@@ -1,0 +1,4 @@
+{
+  "_note": "Copy to local/machine.json on any machine where auto-detection fails. This directory is gitignored.",
+  "pathToClaudeCodeExecutable": "C:/Users/YOURNAME/.local/bin/claude"
+}

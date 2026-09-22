@@ -1,0 +1,38 @@
+# ---------------------------------------------------------------------------
+# CREDENTIALS — never commit. Listed first and redundantly on purpose.
+# ---------------------------------------------------------------------------
+auth.json
+**/auth.json
+*.token
+*.secret
+.env
+
+# Machine-specific overrides, written by you on each machine.
+# NOTE: `local/*` not `local/` — git will not descend into an ignored
+# directory, so the negation below would never be reached.
+local/*
+!local/machine.json.example
+
+# ---------------------------------------------------------------------------
+# Rebuildable / machine-local Pi state. Never sync these.
+# ---------------------------------------------------------------------------
+node_modules/
+models-store.json
+trust.json
+package-lock.json
+
+# Live SQLite — cloud/git sync corrupts these.
+*.db
+*.sqlite
+*-shm
+*-wal
+
+# Platform binaries Pi fetches itself.
+bin/*.exe
+bin/fd
+bin/rg
+
+# OS noise
+.DS_Store
+Thumbs.db
+desktop.ini
