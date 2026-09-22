@@ -1,0 +1,9 @@
+{
+  "autoImportOnStart": true,
+  "pullOnStart": false,
+  "autoExportOnShutdown": true,
+  "autoCommit": true,
+  "autoPush": false,
+  "notify": true,
+  "timeoutMs": 20000
+}

@@ -12,6 +12,7 @@ auth.json
 # directory, so the negation below would never be reached.
 local/*
 !local/machine.json.example
+!local/sync.json.example
 
 # ---------------------------------------------------------------------------
 # Rebuildable / machine-local Pi state. Never sync these.
