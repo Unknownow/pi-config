@@ -20,6 +20,6 @@
   "tuiMode": "regular",
   "hideThinkingBlock": false,
   "extensions": [
-    "D:\\works\\pi-config\\extension"
+    "__PI_CONFIG_REPO__/extension"
   ]
 }
