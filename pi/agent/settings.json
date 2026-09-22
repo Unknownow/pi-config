@@ -1,0 +1,25 @@
+{
+  "lastChangelogVersion": "0.87.0",
+  "theme": "dark",
+  "defaultProvider": "claude-bridge",
+  "defaultModel": "claude-opus-5",
+  "images": {
+    "blockImages": false
+  },
+  "showHardwareCursor": true,
+  "quietStartup": false,
+  "packages": [
+    {
+      "source": "npm:pi-claude-bridge",
+      "extensions": [
+        "+src\\index.ts"
+      ]
+    },
+    "npm:context-mode"
+  ],
+  "tuiMode": "regular",
+  "hideThinkingBlock": false,
+  "extensions": [
+    "D:\\works\\pi-config\\extension"
+  ]
+}

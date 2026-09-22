@@ -1,0 +1,8 @@
+{
+  "name": "pi-extensions",
+  "private": true,
+  "dependencies": {
+    "context-mode": "^1.0.169",
+    "pi-claude-bridge": "^0.8.0"
+  }
+}

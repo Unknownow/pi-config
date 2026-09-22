@@ -1,0 +1,16 @@
+{
+  "askClaude": {
+    "enabled": true,
+    "allowFullMode": true,
+    "defaultIsolated": false,
+    "description": "Custom tool description override",
+    "defaultMode": "full",
+    "appendSkills": true
+  },
+  "provider": {
+    "plan": "max",
+    "longContextExtraUsage": false,
+    "strictMcpConfig": true,
+    "pathToClaudeCodeExecutable": "__CLAUDE_EXECUTABLE__"
+  }
+}
