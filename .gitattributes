@@ -1,0 +1,11 @@
+# cmd.exe reads batch files by byte offset. With LF-only line endings `goto`
+# silently jumps to the wrong place or fails with "cannot find the batch label".
+# Force CRLF on checkout so a clone on any machine produces a working script.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Everything else stays LF.
+*.js   text eol=lf
+*.sh   text eol=lf
+*.json text eol=lf
+*.md   text eol=lf

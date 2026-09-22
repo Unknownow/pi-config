@@ -7,6 +7,20 @@ different patterns. Log in separately on each machine.
 
 ## Use
 
+On Windows, `pi-config.bat` wraps everything. Double-click it for a menu, or from a terminal:
+
+```bat
+pi-config preview     :: show what import would change, write nothing
+pi-config setup       :: import + npm install, for a fresh machine
+pi-config import      :: apply repo config to this machine
+pi-config export      :: capture this machine's config into the repo
+pi-config install     :: npm install the extensions
+```
+
+It resolves its own location, so it works from any working directory.
+
+The scripts underneath are plain Node and work anywhere:
+
 ```bash
 # on a new machine
 git clone <your-remote> pi-config
