@@ -28,7 +28,8 @@ cd ~/.pi/agent/npm && npm install
 
 ## Day to day
 
-Nothing, ideally. The extension imports at session start and commits your changes at session exit.
+Nothing, ideally. The extension imports at session start, commits your changes a few seconds after
+you make them, and once more at session exit.
 When you want to drive it yourself:
 
 | In Pi | In a terminal | Does |
@@ -37,7 +38,8 @@ When you want to drive it yourself:
 | `/pi-config preview` | `pi-config preview` | what an import would change, writes nothing |
 | `/pi-config import` | `pi-config import` | repo → this machine |
 | `/pi-config export` | `pi-config export` | this machine → repo |
-| `/pi-config push` | `pi-config sync` | export, commit, push |
+| `/pi-config sync` | `pi-config sync` | export, commit, push (also pushes earlier unpushed commits) |
+| `/pi-config push` | `pi-config sync` | same as `sync` |
 | `/pi-config pull` | `git pull` | fetch the other machine's changes |
 | — | `pi-config install` | `npm install` the extensions |
 
@@ -92,6 +94,7 @@ machine B's config simply by never having installed that extension.
 | When | What |
 |---|---|
 | session start | optional `git pull --ff-only`, then import — only if a dry run says something would change |
+| setup changes mid-session | export, commit, optionally push — after `syncDebounceMs` of quiet |
 | session shutdown | export, then commit what changed under `pi/` |
 
 Register it once per machine, in `~/.pi/agent/settings.json`:
@@ -100,7 +103,7 @@ Register it once per machine, in `~/.pi/agent/settings.json`:
 { "extensions": ["D:\\works\\pi-config\\extension"] }
 ```
 
-`import.js` writes exactly that during setup, so on a cloned machine it happens for you.
+`import.js` adds that entry on every import if it's missing, so on a cloned machine it happens for you.
 `export.js` rewrites the path to `__PI_CONFIG_REPO__/extension` before committing and `import.js`
 resolves it back to wherever the clone lives — the same treatment is applied to any `skills`,
 `prompts` or `themes` paths in `settings.json` that point into this repo. If the clone ends up
@@ -116,6 +119,8 @@ see `local/sync.json.example`):
 | `autoExportOnShutdown` | `true` | capture this machine's config when the session ends |
 | `autoCommit` | `true` | commit what the export changed |
 | `autoPush` | `false` | push that commit — off because publishing should be deliberate |
+| `autoSyncOnChange` | `true` | watch `~/.pi/agent` and export/commit when synced files change |
+| `syncDebounceMs` | `5000` | quiet period after the last change before that sync runs |
 | `notify` | `true` | show TUI notifications |
 | `timeoutMs` | `20000` | per-command timeout for git and the scripts |
 

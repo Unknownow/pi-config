@@ -5,8 +5,9 @@
  * anyone remembering to run the scripts.
  *
  *   session start     optional `git pull --ff-only`, then import repo -> machine
+ *   config changes    watch ~/.pi/agent; export, commit, optionally push
  *   session shutdown  export machine -> repo, commit, optionally push
- *   /pi-config        status / export / import / preview / pull / push, on demand
+ *   /pi-config        status / sync / export / import / preview / pull / push, on demand
  *
  * The extension lives inside the repo it syncs, so cloning the repo on another
  * machine brings the automation with it. Behaviour is configured in
@@ -56,6 +57,10 @@ interface SyncConfig {
 	autoCommit: boolean;
 	/** Push the commit. Off by default: publishing is the user's call. */
 	autoPush: boolean;
+	/** Watch ~/.pi/agent during the session and sync shortly after the setup changes. */
+	autoSyncOnChange: boolean;
+	/** Quiet period after the last change before syncing, in milliseconds. */
+	syncDebounceMs: number;
 	/** Show notifications in the TUI. */
 	notify: boolean;
 	/** Per-command timeout for git and the sync scripts, in milliseconds. */
@@ -68,6 +73,8 @@ const DEFAULTS: SyncConfig = {
 	autoExportOnShutdown: true,
 	autoCommit: true,
 	autoPush: false,
+	autoSyncOnChange: true,
+	syncDebounceMs: 5000,
 	notify: true,
 	timeoutMs: 20000,
 };
@@ -184,6 +191,18 @@ export default function piConfigSync(pi: ExtensionAPI) {
 		return code === 0;
 	}
 
+	/**
+	 * One sync operation at a time. The watcher, the shutdown hook and the
+	 * command can all fire together, and two exports racing into one git index
+	 * produce half-staged commits.
+	 */
+	let queue: Promise<unknown> = Promise.resolve();
+	function serial<T>(fn: () => Promise<T>): Promise<T> {
+		const run = queue.then(fn, fn);
+		queue = run.catch(() => undefined);
+		return run;
+	}
+
 	// ----------------------------------------------------------------------
 	// Operations
 	// ----------------------------------------------------------------------
@@ -214,7 +233,17 @@ export default function piConfigSync(pi: ExtensionAPI) {
 		if (exported.code !== 0) return "export failed — see local/sync.log";
 
 		const changed = await dirtyPaths();
-		if (changed.length === 0) return "repo already up to date";
+		if (changed.length === 0) {
+			// Earlier auto-commits may still be waiting for a push.
+			if (!opts.push) return "repo already up to date";
+			const ahead = Number((await git("rev-list", "--count", "@{u}..HEAD")).stdout.trim()) || 0;
+			if (ahead === 0) return "repo already up to date";
+			const push = await git("push");
+			log(repo, `push (${push.code}): ${push.stderr.trim() || push.stdout.trim()}`);
+			const result = push.code === 0 ? `pushed ${ahead} pending commit(s)` : "push failed — see local/sync.log";
+			say(ctx, cfg, `pi-config: ${result}`, push.code === 0 ? "info" : "error");
+			return result;
+		}
 		if (!opts.commit) return `${changed.length} file(s) changed, left uncommitted: ${changed.join(", ")}`;
 
 		const pathspec = syncedPathspec();
@@ -262,8 +291,74 @@ export default function piConfigSync(pi: ExtensionAPI) {
 			"",
 			`autoImportOnStart=${cfg.autoImportOnStart}  pullOnStart=${cfg.pullOnStart}`,
 			`autoExportOnShutdown=${cfg.autoExportOnShutdown}  autoCommit=${cfg.autoCommit}  autoPush=${cfg.autoPush}`,
+			`autoSyncOnChange=${cfg.autoSyncOnChange}  watching=${watcher !== null}`,
 		];
 		return lines.join("\n");
+	}
+
+	// ----------------------------------------------------------------------
+	// Change watcher
+	// ----------------------------------------------------------------------
+
+	const AGENT = path.join(os.homedir(), ".pi", "agent");
+	const DENY_FILES = new Set(["auth.json", "trust.json", "models-store.json"]);
+	const MIRROR_DIRS = new Set(["skills", "prompts", "themes", "extensions"]);
+
+	/**
+	 * A cheap pre-filter mirroring bin/lib.js `inventory()`, so session files and
+	 * backups don't wake the exporter every turn. export.js stays the authority.
+	 */
+	function inScope(rel: string): boolean {
+		const parts = rel.split(/[\\/]/).filter(Boolean);
+		const name = parts[parts.length - 1] ?? "";
+		if (name.startsWith(".") || name.includes(".bak-") || /\.(db|sqlite)(-shm|-wal)?$/.test(name)) return false;
+		if (parts.length === 1) return name.endsWith(".json") && !DENY_FILES.has(name);
+		if (parts[0] === "npm") return parts.length === 2 && name === "package.json";
+		return MIRROR_DIRS.has(parts[0]) && !parts.includes("node_modules");
+	}
+
+	let watcher: fs.FSWatcher | null = null;
+	let debounce: ReturnType<typeof setTimeout> | null = null;
+
+	function startWatcher(ctx: ExtensionContext): void {
+		if (watcher || !cfg.autoSyncOnChange || !fs.existsSync(AGENT)) return;
+		try {
+			watcher = fs.watch(AGENT, { recursive: true }, (_type, file) => {
+				if (!file || !inScope(file.toString())) return;
+				if (debounce) clearTimeout(debounce);
+				debounce = setTimeout(() => {
+					debounce = null;
+					void syncOnChange(ctx);
+				}, cfg.syncDebounceMs);
+			});
+			watcher.on("error", (e) => {
+				log(repo, `watcher error: ${e.message}`);
+				stopWatcher();
+			});
+			log(repo, `watching ${AGENT}`);
+		} catch (e) {
+			// recursive fs.watch is missing on old Node/Linux; shutdown export still covers it
+			log(repo, `watcher unavailable: ${(e as Error).message}`);
+			watcher = null;
+		}
+	}
+
+	function stopWatcher(): void {
+		if (debounce) clearTimeout(debounce);
+		debounce = null;
+		watcher?.close();
+		watcher = null;
+	}
+
+	async function syncOnChange(ctx: ExtensionContext): Promise<void> {
+		// Same reasoning as the shutdown hook: after an import, Pi's view is stale.
+		if (importedThisSession) return;
+		try {
+			const result = await serial(() => exportAndCommit(ctx, { commit: cfg.autoCommit, push: cfg.autoPush }));
+			log(repo, `on change: ${result}`);
+		} catch (e) {
+			log(repo, `on change failed: ${(e as Error).message}`);
+		}
 	}
 
 	// ----------------------------------------------------------------------
@@ -273,24 +368,28 @@ export default function piConfigSync(pi: ExtensionAPI) {
 	pi.on("session_start", async (event, ctx) => {
 		if (startupDone || event.reason !== "startup") return;
 		startupDone = true;
-		if (!cfg.autoImportOnStart && !cfg.pullOnStart) return;
 
 		try {
 			if (!(await isGitRepo())) {
 				log(repo, "session_start: not a git repo, skipping");
 				return;
 			}
-			if (cfg.pullOnStart) {
-				const pulled = await pull();
-				if (pulled !== "already up to date") say(ctx, cfg, `pi-config: ${pulled}`, "info");
-			}
-			if (cfg.autoImportOnStart) await importIfChanged(ctx);
+			await serial(async () => {
+				if (cfg.pullOnStart) {
+					const pulled = await pull();
+					if (pulled !== "already up to date") say(ctx, cfg, `pi-config: ${pulled}`, "info");
+				}
+				if (cfg.autoImportOnStart) await importIfChanged(ctx);
+			});
+			// After the import, so its own writes don't trigger a sync.
+			if (!importedThisSession) startWatcher(ctx);
 		} catch (e) {
 			log(repo, `session_start failed: ${(e as Error).message}`);
 		}
 	});
 
 	pi.on("session_shutdown", async (_event, ctx) => {
+		stopWatcher();
 		if (!cfg.autoExportOnShutdown) return;
 		if (importedThisSession) {
 			log(repo, "session_shutdown: skipped export (this session imported; in-memory settings are stale)");
@@ -298,7 +397,7 @@ export default function piConfigSync(pi: ExtensionAPI) {
 		}
 		try {
 			if (!(await isGitRepo())) return;
-			const result = await exportAndCommit(ctx, { commit: cfg.autoCommit, push: cfg.autoPush });
+			const result = await serial(() => exportAndCommit(ctx, { commit: cfg.autoCommit, push: cfg.autoPush }));
 			log(repo, `session_shutdown: ${result}`);
 		} catch (e) {
 			log(repo, `session_shutdown failed: ${(e as Error).message}`);
@@ -311,6 +410,7 @@ export default function piConfigSync(pi: ExtensionAPI) {
 
 	const SUBCOMMANDS = [
 		{ value: "status", label: "status - repo, branch, drift" },
+		{ value: "sync", label: "sync - export, commit, push (same as pi-config.bat sync)" },
 		{ value: "export", label: "export - machine -> repo, commit" },
 		{ value: "import", label: "import - repo -> machine" },
 		{ value: "preview", label: "preview - what import would change" },
@@ -329,7 +429,7 @@ export default function piConfigSync(pi: ExtensionAPI) {
 			try {
 				switch (sub) {
 					case "status":
-						ctx.ui.notify(await status(), "info");
+						ctx.ui.notify(await serial(status), "info");
 						return;
 					case "preview": {
 						const { stdout } = await runScript("import.js", "--dry-run");
@@ -337,16 +437,18 @@ export default function piConfigSync(pi: ExtensionAPI) {
 						return;
 					}
 					case "import":
-						ctx.ui.notify(await importIfChanged(ctx), "info");
+						ctx.ui.notify(await serial(() => importIfChanged(ctx)), "info");
+						if (importedThisSession) stopWatcher();
 						return;
 					case "export":
-						ctx.ui.notify(await exportAndCommit(ctx, { commit: cfg.autoCommit, push: false }), "info");
+						ctx.ui.notify(await serial(() => exportAndCommit(ctx, { commit: cfg.autoCommit, push: false })), "info");
 						return;
+					case "sync":
 					case "push":
-						ctx.ui.notify(await exportAndCommit(ctx, { commit: true, push: true }), "info");
+						ctx.ui.notify(await serial(() => exportAndCommit(ctx, { commit: true, push: true })), "info");
 						return;
 					case "pull":
-						ctx.ui.notify(await pull(), "info");
+						ctx.ui.notify(await serial(pull), "info");
 						return;
 					default:
 						ctx.ui.notify(`Unknown: ${sub}. Try: ${SUBCOMMANDS.map((c) => c.value).join(", ")}`, "warning");

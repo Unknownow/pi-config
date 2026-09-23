@@ -103,6 +103,20 @@ function resolveSettings(json, log) {
       return resolved;
     });
   }
+  registerSyncExtension(json, log);
+}
+
+/**
+ * Every machine that imports should also run the sync extension, otherwise the
+ * automation never starts. Add it unless some entry already points at it.
+ */
+function registerSyncExtension(json, log) {
+  const ext = path.join(REPO, 'extension');
+  if (!fs.existsSync(path.join(ext, 'index.ts'))) return;
+  const list = Array.isArray(json.extensions) ? json.extensions : [];
+  if (list.some((e) => typeof e === 'string' && samePath(e, ext))) return;
+  json.extensions = [...list, ext];
+  log(`extensions[] += ${ext}`);
 }
 
 /** Find the Claude Code executable on this machine. */

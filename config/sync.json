@@ -4,6 +4,8 @@
   "autoExportOnShutdown": true,
   "autoCommit": true,
   "autoPush": false,
+  "autoSyncOnChange": true,
+  "syncDebounceMs": 5000,
   "notify": true,
   "timeoutMs": 20000
 }
