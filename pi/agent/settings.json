@@ -21,5 +21,6 @@
   "hideThinkingBlock": false,
   "extensions": [
     "__PI_CONFIG_REPO__/extension"
-  ]
+  ],
+  "followUpMode": "one-at-a-time"
 }
