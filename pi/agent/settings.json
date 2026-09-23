@@ -18,5 +18,8 @@
     "npm:context-mode"
   ],
   "tuiMode": "regular",
-  "hideThinkingBlock": false
+  "hideThinkingBlock": false,
+  "extensions": [
+    "__PI_CONFIG_REPO__/extension"
+  ]
 }
