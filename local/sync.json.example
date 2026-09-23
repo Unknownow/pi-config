@@ -1,6 +1,5 @@
 {
   "_comment": "Copy to local/sync.json (gitignored) to override config/sync.json on this machine only. Any subset of keys works.",
-  "pullOnStart": true,
-  "autoPush": true,
+  "autoPush": false,
   "notify": false
 }

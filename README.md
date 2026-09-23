@@ -93,7 +93,7 @@ machine B's config simply by never having installed that extension.
 
 | When | What |
 |---|---|
-| session start | optional `git pull --ff-only`, then import — only if a dry run says something would change |
+| session start | `git pull --rebase`, then import — only if a dry run says something would change |
 | setup changes mid-session | export, commit, optionally push — after `syncDebounceMs` of quiet |
 | session shutdown | export, then commit what changed under `pi/` |
 
@@ -115,18 +115,21 @@ see `local/sync.json.example`):
 | Key | Default | Meaning |
 |---|---|---|
 | `autoImportOnStart` | `true` | apply repo config at session start when it differs |
-| `pullOnStart` | `false` | `git pull --ff-only` first — off because it touches the network |
+| `pullOnStart` | `true` | `git pull --rebase --autostash` first, so you start from the other machine's latest |
 | `autoExportOnShutdown` | `true` | capture this machine's config when the session ends |
 | `autoCommit` | `true` | commit what the export changed |
-| `autoPush` | `false` | push that commit — off because publishing should be deliberate |
+| `autoPush` | `true` | push that commit; if the other machine pushed first, rebase and retry once |
 | `autoSyncOnChange` | `true` | watch `~/.pi/agent` and export/commit when synced files change |
 | `syncDebounceMs` | `5000` | quiet period after the last change before that sync runs |
 | `notify` | `true` | show TUI notifications |
 | `timeoutMs` | `20000` | per-command timeout for git and the scripts |
 
-Turn on `pullOnStart` and `autoPush` once you're happy with what the commits look like, and the two
-machines converge with no thought at all. Until then, `/pi-config pull` and `/pi-config push` do it
-when you ask.
+With `pullOnStart` and `autoPush` on, the two machines converge with no thought at all: each one
+pulls when Pi starts and pushes a few seconds after its setup changes. If a push is rejected because
+the other machine got there first, the extension rebases onto it, pushes again, and imports what it
+pulled in (restart Pi to apply it). When both machines edited the same file, the rebase is aborted
+and logged — resolve it in the repo by hand. To keep a machine from publishing, set
+`{ "autoPush": false }` in its `local/sync.json`.
 
 Three behaviours worth knowing:
 

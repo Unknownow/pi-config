@@ -4,7 +4,7 @@
  * Keeps this machine's Pi config in step with the pi-config repo, without
  * anyone remembering to run the scripts.
  *
- *   session start     optional `git pull --ff-only`, then import repo -> machine
+ *   session start     `git pull --rebase`, then import repo -> machine
  *   config changes    watch ~/.pi/agent; export, commit, optionally push
  *   session shutdown  export machine -> repo, commit, optionally push
  *   /pi-config        status / sync / export / import / preview / pull / push, on demand
@@ -49,13 +49,13 @@ const REPO = resolveRepo();
 interface SyncConfig {
 	/** Import repo config into ~/.pi/agent at session start when it differs. */
 	autoImportOnStart: boolean;
-	/** `git pull --ff-only` before importing. Off by default: it touches the network. */
+	/** `git pull --rebase` before importing, so this machine starts from the other's latest. */
 	pullOnStart: boolean;
 	/** Export ~/.pi/agent into the repo when the session ends. */
 	autoExportOnShutdown: boolean;
 	/** Commit whatever the export changed. */
 	autoCommit: boolean;
-	/** Push the commit. Off by default: publishing is the user's call. */
+	/** Push the commit; a rejected push rebases onto the remote and retries once. */
 	autoPush: boolean;
 	/** Watch ~/.pi/agent during the session and sync shortly after the setup changes. */
 	autoSyncOnChange: boolean;
@@ -69,10 +69,10 @@ interface SyncConfig {
 
 const DEFAULTS: SyncConfig = {
 	autoImportOnStart: true,
-	pullOnStart: false,
+	pullOnStart: true,
 	autoExportOnShutdown: true,
 	autoCommit: true,
-	autoPush: false,
+	autoPush: true,
 	autoSyncOnChange: true,
 	syncDebounceMs: 5000,
 	notify: true,
@@ -238,10 +238,9 @@ export default function piConfigSync(pi: ExtensionAPI) {
 			if (!opts.push) return "repo already up to date";
 			const ahead = Number((await git("rev-list", "--count", "@{u}..HEAD")).stdout.trim()) || 0;
 			if (ahead === 0) return "repo already up to date";
-			const push = await git("push");
-			log(repo, `push (${push.code}): ${push.stderr.trim() || push.stdout.trim()}`);
-			const result = push.code === 0 ? `pushed ${ahead} pending commit(s)` : "push failed — see local/sync.log";
-			say(ctx, cfg, `pi-config: ${result}`, push.code === 0 ? "info" : "error");
+			const pushed = await push(ctx);
+			const result = pushed ? `pushed ${ahead} pending commit(s)` : "push failed — see local/sync.log";
+			say(ctx, cfg, `pi-config: ${result}`, pushed ? "info" : "error");
 			return result;
 		}
 		if (!opts.commit) return `${changed.length} file(s) changed, left uncommitted: ${changed.join(", ")}`;
@@ -257,20 +256,49 @@ export default function piConfigSync(pi: ExtensionAPI) {
 		if (commit.code !== 0) return "git commit failed — see local/sync.log";
 
 		let result = `committed ${changed.length} change(s): ${changed.join(", ")}`;
-		if (opts.push) {
-			const push = await git("push");
-			log(repo, `push (${push.code}): ${push.stderr.trim() || push.stdout.trim()}`);
-			result += push.code === 0 ? " and pushed" : " — push failed, see local/sync.log";
-		}
-		say(ctx, cfg, `pi-config: ${result}`, "info");
+		const pushed = opts.push ? await push(ctx) : true;
+		if (opts.push) result += pushed ? " and pushed" : " — push failed, see local/sync.log";
+		say(ctx, cfg, `pi-config: ${result}`, pushed ? "info" : "error");
 		return result;
 	}
 
+	/**
+	 * Push; if the other machine got there first, rebase onto it and try once
+	 * more. The rebase brings in the other machine's config, so apply it here too —
+	 * otherwise the next export would write this machine's older copy back over it.
+	 */
+	async function push(ctx: ExtensionContext): Promise<boolean> {
+		const first = await git("push");
+		log(repo, `push (${first.code}): ${first.stderr.trim() || first.stdout.trim()}`);
+		if (first.code === 0) return true;
+
+		const pulled = await pull();
+		if (pulled.startsWith("pull failed")) return false;
+		const second = await git("push");
+		log(repo, `push retry (${second.code}): ${second.stderr.trim() || second.stdout.trim()}`);
+		if (pulled === "pulled") {
+			await importIfChanged(ctx);
+			if (importedThisSession) stopWatcher();
+		}
+		return second.code === 0;
+	}
+
+	/**
+	 * Rebase rather than fast-forward: with autoPush the usual divergence is a
+	 * local auto-commit the remote hasn't seen yet, and that replays cleanly. A
+	 * real conflict (both machines edited the same file) is aborted and left to you.
+	 */
 	async function pull(): Promise<string> {
-		const { code, stdout, stderr } = await git("pull", "--ff-only");
+		const before = (await git("rev-parse", "HEAD")).stdout.trim();
+		const { code, stdout, stderr } = await git("pull", "--rebase", "--autostash");
 		log(repo, `pull (${code}): ${stdout.trim() || stderr.trim()}`);
-		if (code !== 0) return "pull failed (diverged or offline) — see local/sync.log";
-		return stdout.includes("Already up to date") ? "already up to date" : "pulled";
+		if (code !== 0) {
+			const abort = await git("rebase", "--abort");
+			if (abort.code === 0) log(repo, "pull: conflict, rebase aborted — resolve in the repo by hand");
+			return "pull failed (conflict or offline) — see local/sync.log";
+		}
+		const after = (await git("rev-parse", "HEAD")).stdout.trim();
+		return before === after ? "already up to date" : "pulled";
 	}
 
 	async function status(): Promise<string> {
@@ -414,7 +442,7 @@ export default function piConfigSync(pi: ExtensionAPI) {
 		{ value: "export", label: "export - machine -> repo, commit" },
 		{ value: "import", label: "import - repo -> machine" },
 		{ value: "preview", label: "preview - what import would change" },
-		{ value: "pull", label: "pull - git pull --ff-only" },
+		{ value: "pull", label: "pull - git pull --rebase" },
 		{ value: "push", label: "push - export, commit, push" },
 	];
 
