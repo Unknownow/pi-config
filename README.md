@@ -10,7 +10,7 @@ rules and gitignored in three patterns on top of that. Log in separately on each
 ## New machine, three steps
 
 ```bat
-git clone git@github.com:cuongbpt-iec/pi-config.git
+git clone git@github.com:Unknownow/pi-config.git
 cd pi-config
 pi-config setup          :: import the config, then npm install the extensions
 ```
