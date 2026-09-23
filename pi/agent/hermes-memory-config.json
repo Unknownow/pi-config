@@ -1,0 +1,4 @@
+{
+  "_note": "reviewEnabled is off because defaultProvider is claude-bridge, supplied by the pi-claude-bridge extension. The background review cannot reach it: the direct path finds no registered API provider, and the fallback subprocess spawns with --no-extensions so claude-bridge/claude-opus-5 is not in its model list. Re-enable by deleting this file, or keep it off and set llmModelOverride to an API-keyed model instead.",
+  "reviewEnabled": false
+}

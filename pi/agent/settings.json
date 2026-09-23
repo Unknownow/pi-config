@@ -1,8 +1,8 @@
 {
-  "lastChangelogVersion": "0.87.0",
+  "lastChangelogVersion": "0.87.1",
   "theme": "dark",
   "defaultProvider": "claude-bridge",
-  "defaultModel": "claude-opus-5",
+  "defaultModel": "claude-opus-5-5",
   "images": {
     "blockImages": false
   },
@@ -15,11 +15,9 @@
         "+src\\index.ts"
       ]
     },
+    "npm:pi-hermes-memory",
     "npm:context-mode"
   ],
   "tuiMode": "regular",
-  "hideThinkingBlock": false,
-  "extensions": [
-    "__PI_CONFIG_REPO__/extension"
-  ]
+  "hideThinkingBlock": false
 }
