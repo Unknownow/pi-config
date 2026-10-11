@@ -19,6 +19,23 @@ context guard:       compacts at ~140k tokens on every model
 | `judge` | `judge` tool, sub-`pi` with the git diff | the diff is ready; when a run ends with an unreviewed diff it asks (`autoJudge`) |
 | `escalate` | main session model | `/flow escalate` |
 
+## Hands-off run
+
+You discuss the plan with the planner. When you're happy, say **"go"**. It also accepts "ok go",
+"lgtm", "do it", "ship it" and other short approvals; see `approvePattern`. Everything after that
+runs on its own:
+
+```
+"go" -> execute (Sonnet) -> judge (auto) -> FAIL: fix and judge again (max 3 rounds)
+                                         -> PASS: commit -> push the current branch
+```
+
+- **Push guard:** it never pushes `protectedBranches` (`main`, `master`) or a detached HEAD. It
+  commits there and tells you. It never force-pushes or uses `--no-verify`, and stops if a hook fails.
+- **Where it stops for you:** when the judge fails `maxJudgeRounds` times in a row, or something errors.
+- **Turning steps back to manual:** set `"autoJudge": "ask"`, `"autoCommit": "ask"` (or `"commit"` /
+  `"off"`), and `"planPrompt": true` for an Approve menu instead of the "say go" hint.
+
 ## What you see
 
 A widget above the editor shows the pipeline with the active stage and its model, and one live row

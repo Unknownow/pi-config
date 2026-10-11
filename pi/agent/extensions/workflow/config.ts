@@ -30,6 +30,14 @@ export interface WorkflowConfig {
 	autoJudge: "ask" | "auto" | "off";
 	/** Judge -> fix rounds before handing back to you. */
 	maxJudgeRounds: number;
+	/** After the judge passes: ask, commit, commit and push, or do nothing. */
+	autoCommit: "ask" | "commit" | "push" | "off";
+	/** Branches never pushed automatically; the commit stays local. */
+	protectedBranches: string[];
+	/** In plan phase, a message matching this (case-insensitive, whole message) approves the plan. */
+	approvePattern: string;
+	/** Pop up an Approve / Keep planning menu whenever a plan is ready (otherwise just a hint). */
+	planPrompt: boolean;
 	/** Consecutive failed tool calls before the executor is told to ask the advisor. 0 disables. */
 	repeatedErrorThreshold: number;
 	/** Tools switched off while planning. */
@@ -51,8 +59,13 @@ export const DEFAULTS: WorkflowConfig = {
 	},
 	startPhase: "plan",
 	contextGuardTokens: 140_000,
-	autoJudge: "ask",
+	autoJudge: "auto",
 	maxJudgeRounds: 3,
+	autoCommit: "push",
+	protectedBranches: ["main", "master"],
+	approvePattern:
+		"^(ok(ay)?[, ]+|yes[, ]+|sure[, ]+)?(go|go ahead|go for it|do it|approved?|lgtm|ship it|execute( it)?|proceed|start|let'?s go|let'?s do it|run it|implement it|build it)( now| please)?[.! ]*$",
+	planPrompt: false,
 	repeatedErrorThreshold: 3,
 	planBlockedTools: ["edit", "write"],
 	explore: { maxQueries: 8, concurrency: 4, tools: ["read", "grep", "find", "ls"] },

@@ -28,8 +28,15 @@
   },
   "startPhase": "plan",
   "contextGuardTokens": 140000,
-  "autoJudge": "ask",
+  "autoJudge": "auto",
   "maxJudgeRounds": 3,
+  "autoCommit": "push",
+  "protectedBranches": [
+    "main",
+    "master"
+  ],
+  "planPrompt": false,
+  "approvePattern": "^(ok(ay)?[, ]+|yes[, ]+|sure[, ]+)?(go|go ahead|go for it|do it|approved?|lgtm|ship it|execute( it)?|proceed|start|let'?s go|let'?s do it|run it|implement it|build it)( now| please)?[.! ]*$",
   "repeatedErrorThreshold": 3,
   "planBlockedTools": [
     "edit",

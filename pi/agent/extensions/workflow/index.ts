@@ -33,6 +33,7 @@ import { type Component, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import {
 	CONFIG_PATH,
+	DEFAULTS,
 	describeRole,
 	loadConfig,
 	parseRoleSpec,
@@ -59,6 +60,7 @@ interface FlowState {
 }
 
 const STATE_ENTRY = "workflow-state";
+const APPROVED = "Plan approved. Execute it now, step by step, following the workflow rules.";
 const OWN_TOOLS = new Set(["explore", "advisor", "judge"]);
 
 interface Diff {
@@ -189,7 +191,7 @@ export default function workflow(pi: ExtensionAPI) {
 		pi.sendMessage(
 			{
 				customType: "workflow-execute",
-				content: "Plan approved. Execute it now, step by step, following the workflow rules.",
+				content: APPROVED,
 				display: true,
 			},
 			{ triggerTurn: true, deliverAs: "followUp" },
@@ -535,12 +537,34 @@ export default function workflow(pi: ExtensionAPI) {
 		view.clearFinished(15_000);
 	});
 
+	function approveRe(): RegExp {
+		try {
+			return new RegExp(cfg.approvePattern, "i");
+		} catch {
+			return new RegExp(DEFAULTS.approvePattern, "i");
+		}
+	}
+
+	// Saying "go" in plan phase approves the plan: switch to execute and send the message on as the start signal.
+	pi.on("input", async (event, ctx) => {
+		if (state.phase !== "plan" || event.source === "extension" || event.streamingBehavior) return { action: "continue" };
+		if (!approveRe().test(event.text.trim())) return { action: "continue" };
+		await setPhase(ctx, "execute");
+		ctx.ui.notify(`workflow: plan approved, executing on ${describeRole(cfg.roles.execute)}`, "info");
+		return { action: "transform", text: `${event.text.trim()}\n\n${APPROVED}` };
+	});
+
 	pi.on("agent_end", async (event, ctx) => {
 		if (!ctx.hasUI) return;
 		const last = [...event.messages].reverse().find((m) => m.role === "assistant");
 
 		if (state.phase === "plan") {
-			if (!/(^|\n)\s*(#+\s*)?(\*\*)?plan\b[^\n]*\n\s*(1[.)]|[-*])/i.test(assistantText(last))) return;
+			// A plan is any reply with a numbered list of at least two steps.
+			if (!/(^|\n)\s*(\*\*)?1[.)][\s\S]*\n\s*(\*\*)?2[.)]/.test(assistantText(last))) return;
+			if (!cfg.planPrompt) {
+				ctx.ui.notify(`workflow: plan ready. Say "go" to execute on ${describeRole(cfg.roles.execute)}, or keep discussing.`, "info");
+				return;
+			}
 			const choice = await ctx.ui.select("Plan ready", [
 				`Approve: execute on ${describeRole(cfg.roles.execute)}`,
 				"Keep planning",
@@ -552,9 +576,8 @@ export default function workflow(pi: ExtensionAPI) {
 		if (state.phase === "execute") await reviewDiff(ctx, false);
 	});
 
-	/** diff ready -> judge -> fix loop or commit. */
+	/** diff ready -> judge -> fix loop, or commit (and push) once it passes. */
 	async function reviewDiff(ctx: ExtensionContext, manual: boolean): Promise<void> {
-		if (!manual && cfg.autoJudge === "off") return;
 		const diff = await collectDiff(ctx.cwd);
 		// Committed, or changed since the judge passed: back to executing.
 		if (view.stage === "commit" && diff?.hash !== state.passedDiff) {
@@ -565,7 +588,12 @@ export default function workflow(pi: ExtensionAPI) {
 			if (manual) ctx.ui.notify("workflow: no changes to review", "info");
 			return;
 		}
-		if (!manual && (diff.hash === state.passedDiff || seenDiffs.has(diff.hash))) return;
+		// Already passed, e.g. the executor called judge itself: straight to commit.
+		if (!manual && diff.hash === state.passedDiff) {
+			await finishPassed(ctx, diff.hash);
+			return;
+		}
+		if (!manual && (cfg.autoJudge === "off" || seenDiffs.has(diff.hash))) return;
 		if (!manual && cfg.autoJudge === "ask") {
 			const run = await ctx.ui.confirm("Diff ready", `Run the judge (${describeRole(cfg.roles.judge)}) on ${diff.files} changed file(s)?`);
 			if (!run) {
@@ -585,31 +613,61 @@ export default function workflow(pi: ExtensionAPI) {
 			ctx.ui.notify(r.text, "error");
 			return;
 		}
-		pi.sendMessage(
-			{ customType: "workflow-judge", content: `**Judge: ${r.verdict}**\n\n${r.text}`, display: true },
-			{ triggerTurn: false },
-		);
-
+		// The verdict travels with the next instruction, so they reach the transcript in order.
+		const report = `**Judge: ${r.verdict}**\n\n${r.text}`;
 		if (r.verdict === "FAIL") {
 			state.judgeRounds++;
 			persist();
 			if (state.judgeRounds >= cfg.maxJudgeRounds) {
+				pi.sendMessage({ customType: "workflow-judge", content: report, display: true }, { triggerTurn: false });
 				ctx.ui.notify(`workflow: judge failed ${state.judgeRounds} rounds in a row — your call (/flow escalate?)`, "warning");
 				return;
 			}
 			pi.sendMessage(
-				{ customType: "workflow-fix", content: "Fix the judge's blocker and major findings above, then call judge again.", display: true },
+				{ customType: "workflow-fix", content: `${report}\n\nFix the blocker and major findings above, then call judge again.`, display: true },
 				{ triggerTurn: true, deliverAs: "followUp" },
 			);
 			return;
 		}
 
-		const commit = await ctx.ui.select("Judge passed", ["Commit now", "Not yet"]);
-		if (commit === "Commit now") {
-			pi.sendUserMessage("The judge passed. Commit these changes now with a clear message, following the repo's conventions. Do not push.", {
-				deliverAs: "followUp",
-			});
+		if (!(await finishPassed(ctx, diff.hash, report))) {
+			pi.sendMessage({ customType: "workflow-judge", content: report, display: true }, { triggerTurn: false });
 		}
+	}
+
+	/** Diffs already handed to the commit step, so a pass is committed once. */
+	const committedDiffs = new Set<string>();
+
+	/** Sends the commit (and push) instruction, prefixed with `report`. False if nothing was sent. */
+	async function finishPassed(ctx: ExtensionContext, hash: string, report?: string): Promise<boolean> {
+		if (cfg.autoCommit === "off" || committedDiffs.has(hash)) return false;
+		committedDiffs.add(hash);
+
+		let mode: "commit" | "push" = cfg.autoCommit === "commit" ? "commit" : "push";
+		if (cfg.autoCommit === "ask") {
+			const choice = await ctx.ui.select("Judge passed", ["Commit and push", "Commit", "Not yet"]);
+			if (!choice || choice === "Not yet") return false;
+			mode = choice === "Commit" ? "commit" : "push";
+		}
+
+		const branch = (await git(ctx.cwd, "rev-parse", "--abbrev-ref", "HEAD")).stdout.trim();
+		if (mode === "push" && (!branch || branch === "HEAD" || cfg.protectedBranches.includes(branch))) {
+			mode = "commit";
+			ctx.ui.notify(`workflow: on ${branch || "a detached HEAD"}, committing without pushing`, "warning");
+		}
+
+		view.stage = "commit";
+		view.changed();
+		const commit =
+			"The judge passed. Commit exactly the reviewed changes now: stage the changed and new files from the diff without editing anything first, and write a clear message that follows the repo's conventions.";
+		const push = ` Then push branch \`${branch}\` (\`git push\`, or \`git push -u origin ${branch}\` if it has no upstream).`;
+		const rules = " Never force-push or use --no-verify. If a hook, the commit or the push fails, stop and report it instead of working around it.";
+		const instruction = commit + (mode === "push" ? push : "") + rules;
+		pi.sendMessage(
+			{ customType: "workflow-commit", content: report ? `${report}\n\n${instruction}` : instruction, display: true },
+			{ triggerTurn: true, deliverAs: "followUp" },
+		);
+		return true;
 	}
 
 	pi.on("session_start", async (event, ctx) => {
@@ -658,7 +716,7 @@ export default function workflow(pi: ExtensionAPI) {
 	function statusText(): string {
 		const lines = [
 			`phase      ${state.phase}${state.escalated ? " (escalated)" : ""}`,
-			`judge     ${state.judgeRounds} failed round(s); auto=${cfg.autoJudge}`,
+			`judge     ${state.judgeRounds} failed round(s); auto=${cfg.autoJudge}; then ${cfg.autoCommit}`,
 			`guard     compact at ${cfg.contextGuardTokens || "off"} tokens`,
 			"",
 			...ROLES.map((r) => `${r.padEnd(9)} ${describeRole(cfg.roles[r])}`),
