@@ -25,9 +25,14 @@ export interface RunOptions {
 	extensions: string[];
 	timeoutMs: number;
 	signal?: AbortSignal;
-	/** Latest assistant text, for streaming progress. */
-	onProgress?: (text: string) => void;
+	/** Live activity, for the workflow view. */
+	onEvent?: (event: SubagentEvent) => void;
 }
+
+export type SubagentEvent =
+	| { type: "tool"; name: string; args: Record<string, unknown> }
+	| { type: "text"; text: string }
+	| { type: "turn"; usage: Usage };
 
 export interface RunResult {
 	ok: boolean;
@@ -131,6 +136,10 @@ export async function runSubagent(opts: RunOptions): Promise<RunResult> {
 				} catch {
 					return;
 				}
+				if (event.type === "tool_execution_start") {
+					opts.onEvent?.({ type: "tool", name: event.toolName, args: event.args ?? {} });
+					return;
+				}
 				if (event.type !== "message_end" || !event.message) return;
 				const msg = event.message as Message;
 				messages.push(msg);
@@ -139,8 +148,9 @@ export async function runSubagent(opts: RunOptions): Promise<RunResult> {
 				addUsage(result.usage, msg.usage);
 				result.model ??= msg.model;
 				if (msg.stopReason === "error" || msg.stopReason === "aborted") result.error = msg.errorMessage ?? msg.stopReason;
+				if (msg.usage) opts.onEvent?.({ type: "turn", usage: msg.usage });
 				const text = lastAssistantText(messages);
-				if (text) opts.onProgress?.(text);
+				if (text) opts.onEvent?.({ type: "text", text });
 			};
 
 			proc.stdout.on("data", (d) => {

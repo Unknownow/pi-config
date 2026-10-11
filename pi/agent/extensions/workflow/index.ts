@@ -12,6 +12,9 @@
  * are tools that run their role in a separate `pi` process (see subagent.ts).
  * Every model and thinking level comes from ~/.pi/agent/workflow.json, which
  * pi-config syncs between machines; `/flow model` edits it.
+ *
+ * view.ts draws it live: the pipeline above the editor with the active stage
+ * and its model, plus a row per running subagent with what it is doing now.
  */
 
 import { createHash } from "node:crypto";
@@ -24,7 +27,9 @@ import {
 	type ExtensionAPI,
 	type ExtensionContext,
 	serializeConversation,
+	type Theme,
 } from "@earendil-works/pi-coding-agent";
+import { type Component, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import {
 	CONFIG_PATH,
@@ -37,7 +42,8 @@ import {
 	type WorkflowConfig,
 } from "./config.ts";
 import * as prompts from "./prompts.ts";
-import { addUsage, emptyUsage, mapLimit, runSubagent } from "./subagent.ts";
+import { addUsage, emptyUsage, mapLimit, type RunResult, runSubagent } from "./subagent.ts";
+import { FlowView, type RunView, runLine, shortModel, type SubRole } from "./view.ts";
 
 type Phase = "off" | "plan" | "execute";
 
@@ -70,8 +76,39 @@ function assistantText(m: AgentMessage | undefined): string {
 		.join("\n");
 }
 
-function shortModel(spec: string): string {
-	return spec.split("/").pop()?.replace(/^claude-/, "") ?? spec;
+interface ToolDetails {
+	runs: RunView[];
+	verdict?: "PASS" | "FAIL";
+}
+
+/** Calls `fn` at most every `ms`, always delivering the last call. */
+function throttle(fn: () => void, ms: number): () => void {
+	let last = 0;
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	return () => {
+		const wait = last + ms - Date.now();
+		if (wait <= 0) {
+			last = Date.now();
+			fn();
+		} else if (!timer) {
+			timer = setTimeout(() => {
+				timer = undefined;
+				last = Date.now();
+				fn();
+			}, wait);
+		}
+	};
+}
+
+function textOf(result: { content: { type: string; text?: string }[] }): string {
+	return result.content
+		.filter((c) => c.type === "text")
+		.map((c) => c.text ?? "")
+		.join("\n");
+}
+
+function countFindings(text: string): number {
+	return text.split("\n").filter((l) => /\s-\s*(blocker|major|minor)\s*-/i.test(l)).length;
 }
 
 export default function workflow(pi: ExtensionAPI) {
@@ -82,6 +119,7 @@ export default function workflow(pi: ExtensionAPI) {
 	let consecutiveErrors = 0;
 	let guardTokens: number | null = null;
 	let compacting = false;
+	const view = new FlowView(cfg.roles);
 
 	pi.registerFlag("flow", {
 		description: "Workflow phase to start in: plan, execute or off (default from workflow.json)",
@@ -97,14 +135,12 @@ export default function workflow(pi: ExtensionAPI) {
 	}
 
 	function updateStatus(ctx: ExtensionContext): void {
-		if (!ctx.hasUI) return;
-		if (state.phase === "off") {
-			ctx.ui.setStatus("workflow", undefined);
-			return;
-		}
-		const role: Role = state.escalated ? "escalate" : state.phase;
-		const label = `flow:${state.phase}${state.escalated ? " ↑" : ""} ${shortModel(cfg.roles[role].model)}`;
-		ctx.ui.setStatus("workflow", ctx.ui.theme.fg(state.escalated ? "warning" : "accent", label));
+		view.roles = cfg.roles;
+		view.phase = state.phase;
+		view.escalated = state.escalated;
+		if (state.phase === "plan") view.stage = "plan";
+		else if (view.stage === "plan") view.stage = "execute";
+		if (ctx.hasUI) view.mount(ctx.ui);
 	}
 
 	/** Switches the main session to a role's model and thinking level. */
@@ -181,13 +217,44 @@ export default function workflow(pi: ExtensionAPI) {
 	// Subagent helpers
 	// ----------------------------------------------------------------------
 
-	function runRole(role: "explore" | "advisor" | "judge", opts: { systemPrompts: string[]; tools: string[]; task: string; cwd: string; signal?: AbortSignal; onProgress?: (text: string) => void }) {
-		return runSubagent({
+	/** Runs a role as a subagent with a live row in the view; `onChange` fires on every update. */
+	async function runRole(
+		role: SubRole,
+		label: string,
+		opts: { systemPrompts: string[]; tools: string[]; task: string; cwd: string; signal?: AbortSignal },
+		onChange?: (run: RunView) => void,
+	): Promise<{ result: RunResult; run: RunView }> {
+		const run = view.start(role, label);
+		onChange?.(run);
+		const result = await runSubagent({
 			...opts,
 			role: cfg.roles[role],
 			extensions: cfg.subagent.extensions,
 			timeoutMs: cfg.subagent.timeoutMs,
+			onEvent: (e) => {
+				view.event(run, e, opts.cwd);
+				onChange?.(run);
+			},
 		});
+		if (!result.ok) view.finish(run, false, result.error ?? "failed");
+		return { result, run };
+	}
+
+	/** Streams a tool's live rows into its transcript entry. */
+	function toolProgress(onUpdate: ((p: { content: { type: "text"; text: string }[]; details: ToolDetails }) => void) | undefined) {
+		const runs: RunView[] = [];
+		const push = throttle(() => {
+			const summary = runs.map((r) => `${r.role} ${r.status}: ${r.activity}`).join("\n");
+			onUpdate?.({ content: [{ type: "text", text: summary }], details: { runs: runs.map((r) => ({ ...r })) } });
+		}, 150);
+		return {
+			runs,
+			track: (run: RunView) => {
+				if (!runs.includes(run)) runs.push(run);
+				push();
+			},
+			snapshot: (): RunView[] => runs.map((r) => ({ ...r })),
+		};
 	}
 
 	async function git(cwd: string, ...args: string[]) {
@@ -253,30 +320,65 @@ export default function workflow(pi: ExtensionAPI) {
 		usage: ReturnType<typeof emptyUsage>;
 	}
 
-	async function judge(ctx: ExtensionContext, diff: Diff, focus: string | undefined, signal?: AbortSignal, onProgress?: (t: string) => void): Promise<JudgeResult> {
+	async function judge(ctx: ExtensionContext, diff: Diff, focus: string | undefined, signal?: AbortSignal, onChange?: (run: RunView) => void): Promise<JudgeResult & { run: RunView }> {
 		const header = `## Diff under review (${diff.files} file(s)${diff.truncated ? ", truncated" : ""})\n\n`;
-		const run = await runRole("judge", {
-			systemPrompts: [prompts.JUDGE, header + diff.text],
-			tools: cfg.judge.tools,
-			task: `Review the diff in your system prompt.${focus ? ` Focus: ${focus}` : ""}`,
-			cwd: ctx.cwd,
-			signal,
-			onProgress,
-		});
+		view.stage = "judge";
+		const { result, run } = await runRole(
+			"judge",
+			focus || `${diff.files} changed file(s)`,
+			{
+				systemPrompts: [prompts.JUDGE, header + diff.text],
+				tools: cfg.judge.tools,
+				task: `Review the diff in your system prompt.${focus ? ` Focus: ${focus}` : ""}`,
+				cwd: ctx.cwd,
+				signal,
+			},
+			onChange,
+		);
 		seenDiffs.add(diff.hash);
-		if (!run.ok) return { verdict: "ERROR", text: `judge failed: ${run.error}`, hash: diff.hash, usage: run.usage };
-		const verdict = /VERDICT:\s*PASS/i.test(run.text) && !/VERDICT:\s*FAIL/i.test(run.text) ? "PASS" : "FAIL";
+		if (!result.ok) {
+			view.stage = state.phase === "plan" ? "plan" : "execute";
+			return { verdict: "ERROR", text: `judge failed: ${result.error}`, hash: diff.hash, usage: result.usage, run };
+		}
+		const verdict = /VERDICT:\s*PASS/i.test(result.text) && !/VERDICT:\s*FAIL/i.test(result.text) ? "PASS" : "FAIL";
+		const findings = countFindings(result.text);
+		view.finish(run, verdict === "PASS", `${verdict} · ${findings} finding${findings === 1 ? "" : "s"}`);
+		onChange?.(run);
+		view.stage = verdict === "PASS" ? "commit" : "execute";
 		if (verdict === "PASS") {
 			state.passedDiff = diff.hash;
 			state.judgeRounds = 0;
 			persist();
 		}
-		return { verdict, text: run.text, hash: diff.hash, usage: run.usage };
+		return { verdict, text: result.text, hash: diff.hash, usage: result.usage, run };
 	}
 
 	// ----------------------------------------------------------------------
 	// Tools
 	// ----------------------------------------------------------------------
+
+	const title = (theme: Theme, name: string, role: Role) =>
+		theme.fg("toolTitle", theme.bold(`${name} `)) + theme.fg("muted", shortModel(cfg.roles[role].model));
+
+	/** Live rows while running; rows plus the output (or a preview of it) when done. */
+	function renderRuns(
+		result: { content: { type: string; text?: string }[]; details?: unknown },
+		opts: { expanded: boolean; isPartial: boolean },
+		theme: Theme,
+		previewLines: number,
+	): Component {
+		const details = result.details as ToolDetails | undefined;
+		const rows = (details?.runs ?? []).map((r) => runLine(r, theme, { showRole: false }));
+		if (opts.isPartial) return new Text(rows.join("\n") || theme.fg("dim", "starting…"), 0, 0);
+		const body = textOf(result).trim();
+		if (!details) return new Text(theme.fg("toolOutput", body), 0, 0);
+		const lines = body.split("\n");
+		const shown = opts.expanded || lines.length <= previewLines ? lines : [...lines.slice(0, previewLines), theme.fg("dim", `… ${lines.length - previewLines} more lines (expand to see all)`)];
+		const colored = shown.map((l) =>
+			/VERDICT:\s*PASS/i.test(l) ? theme.fg("success", theme.bold(l)) : /VERDICT:\s*FAIL/i.test(l) ? theme.fg("error", theme.bold(l)) : /\s-\s*blocker\s*-/i.test(l) ? theme.fg("error", l) : /\s-\s*major\s*-/i.test(l) ? theme.fg("warning", l) : theme.fg("toolOutput", l),
+		);
+		return new Text([...rows, ...(previewLines > 0 || opts.expanded ? ["", ...colored] : [])].join("\n"), 0, 0);
+	}
 
 	pi.registerTool({
 		name: "explore",
@@ -292,22 +394,31 @@ export default function workflow(pi: ExtensionAPI) {
 		}),
 		async execute(_id, params, signal, onUpdate, ctx) {
 			const queries = params.queries.slice(0, cfg.explore.maxQueries);
-			let done = 0;
-			const runs = await mapLimit(queries, cfg.explore.concurrency, async (q) => {
-				const r = await runRole("explore", { systemPrompts: [prompts.EXPLORE], tools: cfg.explore.tools, task: q, cwd: ctx.cwd, signal });
-				done++;
-				onUpdate?.({ content: [{ type: "text", text: `explore: ${done}/${queries.length} done` }], details: undefined });
-				return r;
+			const progress = toolProgress(onUpdate);
+			const results = await mapLimit(queries, cfg.explore.concurrency, async (q) => {
+				const { result, run } = await runRole("explore", q, { systemPrompts: [prompts.EXPLORE], tools: cfg.explore.tools, task: q, cwd: ctx.cwd, signal }, progress.track);
+				if (result.ok) {
+					const refs = result.text.trim() === "none" ? 0 : result.text.split("\n").filter((l) => /:\d/.test(l)).length;
+					view.finish(run, true, refs ? `${refs} ref${refs === 1 ? "" : "s"}` : "nothing found");
+				}
+				progress.track(run);
+				return result;
 			});
 			const usage = emptyUsage();
-			const sections = runs.map((r, i) => {
+			const sections = results.map((r, i) => {
 				addUsage(usage, r.usage);
 				return `### ${queries[i]}\n${r.ok ? r.text : `(failed: ${r.error})`}`;
 			});
 			const dropped = params.queries.length - queries.length;
 			if (dropped > 0) sections.push(`(${dropped} more queries dropped: limit is ${cfg.explore.maxQueries} per call)`);
-			return { content: [{ type: "text", text: sections.join("\n\n") }], details: undefined, usage };
+			return { content: [{ type: "text", text: sections.join("\n\n") }], details: { runs: progress.snapshot() }, usage };
 		},
+		renderCall(args, theme) {
+			const queries = (args.queries ?? []) as string[];
+			const head = `${title(theme, "explore", "explore")}${theme.fg("accent", ` ${queries.length} quer${queries.length === 1 ? "y" : "ies"}`)}`;
+			return new Text(head, 0, 0);
+		},
+		renderResult: (result, opts, theme) => renderRuns(result, opts, theme, 0),
 	});
 
 	pi.registerTool({
@@ -324,17 +435,27 @@ export default function workflow(pi: ExtensionAPI) {
 		}),
 		async execute(_id, params, signal, onUpdate, ctx) {
 			consecutiveErrors = 0;
-			const run = await runRole("advisor", {
-				systemPrompts: [prompts.ADVISOR, `## Transcript of the execution agent\n\n${transcript(ctx)}`],
-				tools: cfg.advisor.tools,
-				task: `Situation: ${params.situation}\nQuestion: ${params.question}`,
-				cwd: ctx.cwd,
-				signal,
-				onProgress: (text) => onUpdate?.({ content: [{ type: "text", text }], details: undefined }),
-			});
-			if (!run.ok) throw new Error(`advisor failed: ${run.error}`);
-			return { content: [{ type: "text", text: run.text }], details: undefined, usage: run.usage };
+			const progress = toolProgress(onUpdate);
+			const { result, run } = await runRole(
+				"advisor",
+				`[${params.situation}] ${params.question}`,
+				{
+					systemPrompts: [prompts.ADVISOR, `## Transcript of the execution agent\n\n${transcript(ctx)}`],
+					tools: cfg.advisor.tools,
+					task: `Situation: ${params.situation}\nQuestion: ${params.question}`,
+					cwd: ctx.cwd,
+					signal,
+				},
+				progress.track,
+			);
+			if (!result.ok) throw new Error(`advisor failed: ${result.error}`);
+			view.finish(run, true, "guidance ready");
+			return { content: [{ type: "text", text: result.text }], details: { runs: progress.snapshot() }, usage: result.usage };
 		},
+		renderCall(args, theme) {
+			return new Text(`${title(theme, "advisor", "advisor")} ${theme.fg("accent", `[${args.situation ?? "…"}]`)} ${theme.fg("dim", String(args.question ?? ""))}`, 0, 0);
+		},
+		renderResult: (result, opts, theme) => renderRuns(result, opts, theme, 8),
 	});
 
 	pi.registerTool({
@@ -351,13 +472,16 @@ export default function workflow(pi: ExtensionAPI) {
 			const diff = await collectDiff(ctx.cwd, params.base || "HEAD");
 			if (!diff) throw new Error("not a git work tree; the judge reviews git diffs");
 			if (!diff.text) return { content: [{ type: "text", text: "No changes to review." }], details: undefined };
-			const r = await judge(ctx, diff, params.focus, signal, (text) =>
-				onUpdate?.({ content: [{ type: "text", text }], details: undefined }),
-			);
+			const progress = toolProgress(onUpdate);
+			const r = await judge(ctx, diff, params.focus, signal, progress.track);
 			if (r.verdict === "ERROR") throw new Error(r.text);
 			if (r.verdict === "FAIL") state.judgeRounds++;
-			return { content: [{ type: "text", text: r.text }], details: { verdict: r.verdict }, usage: r.usage };
+			return { content: [{ type: "text", text: r.text }], details: { runs: progress.snapshot(), verdict: r.verdict }, usage: r.usage };
 		},
+		renderCall(args, theme) {
+			return new Text(`${title(theme, "judge", "judge")} ${theme.fg("dim", String(args.focus ?? "current diff"))}`, 0, 0);
+		},
+		renderResult: (result, opts, theme) => renderRuns(result, opts, theme, 40),
 	});
 
 	// ----------------------------------------------------------------------
@@ -406,6 +530,11 @@ export default function workflow(pi: ExtensionAPI) {
 		});
 	});
 
+	// Rows from the previous run stay visible a little while, then make room.
+	pi.on("agent_start", async () => {
+		view.clearFinished(15_000);
+	});
+
 	pi.on("agent_end", async (event, ctx) => {
 		if (!ctx.hasUI) return;
 		const last = [...event.messages].reverse().find((m) => m.role === "assistant");
@@ -427,6 +556,11 @@ export default function workflow(pi: ExtensionAPI) {
 	async function reviewDiff(ctx: ExtensionContext, manual: boolean): Promise<void> {
 		if (!manual && cfg.autoJudge === "off") return;
 		const diff = await collectDiff(ctx.cwd);
+		// Committed, or changed since the judge passed: back to executing.
+		if (view.stage === "commit" && diff?.hash !== state.passedDiff) {
+			view.stage = "execute";
+			view.changed();
+		}
 		if (!diff?.text) {
 			if (manual) ctx.ui.notify("workflow: no changes to review", "info");
 			return;

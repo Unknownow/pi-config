@@ -19,6 +19,24 @@ context guard:       compacts at ~140k tokens on every model
 | `judge` | `judge` tool, sub-`pi` with the git diff | the diff is ready; when a run ends with an unreviewed diff it asks (`autoJudge`) |
 | `escalate` | main session model | `/flow escalate` |
 
+## What you see
+
+A widget above the editor shows the pipeline with the active stage and its model, and one live row
+per subagent: what it's doing right now, how many tools it has run, its tokens and the elapsed time.
+
+```
+flow  plan opus-5-5·high ▸ ● EXECUTE sonnet-5-5·medium ▸ judge opus-5-5·high ▸ commit
+  ├ ⠇ explore  haiku-5-5  where is the save system serialized?  grep /Serialize/ in Scripts · 1 tool · 12k tok · 4s
+  ├ ✓ explore  haiku-5-5  which scenes load the HUD prefab?  3 refs · 1 tool · 7s
+  └ ⠇ advisor  opus-5-5   [error] NullReferenceException in SaveM…  read Scripts/SaveManager.cs:40-80 · 0s
+```
+
+When escalated, the phase's node turns yellow and shows `fable-5-1·high ↑`. The explore, advisor and
+judge rows in the transcript stream the same rows while they run. Then they collapse to the result:
+explore shows only its rows, advisor shows an 8-line preview, and judge shows its findings colored by
+severity. Expand a row to see everything. Finished rows stay in the widget for 15 seconds after the
+next run starts.
+
 ## Commands
 
 | Command | Does |
