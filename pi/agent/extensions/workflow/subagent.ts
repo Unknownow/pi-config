@@ -1,0 +1,205 @@
+/**
+ * Runs one role as a separate `pi` process in JSON print mode, so it gets its
+ * own model, thinking level, tools and context window.
+ *
+ * Sub-processes start with `--no-extensions` and load only the extensions
+ * listed in workflow.json (`subagent.extensions`, normally just the provider).
+ * That keeps the pi-config sync extension from pulling and importing on every
+ * subagent start, and keeps this extension from recursing into itself.
+ */
+
+import { spawn } from "node:child_process";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import type { Message, Usage } from "@earendil-works/pi-ai";
+import type { RoleSpec } from "./config.ts";
+
+export interface RunOptions {
+	role: RoleSpec;
+	/** Appended to the sub-agent's system prompt, one file per entry. */
+	systemPrompts: string[];
+	tools: string[];
+	task: string;
+	cwd: string;
+	extensions: string[];
+	timeoutMs: number;
+	signal?: AbortSignal;
+	/** Latest assistant text, for streaming progress. */
+	onProgress?: (text: string) => void;
+}
+
+export interface RunResult {
+	ok: boolean;
+	text: string;
+	error?: string;
+	model?: string;
+	turns: number;
+	usage: Usage;
+}
+
+export function emptyUsage(): Usage {
+	return {
+		input: 0,
+		output: 0,
+		cacheRead: 0,
+		cacheWrite: 0,
+		totalTokens: 0,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+	};
+}
+
+export function addUsage(into: Usage, u: Partial<Usage> | undefined): Usage {
+	if (!u) return into;
+	into.input += u.input ?? 0;
+	into.output += u.output ?? 0;
+	into.cacheRead += u.cacheRead ?? 0;
+	into.cacheWrite += u.cacheWrite ?? 0;
+	into.totalTokens += u.totalTokens ?? 0;
+	into.cost.input += u.cost?.input ?? 0;
+	into.cost.output += u.cost?.output ?? 0;
+	into.cost.cacheRead += u.cost?.cacheRead ?? 0;
+	into.cost.cacheWrite += u.cost?.cacheWrite ?? 0;
+	into.cost.total += u.cost?.total ?? 0;
+	return into;
+}
+
+/** Same resolution as Pi's subagent example: re-run the CLI script under the current runtime. */
+function piInvocation(args: string[]): { command: string; args: string[] } {
+	const script = process.argv[1];
+	if (script && !script.startsWith("/$bunfs/root/") && fs.existsSync(script)) {
+		return { command: process.execPath, args: [script, ...args] };
+	}
+	const exe = path.basename(process.execPath).toLowerCase();
+	if (!/^(node|bun)(\.exe)?$/.test(exe)) return { command: process.execPath, args };
+	return { command: "pi", args };
+}
+
+export function expandHome(p: string): string {
+	return p === "~" || p.startsWith("~/") || p.startsWith("~\\") ? path.join(os.homedir(), p.slice(1)) : p;
+}
+
+function lastAssistantText(messages: Message[]): string {
+	for (let i = messages.length - 1; i >= 0; i--) {
+		const m = messages[i];
+		if (m.role !== "assistant") continue;
+		const text = m.content
+			.filter((c) => c.type === "text")
+			.map((c) => (c as { text: string }).text)
+			.join("\n")
+			.trim();
+		if (text) return text;
+	}
+	return "";
+}
+
+export async function runSubagent(opts: RunOptions): Promise<RunResult> {
+	const tmp = await fs.promises.mkdtemp(path.join(os.tmpdir(), "pi-workflow-"));
+	const result: RunResult = { ok: false, text: "", turns: 0, usage: emptyUsage() };
+	const messages: Message[] = [];
+
+	try {
+		const args = ["--mode", "json", "-p", "--no-session", "--no-extensions", "--no-skills", "--no-prompt-templates"];
+		for (const ext of opts.extensions) args.push("-e", expandHome(ext));
+		args.push("--model", opts.role.model);
+		if (opts.role.thinking) args.push("--thinking", opts.role.thinking);
+		if (opts.tools.length > 0) args.push("--tools", opts.tools.join(","));
+		// Windows caps a command line at ~32k characters; long tasks travel as a prompt file instead.
+		const longTask = opts.task.length > 8000;
+		const prompts = longTask ? [...opts.systemPrompts, `## Task\n\n${opts.task}`] : opts.systemPrompts;
+		for (const [i, prompt] of prompts.entries()) {
+			const file = path.join(tmp, `system-${i}.md`);
+			await fs.promises.writeFile(file, prompt, { encoding: "utf-8", mode: 0o600 });
+			args.push("--append-system-prompt", file);
+		}
+		args.push(longTask ? "Do the task described under '## Task' in your system prompt." : opts.task);
+
+		const stderr: string[] = [];
+		let timedOut = false;
+		let aborted = false;
+
+		const code = await new Promise<number>((resolve) => {
+			const inv = piInvocation(args);
+			const proc = spawn(inv.command, inv.args, { cwd: opts.cwd, shell: false, stdio: ["ignore", "pipe", "pipe"] });
+			let buffer = "";
+
+			const onLine = (line: string) => {
+				if (!line.trim()) return;
+				let event: any;
+				try {
+					event = JSON.parse(line);
+				} catch {
+					return;
+				}
+				if (event.type !== "message_end" || !event.message) return;
+				const msg = event.message as Message;
+				messages.push(msg);
+				if (msg.role !== "assistant") return;
+				result.turns++;
+				addUsage(result.usage, msg.usage);
+				result.model ??= msg.model;
+				if (msg.stopReason === "error" || msg.stopReason === "aborted") result.error = msg.errorMessage ?? msg.stopReason;
+				const text = lastAssistantText(messages);
+				if (text) opts.onProgress?.(text);
+			};
+
+			proc.stdout.on("data", (d) => {
+				buffer += d.toString();
+				const lines = buffer.split("\n");
+				buffer = lines.pop() ?? "";
+				for (const l of lines) onLine(l);
+			});
+			proc.stderr.on("data", (d) => stderr.push(d.toString()));
+
+			const kill = () => {
+				proc.kill("SIGTERM");
+				setTimeout(() => !proc.killed && proc.kill("SIGKILL"), 5000);
+			};
+			const timer = setTimeout(() => {
+				timedOut = true;
+				kill();
+			}, opts.timeoutMs);
+			const onAbort = () => {
+				aborted = true;
+				kill();
+			};
+			if (opts.signal?.aborted) onAbort();
+			else opts.signal?.addEventListener("abort", onAbort, { once: true });
+
+			proc.on("close", (c) => {
+				clearTimeout(timer);
+				opts.signal?.removeEventListener("abort", onAbort);
+				if (buffer.trim()) onLine(buffer);
+				resolve(c ?? 0);
+			});
+			proc.on("error", (e) => {
+				stderr.push(e.message);
+				resolve(1);
+			});
+		});
+
+		result.text = lastAssistantText(messages);
+		if (aborted) result.error = "aborted";
+		else if (timedOut) result.error = `timed out after ${Math.round(opts.timeoutMs / 1000)}s`;
+		else if (code !== 0 && !result.error) result.error = stderr.join("").trim().slice(-2000) || `exit code ${code}`;
+		result.ok = !result.error && result.text.length > 0;
+		if (!result.ok && !result.error) result.error = "no output";
+		return result;
+	} finally {
+		await fs.promises.rm(tmp, { recursive: true, force: true }).catch(() => undefined);
+	}
+}
+
+/** Runs `fn` over `items` with at most `limit` in flight, keeping input order. */
+export async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T, i: number) => Promise<R>): Promise<R[]> {
+	const out: R[] = new Array(items.length);
+	let next = 0;
+	const workers = Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, async () => {
+		while (next < items.length) {
+			const i = next++;
+			out[i] = await fn(items[i], i);
+		}
+	});
+	await Promise.all(workers);
+	return out;
+}

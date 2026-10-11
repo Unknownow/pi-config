@@ -1,0 +1,72 @@
+{
+  "_comment": "Config for ~/.pi/agent/extensions/workflow. model is provider/model-id (see `pi --list-models`); thinking is off|minimal|low|medium|high|xhigh|max. Edit here or with `/flow model <role> <provider/id[:thinking]>`, then `/flow reload`. Synced by pi-config.",
+  "roles": {
+    "plan": {
+      "model": "claude-bridge/claude-opus-5-5",
+      "thinking": "high"
+    },
+    "execute": {
+      "model": "claude-bridge/claude-sonnet-5-5",
+      "thinking": "medium"
+    },
+    "explore": {
+      "model": "claude-bridge/claude-haiku-5-5",
+      "thinking": "off"
+    },
+    "advisor": {
+      "model": "claude-bridge/claude-opus-5-5",
+      "thinking": "high"
+    },
+    "judge": {
+      "model": "claude-bridge/claude-opus-5-5",
+      "thinking": "high"
+    },
+    "escalate": {
+      "model": "claude-bridge/claude-fable-5-1",
+      "thinking": "high"
+    }
+  },
+  "startPhase": "plan",
+  "contextGuardTokens": 140000,
+  "autoJudge": "ask",
+  "maxJudgeRounds": 3,
+  "repeatedErrorThreshold": 3,
+  "planBlockedTools": [
+    "edit",
+    "write"
+  ],
+  "explore": {
+    "maxQueries": 8,
+    "concurrency": 4,
+    "tools": [
+      "read",
+      "grep",
+      "find",
+      "ls"
+    ]
+  },
+  "advisor": {
+    "tools": [
+      "read",
+      "grep",
+      "find",
+      "ls"
+    ],
+    "maxTranscriptChars": 1500000
+  },
+  "judge": {
+    "tools": [
+      "read",
+      "grep",
+      "find",
+      "ls"
+    ],
+    "maxDiffChars": 400000
+  },
+  "subagent": {
+    "extensions": [
+      "~/.pi/agent/npm/node_modules/pi-claude-bridge/src/index.ts"
+    ],
+    "timeoutMs": 900000
+  }
+}
