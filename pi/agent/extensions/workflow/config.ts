@@ -24,7 +24,7 @@ export interface WorkflowConfig {
 	roles: Record<Role, RoleSpec>;
 	/** Phase a new session starts in. */
 	startPhase: "plan" | "execute" | "off";
-	/** Compact once context crosses this many tokens, whatever the model's window. 0 disables. */
+	/** Compact once context crosses this many tokens, whatever the model's window, when the run settles (never mid-run). 0 disables. */
 	contextGuardTokens: number;
 	/** At the end of an execute run with an unreviewed diff: ask to run the judge, run it, or do nothing. */
 	autoJudge: "ask" | "auto" | "off";

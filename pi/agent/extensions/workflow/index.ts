@@ -6,7 +6,7 @@
  *                                             `-- advisor (Opus): reads the full transcript at decision points
  *
  *   escalation (manual)  /flow escalate -> Fable, /flow back -> the phase's own model
- *   context guard        compact at ~140k tokens on every model
+ *   context guard        compact at ~140k tokens on every model, once the run settles
  *
  * plan and execute switch the main session's model. explore, advisor and judge
  * are tools that run their role in a separate `pi` process (see subagent.ts).
@@ -121,6 +121,8 @@ export default function workflow(pi: ExtensionAPI) {
 	let consecutiveErrors = 0;
 	let guardTokens: number | null = null;
 	let compacting = false;
+	/** The guard threshold was crossed during a run; compact when the run settles. */
+	let compactPending = false;
 	const view = new FlowView(cfg.roles);
 
 	pi.registerFlag("flow", {
@@ -512,12 +514,23 @@ export default function workflow(pi: ExtensionAPI) {
 	});
 
 	// Context guard: compact at a fixed size on every model, whatever its window.
+	// turn_end only notes the crossing: ctx.compact() aborts the running turn first,
+	// so calling it mid-run killed the agent's next step ("This operation was
+	// aborted"). The compaction runs in agent_settled, when nothing is left to abort;
+	// pi's own auto-compaction still covers a run that nears the model's window.
 	pi.on("turn_end", async (_event, ctx) => {
 		const tokens = ctx.getContextUsage()?.tokens ?? null;
 		if (tokens === null || cfg.contextGuardTokens <= 0) return;
 		const crossed = guardTokens !== null && guardTokens <= cfg.contextGuardTokens && tokens > cfg.contextGuardTokens;
 		guardTokens = tokens;
-		if (!crossed || compacting) return;
+		if (crossed) compactPending = true;
+	});
+
+	pi.on("agent_settled", async (event, ctx) => {
+		if (!compactPending || compacting || event.aborted || !ctx.isIdle()) return;
+		const tokens = ctx.getContextUsage()?.tokens ?? null;
+		compactPending = false;
+		if (tokens === null || tokens <= cfg.contextGuardTokens) return;
 		compacting = true;
 		ctx.ui.notify(`workflow: context at ${Math.round(tokens / 1000)}k, compacting`, "info");
 		ctx.compact({

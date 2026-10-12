@@ -7,7 +7,7 @@ you -> plan (Opus 5.5, high) -> approve -> execute (Sonnet 5.5, medium) -> judge
                                               |-- explore (Haiku 5.5, parallel): file:line only
                                               `-- advisor (Opus 5.5): reads the full transcript
 escalation (manual): /flow escalate -> Fable 5.1 (high), /flow back
-context guard:       compacts at ~140k tokens on every model
+context guard:       compacts at ~140k tokens on every model, after the run settles
 ```
 
 | Role | Runs as | When |
