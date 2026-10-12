@@ -38,15 +38,38 @@ runs on its own:
 
 ## What you see
 
-A widget above the editor shows the pipeline with the active stage and its model, and one live row
-per subagent: what it's doing right now, how many tools it has run, its tokens and the elapsed time.
+A widget above the editor shows the pipeline with the active stage, its model and the tokens each
+stage has used, and one live row per subagent: what it's doing right now, how many tools it has run,
+its tokens and the elapsed time.
 
 ```
-flow  plan opus-5-5·high ▸ ● EXECUTE sonnet-5-5·medium ▸ judge opus-5-5·high ▸ commit
+flow  plan opus-5-5·high 48k ▸ ● EXECUTE sonnet-5-5·medium 1.2M ▸ judge opus-5-5·high ▸ commit · Σ 1.3M
   ├ ⠇ explore  haiku-5-5  where is the save system serialized?  grep /Serialize/ in Scripts · 1 tool · 12k tok · 4s
   ├ ✓ explore  haiku-5-5  which scenes load the HUD prefab?  3 refs · 1 tool · 7s
   └ ⠇ advisor  opus-5-5   [error] NullReferenceException in SaveM…  read Scripts/SaveManager.cs:40-80 · 0s
 ```
+
+Token counts update in real time, including the message still streaming. A stage counts the main
+session's messages sent while it was active plus the subagents run during it (explore and advisor
+count toward the stage that called them, judge runs toward `judge`). The figure is each message's
+`totalTokens` (input + output + cache read/write) summed, so long contexts add up fast. The widget
+counts the current flow; `/flow status` lists the whole session. Both survive a restart.
+
+When a flow ends, a summary card goes into the transcript. It is display-only and never sent to the
+model. A flow ends when the commit step finishes, when the judge passes and nothing gets committed, or
+when the automatic judge loop stops after `maxJudgeRounds` failures. Then the widget starts again
+from zero:
+
+```
+✓ flow done · committed and pushed · 1.2M tokens · 12m04s
+  plan     █░░░░░░░░░░░░░░░░░░░    48k   4%  opus-5-5 48k
+  execute  █████████████████░░░   1.0M  87%  sonnet-5 920k · explore ×6 120k
+  judge    ██░░░░░░░░░░░░░░░░░░    90k   8%  judge ×1 90k
+  commit   █░░░░░░░░░░░░░░░░░░░    20k   2%  sonnet-5 20k
+```
+
+The outcome says whether the commit really landed (HEAD moved) and whether it was pushed (nothing
+ahead of upstream). `/flow tokens` shows the same card for the flow in progress.
 
 When escalated, the phase's node turns yellow and shows `fable-5-1·high ↑`. The explore, advisor and
 judge rows in the transcript stream the same rows while they run. Then they collapse to the result:
@@ -63,6 +86,7 @@ next run starts.
 | `/flow approve` | approve the plan: switch to execute and start (also offered when a plan ends) |
 | `/flow escalate` (`fable`) / `/flow back` (`opusplan`) | manual escalation and return |
 | `/flow judge` | review the current diff now |
+| `/flow tokens` | token breakdown of the current flow so far |
 | `/flow model <role> <provider/id[:thinking]>` | set a role's model and save it to workflow.json |
 | `/flow reload` | re-read workflow.json |
 | `pi --flow execute` | start a session in a given phase |

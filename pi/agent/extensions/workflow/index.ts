@@ -44,7 +44,21 @@ import {
 } from "./config.ts";
 import * as prompts from "./prompts.ts";
 import { addUsage, emptyUsage, mapLimit, type RunResult, runSubagent } from "./subagent.ts";
-import { FlowView, type RunView, runLine, shortModel, type SubRole } from "./view.ts";
+import {
+	emptyFlowUsage,
+	emptyStageTokens,
+	type FlowSummary,
+	type FlowUsage,
+	FlowView,
+	formatTokens,
+	type RunView,
+	runLine,
+	STAGES,
+	type Stage,
+	shortModel,
+	type SubRole,
+	summaryLines,
+} from "./view.ts";
 
 type Phase = "off" | "plan" | "execute";
 
@@ -57,9 +71,20 @@ interface FlowState {
 	passedDiff?: string;
 	/** Active tools before plan mode switched some off. */
 	toolsBeforePlan?: string[];
+	/** Tokens spent per pipeline stage this session. */
+	tokens?: Record<Stage, number>;
+	/** The current flow's breakdown, until its summary is shown. */
+	flow?: FlowUsage;
+	flowStarted?: number;
+	/** Set when the commit (and push) instruction goes out; the run after it ends the flow. */
+	commitPending?: { mode: "commit" | "push"; head: string };
+	/** Passed diffs whose flow already ended (or will, at the commit run's end). */
+	summarizedPasses?: string[];
 }
 
 const STATE_ENTRY = "workflow-state";
+/** Display-only entry (never sent to the model) with the token breakdown of a finished flow. */
+const SUMMARY_ENTRY = "workflow-summary";
 const APPROVED = "Plan approved. Execute it now, step by step, following the workflow rules.";
 const OWN_TOOLS = new Set(["explore", "advisor", "judge"]);
 
@@ -135,7 +160,19 @@ export default function workflow(pi: ExtensionAPI) {
 	// ----------------------------------------------------------------------
 
 	function persist(): void {
+		state.tokens = { ...view.used };
+		state.flow = structuredClone(view.flow);
+		state.flowStarted = view.flowStarted;
 		pi.appendEntry(STATE_ENTRY, state);
+	}
+
+	/** Ends the current flow: shows its token breakdown and starts counting the next one. False if it had none. */
+	function summarizeFlow(outcome: string, ok: boolean): boolean {
+		view.settleMain();
+		if (!view.hasFlowUsage()) return false;
+		pi.appendEntry(SUMMARY_ENTRY, view.endFlow(outcome, ok));
+		persist();
+		return true;
 	}
 
 	function updateStatus(ctx: ExtensionContext): void {
@@ -182,6 +219,7 @@ export default function workflow(pi: ExtensionAPI) {
 		state.phase = phase;
 		state.escalated = false;
 		state.judgeRounds = 0;
+		state.commitPending = undefined;
 		consecutiveErrors = 0;
 		if (phase !== "off") await applyRole(ctx, phase);
 		persist();
@@ -348,7 +386,8 @@ export default function workflow(pi: ExtensionAPI) {
 		const findings = countFindings(result.text);
 		view.finish(run, verdict === "PASS", `${verdict} · ${findings} finding${findings === 1 ? "" : "s"}`);
 		onChange?.(run);
-		view.stage = verdict === "PASS" ? "commit" : "execute";
+		// Back to the phase's stage either way; finishPassed moves to commit once the commit is actually handed over.
+		view.stage = state.phase === "plan" ? "plan" : "execute";
 		if (verdict === "PASS") {
 			state.passedDiff = diff.hash;
 			state.judgeRounds = 0;
@@ -526,7 +565,21 @@ export default function workflow(pi: ExtensionAPI) {
 		if (crossed) compactPending = true;
 	});
 
+	// Live token count per stage: usage is cumulative while a message streams.
+	pi.on("message_update", async (event) => {
+		if (event.message.role === "assistant" && event.message.usage) view.mainUsage(event.message.usage.totalTokens ?? 0, false);
+	});
+
+	pi.on("message_end", async (event) => {
+		if (event.message.role === "assistant" && event.message.usage) view.mainUsage(event.message.usage.totalTokens ?? 0, true, event.message.model);
+	});
+
+	pi.registerEntryRenderer<FlowSummary>(SUMMARY_ENTRY, (entry, _opts, theme) => (entry.data ? new Text(summaryLines(entry.data, theme).join("\n"), 1, 0) : undefined));
+
 	pi.on("agent_settled", async (event, ctx) => {
+		view.settleMain();
+		const tracked = state.phase !== "off" || state.tokens !== undefined;
+		if (tracked && STAGES.some((s) => view.used[s] !== (state.tokens?.[s] ?? 0))) persist();
 		if (!compactPending || compacting || event.aborted || !ctx.isIdle()) return;
 		const tokens = ctx.getContextUsage()?.tokens ?? null;
 		compactPending = false;
@@ -586,8 +639,25 @@ export default function workflow(pi: ExtensionAPI) {
 			return;
 		}
 
-		if (state.phase === "execute") await reviewDiff(ctx, false);
+		if (state.phase !== "execute") return;
+		if (state.commitPending) await summarizeCommit(ctx);
+		await reviewDiff(ctx, false);
 	});
+
+	async function summarizeCommit(ctx: ExtensionContext): Promise<void> {
+		const { mode, head } = state.commitPending!;
+		state.commitPending = undefined;
+		const now = (await git(ctx.cwd, "rev-parse", "HEAD")).stdout.trim();
+		let shown: boolean;
+		if (!now || now === head) shown = summarizeFlow("commit step ended without a commit", false);
+		else if (mode === "commit") shown = summarizeFlow("committed", true);
+		else {
+			const ahead = await git(ctx.cwd, "rev-list", "--count", "@{u}..HEAD");
+			const pushed = ahead.code === 0 && ahead.stdout.trim() === "0";
+			shown = summarizeFlow(pushed ? "committed and pushed" : "committed, not pushed", pushed);
+		}
+		if (!shown) persist(); // commitPending was cleared
+	}
 
 	/** diff ready -> judge -> fix loop, or commit (and push) once it passes. */
 	async function reviewDiff(ctx: ExtensionContext, manual: boolean): Promise<void> {
@@ -603,7 +673,7 @@ export default function workflow(pi: ExtensionAPI) {
 		}
 		// Already passed, e.g. the executor called judge itself: straight to commit.
 		if (!manual && diff.hash === state.passedDiff) {
-			await finishPassed(ctx, diff.hash);
+			if (!(await finishPassed(ctx, diff.hash))) summarizePass(diff.hash);
 			return;
 		}
 		if (!manual && (cfg.autoJudge === "off" || seenDiffs.has(diff.hash))) return;
@@ -634,6 +704,7 @@ export default function workflow(pi: ExtensionAPI) {
 			if (state.judgeRounds >= cfg.maxJudgeRounds) {
 				pi.sendMessage({ customType: "workflow-judge", content: report, display: true }, { triggerTurn: false });
 				ctx.ui.notify(`workflow: judge failed ${state.judgeRounds} rounds in a row — your call (/flow escalate?)`, "warning");
+				summarizeFlow(`stopped: judge failed ${state.judgeRounds} rounds`, false);
 				return;
 			}
 			pi.sendMessage(
@@ -645,7 +716,21 @@ export default function workflow(pi: ExtensionAPI) {
 
 		if (!(await finishPassed(ctx, diff.hash, report))) {
 			pi.sendMessage({ customType: "workflow-judge", content: report, display: true }, { triggerTurn: false });
+			summarizePass(diff.hash);
 		}
+	}
+
+	/** Remembers a passed diff's flow as ended, so later runs on the same diff don't end another one. */
+	function markPassSummarized(hash: string): void {
+		state.summarizedPasses = [...(state.summarizedPasses ?? []).filter((h) => h !== hash), hash].slice(-20);
+	}
+
+	/** The flow ends at a pass that won't be committed (autoCommit off, or "Not yet"). */
+	function summarizePass(hash: string): void {
+		if (state.summarizedPasses?.includes(hash)) return;
+		markPassSummarized(hash);
+		view.stage = "execute";
+		if (!summarizeFlow("judge passed, not committed", true)) persist();
 	}
 
 	/** Diffs already handed to the commit step, so a pass is committed once. */
@@ -671,6 +756,9 @@ export default function workflow(pi: ExtensionAPI) {
 
 		view.stage = "commit";
 		view.changed();
+		state.commitPending = { mode, head: (await git(ctx.cwd, "rev-parse", "HEAD")).stdout.trim() };
+		markPassSummarized(hash); // the commit run's end summarizes this flow
+		persist();
 		const commit =
 			"The judge passed. Commit exactly the reviewed changes now: stage the changed and new files from the diff without editing anything first, and write a clear message that follows the repo's conventions.";
 		const push = ` Then push branch \`${branch}\` (\`git push\`, or \`git push -u origin ${branch}\` if it has no upstream).`;
@@ -697,6 +785,10 @@ export default function workflow(pi: ExtensionAPI) {
 		if (saved?.data) {
 			// Pi restores the session's model itself; only the tool set needs re-applying.
 			state = { ...saved.data };
+			view.used = { ...emptyStageTokens(), ...state.tokens };
+			view.flow = { ...emptyFlowUsage(), ...structuredClone(state.flow) };
+			view.flowStarted = state.flowStarted;
+			if (state.commitPending) view.stage = "commit";
 			if (state.phase === "plan") blockPlanTools();
 			updateStatus(ctx);
 			return;
@@ -706,6 +798,9 @@ export default function workflow(pi: ExtensionAPI) {
 		const flag = pi.getFlag("flow");
 		const start = (typeof flag === "string" && ["plan", "execute", "off"].includes(flag) ? flag : cfg.startPhase) as Phase;
 		state = { phase: "off", escalated: false, judgeRounds: 0 };
+		view.used = emptyStageTokens();
+		view.flow = emptyFlowUsage();
+		view.flowStarted = undefined;
 		if (start !== "off") await setPhase(ctx, start);
 	});
 
@@ -722,6 +817,7 @@ export default function workflow(pi: ExtensionAPI) {
 		{ value: "escalate", label: "escalate - switch to the escalate model (Fable)" },
 		{ value: "back", label: "back - return to the phase's own model" },
 		{ value: "judge", label: "judge - review the current diff now" },
+		{ value: "tokens", label: "tokens - token breakdown of the current flow so far" },
 		{ value: "model", label: "model <role> <provider/id[:thinking]> - set a role's model" },
 		{ value: "reload", label: "reload - re-read workflow.json" },
 	];
@@ -731,6 +827,7 @@ export default function workflow(pi: ExtensionAPI) {
 			`phase      ${state.phase}${state.escalated ? " (escalated)" : ""}`,
 			`judge     ${state.judgeRounds} failed round(s); auto=${cfg.autoJudge}; then ${cfg.autoCommit}`,
 			`guard     compact at ${cfg.contextGuardTokens || "off"} tokens`,
+			`tokens    ${STAGES.map((s) => `${s} ${formatTokens(view.sessionTokens(s))}`).join(" · ")} · session total ${formatTokens(STAGES.reduce((n, s) => n + view.sessionTokens(s), 0))}`,
 			"",
 			...ROLES.map((r) => `${r.padEnd(9)} ${describeRole(cfg.roles[r])}`),
 			"",
@@ -775,6 +872,13 @@ export default function workflow(pi: ExtensionAPI) {
 					return;
 				case "judge":
 					await reviewDiff(ctx, true);
+					return;
+				case "tokens":
+					if (!view.hasFlowUsage()) {
+						ctx.ui.notify("workflow: no tokens spent in this flow yet", "info");
+						return;
+					}
+					pi.appendEntry(SUMMARY_ENTRY, { ...view.peekFlow(`stage ${view.stage}`, true), title: "flow so far" });
 					return;
 				case "reload": {
 					const loaded = loadConfig();
