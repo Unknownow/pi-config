@@ -22,12 +22,12 @@ plan is read-only:   bash refuses commands that change files, git or GitHub
 
 ## Hands-off run
 
-You discuss the plan with the planner. When a reply ends with a numbered plan, an **Approve / Keep
-planning** menu pops up (`planPrompt`). Right after such a reply you can also type a short approval
+You discuss the plan with the planner. After every finished planner reply, an **Approve / Keep
+discussing** menu pops up (`planPrompt`). Right after such a reply you can also type a short approval
 as the whole message:
 "go", "ok go", "lgtm", "do it", "do it for me", "yeah do that", "implement the plan", "ship it" and
-the like; see `approvePattern`. Longer messages ("do it but skip step 3") keep planning, and so does
-"yes, do that" when the last reply had no plan (it answers a question). Everything
+the like; see `approvePattern`. Longer messages ("do it but skip step 3") keep planning, and so does "yes, do that" when the last
+reply had no "Plan:" section or ended with a question (it answers a question). Everything
 after approval runs on its own:
 
 ```
@@ -49,6 +49,10 @@ after approval runs on its own:
   `"off"`), and `"planPrompt": false` for a "say go" hint instead of the Approve menu.
 
 ## Plan phase is read-only
+
+Only tools matching `planAllowedTools` (regexes over the tool name) can be called: read, grep, find,
+ls, bash, codemode, explore, advisor, judge, read-only ctx_* tools and MCP tools named search/get/list/...
+Everything else (AskClaude, `propose_entry`, `ctx_purge`, edit, write) is hidden and refused.
 
 The planner (Opus, high thinking) is the most expensive model per call, so it only plans. Edit and
 write are off, and `bash` refuses commands that can change files, git or GitHub
@@ -135,6 +139,12 @@ next run starts.
 | `/flow model <role> <provider/id[:thinking]>` | set a role's model and save it to workflow.json |
 | `/flow reload` | re-read workflow.json |
 | `pi --flow execute` | start a session in a given phase |
+
+## Prompt is too long
+
+When pi compacts after a context overflow and retries, the claude-bridge provider can answer the
+retry with an empty reply and the run stops. The workflow then sends a `workflow-resume` message
+(at most 2 per prompt) telling the model to continue from the summary.
 
 Subagents run `pi --no-extensions` and load only the extensions in `subagent.extensions` (the
 claude-bridge provider). That way the pi-config sync and this extension don't run inside them. If a

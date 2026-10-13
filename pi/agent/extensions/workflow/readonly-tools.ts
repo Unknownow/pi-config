@@ -10,6 +10,31 @@
  */
 import { readOnlyProblem } from "./readonly-bash.ts";
 
+/**
+ * Tools the planner may call, as regexes over the tool name; workflow.json's
+ * planAllowedTools replaces this list. Everything else is refused while planning,
+ * so a tool that changes things (an agent that edits, an MCP tool that writes)
+ * stays off until it is added here. bash and the ctx_* code tools are allowed
+ * by name and then checked below.
+ */
+export const PLAN_TOOLS = [
+	"^(read|grep|find|ls|bash|codemode|explore|advisor|judge)$",
+	"(^|__)ctx_(search|execute|execute_file|batch_execute|fetch_and_index|index|stats|doctor|insight)$",
+	// MCP tools named for reading: mcp__knowledge__search, mcp__knowledge__get_entry, ...
+	"^mcp__.+__(search|get|list|read|view|status|fetch|find|query|describe|show|lookup)(_\\w+)?$",
+];
+
+/** Words that mark an MCP tool as a writer even when its name starts with a read verb (get_or_create, find_and_replace). planAllowedTools cannot override it. */
+const WRITE_WORDS = /(^|_)(create|update|delete|replace|write|set|add|remove|put|post|propose|insert|edit|modify|run|exec\w*|save|apply)(_|$)/;
+
+/** Why plan phase refuses a tool by its name alone, or null when it is on the allow list. */
+export function planToolRefused(name: string, allowed: RegExp[], blocked: string[]): string | null {
+	if (blocked.includes(name)) return `${name} is off while planning`;
+	if (!allowed.some((re) => re.test(name))) return `${name} is not a reading tool (planAllowedTools)`;
+	if (/^mcp__/.test(name) && !/__ctx_/.test(name) && WRITE_WORDS.test(name.replace(/^mcp__.+?__/, ""))) return `${name} looks like it changes data`;
+	return null;
+}
+
 const TOOL = (name: string) => new RegExp(`(^|__)${name}$`);
 const BASH_TOOL = TOOL("bash");
 const CODE_TOOL = TOOL("ctx_execute(_file)?");

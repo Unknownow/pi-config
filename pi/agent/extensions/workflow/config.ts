@@ -7,6 +7,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { PLAN_TOOLS } from "./readonly-tools.ts";
 import type { TokenWeights } from "./tokens.ts";
 
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
@@ -43,6 +44,8 @@ export interface WorkflowConfig {
 	repeatedErrorThreshold: number;
 	/** Tools switched off while planning. */
 	planBlockedTools: string[];
+	/** The only tools plan phase may call, as regexes over the tool name; the rest are switched off. */
+	planAllowedTools: string[];
 	/** In plan phase, refuse bash commands that can change files, git or GitHub (see readonly-bash.ts). */
 	planReadOnlyBash: boolean;
 	/** Extra commands plan phase may run, as regexes over the command's words (e.g. "^unity cmd editor_status\\b"). */
@@ -90,6 +93,7 @@ export const DEFAULTS: WorkflowConfig = {
 	planPrompt: true,
 	repeatedErrorThreshold: 3,
 	planBlockedTools: ["edit", "write"],
+	planAllowedTools: PLAN_TOOLS,
 	planReadOnlyBash: true,
 	planBashAllow: ["^unity (cmd )?(editor_status|console_status)\\b"],
 	tokenWeights: { input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1.25 },

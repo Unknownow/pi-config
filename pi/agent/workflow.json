@@ -42,6 +42,11 @@
     "edit",
     "write"
   ],
+  "planAllowedTools": [
+    "^(read|grep|find|ls|bash|codemode|explore|advisor|judge)$",
+    "(^|__)ctx_(search|execute|execute_file|batch_execute|fetch_and_index|index|stats|doctor)$",
+    "^mcp__.+__(search|get|list|read|view|status|fetch|find|query|describe|show|lookup)(_\\w+)?$"
+  ],
   "planReadOnlyBash": true,
   "planBashAllow": [
     "^unity (cmd )?(editor_status|console_status)\\b"

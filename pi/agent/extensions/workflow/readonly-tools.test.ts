@@ -1,7 +1,7 @@
 // node --test readonly-tools.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { planToolProblem } from "./readonly-tools.ts";
+import { PLAN_TOOLS, planToolProblem, planToolRefused } from "./readonly-tools.ts";
 
 const allow: RegExp[] = [];
 const check = (name: string, input: Record<string, unknown>, platform = "linux") =>
@@ -134,4 +134,15 @@ test("quoted PowerShell aliases are refused on Windows; a stray CR is refused ev
 	assert.match(refused("c'url' -Method Delete -Uri http://x"), /alias/);
 	assert.match(refused("git config a.b \r\n", "linux"), /carriage/);
 	assert.match(refused("git config a.b \r\n", "linux"), /carriage/);
+});
+
+test("the allow list admits reading tools and refuses the rest", () => {
+	const allowed = PLAN_TOOLS.map((p) => new RegExp(p));
+	const blocked = ["edit", "write"];
+	for (const name of ["read", "bash", "ctx_search", "mcp__custom-tools__ctx_execute", "mcp__knowledge__get_entry", "mcp__knowledge__search"]) {
+		assert.equal(planToolRefused(name, allowed, blocked), null, name);
+	}
+	for (const name of ["AskClaude", "mcp__knowledge__propose_entry", "mcp__x__find_and_replace", "mcp__x__get_or_create_item", "ctx_purge", "edit", "powershell"]) {
+		assert.ok(planToolRefused(name, allowed, blocked), name);
+	}
 });

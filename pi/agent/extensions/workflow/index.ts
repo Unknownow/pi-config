@@ -48,7 +48,7 @@ import {
 } from "./config.ts";
 import { countTokens, type Tok } from "./tokens.ts";
 import * as prompts from "./prompts.ts";
-import { planToolProblem } from "./readonly-tools.ts";
+import { planToolProblem, planToolRefused } from "./readonly-tools.ts";
 import { addUsage, emptyUsage, mapLimit, type RunResult, runSubagent } from "./subagent.ts";
 import {
 	emptyFlowUsage,
@@ -172,12 +172,16 @@ export default function workflow(pi: ExtensionAPI) {
 	/** Diffs already judged or declined this session, so agent_end doesn't ask twice. */
 	const seenDiffs = new Set<string>();
 	let consecutiveErrors = 0;
-	/** The planner's last reply ended with a plan; only then does a typed "go" / "do it" approve. */
+	/** The planner's last reply has a "Plan:" section and no open question; only then does a typed "go" / "do it" approve. */
 	let planReady = false;
 	let guardTokens: number | null = null;
 	let compacting = false;
 	/** The guard threshold was crossed during a run; compact when the run settles. */
 	let compactPending = false;
+	/** An overflow compaction is retrying the turn; the bridge may answer that retry with an empty reply. */
+	let overflowRetry = false;
+	/** Automatic resumes since the user's last prompt. */
+	let resumes = 0;
 	const view = new FlowView(cfg.roles);
 
 	pi.registerFlag("flow", {
@@ -235,7 +239,8 @@ export default function workflow(pi: ExtensionAPI) {
 
 	function blockPlanTools(): void {
 		state.toolsBeforePlan ??= pi.getActiveTools();
-		pi.setActiveTools(state.toolsBeforePlan.filter((t) => !cfg.planBlockedTools.includes(t)));
+		const allowed = planAllowedTools();
+		pi.setActiveTools(state.toolsBeforePlan.filter((t) => !planToolRefused(t, allowed, cfg.planBlockedTools)));
 	}
 
 	function restorePlanTools(): void {
@@ -664,12 +669,23 @@ export default function workflow(pi: ExtensionAPI) {
 	// Nested calls (codemode's tools.bash) pass through here too.
 	pi.on("tool_call", async (event) => {
 		if (state.phase !== "plan") return;
-		if (cfg.planBlockedTools.includes(event.toolName)) return { block: true, reason: planBlocked(`${event.toolName} is off while planning`) };
+		const refused = planToolRefused(event.toolName, planAllowedTools(), cfg.planBlockedTools);
+		if (refused) return { block: true, reason: planBlocked(refused) };
 		if (!cfg.planReadOnlyBash) return;
 		if (event.toolName === "powershell") return { block: true, reason: planBlocked("PowerShell commands are not checked, so they are off while planning") };
 		const problem = planToolProblem(event.toolName, (event.input ?? {}) as Record<string, unknown>, planAllow());
 		if (problem) return { block: true, reason: planBlocked(problem) };
 	});
+
+	function planAllowedTools(): RegExp[] {
+		return cfg.planAllowedTools.flatMap((p) => {
+			try {
+				return [new RegExp(p)];
+			} catch {
+				return [];
+			}
+		});
+	}
 
 	function planAllow(): RegExp[] {
 		return cfg.planBashAllow.flatMap((p) => {
@@ -766,6 +782,7 @@ export default function workflow(pi: ExtensionAPI) {
 
 	// Saying "go" in plan phase approves the plan: switch to execute and send the message on as the start signal.
 	pi.on("input", async (event, ctx) => {
+		if (event.source !== "extension") resumes = 0;
 		if (state.phase !== "plan" || event.source === "extension" || event.streamingBehavior) return { action: "continue" };
 		// Without a plan on screen, "yes, do that" answers a question; it doesn't approve anything.
 		if (!planReady || !approveRe().test(event.text.trim())) return { action: "continue" };
@@ -774,27 +791,55 @@ export default function workflow(pi: ExtensionAPI) {
 		return { action: "transform", text: `${event.text.trim()}\n\n${APPROVED}` };
 	});
 
+	pi.on("session_compact", async (event) => {
+		if (event.reason === "overflow" && event.willRetry) overflowRetry = true;
+	});
+
 	pi.on("agent_end", async (event, ctx) => {
-		if (!ctx.hasUI) return;
 		const last = [...event.messages].reverse().find((m) => m.role === "assistant");
 
-		if (state.phase === "plan") {
-			// A plan is any reply with a numbered list of at least two steps.
-			planReady = /(^|\n)\s*(\*\*)?1[.)][\s\S]*\n\s*(\*\*)?2[.)]/.test(assistantText(last));
-			if (!planReady) return;
-			if (!cfg.planPrompt) {
-				ctx.ui.notify(`workflow: plan ready. Say "go" to execute on ${describeRole(cfg.roles.execute)}, or keep discussing.`, "info");
+		// "Prompt is too long": pi compacts and retries, but the retry ends on a tool result and the
+		// bridge answers it with an empty reply, so the run stops. Ask the model to carry on.
+		if (overflowRetry) {
+			overflowRetry = false;
+			const empty = last?.role === "assistant" && Array.isArray(last.content) && last.content.length === 0;
+			if (empty && resumes < 2) {
+				resumes++;
+				pi.sendMessage(
+					{
+						customType: "workflow-resume",
+						content: "The conversation got too long for the model and was compacted. Continue the task from where you stopped, using the summary, without redoing finished steps.",
+						display: true,
+					},
+					{ triggerTurn: true, deliverAs: "followUp" },
+				);
 				return;
 			}
-			const choice = await ctx.ui.select("Plan ready", [
-				`Approve: execute on ${describeRole(cfg.roles.execute)}`,
-				"Keep planning",
+		}
+
+		if (!ctx.hasUI) return;
+		const stoppedNormally = last?.role === "assistant" && last.stopReason === "stop" && assistantText(last).trim().length > 0;
+
+		if (state.phase === "plan") {
+			// Every finished reply offers the choice; aborted or errored ones do not.
+			// A typed "go" approves only a finished plan that is not waiting on an answer.
+			const text = assistantText(last).trim();
+			planReady = stoppedNormally && /^\s*(#+\s*)?[*_]*Plan:?[*_]*\s*$/im.test(text) && !/\?[\s*_)"'`]*$/.test(text);
+			if (!stoppedNormally) return;
+			if (!cfg.planPrompt) {
+				ctx.ui.notify(`workflow: say "go" to execute on ${describeRole(cfg.roles.execute)}, or keep discussing.`, "info");
+				return;
+			}
+			const choice = await ctx.ui.select("Plan phase", [
+				`Approve: execute the plan on ${describeRole(cfg.roles.execute)}`,
+				"Keep discussing",
 			]);
 			if (choice?.startsWith("Approve")) await approve(ctx);
 			return;
 		}
 
 		if (state.phase !== "execute") return;
+		if (last?.role === "assistant" && last.stopReason === "error") return;
 		if (state.commitPending) await summarizeCommit(ctx);
 		await reviewDiff(ctx, false);
 	});
