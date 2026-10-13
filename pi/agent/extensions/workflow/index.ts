@@ -45,8 +45,10 @@ import {
 	saveRole,
 	type Thinking,
 	type WorkflowConfig,
+	weighTokens,
 } from "./config.ts";
 import * as prompts from "./prompts.ts";
+import { readOnlyProblem } from "./readonly-bash.ts";
 import { addUsage, emptyUsage, mapLimit, type RunResult, runSubagent } from "./subagent.ts";
 import {
 	emptyFlowUsage,
@@ -79,6 +81,8 @@ interface FlowState {
 	toolsBeforePlan?: string[];
 	/** Tokens spent per pipeline stage this session. */
 	tokens?: Record<Stage, number>;
+	/** "weighted": tokens are cost-weighted (tokenWeights). Counts saved before that were raw and are dropped. */
+	tokenUnit?: "weighted";
 	/** The current flow's breakdown, until its summary is shown. */
 	flow?: FlowUsage;
 	flowStarted?: number;
@@ -168,6 +172,8 @@ export default function workflow(pi: ExtensionAPI) {
 	/** Diffs already judged or declined this session, so agent_end doesn't ask twice. */
 	const seenDiffs = new Set<string>();
 	let consecutiveErrors = 0;
+	/** The planner's last reply ended with a plan; only then does a typed "go" / "do it" approve. */
+	let planReady = false;
 	let guardTokens: number | null = null;
 	let compacting = false;
 	/** The guard threshold was crossed during a run; compact when the run settles. */
@@ -185,6 +191,7 @@ export default function workflow(pi: ExtensionAPI) {
 
 	function persist(): void {
 		state.tokens = { ...view.used };
+		state.tokenUnit = "weighted";
 		state.flow = structuredClone(view.flow);
 		state.flowStarted = view.flowStarted;
 		pi.appendEntry(STATE_ENTRY, state);
@@ -201,6 +208,7 @@ export default function workflow(pi: ExtensionAPI) {
 
 	function updateStatus(ctx: ExtensionContext): void {
 		view.roles = cfg.roles;
+		view.weights = cfg.tokenWeights;
 		view.phase = state.phase;
 		view.escalated = state.escalated;
 		if (state.phase === "plan") view.stage = "plan";
@@ -238,6 +246,7 @@ export default function workflow(pi: ExtensionAPI) {
 	}
 
 	async function setPhase(ctx: ExtensionContext, phase: Phase): Promise<void> {
+		planReady = false;
 		if (state.phase === "plan" && phase !== "plan") restorePlanTools();
 		if (phase === "plan") blockPlanTools();
 		state.phase = phase;
@@ -651,6 +660,36 @@ export default function workflow(pi: ExtensionAPI) {
 		if (state.phase === "execute") return { systemPrompt: `${event.systemPrompt}\n\n${prompts.EXECUTE_PHASE}` };
 	});
 
+	// Plan phase is read-only: the planner settles the approach, the execute model changes things.
+	// Nested calls (codemode's tools.bash) pass through here too.
+	pi.on("tool_call", async (event) => {
+		if (state.phase !== "plan") return;
+		if (cfg.planBlockedTools.includes(event.toolName)) return { block: true, reason: planBlocked(`${event.toolName} is off while planning`) };
+		if (!cfg.planReadOnlyBash) return;
+		if (event.toolName === "powershell") return { block: true, reason: planBlocked("PowerShell commands are not checked, so they are off while planning") };
+		if (event.toolName !== "bash") return;
+		const problem = readOnlyProblem(String((event.input as { command?: unknown }).command ?? ""), planAllow());
+		if (problem) return { block: true, reason: planBlocked(problem) };
+	});
+
+	function planAllow(): RegExp[] {
+		return cfg.planBashAllow.flatMap((p) => {
+			try {
+				return [new RegExp(p)];
+			} catch {
+				return [];
+			}
+		});
+	}
+
+	function planBlocked(problem: string): string {
+		return [
+			`Plan phase is read-only: ${problem}.`,
+			"Do not work around this (no other tool, no script). Put the step in the plan instead: it runs after the user approves, on the execute model.",
+			"Reading is fine: ls, cat, grep, find, git status/log/diff/show, gh ... view/list/checks, gh api GET.",
+		].join(" ");
+	}
+
 	// "repeated error" decision point
 	pi.on("tool_result", async (event) => {
 		if (state.phase !== "execute" || cfg.repeatedErrorThreshold <= 0 || OWN_TOOLS.has(event.toolName)) return;
@@ -682,11 +721,11 @@ export default function workflow(pi: ExtensionAPI) {
 
 	// Live token count per stage: usage is cumulative while a message streams.
 	pi.on("message_update", async (event) => {
-		if (event.message.role === "assistant" && event.message.usage) view.mainUsage(event.message.usage.totalTokens ?? 0, false);
+		if (event.message.role === "assistant" && event.message.usage) view.mainUsage(weighTokens(event.message.usage, cfg.tokenWeights), false);
 	});
 
 	pi.on("message_end", async (event) => {
-		if (event.message.role === "assistant" && event.message.usage) view.mainUsage(event.message.usage.totalTokens ?? 0, true, event.message.model);
+		if (event.message.role === "assistant" && event.message.usage) view.mainUsage(weighTokens(event.message.usage, cfg.tokenWeights), true, event.message.model);
 	});
 
 	pi.registerEntryRenderer<FlowSummary>(SUMMARY_ENTRY, (entry, _opts, theme) => (entry.data ? new Text(summaryLines(entry.data, theme).join("\n"), 1, 0) : undefined));
@@ -729,7 +768,8 @@ export default function workflow(pi: ExtensionAPI) {
 	// Saying "go" in plan phase approves the plan: switch to execute and send the message on as the start signal.
 	pi.on("input", async (event, ctx) => {
 		if (state.phase !== "plan" || event.source === "extension" || event.streamingBehavior) return { action: "continue" };
-		if (!approveRe().test(event.text.trim())) return { action: "continue" };
+		// Without a plan on screen, "yes, do that" answers a question; it doesn't approve anything.
+		if (!planReady || !approveRe().test(event.text.trim())) return { action: "continue" };
 		await setPhase(ctx, "execute");
 		ctx.ui.notify(`workflow: plan approved, executing on ${describeRole(cfg.roles.execute)}`, "info");
 		return { action: "transform", text: `${event.text.trim()}\n\n${APPROVED}` };
@@ -741,7 +781,8 @@ export default function workflow(pi: ExtensionAPI) {
 
 		if (state.phase === "plan") {
 			// A plan is any reply with a numbered list of at least two steps.
-			if (!/(^|\n)\s*(\*\*)?1[.)][\s\S]*\n\s*(\*\*)?2[.)]/.test(assistantText(last))) return;
+			planReady = /(^|\n)\s*(\*\*)?1[.)][\s\S]*\n\s*(\*\*)?2[.)]/.test(assistantText(last));
+			if (!planReady) return;
 			if (!cfg.planPrompt) {
 				ctx.ui.notify(`workflow: plan ready. Say "go" to execute on ${describeRole(cfg.roles.execute)}, or keep discussing.`, "info");
 				return;
@@ -900,6 +941,12 @@ export default function workflow(pi: ExtensionAPI) {
 		if (saved?.data) {
 			// Pi restores the session's model itself; only the tool set needs re-applying.
 			state = { ...saved.data };
+			if (state.tokenUnit !== "weighted") {
+				// Saved before counts were cost-weighted; mixing raw and weighted would mislead.
+				state.tokens = undefined;
+				state.flow = undefined;
+				state.flowStarted = undefined;
+			}
 			view.used = { ...emptyStageTokens(), ...state.tokens };
 			view.flow = { ...emptyFlowUsage(), ...structuredClone(state.flow) };
 			view.flowStarted = state.flowStarted;

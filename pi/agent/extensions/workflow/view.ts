@@ -9,14 +9,16 @@
  *
  * Token counts are live: each stage sums the main session's messages sent while
  * it was active plus the subagents run during it (judge runs count as judge),
- * including the message still streaming.
+ * including the message still streaming. They are cost-weighted (tokenWeights in
+ * workflow.json): a cache read counts 0.1, so re-sending a long context on every
+ * tool call shows what it costs, not its raw volume.
  */
 
 import * as os from "node:os";
 import * as path from "node:path";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { type Component, type TUI, truncateToWidth } from "@earendil-works/pi-tui";
-import { describeRole, type Role, type RoleSpec } from "./config.ts";
+import { DEFAULTS, describeRole, type Role, type RoleSpec, type TokenWeights, weighTokens } from "./config.ts";
 import type { SubagentEvent } from "./subagent.ts";
 
 export type Stage = "plan" | "execute" | "judge" | "commit";
@@ -72,6 +74,8 @@ export interface FlowSummary {
 	started?: number;
 	ended: number;
 	stages: FlowUsage;
+	/** Counts are cost-weighted; summaries saved before that hold raw totals. */
+	weighted?: boolean;
 }
 
 export function formatTokens(n: number): string {
@@ -168,7 +172,7 @@ export function summaryLines(s: FlowSummary, theme: Theme): string[] {
 		theme.bold(s.title ?? "flow done"),
 		theme.fg("dim", "·"),
 		theme.fg(s.ok ? "success" : "warning", s.outcome),
-		theme.fg("dim", `· ${formatTokens(total)} tokens${s.started ? ` · ${elapsed({ started: s.started, ended: s.ended })}` : ""}`),
+		theme.fg("dim", `· ${formatTokens(total)} ${s.weighted ? "cost-weighted " : ""}tokens${s.started ? ` · ${elapsed({ started: s.started, ended: s.ended })}` : ""}`),
 	].join(" ");
 	const lines = [head];
 	const width = 20;
@@ -193,6 +197,8 @@ export class FlowView {
 	escalated = false;
 	stage: Stage = "plan";
 	roles: Record<Role, RoleSpec>;
+	/** How much each kind of token counts; see WorkflowConfig.tokenWeights. */
+	weights: TokenWeights = DEFAULTS.tokenWeights;
 	runs: RunView[] = [];
 	/** Tokens of finished messages per stage this session, main session and subagents together. */
 	used: Record<Stage, number> = emptyStageTokens();
@@ -272,7 +278,7 @@ export class FlowView {
 			run.activity = describeTool(e.name, e.args, cwd);
 		} else if (e.type === "usage") {
 			// Cumulative per message; a failed stream can end with empty usage, so keep the larger.
-			const tokens = Math.max(e.usage.totalTokens ?? 0, e.done ? run.liveTokens : 0);
+			const tokens = Math.max(weighTokens(e.usage, this.weights), e.done ? run.liveTokens : 0);
 			if (e.done) {
 				run.tokens += tokens;
 				this.add(run.stage, tokens, run.role);
@@ -371,7 +377,7 @@ export class FlowView {
 			const sub = (stages[r.stage].subs[r.role] ??= { tokens: 0, runs: 0 });
 			sub.tokens += r.liveTokens;
 		}
-		return { outcome, ok, started: this.flowStarted, ended: Date.now(), stages };
+		return { outcome, ok, started: this.flowStarted, ended: Date.now(), stages, weighted: true };
 	}
 
 	hasFlowUsage(): boolean {

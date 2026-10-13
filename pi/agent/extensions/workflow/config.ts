@@ -42,6 +42,16 @@ export interface WorkflowConfig {
 	repeatedErrorThreshold: number;
 	/** Tools switched off while planning. */
 	planBlockedTools: string[];
+	/** In plan phase, refuse bash commands that can change files, git or GitHub (see readonly-bash.ts). */
+	planReadOnlyBash: boolean;
+	/** Extra commands plan phase may run, as regexes over the command's words (e.g. "^unity cmd editor_status\\b"). */
+	planBashAllow: string[];
+	/**
+	 * Token counts in the widget and the flow summary weigh each kind by its price relative to
+	 * uncached input, so they show cost (input-token equivalents), not volume. Claude: cache reads
+	 * 0.1, cache writes 1.25, output 5. All 1 gives the raw totalTokens.
+	 */
+	tokenWeights: TokenWeights;
 	explore: { maxQueries: number; concurrency: number; tools: string[] };
 	advisor: { tools: string[]; maxTranscriptChars: number };
 	judge: {
@@ -57,6 +67,26 @@ export interface WorkflowConfig {
 		finalFullReviewOverChars: number;
 	};
 	subagent: { extensions: string[]; timeoutMs: number };
+}
+
+export interface TokenWeights {
+	input: number;
+	output: number;
+	cacheRead: number;
+	cacheWrite: number;
+}
+
+/** Usage fields as pi reports them on assistant messages and subagent events. */
+export interface UsageCounts {
+	input?: number;
+	output?: number;
+	cacheRead?: number;
+	cacheWrite?: number;
+}
+
+export function weighTokens(u: UsageCounts | undefined, w: TokenWeights): number {
+	if (!u) return 0;
+	return Math.round((u.input ?? 0) * w.input + (u.output ?? 0) * w.output + (u.cacheRead ?? 0) * w.cacheRead + (u.cacheWrite ?? 0) * w.cacheWrite);
 }
 
 export const DEFAULTS: WorkflowConfig = {
@@ -75,10 +105,13 @@ export const DEFAULTS: WorkflowConfig = {
 	autoCommit: "push",
 	protectedBranches: ["main", "master"],
 	approvePattern:
-		"^(ok(ay)?[, ]+|yes[, ]+|sure[, ]+)?(go|go ahead|go for it|do it|approved?|lgtm|ship it|execute( it)?|proceed|start|let'?s go|let'?s do it|run it|implement it|build it)( now| please)?[.! ]*$",
-	planPrompt: false,
+		"^((ok(ay)?|yes|yeah|yep|sure|alright|fine|great|good)[,.! ]+)?(then[, ]+)?(go|go ahead|go for it|do it|do that|do this|do them|do (it )?all( of (it|that|them))?|approved?|lgtm|ship it|execute( it| that| this| the plan)?|proceed|start|let'?s go|let'?s do it|run it|implement( it| that| this| the plan)?|build it|make it so)( for me)?( now)?( please)?[.! ]*$",
+	planPrompt: true,
 	repeatedErrorThreshold: 3,
 	planBlockedTools: ["edit", "write"],
+	planReadOnlyBash: true,
+	planBashAllow: ["^unity (cmd )?(editor_status|console_status)\\b"],
+	tokenWeights: { input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1.25 },
 	explore: { maxQueries: 8, concurrency: 4, tools: ["read", "grep", "find", "ls"] },
 	advisor: { tools: ["read", "grep", "find", "ls"], maxTranscriptChars: 1_500_000 },
 	judge: {

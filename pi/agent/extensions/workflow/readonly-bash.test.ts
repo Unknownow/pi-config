@@ -76,10 +76,11 @@ test("planBashAllow patterns let extra commands through", () => {
 });
 
 test("parser: quotes, substitutions and heredoc bodies", () => {
+	// X=1 on its own is kept (env ["X"], no words) so risky assignments can be refused.
 	const cmds = parseCommands(`X=1; echo "a $(git log -1) b" 'c d' | grep -c x\ncat <<EOF\nrm -rf /\nEOF\nls`);
 	assert.deepEqual(
 		cmds.map((c) => c.words.join(" ")),
-		["git log -1", "echo a $(...) b c d", "grep -c x", "cat", "ls"],
+		["", "git log -1", "echo a $(...) b c d", "grep -c x", "cat", "ls"],
 	);
 });
 
@@ -134,3 +135,81 @@ for (const [cmd, why] of moreWrites) test(`blocks: ${oneLine(cmd)}`, () => asser
 test("quoted heredoc bodies are data", () => assert.equal(readOnlyProblem(`cat <<'EOF'
 $(rm -rf build)
 EOF`), null));
+
+// Judge round 2 findings.
+const round2Reads = [
+	"git -c color.ui=always log -3",
+	"git -c core.quotepath=false status",
+	"git diff -O order.txt",
+	"sed -n '/where/p' f.txt",
+	"sed -n 's/a/b/gp' f.txt",
+	"tree -L 2",
+	"xxd f.bin | head",
+	"echo $(( 1 + 2 ))",
+];
+const round2Writes: [string, RegExp][] = [
+	["git diff --output=patch.txt", /writes a file/],
+	["git log --output patch.txt", /writes a file/],
+	["git -c core.fsmonitor=evil status", /core.fsmonitor/],
+	["git -c diff.external=evil diff", /diff.external/],
+	["git fetch --upload-pack=evil origin", /runs a command/],
+	["git grep -O foo", /runs a command/],
+	["gh api graphql -F query=@mutation.graphql", /from a file/],
+	["echo $(( $(rm -rf build) + 1 ))", /rm/],
+	["curl --etag-save e.txt https://x", /writes a file/],
+	["curl -Q 'DELE x' ftp://x", /sends data/],
+	["sed -n '1w out.txt' f.txt", /sed w/],
+	["sed 's/a/b/w out.txt' f.txt", /sed w/],
+	["sed -e '1e rm x' f.txt", /sed w/],
+	["tree -o out.txt", /writes a file/],
+	["xxd -r in.hex out.bin", /second file/],
+];
+for (const cmd of round2Reads) test(`reads: ${cmd}`, () => assert.equal(readOnlyProblem(cmd), null));
+for (const [cmd, why] of round2Writes) test(`blocks: ${cmd}`, () => assert.match(readOnlyProblem(cmd) ?? "allowed", why));
+
+// Judge round 3 findings.
+const round3Reads = [
+	"command -v rg",
+	"xxd -l 64 f.bin",
+	"xxd -s 0x100 f.bin",
+	"uniq -f 1 f.txt",
+	"uniq -w 5 f.txt",
+	"X=1; echo $X",
+	"export FOO=1",
+	"sed -n '/where/p' f.txt",
+	"sed -n '/class/p' f.txt",
+	"sed -n 1,5p f.txt",
+	"echo $((1 + (2 * 3)))",
+];
+const round3Writes: [string, RegExp][] = [
+	["echo $((rm -rf build) )", /rm/],
+	["echo $((rm x); rm -rf y)", /rm/],
+	["GIT_EXTERNAL_DIFF=evil git diff", /GIT_EXTERNAL_DIFF/],
+	["GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.fsmonitor GIT_CONFIG_VALUE_0=evil git status", /GIT_CONFIG_COUNT/],
+	["env GIT_SSH_COMMAND=evil git fetch", /GIT_SSH_COMMAND/],
+	["export GIT_PAGER=evil", /GIT_PAGER/],
+	["PAGER=evil git log", /PAGER/],
+	["X=evil git --config-env=core.fsmonitor=X status", /core.fsmonitor/],
+	["sed 's/a/b/gw out' f.txt", /sed w/],
+	["sed 's/x/y/ge' f.txt", /sed w/],
+	["sed -n '1wout.txt' f.txt", /sed w/],
+	["sed --expression='1w out' f.txt", /sed w/],
+	["sed -e'1w out' f.txt", /sed w/],
+	["sed --file=x f.txt", /script file/],
+];
+for (const cmd of round3Reads) test(`reads: ${cmd}`, () => assert.equal(readOnlyProblem(cmd), null));
+for (const [cmd, why] of round3Writes) test(`blocks: ${cmd}`, () => assert.match(readOnlyProblem(cmd) ?? "allowed", why));
+
+// Judge round 4 findings.
+const round4Writes: [string, RegExp][] = [
+	["sed -ne '1w out.txt' -e p f.txt", /sed w/],
+	["cat x | uniq - out.txt", /second file/],
+	["xxd - out.bin", /second file/],
+	["sed --i 's/a/b/' f", /in place/],
+	["sed --expr='1w x' f", /sed w/],
+	["sort --out=x f", /writes a file/],
+	["git diff --outp=x", /writes a file/],
+];
+for (const [cmd, why] of round4Writes) test(`blocks: ${cmd}`, () => assert.match(readOnlyProblem(cmd) ?? "allowed", why));
+test("reads: cat x | uniq -", () => assert.equal(readOnlyProblem("cat x | uniq -"), null));
+test("reads: git log --oneline", () => assert.equal(readOnlyProblem("git log --oneline -5"), null));

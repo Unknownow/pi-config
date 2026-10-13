@@ -14,11 +14,13 @@ export interface ParsedCommand {
 	words: string[];
 	/** Targets of output redirections (`>`, `>>`, `&>`). */
 	writes: string[];
+	/** Names assigned in front of the command (NAME=value cmd) or on their own. */
+	env: string[];
 }
 
 class Lexer {
 	private i = 0;
-	private cur: ParsedCommand = { words: [], writes: [] };
+	private cur: ParsedCommand = { words: [], writes: [], env: [] };
 	private word = "";
 	private has = false;
 	private target: "out" | "in" | null = null;
@@ -98,8 +100,12 @@ class Lexer {
 			return this.nested(this.i + 1, end < 0 ? s.length : end);
 		}
 		if (s.startsWith("$((", this.i)) {
-			const end = s.indexOf("))", this.i + 3);
-			return this.take("0", (end < 0 ? s.length : end + 2) - this.i);
+			// $((1 + 2)) is arithmetic; $((cmd) ) is a command substitution holding a subshell.
+			const close = matchParen(s, this.i + 3);
+			if (s[close + 1] === ")") {
+				substitutions(s.slice(this.i + 3, close), this.out, this.vars);
+				return this.take("0", close + 2 - this.i);
+			}
 		}
 		if (s[this.i + 1] === "(") return this.nested(this.i + 2, matchParen(s, this.i + 2));
 		const m = /^\$(?:\{([A-Za-z_]\w*)\}|([A-Za-z_]\w*))/.exec(s.slice(this.i));
@@ -193,19 +199,23 @@ class Lexer {
 			const w = cmd.words.shift()!;
 			const eq = w.indexOf("=");
 			this.vars.set(w.slice(0, eq), w.slice(eq + 1));
+			cmd.env.push(w.slice(0, eq));
 		}
-		if (cmd.words.length || cmd.writes.length) this.out.push(cmd);
-		this.cur = { words: [], writes: [] };
+		if (cmd.words.length || cmd.writes.length || cmd.env.length) this.out.push(cmd);
+		this.cur = { words: [], writes: [], env: [] };
 	}
 }
 
 /** The commands in $(...) and backticks of a heredoc body line. */
 function substitutions(line: string, out: ParsedCommand[], vars: Map<string, string>): void {
 	for (let i = 0; i < line.length; i++) {
-		if (line.startsWith("$(", i) && line[i + 2] !== "(") {
-			const end = matchParen(line, i + 2);
-			new Lexer(line.slice(i + 2, end), out, vars).run();
-			i = end;
+		if (line.startsWith("$(", i)) {
+			const arithmetic = line[i + 2] === "(" && line[matchParen(line, i + 3) + 1] === ")";
+			const start = arithmetic ? i + 3 : i + 2;
+			const end = matchParen(line, start);
+			if (arithmetic) substitutions(line.slice(start, end), out, vars);
+			else new Lexer(line.slice(start, end), out, vars).run();
+			i = arithmetic ? end + 1 : end;
 		} else if (line[i] === "`") {
 			const end = line.indexOf("`", i + 1);
 			new Lexer(line.slice(i + 1, end < 0 ? line.length : end), out, vars).run();
@@ -266,6 +276,9 @@ const WRAPPERS: Record<string, string[]> = {
 	stdbuf: ["-i", "-o", "-e"],
 };
 
+/** Variables that make git, pagers or shells run other programs. */
+const RISKY_ENV = /^(GIT_\w*|PAGER|LESSOPEN|LESSCLOSE|EDITOR|VISUAL|BASH_ENV|ENV|LD_PRELOAD|PROMPT_COMMAND)$/;
+
 const DEV_NULL = new Set(["/dev/null", "/dev/stdout", "/dev/stderr", "nul", "NUL"]);
 
 /** Why `command` would change something in plan mode, or null when it only reads. */
@@ -280,6 +293,8 @@ export function readOnlyProblem(command: string, allow: RegExp[] = []): string |
 function commandProblem(cmd: ParsedCommand, allow: RegExp[]): string | null {
 	const text = cmd.words.join(" ");
 	const write = cmd.writes.find((t) => !DEV_NULL.has(t));
+	const risky = cmd.env.find((n) => RISKY_ENV.test(n));
+	if (risky) return `sets ${risky}, which can make commands run other programs`;
 	if (write !== undefined) return `\`${short(text || ">")}\` writes to ${write}`;
 	let words = cmd.words;
 	while (words.length && KEYWORDS.has(words[0])) words = words.slice(1);
@@ -302,11 +317,31 @@ function wordsProblem(words: string[], allow: RegExp[]): string | null {
 	return READ_ONLY.has(name) ? null : "is not on the read-only list";
 }
 
+/** `a` is the long option `full` or a prefix of it, which GNU tools and git accept (--outp for --output). */
+const isLong = (a: string, full: string) => {
+	const opt = a.split("=")[0];
+	return opt.length > 2 && full.startsWith(opt);
+};
+
 /** A short option cluster (`-sSLo`) that contains one of `letters`. */
 const shortHas = (a: string, letters: string) => /^-[a-zA-Z]+$/.test(a) && [...a.slice(1)].some((c) => letters.includes(c));
 
 const script = (args: string[]) =>
-	args.length === 1 && /^(-v|-V|--version)$/.test(args[0]) ? null : "runs a script, which can change files (use ctx_execute for read-only analysis)";
+	args.length === 1 && /^(-v|-V|--version)$/.test(args[0]) ? null : "runs a script, which can change files";
+
+const XXD_VALUED = ["-l", "-s", "-c", "-g", "-o", "-n", "-C", "-len", "-seek", "-cols", "-groupsize", "-offset", "-name"];
+const UNIQ_VALUED = ["-f", "-s", "-w", "--skip-fields", "--skip-chars", "--check-chars"];
+
+/** Positional arguments, skipping the values of the options in `valued`. */
+function operands(args: string[], valued: string[]): string[] {
+	const out: string[] = [];
+	for (let i = 0; i < args.length; i++) {
+		if (args[i] === "--") return [...out, ...args.slice(i + 1)];
+		if (valued.includes(args[i])) i++;
+		else if (args[i] === "-" || !args[i].startsWith("-")) out.push(args[i]); // a bare - is stdin or stdout
+	}
+	return out;
+}
 
 /** Commands that need their arguments checked. Each returns why it would change something, or null. */
 const CHECKS: Record<string, (args: string[]) => string | null> = {
@@ -318,14 +353,48 @@ const CHECKS: Record<string, (args: string[]) => string | null> = {
 	python: script,
 	python3: script,
 	py: script,
-	sed: (a) => (a.some((x) => /^--in-place/.test(x) || shortHas(x, "i")) ? "edits files in place" : null),
+	sed: (a) => sedProblem(a),
+	tree: (a) => (a.some((x) => x === "-o" || x.startsWith("-o")) ? "writes a file" : null),
+	xxd: (a) => (operands(a, XXD_VALUED).length > 1 ? "writes its second file argument" : null),
 	yq: (a) => (a.some((x) => /^--inplace/.test(x) || shortHas(x, "i")) ? "edits files in place" : null),
 	awk: (a) => awkProblem(a),
 	gawk: (a) => awkProblem(a),
 	find: (a) => (a.some((x) => /^-(delete|exec|execdir|ok|okdir|fprint|fprint0|fprintf|fls)$/.test(x)) ? "deletes files or runs commands" : null),
-	sort: (a) => (a.some((x) => /^--output/.test(x) || shortHas(x, "o")) ? "writes a file" : null),
-	uniq: (a) => (positional(a).length > 1 ? "writes its second file argument" : null),
+	sort: (a) => (a.some((x) => isLong(x, "--output") || shortHas(x, "o")) ? "writes a file" : null),
+	uniq: (a) => (operands(a, UNIQ_VALUED).length > 1 ? "writes its second file argument" : null),
+	export: (a) => {
+		const risky = a.map((x) => x.split("=")[0]).find((n) => RISKY_ENV.test(n));
+		return risky ? `exports ${risky}, which can make commands run other programs` : null;
+	},
 };
+
+/** sed -i edits in place; the w/W/e commands and the s///w and s///e flags write files or run commands. */
+function sedProblem(args: string[]): string | null {
+	if (args.some((x) => isLong(x, "--in-place") || shortHas(x, "i"))) return "edits files in place";
+	const scripts: string[] = [];
+	for (let i = 0; i < args.length; i++) {
+		const a = args[i];
+		const attached = /^-[nErsuz]*e(.+)$/s.exec(a);
+		if (a === "-e" || /^-[nErsuz]+e$/.test(a) || (isLong(a, "--expression") && !a.includes("="))) scripts.push(args[++i] ?? "");
+		else if (isLong(a, "--expression")) scripts.push(a.slice(a.indexOf("=") + 1));
+		else if (attached) scripts.push(attached[1]);
+		else if (/^-[nErsuz]*f/.test(a) || isLong(a, "--file")) return "runs a sed script file";
+	}
+	if (!scripts.length) scripts.push(positional(args)[0] ?? "");
+	return scripts.some(sedScriptWrites) ? "writes files or runs commands (sed w/e)" : null;
+}
+
+function sedScriptWrites(script: string): boolean {
+	let marked = false;
+	// s commands first: their pattern and replacement are text; the w and e flags write or run.
+	let rest = script.replace(/s(.)((?:\\.|(?!\1).)*)\1((?:\\.|(?!\1).)*)\1([a-zA-Z0-9]*)/g, (_m, _d, _p, _r, flags: string) => {
+		if (/[we]/.test(flags)) marked = true;
+		return "s";
+	});
+	if (marked) return true;
+	rest = rest.replace(/\/(?:\\.|[^/])*\//g, "A"); // address regexes
+	return /(^|[;{}\s\dA$!,])[wWe]/.test(rest);
+}
 
 function awkProblem(args: string[]): string | null {
 	return args.some((a) => /system\s*\(|\|\s*getline|>\s*"|\|\s*"|^-i/.test(a)) ? "can write files or run commands" : null;
@@ -336,6 +405,9 @@ function commandName(word: string): string {
 }
 
 function wrapperProblem(name: string, args: string[], allow: RegExp[]): string | null {
+	if (name === "command" && /^-[vV]$/.test(args[0] ?? "")) return null;
+	const risky = name === "env" ? args.map((a) => a.split("=")[0]).find((n) => RISKY_ENV.test(n)) : undefined;
+	if (risky) return `sets ${risky}, which can make commands run other programs`;
 	const valued = WRAPPERS[name];
 	let i = 0;
 	while (i < args.length && (args[i].startsWith("-") || (name === "env" && /^[A-Za-z_]\w*=/.test(args[i])))) {
@@ -344,7 +416,7 @@ function wrapperProblem(name: string, args: string[], allow: RegExp[]): string |
 	if (name === "timeout") i++; // the duration
 	const rest = args.slice(i);
 	if (!rest.length) return null;
-	return commandProblem({ words: rest, writes: [] }, allow);
+	return commandProblem({ words: rest, writes: [], env: [] }, allow);
 }
 
 function short(text: string): string {
@@ -363,11 +435,23 @@ const GIT_READ = new Set(
 	).split(" "),
 );
 
+/** git -c keys that only change how output looks. Others (core.fsmonitor, core.pager, diff.external, ...) can run commands. */
+const GIT_SAFE_CONFIG = /^(color\.|core\.quotepath$|safe\.directory$|i18n\.|log\.(date|decorate|showsignature)$)/i;
+
 function gitProblem(args: string[]): string | null {
 	let i = 0;
-	while (i < args.length && args[i].startsWith("-")) i += ["-C", "-c", "--git-dir", "--work-tree"].includes(args[i]) ? 2 : 1;
+	while (i < args.length && args[i].startsWith("-")) {
+		const setting = args[i] === "-c" || args[i] === "--config-env" ? (args[i + 1] ?? "") : args[i].startsWith("--config-env=") ? args[i].slice(13) : undefined;
+		const key = setting?.split("=")[0];
+		if (key !== undefined && !GIT_SAFE_CONFIG.test(key)) return `sets ${key}, which can run commands`;
+		if (args[i].startsWith("--exec-path=")) return "changes where git finds its commands";
+		i += ["-C", "-c", "--config-env", "--git-dir", "--work-tree"].includes(args[i]) ? 2 : 1;
+	}
 	const sub = args[i];
 	const rest = args.slice(i + 1);
+	if (rest.some((a) => isLong(a, "--output") || isLong(a, "--upload-pack")) || (sub === "grep" && has(rest, ["-O", "--open-files-in-pager"]))) {
+		return "writes a file or runs a command";
+	}
 	if (sub === undefined || GIT_READ.has(sub)) return null;
 	const ok = GIT_CONDITIONAL[sub]?.(rest) ?? false;
 	return ok ? null : `changes the repository (git ${sub})`;
@@ -423,15 +507,16 @@ function ghApiProblem(args: string[]): string | null {
 	if (!fields.length) return null;
 	const graphql = positional(args)[0] === "graphql";
 	const query = fields.find((f) => f.startsWith("query="))?.slice(6) ?? "";
+	if (graphql && query.startsWith("@")) return "runs a GraphQL query from a file, which may be a mutation";
 	if (graphql && !/^\s*mutation\b/.test(query)) return null;
 	return graphql ? "runs a GraphQL mutation" : "sends data to GitHub (gh api with fields is a POST)";
 }
 
 /** curl long options that send data or write files. */
-const CURL_WRITE = /^--(data|json|form|upload-file|output|remote-name|config|create-dirs|dump-header|cookie-jar|trace|stderr|output-dir)/;
+const CURL_WRITE = /^--(data|json|form|upload-file|output|remote-name|config|create-dirs|dump-header|cookie-jar|trace|stderr|output-dir|etag-save|libcurl|hsts|alt-svc|quote)/;
 /** Short options that send data or write files, and the ones that take a value (the rest of the cluster or the next word). */
-const CURL_WRITE_SHORT = "dFTOoKDc";
-const CURL_VALUE_SHORT = "HuAebmwxUErYyzCtQ";
+const CURL_WRITE_SHORT = "dFTOoKDcQ";
+const CURL_VALUE_SHORT = "HuAebmwxUErYyzCt";
 
 function curlProblem(args: string[]): string | null {
 	for (let i = 0; i < args.length; i++) {

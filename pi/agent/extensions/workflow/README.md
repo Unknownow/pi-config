@@ -8,11 +8,12 @@ you -> plan (Opus 5.5, high) -> approve -> execute (Sonnet 5.5, medium) -> judge
                                               `-- advisor (Opus 5.5): reads the full transcript
 escalation (manual): /flow escalate -> Fable 5.1 (high), /flow back
 context guard:       compacts at ~140k tokens on every model, after the run settles
+plan is read-only:   bash refuses commands that change files, git or GitHub
 ```
 
 | Role | Runs as | When |
 |---|---|---|
-| `plan` | main session model; edit/write off | new sessions start here (`startPhase`) |
+| `plan` | main session model; edit/write off, bash read-only | new sessions start here (`startPhase`) |
 | `execute` | main session model | after you approve the plan |
 | `explore` | `explore` tool, parallel sub-`pi` processes | fallback when normal search is not enough; every call names its `reason` |
 | `advisor` | `advisor` tool, sub-`pi` with the whole transcript | choosing an approach, after an error repeats (auto-nudged after `repeatedErrorThreshold` failures), before "done" |
@@ -21,9 +22,13 @@ context guard:       compacts at ~140k tokens on every model, after the run sett
 
 ## Hands-off run
 
-You discuss the plan with the planner. When you're happy, say **"go"**. It also accepts "ok go",
-"lgtm", "do it", "ship it" and other short approvals; see `approvePattern`. Everything after that
-runs on its own:
+You discuss the plan with the planner. When a reply ends with a numbered plan, an **Approve / Keep
+planning** menu pops up (`planPrompt`). Right after such a reply you can also type a short approval
+as the whole message:
+"go", "ok go", "lgtm", "do it", "do it for me", "yeah do that", "implement the plan", "ship it" and
+the like; see `approvePattern`. Longer messages ("do it but skip step 3") keep planning, and so does
+"yes, do that" when the last reply had no plan (it answers a question). Everything
+after approval runs on its own:
 
 ```
 "go" -> execute (Sonnet) -> judge (auto) -> FAIL: fix and judge again (max 3 rounds)
@@ -41,7 +46,27 @@ runs on its own:
   `judge.finalFullReviewOverChars` (80,000 characters) that passes a re-review gets one final full
   review; the judge tool's `full: true` forces one. `"judge": { "recheck": false }` turns it off.
 - **Turning steps back to manual:** set `"autoJudge": "ask"`, `"autoCommit": "ask"` (or `"commit"` /
-  `"off"`), and `"planPrompt": true` for an Approve menu instead of the "say go" hint.
+  `"off"`), and `"planPrompt": false` for a "say go" hint instead of the Approve menu.
+
+## Plan phase is read-only
+
+The planner (Opus, high thinking) is the most expensive model per call, so it only plans. Edit and
+write are off, and `bash` refuses commands that can change files, git or GitHub
+(`readonly-bash.ts`), including `bash` calls from codemode scripts. The planner then has to finish
+its plan and hand over, even when you said "fix it" or "do it for me".
+
+- **Allowed:** reading commands (`ls`, `cat`, `grep`, `find`, `sed -n`, `jq`, ...), `git`
+  status/log/diff/show/fetch and listing branches or tags, `gh ... view/list/checks/status`,
+  `gh api` GETs, `curl` GETs to stdout, `npm view/ls`, redirection to `/dev/null`.
+- **Refused:** output redirection to a file, `tee`, `sed -i`, `rm`/`mv`/`cp`/`mkdir`, git
+  commands that change the repo (`commit`, `push`, `checkout`, `tag v1`, ...), `gh` commands that
+  change GitHub (`pr create/merge`, `issue edit/close/comment`, `gh api -X POST` or `-f`), scripts
+  (`node -e`, `python`), and any command not on the list.
+- **More commands:** add regexes over the command's words to `planBashAllow` (default: `unity cmd
+  editor_status` / `console_status`). `"planReadOnlyBash": false` turns the check off.
+- It is a guard against the planner drifting into execution, not a sandbox: `ctx_execute`
+  (context-mode's analysis sandbox) is not checked. The `powershell` tool is off while planning.
+- Tests: `node --test readonly-bash.test.ts`.
 
 ## What you see
 
@@ -58,8 +83,12 @@ flow  plan opus-5-5·high 48k ▸ ● EXECUTE sonnet-5-5·medium 1.2M ▸ judge 
 
 Token counts update in real time, including the message still streaming. A stage counts the main
 session's messages sent while it was active plus the subagents run during it (explore and advisor
-count toward the stage that called them, judge runs toward `judge`). The figure is each message's
-`totalTokens` (input + output + cache read/write) summed, so long contexts add up fast. The widget
+count toward the stage that called them, judge runs toward `judge`). Counts are **cost-weighted**
+(`tokenWeights`): uncached input 1, output 5, cache write 1.25, cache read 0.1, Claude's prices
+relative to input. So "1M" means what 1M uncached input tokens would cost. Every tool call re-sends
+the whole conversation, mostly as cache reads; raw `totalTokens` counted that in full and made a
+150k-context call look like 150k. Set all weights to 1 for raw volume. Counts saved by an older
+version (raw) are dropped when a session is resumed. The widget
 counts the current flow; `/flow status` lists the whole session. Both survive a restart.
 
 When a flow ends, a summary card goes into the transcript. It is display-only and never sent to the
@@ -68,7 +97,7 @@ when the automatic judge loop stops after `maxJudgeRounds` failures. Then the wi
 from zero:
 
 ```
-✓ flow done · committed and pushed · 1.2M tokens · 12m04s
+✓ flow done · committed and pushed · 1.2M cost-weighted tokens · 12m04s
   plan     █░░░░░░░░░░░░░░░░░░░    48k   4%  opus-5-5 48k
   execute  █████████████████░░░   1.0M  87%  sonnet-5 920k · explore ×6 120k
   judge    ██░░░░░░░░░░░░░░░░░░    90k   8%  judge ×1 90k

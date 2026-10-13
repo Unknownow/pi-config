@@ -35,13 +35,23 @@
     "main",
     "master"
   ],
-  "planPrompt": false,
-  "approvePattern": "^(ok(ay)?[, ]+|yes[, ]+|sure[, ]+)?(go|go ahead|go for it|do it|approved?|lgtm|ship it|execute( it)?|proceed|start|let'?s go|let'?s do it|run it|implement it|build it)( now| please)?[.! ]*$",
+  "planPrompt": true,
+  "approvePattern": "^((ok(ay)?|yes|yeah|yep|sure|alright|fine|great|good)[,.! ]+)?(then[, ]+)?(go|go ahead|go for it|do it|do that|do this|do them|do (it )?all( of (it|that|them))?|approved?|lgtm|ship it|execute( it| that| this| the plan)?|proceed|start|let'?s go|let'?s do it|run it|implement( it| that| this| the plan)?|build it|make it so)( for me)?( now)?( please)?[.! ]*$",
   "repeatedErrorThreshold": 3,
   "planBlockedTools": [
     "edit",
     "write"
   ],
+  "planReadOnlyBash": true,
+  "planBashAllow": [
+    "^unity (cmd )?(editor_status|console_status)\\b"
+  ],
+  "tokenWeights": {
+    "input": 1,
+    "output": 5,
+    "cacheRead": 0.1,
+    "cacheWrite": 1.25
+  },
   "explore": {
     "maxQueries": 8,
     "concurrency": 4,
