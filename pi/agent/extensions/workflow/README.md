@@ -53,6 +53,8 @@ after approval runs on its own:
 Only tools matching `planAllowedTools` (regexes over the tool name) can be called: read, grep, find,
 ls, bash, codemode, explore, advisor, judge, read-only ctx_* tools and MCP tools named search/get/list/...
 Everything else (AskClaude, `propose_entry`, `ctx_purge`, edit, write) is hidden and refused.
+MCP tools whose name has a write word (create, update, delete, set, add, run, save, post, ...) are refused even when they start with a read verb
+(`get_or_create`, `get_post`); `planAllowedTools` cannot override this.
 
 The planner (Opus, high thinking) is the most expensive model per call, so it only plans. Edit and
 write are off, and `bash` refuses commands that can change files, git or GitHub
@@ -78,7 +80,7 @@ its plan and hand over, even when you said "fix it" or "do it for me".
   refused because they are not on the list.
 - It is a guard against the planner drifting into execution, not a sandbox. Code built at runtime
   (`eval` of a string, an aliased import) can get past the word checks.
-- Tests: `node --test readonly-bash.test.ts readonly-tools.test.ts`.
+- Tests: `node --test agent-end.test.ts readonly-bash.test.ts readonly-tools.test.ts tokens.test.ts`.
 
 ## What you see
 

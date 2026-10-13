@@ -46,6 +46,7 @@ import {
 	type Thinking,
 	type WorkflowConfig,
 } from "./config.ts";
+import { isPlanReady, shouldResume, skipJudge } from "./agent-end.ts";
 import { countTokens, type Tok } from "./tokens.ts";
 import * as prompts from "./prompts.ts";
 import { planToolProblem, planToolRefused } from "./readonly-tools.ts";
@@ -802,8 +803,7 @@ export default function workflow(pi: ExtensionAPI) {
 		// bridge answers it with an empty reply, so the run stops. Ask the model to carry on.
 		if (overflowRetry) {
 			overflowRetry = false;
-			const empty = last?.role === "assistant" && Array.isArray(last.content) && last.content.length === 0;
-			if (empty && resumes < 2) {
+			if (shouldResume(true, last, resumes)) {
 				resumes++;
 				pi.sendMessage(
 					{
@@ -824,7 +824,7 @@ export default function workflow(pi: ExtensionAPI) {
 			// Every finished reply offers the choice; aborted or errored ones do not.
 			// A typed "go" approves only a finished plan that is not waiting on an answer.
 			const text = assistantText(last).trim();
-			planReady = stoppedNormally && /^\s*(#+\s*)?[*_]*Plan:?[*_]*\s*$/im.test(text) && !/\?[\s*_)"'`]*$/.test(text);
+			planReady = isPlanReady(text, stoppedNormally);
 			if (!stoppedNormally) return;
 			if (!cfg.planPrompt) {
 				ctx.ui.notify(`workflow: say "go" to execute on ${describeRole(cfg.roles.execute)}, or keep discussing.`, "info");
@@ -839,7 +839,7 @@ export default function workflow(pi: ExtensionAPI) {
 		}
 
 		if (state.phase !== "execute") return;
-		if (last?.role === "assistant" && last.stopReason === "error") return;
+		if (skipJudge(last)) return;
 		if (state.commitPending) await summarizeCommit(ctx);
 		await reviewDiff(ctx, false);
 	});

@@ -31,7 +31,7 @@ const WRITE_WORDS = /(^|_)(create|update|delete|replace|write|set|add|remove|put
 export function planToolRefused(name: string, allowed: RegExp[], blocked: string[]): string | null {
 	if (blocked.includes(name)) return `${name} is off while planning`;
 	if (!allowed.some((re) => re.test(name))) return `${name} is not a reading tool (planAllowedTools)`;
-	if (/^mcp__/.test(name) && !/__ctx_/.test(name) && WRITE_WORDS.test(name.replace(/^mcp__.+?__/, ""))) return `${name} looks like it changes data`;
+	if (/^mcp__/.test(name) && !/__ctx_/.test(name) && WRITE_WORDS.test(name.replace(/^mcp__.+?__/, ""))) return `${name} looks like it changes data (its name has a write word; planAllowedTools cannot override this)`;
 	return null;
 }
 
