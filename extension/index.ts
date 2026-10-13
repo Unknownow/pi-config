@@ -239,6 +239,8 @@ export default function piConfigSync(pi: ExtensionAPI) {
 		const exported = await runScript("export.js");
 		log(repo, `export:\n${exported.stdout.trim()}`);
 		if (exported.code !== 0) return "export failed — see local/sync.log";
+		const skipped = (exported.stdout.match(/^\s*SKIPPED\s/gm) ?? []).length;
+		if (skipped > 0) say(ctx, cfg, `pi-config: not syncing ${skipped} file(s) that look like secrets — see local/sync.log`, "warning");
 
 		const { ready, kept } = committableMirror(repo, await dirtyPaths());
 		// Files edited by hand in the repo are never committed here.
@@ -264,7 +266,12 @@ export default function piConfigSync(pi: ExtensionAPI) {
 		const message = `chore(config): sync from ${os.hostname()}`;
 		const commit = await git("commit", "-m", message, `--pathspec-from-file=${pathspec}`);
 		log(repo, `commit (${commit.code}): ${commit.stdout.trim() || commit.stderr.trim()}`);
-		if (commit.code !== 0) return "git commit failed — see local/sync.log";
+		if (commit.code !== 0) {
+			// Leave nothing staged, or every later commit fails on the same files.
+			await git("reset", "-q", `--pathspec-from-file=${pathspec}`);
+			const why = (commit.stderr.trim() || commit.stdout.trim()).split(/\r?\n/)[0];
+			return `git commit failed (${why}) — see local/sync.log`;
+		}
 
 		let result = `committed ${ready.length} change(s): ${ready.join(", ")}`;
 		const pushed = opts.push ? await push(ctx) : true;
@@ -343,6 +350,8 @@ export default function piConfigSync(pi: ExtensionAPI) {
 	const DENY_FILES = new Set(["auth.json", "trust.json", "models-store.json"]);
 	const MIRROR_DIRS = new Set(["skills", "prompts", "themes", "extensions"]);
 	const CONTEXT_FILES = new Set(["AGENTS.md", "AGENTS.override.md", "CLAUDE.md", "SYSTEM.md", "APPEND_SYSTEM.md"]);
+	/** Keep in sync with SECRET_NAME_PATTERNS in bin/lib.js. */
+	const SECRET_NAMES = [/(^|[._-])(o?auth|credentials?|secrets?)([._-]|$)/i, /\.(pem|key|p12|pfx|jks|keystore|ppk)$/i, /^id_(rsa|dsa|ecdsa|ed25519)$/];
 
 	/**
 	 * A cheap pre-filter mirroring bin/lib.js `inventory()`, so session files and
@@ -351,6 +360,7 @@ export default function piConfigSync(pi: ExtensionAPI) {
 	function inScope(rel: string): boolean {
 		const parts = rel.split(/[\\/]/).filter(Boolean);
 		const name = parts[parts.length - 1] ?? "";
+		if (!/\.(js|mjs|cjs|jsx|ts|tsx|md|sh|bat)$/i.test(name) && SECRET_NAMES.some((re) => re.test(name))) return false;
 		if (name.startsWith(".") || name.includes(".bak-") || /\.(db|sqlite)(-shm|-wal)?$/.test(name)) return false;
 		if (parts.length === 1) return (name.endsWith(".json") && !DENY_FILES.has(name)) || CONTEXT_FILES.has(name);
 		if (parts[0] === "npm") return parts.length === 2 && name === "package.json";
@@ -415,6 +425,8 @@ export default function piConfigSync(pi: ExtensionAPI) {
 				return;
 			}
 			await serial(async () => {
+				// The pre-commit hook in .githooks refuses commits that hold credentials.
+				if (fs.existsSync(path.join(repo, ".githooks", "pre-commit"))) await git("config", "core.hooksPath", ".githooks");
 				if (cfg.pullOnStart) {
 					const pulled = await pull();
 					if (pulled !== "already up to date") say(ctx, cfg, `pi-config: ${pulled}`, "info");

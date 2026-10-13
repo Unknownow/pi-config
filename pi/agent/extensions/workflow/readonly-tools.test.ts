@@ -146,3 +146,64 @@ test("the allow list admits reading tools and refuses the rest", () => {
 		assert.ok(planToolRefused(name, allowed, blocked), name);
 	}
 });
+
+const exec = "mcp__custom-tools__ctx_execute";
+const bypasses: [string, string][] = [
+	["javascript", "fs['wri'+'teFileSync']('a','b')"],
+	["javascript", "const r=globalThis['req'+'uire']"],
+	["javascript", "import('node:'+'fs')"],
+	["javascript", "process.binding('fs')"],
+	["javascript", "await fetch(u,{method:'PO'+'ST'})"],
+	["javascript", "process.kill(1)"],
+	["python", "importlib.import_module('o'+'s').system('id')"],
+	["python", "getattr(__builtins__,'op'+'en')('a','w')"],
+	["python", "import os as o; o.system('id')"],
+	["python", "m = 'w'\nopen('a', m)"],
+	["javascript", "const n=['writeFileS','ync'].join(''); fs[n]('a','b')"],
+	["javascript", "const k=Object.keys(fs).find(k=>k.startsWith('writeF')); fs[k]('a','b')"],
+	["python", "open('a', ''.join(['w']))"],
+	["python", "open('a', 'r'.replace('r','w'))"],
+	["python", "open('a', ('w'))"],
+	["python", "open('a', mode=m)"],
+	["python", "io.open('a', ''.join(['w'])).write('x')"],
+	["python", "pathlib.Path('a').open(''.join(['w']))"],
+	["python", "Path('a').open(mode=''.join(['w']))"],
+	["javascript", "fs2[n].call(fs2,'a','b')"],
+	["python", "m='w'; pathlib.Path('a').open(m).write('x')"],
+	["python", "Path('a').open(chr(119))"],
+	["python", "gzip.open('a', ''.join(['w']))"],
+	["python", "builtins.open('a', ''.join(['w']))"],
+	["python", "import io as i; i.open('a', ''.join(['w']))"],
+];
+for (const [language, code] of bypasses) {
+	test(`refuses runtime-built code: ${code.slice(0, 40)}`, () => {
+		assert.notEqual(planToolProblem(exec, { language, code }, [], "linux"), null);
+	});
+}
+const harmless: [string, string][] = [
+	["javascript", "JSON.parse(require('fs').readFileSync('a','utf8'))"],
+	["javascript", "const arr=[1,2,3]; console.log(arr[1+1], arr.length)"],
+	["javascript", "const o={key:1}; console.log(o['key'])"],
+	["python", "print(open('a').read())"],
+	["python", "import json\nprint(json.load(open(p)))"],
+	["python", "print(open('a', 'r', encoding='utf8').read())"],
+	["python", "print(open(os.path.join(a, b), 'rb').read())"],
+	["javascript", "console.log(data[0](1), items[i], path[0])"],
+	["python", "from PIL import Image\nprint(Image.open(p).size)"],
+	["python", "print(Path(p).open().read())"],
+];
+for (const [language, code] of harmless) {
+	test(`allows plain reads: ${code.slice(0, 40)}`, () => {
+		assert.equal(planToolProblem(exec, { language, code }, [], "linux"), null);
+	});
+}
+test("an MCP tool that sends a statement changing data is refused", () => {
+	assert.match(planToolProblem("mcp__x__query_database", { sql: "drop table a" }, []) ?? "", /changes data/);
+	assert.match(planToolProblem("mcp__x__query_database", { nested: { q: "select 1; delete from t" } }, []) ?? "", /changes data/);
+	assert.match(planToolProblem("mcp__x__query_graph", { q: "mutation { x }" }, []) ?? "", /changes data/);
+	for (const sql of ["WITH x AS (SELECT 1) DELETE FROM t", "/* c */ DROP TABLE t", "select 1; COPY t FROM 'f'", "select 1 -- x\n; drop table t", "SELECT '--'; DROP TABLE t", "SELECT '/*'; DELETE FROM t; SELECT '*/'", "-- don't\nDROP TABLE t -- '", "/* it's */ DELETE FROM t /* ' */"]) {
+		assert.match(planToolProblem("mcp__x__query_database", { sql }, []) ?? "", /changes data/, sql);
+	}
+	assert.equal(planToolProblem("mcp__x__query_database", { sql: "select 1" }, []), null);
+	assert.equal(planToolProblem("mcp__x__search_docs", { query: "update the docs" }, []), null);
+});

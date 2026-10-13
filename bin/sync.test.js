@@ -15,7 +15,7 @@ function setup() {
   const repo = path.join(root, 'repo');
   const home = path.join(root, 'home');
   fs.mkdirSync(path.join(repo, 'bin'), { recursive: true });
-  for (const f of ['lib.js', 'export.js', 'import.js']) fs.copyFileSync(path.join(BIN, f), path.join(repo, 'bin', f));
+  for (const f of ['lib.js', 'export.js', 'import.js', 'check-secrets.js']) fs.copyFileSync(path.join(BIN, f), path.join(repo, 'bin', f));
   fs.mkdirSync(path.join(home, '.pi', 'agent', 'extensions', 'demo'), { recursive: true });
   const git = (...a) => execFileSync('git', a, { cwd: repo, stdio: 'pipe' });
   git('init', '-q');
@@ -127,4 +127,70 @@ test('a change committed in the repo and then pulled in is recorded by import, s
   assert.doesNotMatch(out, /keep/);
   const state = JSON.parse(read(path.join(env.repo, 'local', 'sync-state.json')));
   assert.equal(state[rel], require('crypto').createHash('sha256').update('v2\n').digest('hex'));
+});
+
+// Fake credentials are built at runtime so this file itself passes the pre-commit hook.
+const FAKE_KEY = 'sk-' + 'a'.repeat(30);
+
+test('export skips files whose names look like credentials', () => {
+  const env = setup();
+  write(path.join(env.agent, 'mcp-oauth.json'), '{}');
+  write(path.join(env.agent, 'extensions', 'demo', 'key.pem'), 'x');
+  write(path.join(env.agent, 'extensions', 'demo', 'credentials.txt'), 'x');
+  write(path.join(env.agent, 'extensions', 'demo', 'index.ts'), 'v1\n');
+  const out = run(env, 'export.js');
+  assert.match(out, /SKIPPED\s+mcp-oauth\.json/);
+  assert.match(out, /SKIPPED\s+extensions\/demo\/key\.pem/);
+  assert.match(out, /SKIPPED\s+extensions\/demo\/credentials\.txt/);
+  assert.ok(!fs.existsSync(path.join(env.mirror, 'mcp-oauth.json')));
+  assert.ok(!fs.existsSync(path.join(env.mirror, 'extensions', 'demo', 'key.pem')));
+  assert.ok(fs.existsSync(path.join(env.mirror, 'extensions', 'demo', 'index.ts')));
+});
+
+test('export skips a file that holds a key, keeps the rest', () => {
+  const env = setup();
+  write(path.join(env.agent, 'provider.json'), JSON.stringify({ apiKey: FAKE_KEY }));
+  write(path.join(env.agent, 'extensions', 'demo', 'config.json'), JSON.stringify({ password: 'hunter2hunter2' }));
+  write(path.join(env.agent, 'other.json'), JSON.stringify({ fine: true }));
+  const out = run(env, 'export.js');
+  assert.match(out, /SKIPPED\s+provider\.json/);
+  assert.match(out, /SKIPPED\s+extensions\/demo\/config\.json/);
+  assert.ok(!fs.existsSync(path.join(env.mirror, 'provider.json')));
+  assert.ok(fs.existsSync(path.join(env.mirror, 'other.json')));
+});
+
+test('placeholders and unrelated keys are not secrets', () => {
+  const lib = require('./lib');
+  assert.deepEqual(lib.secretsIn('{"apiKey":"__CLAUDE_EXECUTABLE__"}'), []);
+  assert.deepEqual(lib.secretsIn('{"apiKey":"${KEY_FROM_ENV}"}'), []);
+  assert.deepEqual(lib.secretsIn('{"tokenWeights":{"input":1}}'), []);
+  assert.deepEqual(lib.secretsIn('{"Authorization":"Bearer ${GITHUB_TOKEN}"}'), []);
+  assert.equal(lib.isSecretName('tokens.ts'), false);
+  assert.equal(lib.isSecretName('settings.json'), false);
+  assert.equal(lib.isSecretName('check-secrets.js'), false);
+  assert.equal(lib.isSecretName('credentials.txt'), true);
+  assert.ok(lib.secretsIn(JSON.stringify({ apiKey: FAKE_KEY })).length > 0);
+});
+
+test('check-secrets --staged refuses a staged secret and passes a clean file', () => {
+  const env = setup();
+  const check = () => execFileSync(process.execPath, [path.join(env.repo, 'bin', 'check-secrets.js'), '--staged'], { cwd: env.repo, stdio: 'pipe' });
+  write(path.join(env.repo, 'clean.txt'), 'hello\n');
+  env.git('add', 'clean.txt');
+  check();
+  write(path.join(env.repo, 'leak.json'), JSON.stringify({ apiKey: FAKE_KEY }));
+  env.git('add', 'leak.json');
+  assert.throws(check, (e) => e.status === 1 && /leak\.json/.test(String(e.stderr)));
+});
+
+test('the real mirror and config hold no secrets', () => {
+  const lib = require('./lib');
+  const files = execFileSync('git', ['ls-files'], { cwd: lib.REPO, encoding: 'utf8' }).split(/\r?\n/).filter(Boolean);
+  const bad = [];
+  for (const f of files) {
+    const abs = path.join(lib.REPO, f);
+    if (!fs.existsSync(abs)) continue;
+    if (lib.isSecretName(path.basename(f)) || lib.secretsIn(fs.readFileSync(abs, 'utf8')).length) bad.push(f);
+  }
+  assert.deepEqual(bad, []);
 });

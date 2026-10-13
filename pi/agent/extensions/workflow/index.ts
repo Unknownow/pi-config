@@ -49,6 +49,7 @@ import {
 import { isPlanReady, shouldResume, skipJudge } from "./agent-end.ts";
 import { countTokens, type Tok } from "./tokens.ts";
 import * as prompts from "./prompts.ts";
+import { pushProblem } from "./push-guard.ts";
 import { planToolProblem, planToolRefused } from "./readonly-tools.ts";
 import { addUsage, emptyUsage, mapLimit, type RunResult, runSubagent } from "./subagent.ts";
 import {
@@ -668,7 +669,32 @@ export default function workflow(pi: ExtensionAPI) {
 
 	// Plan phase is read-only: the planner settles the approach, the execute model changes things.
 	// Nested calls (codemode's tools.bash) pass through here too.
-	pi.on("tool_call", async (event) => {
+	pi.on("tool_call", async (event, ctx) => {
+		if (state.phase === "execute") {
+			// Pushing is the workflow's job after the judge passes; the executor may not publish or skip hooks.
+			const input = (event.input ?? {}) as Record<string, unknown>;
+			const texts: string[] = [];
+			if (/(^|__)bash$/.test(event.toolName)) texts.push(String(input.command ?? ""));
+			else if (/(^|__)ctx_execute(_file)?$/.test(event.toolName)) {
+				const language = String(input.language ?? "").toLowerCase();
+				const code = String(input.code ?? "");
+				if (["shell", "bash", "sh", "zsh", "powershell", "pwsh", "ps1"].includes(language)) texts.push(code);
+				else if (/\bgit\b/.test(code) && /\bpush\b|\bcommit\b|--no-verify|hooksPath|GIT_CONFIG/i.test(code)) {
+					return { block: true, reason: "Refused: code that runs git push, skips hooks or changes hooks. The workflow commits and pushes after the judge passes." };
+				}
+			}
+			else if (/(^|__)ctx_batch_execute$/.test(event.toolName) && Array.isArray(input.commands)) {
+				for (const c of input.commands) texts.push(String((c as { command?: unknown })?.command ?? ""));
+			}
+			const gitTexts = texts.filter((t) => /\bgit\b/i.test(t));
+			if (gitTexts.length === 0) return;
+			const branch = (await git(ctx.cwd, "rev-parse", "--abbrev-ref", "HEAD")).stdout.trim();
+			for (const text of gitTexts) {
+				const problem = pushProblem(text, { branch, protectedBranches: cfg.protectedBranches, pushAllowed: state.commitPending?.mode === "push" });
+				if (problem) return { block: true, reason: `Refused: ${problem}. Do not push or skip hooks yourself; the workflow commits and pushes after the judge passes.` };
+			}
+			return;
+		}
 		if (state.phase !== "plan") return;
 		const refused = planToolRefused(event.toolName, planAllowedTools(), cfg.planBlockedTools);
 		if (refused) return { block: true, reason: planBlocked(refused) };

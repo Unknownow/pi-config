@@ -48,6 +48,55 @@ const DENY_DIRS = new Set([
   'node_modules'
 ]);
 
+/**
+ * Names that look like credentials: skipped on export whatever they contain.
+ * Keep in sync with the copy in extension/index.ts (inScope). "token" is left out on
+ * purpose: it would match extensions/workflow/tokens.ts.
+ */
+const SECRET_NAME_PATTERNS = [
+  /(^|[._-])(o?auth|credentials?|secrets?)([._-]|$)/i,
+  /\.(pem|key|p12|pfx|jks|keystore|ppk)$/i,
+  /^id_(rsa|dsa|ecdsa|ed25519)$/
+];
+
+/** Source and docs about credentials are not credentials; the content scan still covers them. */
+const CODE_OR_DOC = /\.(js|mjs|cjs|jsx|ts|tsx|md|sh|bat)$/i;
+
+function isSecretName(name) {
+  if (CODE_OR_DOC.test(name)) return false;
+  return SECRET_NAME_PATTERNS.some((re) => re.test(name));
+}
+
+/** Values that are placeholders or references, not secrets. */
+const PLACEHOLDER_VALUE = /^(__\w+__|\$\{[^}]+\}|env:|<|your|example|changeme|x{4,})/i;
+
+const SECRET_CONTENT = [
+  [/-----BEGIN [A-Z ]*PRIVATE KEY-----/, 'private key'],
+  [/\bsk-(?:ant-|proj-)?[A-Za-z0-9_-]{20,}/, 'API key (sk-)'],
+  [/\bgh[pousr]_[A-Za-z0-9]{30,}/, 'GitHub token'],
+  [/\bgithub_pat_[A-Za-z0-9_]{40,}/, 'GitHub token'],
+  [/\bxox[abposr]-[A-Za-z0-9-]{10,}/, 'Slack token'],
+  [/\bAKIA[0-9A-Z]{16}\b/, 'AWS access key'],
+  [/\bAIza[0-9A-Za-z_-]{35}/, 'Google API key'],
+  [/\bglpat-[A-Za-z0-9_-]{20,}/, 'GitLab token'],
+  [/\bnpm_[A-Za-z0-9]{36}/, 'npm token'],
+  [/\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\./, 'JWT']
+];
+
+const SECRET_PAIR = /"(api[_-]?key|apikey|access[_-]?token|refresh[_-]?token|id[_-]?token|auth[_-]?token|token|secret|client[_-]?secret|password|passwd|private[_-]?key|bearer|authorization)"\s*:\s*"([^"]{8,})"/gi;
+
+/** Reasons `text` looks like it holds a credential; empty when it does not. */
+function secretsIn(text) {
+  const reasons = [];
+  for (const [re, why] of SECRET_CONTENT) if (re.test(text) && !reasons.includes(why)) reasons.push(why);
+  for (const m of text.matchAll(SECRET_PAIR)) {
+    if (PLACEHOLDER_VALUE.test(m[2].replace(/^(Bearer|Basic|Token)\s+/i, ''))) continue;
+    const why = `"${m[1]}" has a literal value`;
+    if (!reasons.includes(why)) reasons.push(why);
+  }
+  return reasons;
+}
+
 /** Live SQLite, backups, OS noise. Syncing any of these corrupts or clutters. */
 function isJunk(name) {
   return (
@@ -183,15 +232,19 @@ function resolvePlaceholders(rel, json, overrides, log) {
 // ---------------------------------------------------------------------------
 
 /** Every file under `dir`, as paths relative to it. Skips junk and denied dirs. */
-function walk(dir, base = dir) {
+function walk(dir, base = dir, skipped = []) {
   if (!fs.existsSync(dir)) return [];
   const out = [];
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     if (isJunk(entry.name)) continue;
     const abs = path.join(dir, entry.name);
+    if (!entry.isDirectory() && isSecretName(entry.name)) {
+      skipped.push(path.relative(base, abs).replace(/\\/g, '/'));
+      continue;
+    }
     if (entry.isDirectory()) {
       if (DENY_DIRS.has(entry.name)) continue;
-      out.push(...walk(abs, base));
+      out.push(...walk(abs, base, skipped));
     } else {
       out.push(path.relative(base, abs).replace(/\\/g, '/'));
     }
@@ -204,13 +257,17 @@ function walk(dir, base = dir) {
  * Both sides use the same rules, so export and import can never disagree about
  * what is in scope.
  */
-function inventory(root) {
+function inventory(root, skipped = []) {
   const items = [];
   if (!fs.existsSync(root)) return items;
 
   // Top-level JSON: settings.json plus one config file per extension; and the global context files.
   for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
     if (!entry.isFile() || isJunk(entry.name)) continue;
+    if (isSecretName(entry.name) && !DENY_FILES.has(entry.name)) {
+      skipped.push(entry.name);
+      continue;
+    }
     if (CONTEXT_FILES.has(entry.name)) {
       items.push({ rel: entry.name, kind: 'file' });
       continue;
@@ -226,9 +283,12 @@ function inventory(root) {
 
   // Global resource folders, whole.
   for (const dir of MIRROR_DIRS) {
-    for (const rel of walk(path.join(root, dir))) {
+    const base = path.join(root, dir);
+    const inner = [];
+    for (const rel of walk(base, base, inner)) {
       items.push({ rel: `${dir}/${rel}`, kind: 'file' });
     }
+    for (const rel of inner) skipped.push(`${dir}/${rel}`);
   }
   return items;
 }
@@ -321,7 +381,7 @@ function recordable(state, rel, prev) {
 module.exports = {
   AGENT, REPO, MIRROR, STATE,
   readState, writeState, editedInRepo, recordable, sha, key,
-  MIRROR_DIRS, DENY_FILES, DENY_DIRS,
+  MIRROR_DIRS, DENY_FILES, DENY_DIRS, isSecretName, secretsIn,
   CLAUDE_PLACEHOLDER, REPO_PLACEHOLDER,
   inventory, walk, scrub, resolvePlaceholders, detectClaude,
   readJson, sameJson, samePath, insideRepo, isJunk,

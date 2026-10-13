@@ -233,3 +233,37 @@ test("git config subcommands: list and get read, remove-section and edit change 
 	assert.match(readOnlyProblem("git config remove-section user") ?? "allowed", /git config/);
 	assert.match(readOnlyProblem("git config edit") ?? "allowed", /git config/);
 });
+
+const round5Reads = [
+	"rg --pre-glob '*.gz' foo .",
+	"rg -n foo src",
+	"ag foo src",
+	"less file",
+	"date +%F",
+	"date -d yesterday +%F",
+	"hostname",
+	"hostname -f",
+	"git help -a",
+	"git diff --stat",
+	"git diff --no-ext-diff --no-textconv",
+];
+const round5Writes: [string, RegExp][] = [
+	["rg --pre 'sh' foo .", /preprocessor/],
+	["rg --pre=./x foo", /preprocessor/],
+	["rg --hostname-bin=x foo", /preprocessor/],
+	["ag --pager 'sh -c id' foo", /pager/],
+	["less -o out.txt file", /log file/],
+	["less -ofile file", /log file/],
+	["less --log-file=out file", /log file/],
+	["less '+!id' file", /log file/],
+	["date -s 2020-01-01", /clock/],
+	["date 010100002020", /clock/],
+	["hostname foo", /hostname/],
+	["hostname -F file", /hostname/],
+	["git diff --ext-diff", /diff drivers/],
+	["git log --textconv -p", /diff drivers/],
+	["git help -w status", /viewer/],
+	["git help status", /viewer/],
+];
+for (const cmd of round5Reads) test(`reads: ${cmd}`, () => assert.equal(readOnlyProblem(cmd), null));
+for (const [cmd, why] of round5Writes) test(`blocks: ${cmd}`, () => assert.match(readOnlyProblem(cmd) ?? "allowed", why));

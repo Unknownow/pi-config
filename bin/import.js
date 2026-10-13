@@ -95,6 +95,12 @@ function main() {
   }
 
   if (!DRY) lib.writeState(state);
+  if (!DRY && fs.existsSync(path.join(lib.REPO, '.githooks', 'pre-commit'))) {
+    // The hook refuses commits that hold credentials.
+    try {
+      require('child_process').execFileSync('git', ['-C', lib.REPO, 'config', 'core.hooksPath', '.githooks'], { stdio: 'ignore' });
+    } catch (_) { /* not a git checkout */ }
+  }
   if (DRY) {
     console.log(`\nDry run — ${changed} file(s) would change, ${same} already current.`);
     return;

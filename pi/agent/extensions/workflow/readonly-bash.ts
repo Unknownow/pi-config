@@ -8,6 +8,10 @@
  * redirections, simple VAR=value), and every command in it must be on the
  * read-only list below or match one of `planBashAllow`. Anything unknown is
  * refused, so a new read-only command needs adding here or in workflow.json.
+ *
+ * Accepted risk: a repository's own config (core.fsmonitor, diff.external,
+ * textconv drivers in .gitattributes) can still run programs on a plain
+ * `git status` or `git diff`. Plan a repo you do not trust in a throwaway clone.
  */
 
 export interface ParsedCommand {
@@ -262,10 +266,10 @@ const READ_ONLY = new Set(
 );
 
 /** Shell keywords in front of a command: `do echo x`, `if grep -q`, `! test`. */
-const KEYWORDS = new Set(["if", "then", "else", "elif", "fi", "do", "done", "while", "until", "!", "{", "}", "time", "esac"]);
+export const KEYWORDS = new Set(["if", "then", "else", "elif", "fi", "do", "done", "while", "until", "!", "{", "}", "time", "esac"]);
 
 /** Wrappers whose arguments are another command. Value: options of the wrapper that take a value. */
-const WRAPPERS: Record<string, string[]> = {
+export const WRAPPERS: Record<string, string[]> = {
 	timeout: ["-s", "--signal", "-k", "--kill-after"],
 	xargs: ["-I", "-i", "-n", "-L", "-l", "-P", "-d", "-s", "-E", "-e", "-a"],
 	env: ["-u", "--unset", "-C", "--chdir"],
@@ -360,6 +364,17 @@ const CHECKS: Record<string, (args: string[]) => string | null> = {
 	awk: (a) => awkProblem(a),
 	gawk: (a) => awkProblem(a),
 	find: (a) => (a.some((x) => /^-(delete|exec|execdir|ok|okdir|fprint|fprint0|fprintf|fls)$/.test(x)) ? "deletes files or runs commands" : null),
+	rg: (a) => (a.some((x) => isLong(x, "--pre") || isLong(x, "--hostname-bin")) ? "runs a preprocessor or helper program" : null),
+	ag: (a) => (a.some((x) => isLong(x, "--pager")) ? "runs a pager program" : null),
+	less: (a) =>
+		a.some((x) => shortHas(x, "oO") || isLong(x, "--log-file") || isLong(x, "--LOG-FILE") || (x.startsWith("+") && /[!|]/.test(x)))
+			? "writes a log file or runs a command"
+			: null,
+	date: (a) =>
+		a.some((x) => shortHas(x, "s") || isLong(x, "--set")) || operands(a, ["-d", "-r", "-f", "--date", "--reference", "--file"]).some((o) => !o.startsWith("+"))
+			? "sets the clock"
+			: null,
+	hostname: (a) => (a.some((x) => shortHas(x, "Fb") || isLong(x, "--file") || isLong(x, "--boot")) || operands(a, []).length > 0 ? "sets the hostname" : null),
 	sort: (a) => (a.some((x) => isLong(x, "--output") || shortHas(x, "o")) ? "writes a file" : null),
 	uniq: (a) => (operands(a, UNIQ_VALUED).length > 1 ? "writes its second file argument" : null),
 	export: (a) => {
@@ -438,6 +453,16 @@ const GIT_READ = new Set(
 /** git -c keys that only change how output looks. Others (core.fsmonitor, core.pager, diff.external, ...) can run commands. */
 const GIT_SAFE_CONFIG = /^(color\.|core\.quotepath$|safe\.directory$|i18n\.|log\.(date|decorate|showsignature)$)/i;
 
+/** Global git options that take the next word as their value. */
+const GIT_VALUED_GLOBALS = ["-C", "-c", "--config-env", "--git-dir", "--work-tree"];
+
+/** The git subcommand and its arguments, after the global options. Null when there is none. */
+export function gitSubcommand(args: string[]): { sub: string; rest: string[] } | null {
+	let i = 0;
+	while (i < args.length && args[i].startsWith("-")) i += GIT_VALUED_GLOBALS.includes(args[i]) ? 2 : 1;
+	return args[i] === undefined ? null : { sub: args[i], rest: args.slice(i + 1) };
+}
+
 function gitProblem(args: string[]): string | null {
 	let i = 0;
 	while (i < args.length && args[i].startsWith("-")) {
@@ -445,13 +470,17 @@ function gitProblem(args: string[]): string | null {
 		const key = setting?.split("=")[0];
 		if (key !== undefined && !GIT_SAFE_CONFIG.test(key)) return `sets ${key}, which can run commands`;
 		if (args[i].startsWith("--exec-path=")) return "changes where git finds its commands";
-		i += ["-C", "-c", "--config-env", "--git-dir", "--work-tree"].includes(args[i]) ? 2 : 1;
+		i += GIT_VALUED_GLOBALS.includes(args[i]) ? 2 : 1;
 	}
 	const sub = args[i];
 	const rest = args.slice(i + 1);
 	if (rest.some((a) => isLong(a, "--output") || isLong(a, "--upload-pack")) || (sub === "grep" && has(rest, ["-O", "--open-files-in-pager"]))) {
 		return "writes a file or runs a command";
 	}
+	if (rest.some((a) => isLong(a, "--ext-diff") || isLong(a, "--textconv"))) return "runs diff drivers from the repo config";
+	// A topic opens a man page or, on Windows, a browser; the list options (-a, -g, -c) only print.
+	if (sub === "help" && positional(rest).length > 0) return "opens a viewer";
+	if (sub === "help" && rest.some((a) => ["-w", "--web", "-m", "--man", "-i", "--info"].includes(a))) return "opens a viewer";
 	if (sub === undefined || GIT_READ.has(sub)) return null;
 	const ok = GIT_CONDITIONAL[sub]?.(rest) ?? false;
 	return ok ? null : `changes the repository (git ${sub})`;

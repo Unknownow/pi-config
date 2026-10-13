@@ -31,8 +31,12 @@ if errorlevel 1 (
 if "%~1"=="" goto menu
 
 set "CMD=%~1"
+set "ARGS="
+:collect
 shift
-goto dispatch
+if "%~1"=="" goto dispatch
+set ARGS=%ARGS% "%~1"
+goto collect
 
 REM ---------------------------------------------------------------------------
 :menu
@@ -138,7 +142,7 @@ echo.
 echo   Applying repo config to this machine...
 echo   Existing files are backed up as .bak-^<timestamp^>
 echo.
-node bin\import.js %1 %2 %3
+node bin\import.js %ARGS%
 if errorlevel 1 goto failed
 goto done
 

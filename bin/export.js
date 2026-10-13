@@ -29,7 +29,9 @@ function main() {
     process.exit(1);
   }
 
-  const items = lib.inventory(lib.AGENT);
+  const skippedNames = [];
+  const items = lib.inventory(lib.AGENT, skippedNames);
+  for (const rel of skippedNames) console.log(`  SKIPPED  ${rel}  (name looks like a credential)`);
   if (items.length === 0) {
     console.log('Nothing to export — ~/.pi/agent looks empty.');
     return;
@@ -39,6 +41,7 @@ function main() {
   let changed = 0;
   let same = 0;
   let kept = 0;
+  let skipped = skippedNames.length;
 
   for (const item of items) {
     const src = path.join(lib.AGENT, item.rel);
@@ -60,6 +63,14 @@ function main() {
       next = fs.readFileSync(src);
     }
     const bytes = Buffer.isBuffer(next) ? next : Buffer.from(next);
+
+    // A file that holds a credential never reaches the repo, whatever it is called.
+    const secrets = lib.secretsIn(bytes.toString('utf8'));
+    if (secrets.length > 0) {
+      console.log(`  SKIPPED  ${label}  (looks like a secret: ${secrets.join(', ')})`);
+      skipped++;
+      continue;
+    }
 
     const prev = fs.existsSync(dest) ? fs.readFileSync(dest) : null;
     const unchanged = prev !== null && (
@@ -92,7 +103,7 @@ function main() {
     changed++;
   }
 
-  const keptNote = kept ? `, ${kept} kept (edited in the repo)` : '';
+  const keptNote = (kept ? `, ${kept} kept (edited in the repo)` : '') + (skipped ? `, ${skipped} skipped (possible secrets — not synced)` : '');
   if (DRY) {
     console.log(`\nDry run — ${changed} file(s) would change, ${same} already current${keptNote}.`);
     return;
