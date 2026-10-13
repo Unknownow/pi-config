@@ -33,6 +33,13 @@ runs on its own:
 - **Push guard:** it never pushes `protectedBranches` (`main`, `master`) or a detached HEAD. It
   commits there and tells you. It never force-pushes or uses `--no-verify`, and stops if a hook fails.
 - **Where it stops for you:** when the judge fails `maxJudgeRounds` times in a row, or something errors.
+- **Judge rounds after the first** review only what changed since the last round: a fresh judge gets
+  that round's findings, the changes since, and the names of every file in the change, at
+  `judge.recheckThinking` (medium). Calling it again with no changes returns the last result. It
+  falls back to a full review after a commit, rebase or branch switch, or when the changes since are
+  over `judge.recheckMaxShare` (half) of the whole diff. A change over
+  `judge.finalFullReviewOverChars` (80,000 characters) that passes a re-review gets one final full
+  review; the judge tool's `full: true` forces one. `"judge": { "recheck": false }` turns it off.
 - **Turning steps back to manual:** set `"autoJudge": "ask"`, `"autoCommit": "ask"` (or `"commit"` /
   `"off"`), and `"planPrompt": true` for an Approve menu instead of the "say go" hint.
 
