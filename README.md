@@ -52,6 +52,7 @@ config for extensions you install later — no list to maintain.
 |---|---|
 | `pi/agent/settings.json` | theme, provider, default model, TUI prefs, **the extension list**, resource paths |
 | `pi/agent/*.json` | one config file per extension (`claude-bridge.json`, and whatever you add) |
+| `pi/agent/AGENTS.md`, `APPEND_SYSTEM.md`, `SYSTEM.md`, `CLAUDE.md`, `AGENTS.override.md` | global instructions Pi adds to every session |
 | `pi/agent/npm/package.json` | extension version pins |
 | `pi/agent/skills/` | global skills |
 | `pi/agent/prompts/` | global prompt templates (`/name` commands) |

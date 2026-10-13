@@ -1,0 +1,17 @@
+# Global agent instructions
+
+Applies in every repo. Project `AGENTS.md` files add to this.
+
+## Tool output: filter in the tool, read only what you need
+
+Everything a tool returns stays in context and is re-sent on every later call, so print answers,
+not raw data.
+
+- **Filter or summarize in the tool.** Put the filter in the command (`grep`, `tail`, counts), or
+  use context-mode: `ctx_execute` / `ctx_execute_file` to run code over output or a file and print
+  only the result, `ctx_batch_execute` for several commands at once. Tests: pass/fail counts and
+  the failures only. Builds and logs: errors only. Diffs: `--stat` unless you need the lines.
+- **Read raw text only for the lines you are about to edit**, with offset/limit or a targeted
+  `grep -n`. Don't dump whole files, long diffs or full logs "to have a look".
+- **Too little?** Narrow the next query; don't fall back to printing everything.
+- On Windows `ctx_batch_execute` runs PowerShell; for bash use `ctx_execute` with `language: shell`.

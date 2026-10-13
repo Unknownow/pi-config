@@ -331,6 +331,7 @@ export default function piConfigSync(pi: ExtensionAPI) {
 	const AGENT = path.join(os.homedir(), ".pi", "agent");
 	const DENY_FILES = new Set(["auth.json", "trust.json", "models-store.json"]);
 	const MIRROR_DIRS = new Set(["skills", "prompts", "themes", "extensions"]);
+	const CONTEXT_FILES = new Set(["AGENTS.md", "AGENTS.override.md", "CLAUDE.md", "SYSTEM.md", "APPEND_SYSTEM.md"]);
 
 	/**
 	 * A cheap pre-filter mirroring bin/lib.js `inventory()`, so session files and
@@ -340,7 +341,7 @@ export default function piConfigSync(pi: ExtensionAPI) {
 		const parts = rel.split(/[\\/]/).filter(Boolean);
 		const name = parts[parts.length - 1] ?? "";
 		if (name.startsWith(".") || name.includes(".bak-") || /\.(db|sqlite)(-shm|-wal)?$/.test(name)) return false;
-		if (parts.length === 1) return name.endsWith(".json") && !DENY_FILES.has(name);
+		if (parts.length === 1) return (name.endsWith(".json") && !DENY_FILES.has(name)) || CONTEXT_FILES.has(name);
 		if (parts[0] === "npm") return parts.length === 2 && name === "package.json";
 		return MIRROR_DIRS.has(parts[0]) && !parts.includes("node_modules");
 	}

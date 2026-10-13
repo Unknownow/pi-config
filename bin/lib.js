@@ -33,6 +33,9 @@ const DENY_FILES = new Set([
   'models-store.json' // regenerates from the catalogs
 ]);
 
+/** Global context files: instructions Pi adds to every session, on any machine. */
+const CONTEXT_FILES = new Set(['AGENTS.md', 'AGENTS.override.md', 'CLAUDE.md', 'SYSTEM.md', 'APPEND_SYSTEM.md']);
+
 /** Directories mirrored whole. Everything Pi discovers globally. */
 const MIRROR_DIRS = ['skills', 'prompts', 'themes', 'extensions'];
 
@@ -203,9 +206,13 @@ function inventory(root) {
   const items = [];
   if (!fs.existsSync(root)) return items;
 
-  // Top-level JSON: settings.json plus one config file per extension.
+  // Top-level JSON: settings.json plus one config file per extension; and the global context files.
   for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
     if (!entry.isFile() || isJunk(entry.name)) continue;
+    if (CONTEXT_FILES.has(entry.name)) {
+      items.push({ rel: entry.name, kind: 'file' });
+      continue;
+    }
     if (!entry.name.endsWith('.json') || DENY_FILES.has(entry.name)) continue;
     items.push({ rel: entry.name, kind: 'json' });
   }
