@@ -31,6 +31,15 @@ test("plan is ready with a Plan heading and no trailing question", () => {
 	assert.equal(isPlanReady("Plan:\r\n1. x\r\nWhich db?\r\n", true), false);
 	assert.equal(isPlanReady("**Plan** mode is on, so I can only read files.", true), false);
 	assert.equal(isPlanReady("## Plan mode\nreading first", true), false);
+	assert.equal(isPlanReady("## Plan for the cache fix\n1. x", true), true);
+	assert.equal(isPlanReady("## Plan \u2014 add retries\n1. x", true), true);
+	assert.equal(isPlanReady("**Plan for X**\n1. x", true), true);
+	assert.equal(isPlanReady("**Plan Mode** is active", true), false);
+	assert.equal(isPlanReady("## PLAN MODE\nreading", true), false);
+	assert.equal(isPlanReady("**Plan-mode** on", true), false);
+	assert.equal(isPlanReady("## Plan\n- Mode toggle\n1. x", true), true);
+	assert.equal(isPlanReady("**Plan**\n\nMode: strict", true), true);
+	assert.equal(isPlanReady("## Planning notes\nreading first", true), false);
 	assert.equal(isPlanReady("Plan:\n1. x", false), false);
 });
 
