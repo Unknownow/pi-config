@@ -83,20 +83,21 @@ stage has used, and one live row per subagent: what it's doing right now, how ma
 its tokens and the elapsed time.
 
 ```
-flow  plan opus-5-5·high 48k ▸ ● EXECUTE sonnet-5-5·medium 1.2M ▸ judge opus-5-5·high ▸ commit · Σ 1.3M
-  ├ ⠇ explore  haiku-5-5  [location_unknown] where is the save system serialized?  grep /Serialize/ in Scripts · 1 tool · 12k tok · 4s
+flow  plan opus-5-5·high 48,120 (9,800) ▸ ● EXECUTE sonnet-5-5·medium 1,204,331 (310,200) ▸ judge opus-5-5·high ▸ commit · Σ 1,342,455 (341,300)
+  ├ ⠇ explore  haiku-5-5  [location_unknown] where is the save system serialized?  grep /Serialize/ in Scripts · 1 tool · 12,004 (2,100) tok · 4s
   ├ ✓ explore  haiku-5-5  [location_unknown] which scenes load the HUD prefab?  3 refs · 1 tool · 7s
   └ ⠇ advisor  opus-5-5   [error] NullReferenceException in SaveM…  read Scripts/SaveManager.cs:40-80 · 0s
 ```
 
 Token counts update in real time, including the message still streaming. A stage counts the main
 session's messages sent while it was active plus the subagents run during it (explore and advisor
-count toward the stage that called them, judge runs toward `judge`). Counts are **cost-weighted**
+count toward the stage that called them, judge runs toward `judge`). Each count is the **exact raw
+total**, cache reads and writes included in full, with the **cost-weighted** figure in brackets
 (`tokenWeights`): uncached input 1, output 5, cache write 1.25, cache read 0.1, Claude's prices
-relative to input. So "1M" means what 1M uncached input tokens would cost. Every tool call re-sends
-the whole conversation, mostly as cache reads; raw `totalTokens` counted that in full and made a
-150k-context call look like 150k. Set all weights to 1 for raw volume. Counts saved by an older
-version (raw) are dropped when a session is resumed. The widget
+relative to input. So `1,204,331 (310,200)` means 1,204,331 tokens of volume that cost what 310,200
+uncached input tokens would. Every tool call re-sends the whole conversation, mostly as cache reads,
+so the bracketed figure shows what that re-sending costs. Set all weights to 1 and the two figures
+are equal. Counts saved by an older version are dropped when a session is resumed. The widget
 counts the current flow; `/flow status` lists the whole session. Both survive a restart.
 
 When a flow ends, a summary card goes into the transcript. It is display-only and never sent to the
@@ -105,11 +106,11 @@ when the automatic judge loop stops after `maxJudgeRounds` failures. Then the wi
 from zero:
 
 ```
-✓ flow done · committed and pushed · 1.2M cost-weighted tokens · 12m04s
-  plan     █░░░░░░░░░░░░░░░░░░░    48k   4%  opus-5-5 48k
-  execute  █████████████████░░░   1.0M  87%  sonnet-5 920k · explore ×6 120k
-  judge    ██░░░░░░░░░░░░░░░░░░    90k   8%  judge ×1 90k
-  commit   █░░░░░░░░░░░░░░░░░░░    20k   2%  sonnet-5 20k
+✓ flow done · committed and pushed · 1,202,224 (315,300) tokens · 12m04s
+  plan     █░░░░░░░░░░░░░░░░░░░     48,120 (9,800)   4%  opus-5-5 48,120 (9,800)
+  execute  █████████████████░░░  1,044,100 (280,000) 87%  sonnet-5 920,000 (250,000) · explore ×6 124,100 (30,000)
+  judge    █░░░░░░░░░░░░░░░░░░░     90,004 (21,300)   7%  judge ×1 90,004 (21,300)
+  commit   █░░░░░░░░░░░░░░░░░░░     20,000 (4,200)   2%  sonnet-5 20,000 (4,200)
 ```
 
 The outcome says whether the commit really landed (HEAD moved) and whether it was pushed (nothing

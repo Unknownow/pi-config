@@ -3,22 +3,24 @@
  * (active stage highlighted, with its model) and one row per subagent run,
  * showing what each one is doing right now.
  *
- *   ● flow  plan opus-5-5·high 48k ▸ EXECUTE sonnet-5-5·medium 1.2M ▸ judge opus-5-5·high 90k ▸ commit · Σ 1.3M
- *     ├ ⠹ explore  haiku-5-5  where is average defined?   grep /average/ in src · 3 tools · 12k tok · 12s
- *     └ ✓ judge    opus-5-5   FAIL · 3 findings · 90k tok · 41s
+ *   ● flow  plan opus-5-5·high 48,120 (9,800) ▸ EXECUTE sonnet-5-5·medium 1,204,331 (310,200) ▸ judge opus-5-5·high 90,004 (21,300) ▸ commit · Σ 1,342,455 (341,300)
+ *     ├ ⠹ explore  haiku-5-5  where is average defined?   grep /average/ in src · 3 tools · 12,004 (2,100) tok · 12s
+ *     └ ✓ judge    opus-5-5   FAIL · 3 findings · 90,004 (21,300) tok · 41s
  *
  * Token counts are live: each stage sums the main session's messages sent while
  * it was active plus the subagents run during it (judge runs count as judge),
- * including the message still streaming. They are cost-weighted (tokenWeights in
- * workflow.json): a cache read counts 0.1, so re-sending a long context on every
- * tool call shows what it costs, not its raw volume.
+ * including the message still streaming. Each count is the exact raw total (cache
+ * reads and writes at full size), with the cost-weighted figure in brackets
+ * (tokenWeights in workflow.json: a cache read counts 0.1), so re-sending a long
+ * context shows both its volume and what it costs.
  */
 
 import * as os from "node:os";
 import * as path from "node:path";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { type Component, type TUI, truncateToWidth } from "@earendil-works/pi-tui";
-import { DEFAULTS, describeRole, type Role, type RoleSpec, type TokenWeights, weighTokens } from "./config.ts";
+import { DEFAULTS, describeRole, type Role, type RoleSpec } from "./config.ts";
+import { countTokens, type Tok, type TokenWeights } from "./tokens.ts";
 import type { SubagentEvent } from "./subagent.ts";
 
 export type Stage = "plan" | "execute" | "judge" | "commit";
@@ -36,32 +38,44 @@ export interface RunView {
 	activity: string;
 	tools: number;
 	/** Tokens of finished messages. */
-	tokens: number;
+	tokens: Tok;
 	/** Tokens of the message still streaming. */
-	liveTokens: number;
+	liveTokens: Tok;
 	/** Pipeline stage its tokens count toward. */
 	stage: Stage;
 }
 
 export const STAGES: Stage[] = ["plan", "execute", "judge", "commit"];
 
-export function emptyStageTokens(): Record<Stage, number> {
-	return { plan: 0, execute: 0, judge: 0, commit: 0 };
+const zero = (): Tok => ({ raw: 0, cost: 0 });
+const isZero = (t: Tok): boolean => t.raw === 0 && t.cost === 0;
+const add = (a: Tok, b: Tok): Tok => ({ raw: a.raw + b.raw, cost: a.cost + b.cost });
+const max = (a: Tok, b: Tok): Tok => ({ raw: Math.max(a.raw, b.raw), cost: Math.max(a.cost, b.cost) });
+const same = (a: Tok, b: Tok): boolean => a.raw === b.raw && a.cost === b.cost;
+
+/** Summaries saved before counts were tracked as raw and cost held a single number; show it as both. */
+function asTok(x: Tok | number | undefined): Tok {
+	if (typeof x === "number") return { raw: x, cost: x };
+	return x ?? zero();
+}
+
+export function emptyStageTokens(): Record<Stage, Tok> {
+	return { plan: zero(), execute: zero(), judge: zero(), commit: zero() };
 }
 
 /** Where one stage's tokens went during a flow. */
 export interface StageUsage {
-	tokens: number;
+	tokens: Tok;
 	/** The main session's share; the rest is subagents. */
-	main: number;
+	main: Tok;
 	models: string[];
-	subs: Partial<Record<SubRole, { tokens: number; runs: number }>>;
+	subs: Partial<Record<SubRole, { tokens: Tok; runs: number }>>;
 }
 
 export type FlowUsage = Record<Stage, StageUsage>;
 
 export function emptyFlowUsage(): FlowUsage {
-	const empty = (): StageUsage => ({ tokens: 0, main: 0, models: [], subs: {} });
+	const empty = (): StageUsage => ({ tokens: zero(), main: zero(), models: [], subs: {} });
 	return { plan: empty(), execute: empty(), judge: empty(), commit: empty() };
 }
 
@@ -74,14 +88,18 @@ export interface FlowSummary {
 	started?: number;
 	ended: number;
 	stages: FlowUsage;
-	/** Counts are cost-weighted; summaries saved before that hold raw totals. */
+	/** Saved before both totals were kept: the counts are cost-weighted only. */
 	weighted?: boolean;
 }
 
-export function formatTokens(n: number): string {
-	if (n < 1000) return String(n);
-	if (n < 999_500) return `${Math.round(n / 1000)}k`;
-	return `${(n / 1_000_000).toFixed(1)}M`;
+/** Exact count with thousands separators, e.g. 1,204,331. */
+export function exact(n: number): string {
+	return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+
+/** Raw count, with the cost-weighted count in brackets when they differ. */
+export function fmtTok(t: Tok): string {
+	return t.raw === t.cost ? exact(t.raw) : `${exact(t.raw)} (${exact(t.cost)})`;
 }
 
 const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -147,8 +165,8 @@ export function runLine(run: RunView, theme: Theme, opts: { showRole: boolean })
 				? theme.fg("success", "✓")
 				: theme.fg("error", "✗");
 	const role = opts.showRole ? `${theme.fg("toolTitle", run.role.padEnd(8))} ${theme.fg("muted", run.model.padEnd(10))} ` : "";
-	const tokens = (run.tokens ?? 0) + (run.liveTokens ?? 0); // rows saved before liveTokens existed lack it
-	const stats = [run.tools ? `${run.tools} tool${run.tools > 1 ? "s" : ""}` : "", tokens ? `${formatTokens(tokens)} tok` : "", elapsed(run)]
+	const tokens = add(asTok(run.tokens), asTok(run.liveTokens));
+	const stats = [run.tools ? `${run.tools} tool${run.tools > 1 ? "s" : ""}` : "", isZero(tokens) ? "" : `${fmtTok(tokens)} tok`, elapsed(run)]
 		.filter(Boolean)
 		.join(" · ");
 	const activityColor = run.status === "fail" ? "error" : run.status === "running" ? "toolOutput" : "muted";
@@ -159,34 +177,39 @@ export function runLine(run: RunView, theme: Theme, opts: { showRole: boolean })
  * The end-of-flow card: one bar per stage, scaled to the flow's total, with the
  * main session's and each subagent role's share.
  *
- *   ✓ flow done · committed and pushed · 1.3M tokens · 12m04s
- *     plan     ██░░░░░░░░░░░░░░░░░░    48k   4%  opus-5-5
- *     execute  █████████████████░░░   1.1M  85%  sonnet-5-5 920k · explore ×6 120k · advisor ×1 40k
- *     judge    █░░░░░░░░░░░░░░░░░░░    90k   7%  judge ×2 90k
- *     commit   ░░░░░░░░░░░░░░░░░░░░    20k   2%  sonnet-5-5
+ *   ✓ flow done · committed and pushed · 1,342,455 (341,300) tokens · 12m04s
+ *     plan     ██░░░░░░░░░░░░░░░░░░    48,120 (9,800)   4%  opus-5-5
+ *     execute  █████████████████░░░ 1,080,000 (273,000) 87%  sonnet-5-5 920,000 (240,000) · explore ×6 120,000 (25,000) · advisor ×1 40,000 (8,000)
+ *     judge    █░░░░░░░░░░░░░░░░░░░    90,004 (21,300)   7%  judge ×2 90,004 (21,300)
+ *     commit   ░░░░░░░░░░░░░░░░░░░░    20,000 (4,200)   2%  sonnet-5-5
  */
 export function summaryLines(s: FlowSummary, theme: Theme): string[] {
-	const total = STAGES.reduce((n, st) => n + s.stages[st].tokens, 0);
+	const stageTokens = (st: Stage) => asTok(s.stages[st].tokens);
+	const total = STAGES.reduce((n, st) => add(n, stageTokens(st)), zero());
+	const unit = s.weighted ? "cost-weighted tokens" : "tokens";
 	const head = [
 		s.ok ? theme.fg("success", "✓") : theme.fg("warning", "■"),
 		theme.bold(s.title ?? "flow done"),
 		theme.fg("dim", "·"),
 		theme.fg(s.ok ? "success" : "warning", s.outcome),
-		theme.fg("dim", `· ${formatTokens(total)} ${s.weighted ? "cost-weighted " : ""}tokens${s.started ? ` · ${elapsed({ started: s.started, ended: s.ended })}` : ""}`),
+		theme.fg("dim", `· ${fmtTok(total)} ${unit}${s.started ? ` · ${elapsed({ started: s.started, ended: s.ended })}` : ""}`),
 	].join(" ");
 	const lines = [head];
 	const width = 20;
+	const labelWidth = Math.max(...STAGES.map((st) => fmtTok(stageTokens(st)).length));
 	for (const stage of STAGES) {
 		const u = s.stages[stage];
-		const share = total ? u.tokens / total : 0;
-		const filled = u.tokens ? Math.max(1, Math.round(share * width)) : 0;
+		const t = stageTokens(stage);
+		const share = total.raw ? t.raw / total.raw : 0;
+		const filled = t.raw ? Math.max(1, Math.round(share * width)) : 0;
 		const bar = theme.fg("accent", "█".repeat(filled)) + theme.fg("dim", "░".repeat(width - filled));
 		const parts: string[] = [];
-		if (u.main) parts.push(`${u.models.map(shortModel).join("/") || "main"} ${formatTokens(u.main)}`);
-		for (const [role, sub] of Object.entries(u.subs)) if (sub) parts.push(`${role} ×${sub.runs} ${formatTokens(sub.tokens)}`);
-		const color = u.tokens ? "text" : "dim";
+		const main = asTok(u.main);
+		if (!isZero(main)) parts.push(`${u.models.map(shortModel).join("/") || "main"} ${fmtTok(main)}`);
+		for (const [role, sub] of Object.entries(u.subs)) if (sub) parts.push(`${role} ×${sub.runs} ${fmtTok(asTok(sub.tokens))}`);
+		const color = t.raw || t.cost ? "text" : "dim";
 		lines.push(
-			`  ${theme.fg(color, stage.padEnd(8))} ${bar} ${theme.fg(color, formatTokens(u.tokens).padStart(6))} ${theme.fg("muted", `${Math.round(share * 100)}%`.padStart(4))}  ${theme.fg("dim", parts.join(" · "))}`,
+			`  ${theme.fg(color, stage.padEnd(8))} ${bar} ${theme.fg(color, fmtTok(t).padStart(labelWidth))} ${theme.fg("muted", `${Math.round(share * 100)}%`.padStart(4))}  ${theme.fg("dim", parts.join(" · "))}`,
 		);
 	}
 	return lines;
@@ -201,14 +224,14 @@ export class FlowView {
 	weights: TokenWeights = DEFAULTS.tokenWeights;
 	runs: RunView[] = [];
 	/** Tokens of finished messages per stage this session, main session and subagents together. */
-	used: Record<Stage, number> = emptyStageTokens();
+	used: Record<Stage, Tok> = emptyStageTokens();
 	/** The same, broken down, since the current flow started; the widget shows these. */
 	flow: FlowUsage = emptyFlowUsage();
 	/** When the current flow spent its first token. */
 	flowStarted: number | undefined;
 
 	/** The main session's message still streaming, and the stage it started in. */
-	private mainLive: { stage: Stage; tokens: number } | undefined;
+	private mainLive: { stage: Stage; tokens: Tok } | undefined;
 	private nextId = 1;
 	private tui: TUI | undefined;
 	private ticker: ReturnType<typeof setInterval> | undefined;
@@ -259,11 +282,11 @@ export class FlowView {
 			status: "running",
 			activity: "starting…",
 			tools: 0,
-			tokens: 0,
-			liveTokens: 0,
+			tokens: zero(),
+			liveTokens: zero(),
 			stage: role === "judge" ? "judge" : this.stage,
 		};
-		const sub = (this.flow[run.stage].subs[role] ??= { tokens: 0, runs: 0 });
+		const sub = (this.flow[run.stage].subs[role] ??= { tokens: zero(), runs: 0 });
 		sub.runs++;
 		this.flowStarted ??= run.started;
 		this.runs.push(run);
@@ -278,11 +301,11 @@ export class FlowView {
 			run.activity = describeTool(e.name, e.args, cwd);
 		} else if (e.type === "usage") {
 			// Cumulative per message; a failed stream can end with empty usage, so keep the larger.
-			const tokens = Math.max(weighTokens(e.usage, this.weights), e.done ? run.liveTokens : 0);
+			const tokens = max(countTokens(e.usage, this.weights), e.done ? run.liveTokens : zero());
 			if (e.done) {
-				run.tokens += tokens;
+				run.tokens = add(run.tokens, tokens);
 				this.add(run.stage, tokens, run.role);
-				run.liveTokens = 0;
+				run.liveTokens = zero();
 			} else {
 				run.liveTokens = tokens;
 			}
@@ -297,21 +320,21 @@ export class FlowView {
 		run.ended = Date.now();
 		// A message cut off by an abort or timeout never ends; its tokens were still spent.
 		this.add(run.stage, run.liveTokens, run.role);
-		run.tokens += run.liveTokens;
-		run.liveTokens = 0;
+		run.tokens = add(run.tokens, run.liveTokens);
+		run.liveTokens = zero();
 		run.activity = outcome;
 		this.changed();
 	}
 
 	/** Usage of the main session's assistant message: cumulative while streaming, `done` once it ends. */
-	mainUsage(tokens: number, done: boolean, model?: string): void {
-		this.mainLive ??= { stage: this.stage, tokens: 0 };
+	mainUsage(tokens: Tok, done: boolean, model?: string): void {
+		this.mainLive ??= { stage: this.stage, tokens: zero() };
 		this.flowStarted ??= Date.now();
 		if (done) {
 			// A failed stream can end with empty usage; the streamed tokens were still spent.
-			this.add(this.mainLive.stage, Math.max(tokens, this.mainLive.tokens), "main", model);
+			this.add(this.mainLive.stage, max(tokens, this.mainLive.tokens), "main", model);
 			this.mainLive = undefined;
-		} else if (tokens === this.mainLive.tokens) {
+		} else if (same(tokens, this.mainLive.tokens)) {
 			return;
 		} else {
 			this.mainLive.tokens = tokens;
@@ -324,35 +347,35 @@ export class FlowView {
 		if (this.mainLive) this.mainUsage(this.mainLive.tokens, true);
 	}
 
-	private add(stage: Stage, tokens: number, source: "main" | SubRole, model?: string): void {
-		this.used[stage] += tokens;
+	private add(stage: Stage, tokens: Tok, source: "main" | SubRole, model?: string): void {
+		this.used[stage] = add(this.used[stage], tokens);
 		const u = this.flow[stage];
-		u.tokens += tokens;
+		u.tokens = add(u.tokens, tokens);
 		if (source === "main") {
-			u.main += tokens;
+			u.main = add(u.main, tokens);
 			if (model && !u.models.includes(model)) u.models.push(model);
 		} else {
 			// runs is 0 when the run started before this flow did.
-			const sub = (u.subs[source] ??= { tokens: 0, runs: 0 });
-			sub.tokens += tokens;
+			const sub = (u.subs[source] ??= { tokens: zero(), runs: 0 });
+			sub.tokens = add(sub.tokens, tokens);
 			sub.runs ||= 1;
 		}
 	}
 
-	private liveTokens(stage: Stage): number {
-		let n = this.mainLive?.stage === stage ? this.mainLive.tokens : 0;
-		for (const r of this.runs) if (r.stage === stage) n += r.liveTokens;
+	private liveTokens(stage: Stage): Tok {
+		let n = this.mainLive?.stage === stage ? this.mainLive.tokens : zero();
+		for (const r of this.runs) if (r.stage === stage) n = add(n, r.liveTokens);
 		return n;
 	}
 
 	/** The current flow's finished plus in-flight tokens of a stage. */
-	stageTokens(stage: Stage): number {
-		return this.flow[stage].tokens + this.liveTokens(stage);
+	stageTokens(stage: Stage): Tok {
+		return add(this.flow[stage].tokens, this.liveTokens(stage));
 	}
 
 	/** The session's finished plus in-flight tokens of a stage. */
-	sessionTokens(stage: Stage): number {
-		return this.used[stage] + this.liveTokens(stage);
+	sessionTokens(stage: Stage): Tok {
+		return add(this.used[stage], this.liveTokens(stage));
 	}
 
 	/** Closes the current flow: returns its summary and starts counting the next one from zero. */
@@ -368,20 +391,22 @@ export class FlowView {
 	peekFlow(outcome: string, ok: boolean): FlowSummary {
 		const stages = structuredClone(this.flow);
 		if (this.mainLive) {
-			stages[this.mainLive.stage].tokens += this.mainLive.tokens;
-			stages[this.mainLive.stage].main += this.mainLive.tokens;
+			const st = stages[this.mainLive.stage];
+			st.tokens = add(st.tokens, this.mainLive.tokens);
+			st.main = add(st.main, this.mainLive.tokens);
 		}
 		for (const r of this.runs) {
-			if (!r.liveTokens) continue;
-			stages[r.stage].tokens += r.liveTokens;
-			const sub = (stages[r.stage].subs[r.role] ??= { tokens: 0, runs: 0 });
-			sub.tokens += r.liveTokens;
+			if (isZero(r.liveTokens)) continue;
+			const st = stages[r.stage];
+			st.tokens = add(st.tokens, r.liveTokens);
+			const sub = (st.subs[r.role] ??= { tokens: zero(), runs: 0 });
+			sub.tokens = add(sub.tokens, r.liveTokens);
 		}
-		return { outcome, ok, started: this.flowStarted, ended: Date.now(), stages, weighted: true };
+		return { outcome, ok, started: this.flowStarted, ended: Date.now(), stages };
 	}
 
 	hasFlowUsage(): boolean {
-		return STAGES.some((s) => this.flow[s].tokens > 0);
+		return STAGES.some((s) => this.flow[s].tokens.raw > 0);
 	}
 
 	/** Drops rows that finished more than `maxAgeMs` ago. */
@@ -403,15 +428,15 @@ export class FlowView {
 				const spec = escalated ? this.roles.escalate : role ? this.roles[role] : null;
 				const model = spec ? ` ${short(spec)}${escalated ? " ↑" : ""}` : "";
 				const n = this.stageTokens(stage);
-				const tokens = n ? theme.fg(active ? "toolOutput" : "muted", ` ${formatTokens(n)}`) : "";
+				const tokens = isZero(n) ? "" : theme.fg(active ? "toolOutput" : "muted", ` ${fmtTok(n)}`);
 				if (!active) return (escalated ? theme.fg("warning", `${stage}${model}`) : theme.fg("dim", `${stage}${model}`)) + tokens;
 				const color = escalated ? "warning" : "accent";
 				return theme.fg(color, theme.bold(`● ${stage.toUpperCase()}`)) + theme.fg(color, model) + tokens;
 			};
 			const sep = theme.fg("dim", " ▸ ");
-			const total = STAGES.reduce((sum, s) => sum + this.stageTokens(s), 0);
+			const total = STAGES.reduce((sum, s) => add(sum, this.stageTokens(s)), zero());
 			lines.push(
-				`${theme.fg("muted", "flow ")} ${node("plan", "plan")}${sep}${node("execute", "execute")}${sep}${node("judge", "judge")}${sep}${node("commit", null)}${total ? theme.fg("dim", ` · Σ ${formatTokens(total)}`) : ""}`,
+				`${theme.fg("muted", "flow ")} ${node("plan", "plan")}${sep}${node("execute", "execute")}${sep}${node("judge", "judge")}${sep}${node("commit", null)}${isZero(total) ? "" : theme.fg("dim", ` · Σ ${fmtTok(total)}`)}`,
 			);
 		}
 

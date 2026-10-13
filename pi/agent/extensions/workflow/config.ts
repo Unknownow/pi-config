@@ -7,6 +7,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import type { TokenWeights } from "./tokens.ts";
 
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 export type Thinking = (typeof THINKING_LEVELS)[number];
@@ -47,9 +48,9 @@ export interface WorkflowConfig {
 	/** Extra commands plan phase may run, as regexes over the command's words (e.g. "^unity cmd editor_status\\b"). */
 	planBashAllow: string[];
 	/**
-	 * Token counts in the widget and the flow summary weigh each kind by its price relative to
-	 * uncached input, so they show cost (input-token equivalents), not volume. Claude: cache reads
-	 * 0.1, cache writes 1.25, output 5. All 1 gives the raw totalTokens.
+	 * Token counts in the widget and the flow summary show the raw total, with this cost-weighted
+	 * figure in brackets. Each kind is weighted by its price relative to uncached input. Claude:
+	 * cache reads 0.1, cache writes 1.25, output 5. All 1 makes the two figures equal.
 	 */
 	tokenWeights: TokenWeights;
 	explore: { maxQueries: number; concurrency: number; tools: string[] };
@@ -67,26 +68,6 @@ export interface WorkflowConfig {
 		finalFullReviewOverChars: number;
 	};
 	subagent: { extensions: string[]; timeoutMs: number };
-}
-
-export interface TokenWeights {
-	input: number;
-	output: number;
-	cacheRead: number;
-	cacheWrite: number;
-}
-
-/** Usage fields as pi reports them on assistant messages and subagent events. */
-export interface UsageCounts {
-	input?: number;
-	output?: number;
-	cacheRead?: number;
-	cacheWrite?: number;
-}
-
-export function weighTokens(u: UsageCounts | undefined, w: TokenWeights): number {
-	if (!u) return 0;
-	return Math.round((u.input ?? 0) * w.input + (u.output ?? 0) * w.output + (u.cacheRead ?? 0) * w.cacheRead + (u.cacheWrite ?? 0) * w.cacheWrite);
 }
 
 export const DEFAULTS: WorkflowConfig = {

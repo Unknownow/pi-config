@@ -45,8 +45,8 @@ import {
 	saveRole,
 	type Thinking,
 	type WorkflowConfig,
-	weighTokens,
 } from "./config.ts";
+import { countTokens, type Tok } from "./tokens.ts";
 import * as prompts from "./prompts.ts";
 import { planToolProblem } from "./readonly-tools.ts";
 import { addUsage, emptyUsage, mapLimit, type RunResult, runSubagent } from "./subagent.ts";
@@ -56,7 +56,7 @@ import {
 	type FlowSummary,
 	type FlowUsage,
 	FlowView,
-	formatTokens,
+	fmtTok,
 	type RunView,
 	runLine,
 	STAGES,
@@ -80,9 +80,9 @@ interface FlowState {
 	/** Active tools before plan mode switched some off. */
 	toolsBeforePlan?: string[];
 	/** Tokens spent per pipeline stage this session. */
-	tokens?: Record<Stage, number>;
-	/** "weighted": tokens are cost-weighted (tokenWeights). Counts saved before that were raw and are dropped. */
-	tokenUnit?: "weighted";
+	tokens?: Record<Stage, Tok>;
+	/** "both": each count holds the raw total and the cost-weighted one. Counts saved before that are dropped. */
+	tokenUnit?: "both";
 	/** The current flow's breakdown, until its summary is shown. */
 	flow?: FlowUsage;
 	flowStarted?: number;
@@ -191,7 +191,7 @@ export default function workflow(pi: ExtensionAPI) {
 
 	function persist(): void {
 		state.tokens = { ...view.used };
-		state.tokenUnit = "weighted";
+		state.tokenUnit = "both";
 		state.flow = structuredClone(view.flow);
 		state.flowStarted = view.flowStarted;
 		pi.appendEntry(STATE_ENTRY, state);
@@ -720,11 +720,11 @@ export default function workflow(pi: ExtensionAPI) {
 
 	// Live token count per stage: usage is cumulative while a message streams.
 	pi.on("message_update", async (event) => {
-		if (event.message.role === "assistant" && event.message.usage) view.mainUsage(weighTokens(event.message.usage, cfg.tokenWeights), false);
+		if (event.message.role === "assistant" && event.message.usage) view.mainUsage(countTokens(event.message.usage, cfg.tokenWeights), false);
 	});
 
 	pi.on("message_end", async (event) => {
-		if (event.message.role === "assistant" && event.message.usage) view.mainUsage(weighTokens(event.message.usage, cfg.tokenWeights), true, event.message.model);
+		if (event.message.role === "assistant" && event.message.usage) view.mainUsage(countTokens(event.message.usage, cfg.tokenWeights), true, event.message.model);
 	});
 
 	pi.registerEntryRenderer<FlowSummary>(SUMMARY_ENTRY, (entry, _opts, theme) => (entry.data ? new Text(summaryLines(entry.data, theme).join("\n"), 1, 0) : undefined));
@@ -732,7 +732,7 @@ export default function workflow(pi: ExtensionAPI) {
 	pi.on("agent_settled", async (event, ctx) => {
 		view.settleMain();
 		const tracked = state.phase !== "off" || state.tokens !== undefined;
-		if (tracked && STAGES.some((s) => view.used[s] !== (state.tokens?.[s] ?? 0))) persist();
+		if (tracked && STAGES.some((s) => view.used[s].raw !== (state.tokens?.[s]?.raw ?? 0) || view.used[s].cost !== (state.tokens?.[s]?.cost ?? 0))) persist();
 		if (!compactPending || compacting || event.aborted || !ctx.isIdle()) return;
 		const tokens = ctx.getContextUsage()?.tokens ?? null;
 		compactPending = false;
@@ -940,8 +940,8 @@ export default function workflow(pi: ExtensionAPI) {
 		if (saved?.data) {
 			// Pi restores the session's model itself; only the tool set needs re-applying.
 			state = { ...saved.data };
-			if (state.tokenUnit !== "weighted") {
-				// Saved before counts were cost-weighted; mixing raw and weighted would mislead.
+			if (state.tokenUnit !== "both") {
+				// Saved before counts carried both raw and cost-weighted totals; the old ones would mislead.
 				state.tokens = undefined;
 				state.flow = undefined;
 				state.flowStarted = undefined;
@@ -988,7 +988,7 @@ export default function workflow(pi: ExtensionAPI) {
 			`phase      ${state.phase}${state.escalated ? " (escalated)" : ""}`,
 			`judge     ${state.judgeRounds} failed round(s); auto=${cfg.autoJudge}; then ${cfg.autoCommit}`,
 			`guard     compact at ${cfg.contextGuardTokens || "off"} tokens`,
-			`tokens    ${STAGES.map((s) => `${s} ${formatTokens(view.sessionTokens(s))}`).join(" · ")} · session total ${formatTokens(STAGES.reduce((n, s) => n + view.sessionTokens(s), 0))}`,
+			`tokens    ${STAGES.map((s) => `${s} ${fmtTok(view.sessionTokens(s))}`).join(" · ")} · session total ${fmtTok(STAGES.reduce((n, s) => ({ raw: n.raw + view.sessionTokens(s).raw, cost: n.cost + view.sessionTokens(s).cost }), { raw: 0, cost: 0 }))}`,
 			"",
 			...ROLES.map((r) => `${r.padEnd(9)} ${describeRole(cfg.roles[r])}`),
 			"",
