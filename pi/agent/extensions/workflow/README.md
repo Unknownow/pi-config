@@ -64,9 +64,17 @@ its plan and hand over, even when you said "fix it" or "do it for me".
   (`node -e`, `python`), and any command not on the list.
 - **More commands:** add regexes over the command's words to `planBashAllow` (default: `unity cmd
   editor_status` / `console_status`). `"planReadOnlyBash": false` turns the check off.
-- It is a guard against the planner drifting into execution, not a sandbox: `ctx_execute`
-  (context-mode's analysis sandbox) is not checked. The `powershell` tool is off while planning.
-- Tests: `node --test readonly-bash.test.ts`.
+- **context-mode tools** (`readonly-tools.ts`) are checked too. `ctx_execute` and
+  `ctx_execute_file` with `shell` language get the shell check. With `javascript` or `python`
+  they are refused when the code writes, deletes, runs programs, `eval`s, or sends a POST, PUT,
+  PATCH or DELETE request. Other languages are refused. `ctx_batch_execute` checks each command.
+  `ctx_purge` is refused.
+- Shell text on Windows: `ctx_execute` and `ctx_batch_execute` run PowerShell, so a command is
+  checked as a shell command, and PowerShell-only cmdlets (`Set-Content`, `Remove-Item`, ...) are
+  refused because they are not on the list.
+- It is a guard against the planner drifting into execution, not a sandbox. Code built at runtime
+  (`eval` of a string, an aliased import) can get past the word checks.
+- Tests: `node --test readonly-bash.test.ts readonly-tools.test.ts`.
 
 ## What you see
 

@@ -136,11 +136,20 @@ Three behaviours worth knowing:
 
 - **Auto-commits touch `pi/` only.** Your edits to the extension, the scripts, `config/sync.json` or
   this README are yours to commit — the extension never sweeps them into a background commit.
+- **A file you edit in the repo is kept, not overwritten.** `export.js` records a hash of every
+  mirror file as it last moved (`local/sync-state.json`, gitignored). If a mirror file no longer
+  matches that hash, you edited it in the repo: export leaves it alone and says `keep`, and the
+  auto-commit leaves it uncommitted (listed in `/pi-config status` under other edits). To keep your
+  edit, commit it, then run import so the record matches the commit (an edit that is committed but
+  still differs from this machine keeps reporting `keep` until one of the two runs). To take this
+  machine's copy instead, run `node bin/export.js --force`. To take the repo's copy, run import.
 - **A session that imported skips its shutdown export.** Pi keeps settings in memory and rewrites
   them on exit, so exporting after an import would push the stale copy back over what was just
   pulled in. Restart Pi to pick up an import; the notification says so.
 - **Everything is logged** to `local/sync.log` (gitignored), including failures. The extension never
   throws into your session.
+
+Tests for the sync rules: `node --test bin/sync.test.js`.
 
 `import.js` backs up any file it overwrites to `<name>.bak-<timestamp>` next to the original, and
 compares JSON by meaning rather than bytes — re-running it when nothing changed writes nothing.

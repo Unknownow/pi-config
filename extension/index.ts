@@ -20,6 +20,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { committableMirror } from "./ready.ts";
 
 declare const __dirname: string;
 
@@ -177,13 +178,20 @@ export default function piConfigSync(pi: ExtensionAPI) {
 
 	/** Changed paths relative to the repo root, optionally limited to `SYNCED`. */
 	async function dirtyPaths(scope: "synced" | "all" = "synced"): Promise<string[]> {
-		const args = scope === "synced" ? ["status", "--porcelain", "--", ...syncedPathspec()] : ["status", "--porcelain"];
+		// -uall lists each new file, not its folder, so every file is checked on its own.
+		// -z keeps paths unquoted; a rename lists its old path as a second entry, which is skipped.
+		const args = scope === "synced" ? ["status", "--porcelain", "-z", "-uall", "--", ...syncedPathspec()] : ["status", "--porcelain", "-z", "-uall"];
 		const { stdout, code } = await git(...args);
 		if (code !== 0) return [];
-		return stdout
-			.split(/\r?\n/)
-			.map((l) => l.slice(3).trim())
-			.filter(Boolean);
+		const entries = stdout.split("\0");
+		const paths: string[] = [];
+		for (let i = 0; i < entries.length; i++) {
+			const entry = entries[i];
+			if (!entry) continue;
+			paths.push(entry.slice(3));
+			if (entry[0] === "R" || entry[0] === "C") i++;
+		}
+		return paths;
 	}
 
 	async function isGitRepo(): Promise<boolean> {
@@ -232,34 +240,37 @@ export default function piConfigSync(pi: ExtensionAPI) {
 		log(repo, `export:\n${exported.stdout.trim()}`);
 		if (exported.code !== 0) return "export failed — see local/sync.log";
 
-		const changed = await dirtyPaths();
-		if (changed.length === 0) {
+		const { ready, kept } = committableMirror(repo, await dirtyPaths());
+		// Files edited by hand in the repo are never committed here.
+		const note = kept.length ? `; kept ${kept.length} hand edit(s), not committed: ${kept.join(", ")}` : "";
+		if (ready.length === 0) {
 			// Earlier auto-commits may still be waiting for a push.
-			if (!opts.push) return "repo already up to date";
+			if (!opts.push) return `repo already up to date${note}`;
 			const ahead = Number((await git("rev-list", "--count", "@{u}..HEAD")).stdout.trim()) || 0;
-			if (ahead === 0) return "repo already up to date";
+			if (ahead === 0) return `repo already up to date${note}`;
 			const pushed = await push(ctx);
 			const result = pushed ? `pushed ${ahead} pending commit(s)` : "push failed — see local/sync.log";
 			say(ctx, cfg, `pi-config: ${result}`, pushed ? "info" : "error");
-			return result;
+			return result + note;
 		}
-		if (!opts.commit) return `${changed.length} file(s) changed, left uncommitted: ${changed.join(", ")}`;
+		if (!opts.commit) return `${ready.length} file(s) changed, left uncommitted: ${ready.join(", ")}${note}`;
 
-		const pathspec = syncedPathspec();
-		const add = await git("add", "--", ...pathspec);
+		const pathspec = path.join(repo, "local", "commit-paths.txt");
+		fs.writeFileSync(pathspec, ready.map((p) => `:(literal)${p}`).join("\n") + "\n");
+		const add = await git("add", `--pathspec-from-file=${pathspec}`);
 		log(repo, `add (${add.code}): ${add.stderr.trim() || "ok"}`);
 		if (add.code !== 0) return "git add failed — see local/sync.log";
 
 		const message = `chore(config): sync from ${os.hostname()}`;
-		const commit = await git("commit", "-m", message, "--", ...pathspec);
+		const commit = await git("commit", "-m", message, `--pathspec-from-file=${pathspec}`);
 		log(repo, `commit (${commit.code}): ${commit.stdout.trim() || commit.stderr.trim()}`);
 		if (commit.code !== 0) return "git commit failed — see local/sync.log";
 
-		let result = `committed ${changed.length} change(s): ${changed.join(", ")}`;
+		let result = `committed ${ready.length} change(s): ${ready.join(", ")}`;
 		const pushed = opts.push ? await push(ctx) : true;
 		if (opts.push) result += pushed ? " and pushed" : " — push failed, see local/sync.log";
 		say(ctx, cfg, `pi-config: ${result}`, pushed ? "info" : "error");
-		return result;
+		return result + note;
 	}
 
 	/**
@@ -304,7 +315,7 @@ export default function piConfigSync(pi: ExtensionAPI) {
 	async function status(): Promise<string> {
 		const branch = (await git("rev-parse", "--abbrev-ref", "HEAD")).stdout.trim() || "(unknown)";
 		const last = (await git("log", "-1", "--format=%h %s (%cr)")).stdout.trim() || "(no commits)";
-		const changed = await dirtyPaths("synced");
+		const changed = committableMirror(repo, await dirtyPaths("synced")).ready;
 		const other = (await dirtyPaths("all")).filter((f) => !changed.includes(f));
 		const preview = await runScript("import.js", "--dry-run");
 		const wouldChange = (preview.stdout.match(/^\s*WOULD\s+(.+)$/gm) ?? []).map((l) => l.trim());

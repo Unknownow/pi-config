@@ -473,7 +473,18 @@ const GIT_CONDITIONAL: Record<string, (rest: string[]) => boolean> = {
 	fetch: (r) => !positional(r).some((a) => a.includes(":")),
 	remote: (r) => r.length === 0 || ["-v", "--verbose", "show", "get-url"].includes(r[0]),
 	stash: (r) => ["list", "show"].includes(r[0]),
-	config: (r) => has(r, ["--get", "--get-all", "--get-regexp", "--list", "-l"]),
+	// Reads: the --get/--list flags, `list`, `get key`, or `section.key` alone. Anything else
+	// (a value, remove-section, edit, unset, add) changes the config or opens an editor.
+	config: (r) => {
+		const readFlags = ["--get", "--get-all", "--get-regexp", "--list", "-l"];
+		const flags = r.filter((x) => x.startsWith("-"));
+		const positional = r.filter((x) => !x.startsWith("-"));
+		if (!flags.every((f) => readFlags.includes(f))) return false;
+		if (flags.length > 0) return positional.length <= 1;
+		if (positional[0] === "list") return positional.length === 1;
+		if (positional[0] === "get") return positional.length === 2;
+		return positional.length === 1 && positional[0].includes(".");
+	},
 	worktree: (r) => r[0] === "list",
 	notes: (r) => ["list", "show"].includes(r[0]),
 	reflog: (r) => r.length === 0 || r[0] === "show" || r[0].startsWith("-"),

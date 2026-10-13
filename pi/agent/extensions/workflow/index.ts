@@ -48,7 +48,7 @@ import {
 	weighTokens,
 } from "./config.ts";
 import * as prompts from "./prompts.ts";
-import { readOnlyProblem } from "./readonly-bash.ts";
+import { planToolProblem } from "./readonly-tools.ts";
 import { addUsage, emptyUsage, mapLimit, type RunResult, runSubagent } from "./subagent.ts";
 import {
 	emptyFlowUsage,
@@ -667,8 +667,7 @@ export default function workflow(pi: ExtensionAPI) {
 		if (cfg.planBlockedTools.includes(event.toolName)) return { block: true, reason: planBlocked(`${event.toolName} is off while planning`) };
 		if (!cfg.planReadOnlyBash) return;
 		if (event.toolName === "powershell") return { block: true, reason: planBlocked("PowerShell commands are not checked, so they are off while planning") };
-		if (event.toolName !== "bash") return;
-		const problem = readOnlyProblem(String((event.input as { command?: unknown }).command ?? ""), planAllow());
+		const problem = planToolProblem(event.toolName, (event.input ?? {}) as Record<string, unknown>, planAllow());
 		if (problem) return { block: true, reason: planBlocked(problem) };
 	});
 

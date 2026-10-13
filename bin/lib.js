@@ -16,6 +16,8 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const crypto = require('crypto');
+const { execFileSync } = require('child_process');
 
 const AGENT = path.join(os.homedir(), '.pi', 'agent');
 const REPO = path.resolve(__dirname, '..');
@@ -249,8 +251,76 @@ function sameJson(a, b) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Sync record: the hash of each mirror file as it last moved between the repo
+// and this machine (written by export and import). export.js uses it to tell an
+// edit made in the repo, which it keeps, from a machine change, which it writes.
+// The commit step only commits files that still match it. Per machine, gitignored.
+// ---------------------------------------------------------------------------
+
+const STATE = path.join(REPO, 'local', 'sync-state.json');
+
+function sha(buf) {
+  return crypto.createHash('sha256').update(buf).digest('hex');
+}
+
+/** Key for a mirror file: its path under pi/agent, with forward slashes. */
+function key(rel) {
+  return rel.split(path.sep).join('/');
+}
+
+function readState() {
+  try {
+    return JSON.parse(fs.readFileSync(STATE, 'utf8'));
+  } catch {
+    return {};
+  }
+}
+
+function writeState(state) {
+  fs.mkdirSync(path.dirname(STATE), { recursive: true });
+  fs.writeFileSync(STATE, JSON.stringify(state, null, 2) + '\n');
+}
+
+/**
+ * Hashes of the file as committed in HEAD: the raw blob and the working-copy form
+ * (`--filters` applies the autocrlf/eol rules). Either can match a file on disk.
+ */
+function headShas(rel) {
+  const out = new Set();
+  const object = `HEAD:pi/agent/${key(rel)}`;
+  for (const args of [['cat-file', 'blob', object], ['cat-file', '--filters', `--path=pi/agent/${key(rel)}`, object]]) {
+    try {
+      out.add(sha(execFileSync('git', args, { cwd: REPO, stdio: ['ignore', 'pipe', 'ignore'] })));
+    } catch {
+      // not in HEAD
+    }
+  }
+  return out;
+}
+
+/**
+ * True when a mirror file (`prev`, its current bytes) was changed in the repo by hand: its
+ * bytes differ from the last sync record. With no record, the committed file is the baseline.
+ */
+function editedInRepo(state, rel, prev) {
+  if (prev === null) return false;
+  const current = sha(prev);
+  const recorded = state[key(rel)];
+  return recorded !== undefined ? current !== recorded : !headShas(rel).has(current);
+}
+
+/**
+ * Whether the sync record may be set to these bytes: not a hand edit, or a change that is
+ * already committed (a pulled-in change, which import must record or it would never sync).
+ */
+function recordable(state, rel, prev) {
+  return !editedInRepo(state, rel, prev) || headShas(rel).has(sha(prev));
+}
+
 module.exports = {
-  AGENT, REPO, MIRROR,
+  AGENT, REPO, MIRROR, STATE,
+  readState, writeState, editedInRepo, recordable, sha, key,
   MIRROR_DIRS, DENY_FILES, DENY_DIRS,
   CLAUDE_PLACEHOLDER, REPO_PLACEHOLDER,
   inventory, walk, scrub, resolvePlaceholders, detectClaude,

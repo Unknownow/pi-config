@@ -213,3 +213,23 @@ const round4Writes: [string, RegExp][] = [
 for (const [cmd, why] of round4Writes) test(`blocks: ${cmd}`, () => assert.match(readOnlyProblem(cmd) ?? "allowed", why));
 test("reads: cat x | uniq -", () => assert.equal(readOnlyProblem("cat x | uniq -"), null));
 test("reads: git log --oneline", () => assert.equal(readOnlyProblem("git log --oneline -5"), null));
+
+// git config: a key alone reads it; a key with a value, or unset/add flags, change it.
+test("reads: git config key, git config --get key, git config --list", () => {
+	assert.equal(readOnlyProblem("git config core.autocrlf"), null);
+	assert.equal(readOnlyProblem("git config --get user.name"), null);
+	assert.equal(readOnlyProblem("git config --list"), null);
+});
+
+test("blocks: git config key value, git config --unset key, git config --add key v", () => {
+	assert.match(readOnlyProblem("git config user.name x") ?? "allowed", /git config/);
+	assert.match(readOnlyProblem("git config --unset user.name") ?? "allowed", /git config/);
+	assert.match(readOnlyProblem("git config --add a.b c") ?? "allowed", /git config/);
+});
+
+test("git config subcommands: list and get read, remove-section and edit change or open", () => {
+	assert.equal(readOnlyProblem("git config list"), null);
+	assert.equal(readOnlyProblem("git config get core.autocrlf"), null);
+	assert.match(readOnlyProblem("git config remove-section user") ?? "allowed", /git config/);
+	assert.match(readOnlyProblem("git config edit") ?? "allowed", /git config/);
+});

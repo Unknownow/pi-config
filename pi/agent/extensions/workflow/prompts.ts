@@ -2,8 +2,8 @@
 
 /** Every tool call re-sends the whole conversation, so the number of calls drives the cost. */
 const BATCH = `- Batch tool calls. Each call re-sends the whole conversation, so ten small calls at 150k context re-send 1.5M tokens. Put independent reads and commands in one call (a codemode script, ctx_batch_execute, or one bash command joined with && or ;) and print only what you need. Don't spend a call on something you could have added to the previous one.`;
-/** Plan phase leaves out ctx_batch_execute: it runs unchecked shell (PowerShell on Windows). */
-const PLAN_BATCH = `- Batch tool calls. Each call re-sends the whole conversation, so ten small calls at 150k context re-send 1.5M tokens. Put independent reads and commands in one call (a codemode script, or one bash command joined with && or ;) and print only what you need. Don't spend a call on something you could have added to the previous one.`;
+/** Plan phase keeps ctx_batch_execute out of this line: its commands are checked, but PowerShell is refused often. */
+const PLAN_BATCH = `- Batch tool calls. Each call re-sends the whole conversation, so ten small calls at 150k context re-send 1.5M tokens. Put independent reads and commands in one call (a codemode script, ctx_execute for read-only analysis, or one bash command joined with && or ;) and print only what you need. Don't spend a call on something you could have added to the previous one.`;
 
 export const PLAN_PHASE = `## Workflow: PLAN phase
 You are the planner. Settle the architecture and the approach; do not change anything yet.

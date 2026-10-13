@@ -39,6 +39,7 @@ function main() {
   const overrides = loadOverrides();
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const warnings = [];
+  const state = lib.readState();
   let changed = 0;
   let same = 0;
 
@@ -48,6 +49,8 @@ function main() {
     const label = item.rel;
     const note = (line) => { if (!DRY) console.log(`          ${line}`); };
 
+    // What this machine now matches: the mirror file's bytes, whether or not it is written.
+    const mirrorBytes = fs.readFileSync(src);
     let next;
     if (item.kind === 'json') {
       const json = lib.readJson(src);
@@ -70,6 +73,7 @@ function main() {
 
     if (unchanged) {
       same++;
+      if (!DRY && lib.recordable(state, item.rel, mirrorBytes)) state[lib.key(item.rel)] = lib.sha(mirrorBytes);
       continue;
     }
     if (DRY) {
@@ -84,10 +88,13 @@ function main() {
       console.log(`  backup  ${label}.bak-${stamp}`);
     }
     fs.writeFileSync(dest, next);
+    // A hand edit in the repo is copied to this machine but not recorded: the next export keeps it out of commits.
+    if (lib.recordable(state, item.rel, mirrorBytes)) state[lib.key(item.rel)] = lib.sha(mirrorBytes);
     console.log(`  write   ${label}`);
     changed++;
   }
 
+  if (!DRY) lib.writeState(state);
   if (DRY) {
     console.log(`\nDry run — ${changed} file(s) would change, ${same} already current.`);
     return;
