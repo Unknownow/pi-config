@@ -26,3 +26,32 @@ export function isPlanReady(text: string, stoppedNormally: boolean): boolean {
 export function skipJudge(last: { role?: string; stopReason?: string } | undefined): boolean {
 	return last?.role === "assistant" && last.stopReason === "error";
 }
+
+/** True when this many failed judge rounds in a row hit the cap. A cap of 0 means no limit. */
+export function judgeCapReached(rounds: number, max: number): boolean {
+	return max > 0 && rounds >= max;
+}
+
+/** The judge reports that the approved plan itself is flawed: a finding line tagged [plan-flaw]. */
+export function hasPlanFlaw(text: string): boolean {
+	return /^\S.*\s-\s*(blocker|major|minor)\s*-\s*\[plan-flaw\]/im.test(text);
+}
+
+export interface ArbiterDecision {
+	decision: "REVISE" | "KEEP" | "ASK_USER";
+	reason: string;
+	amendment: string;
+}
+
+/** Reads the arbiter's reply. A REVISE without an amendment counts as ASK_USER; null when there is no decision. */
+export function parseArbiter(text: string): ArbiterDecision | null {
+	const m = /^\s*DECISION:\s*(REVISE|KEEP|ASK_USER)\b/im.exec(text);
+	if (!m) return null;
+	let decision = m[1].toUpperCase() as ArbiterDecision["decision"];
+	const reasonMatch = /^\s*Reason:\s*([\s\S]*?)(?=^#{1,6}\s*Plan amendment|$(?![\s\S]))/im.exec(text);
+	const reason = (reasonMatch?.[1] ?? "").trim();
+	const amendMatch = /^#{1,6}\s*Plan amendment[^\n]*\n([\s\S]*)$/im.exec(text);
+	const amendment = (amendMatch?.[1] ?? "").trim();
+	if (decision === "REVISE" && !amendment) decision = "ASK_USER";
+	return { decision, reason, amendment };
+}

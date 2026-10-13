@@ -46,7 +46,7 @@ import {
 	type Thinking,
 	type WorkflowConfig,
 } from "./config.ts";
-import { isPlanReady, shouldResume, skipJudge } from "./agent-end.ts";
+import { hasPlanFlaw, isPlanReady, judgeCapReached, parseArbiter, shouldResume, skipJudge } from "./agent-end.ts";
 import { countTokens, type Tok } from "./tokens.ts";
 import * as prompts from "./prompts.ts";
 import { pushProblem } from "./push-guard.ts";
@@ -92,6 +92,14 @@ interface FlowState {
 	commitPending?: { mode: "commit" | "push"; head: string };
 	/** Passed diffs whose flow already ended (or will, at the commit run's end). */
 	summarizedPasses?: string[];
+	/** The plan the user approved (the final plan, plus arbiter amendments); the judge and the arbiter read it. */
+	approvedPlan?: string;
+	/** The planner is writing the final execution plan; its reply becomes approvedPlan. */
+	finalizing?: boolean;
+	/** Amendments the arbiter added in this flow. */
+	planRevisions?: number;
+	/** A judge report that questions the plan, waiting for the end of the executor's turn. */
+	pendingPlanFlaw?: string;
 }
 
 interface LastJudge {
@@ -109,8 +117,13 @@ const STATE_ENTRY = "workflow-state";
 /** Display-only entry (never sent to the model) with the token breakdown of a finished flow. */
 const SUMMARY_ENTRY = "workflow-summary";
 const APPROVED = "Plan approved. Execute it now, step by step, following the workflow rules.";
+const APPROVED_FINAL = "The final plan above is approved. Execute it exactly, step by step, following the workflow rules.";
+const FIX_MESSAGE =
+	"Fix every blocker and major finding by following its Fix directions. If a finding is wrong, put it in the `disputes` parameter of your next judge call instead of changing code. Then call judge again.";
+/** The judge reads at most this much of the plan; the end (the arbiter's amendments) is kept. */
+const MAX_PLAN_CHARS = 60_000;
 const OWN_TOOLS = new Set(["explore", "advisor", "judge"]);
-const EXPLORE_REASONS = ["timeout", "too_much_output", "location_unknown", "parallel_lookups"] as const;
+const EXPLORE_REASONS = ["question", "broad_search", "timeout", "too_much_output", "location_unknown", "parallel_lookups"] as const;
 const execFileAsync = promisify(execFile);
 
 interface Diff {
@@ -176,6 +189,8 @@ export default function workflow(pi: ExtensionAPI) {
 	let consecutiveErrors = 0;
 	/** The planner's last reply has a "Plan:" section and no open question; only then does a typed "go" / "do it" approve. */
 	let planReady = false;
+	/** The planner's last finished reply, kept as the approved plan when finalizePlan is off. */
+	let lastPlanText = "";
 	let guardTokens: number | null = null;
 	let compacting = false;
 	/** The guard threshold was crossed during a run; compact when the run settles. */
@@ -260,6 +275,10 @@ export default function workflow(pi: ExtensionAPI) {
 		state.escalated = false;
 		state.judgeRounds = 0;
 		state.commitPending = undefined;
+		state.finalizing = undefined;
+		state.planRevisions = undefined;
+		state.pendingPlanFlaw = undefined;
+		if (phase === "plan") state.approvedPlan = undefined;
 		consecutiveErrors = 0;
 		if (phase !== "off") await applyRole(ctx, phase);
 		persist();
@@ -267,15 +286,18 @@ export default function workflow(pi: ExtensionAPI) {
 	}
 
 	async function approve(ctx: ExtensionContext): Promise<void> {
+		if (cfg.finalizePlan) {
+			// One more planner reply, the final execution plan, before the execute model starts.
+			planReady = false;
+			state.finalizing = true;
+			persist();
+			pi.sendMessage({ customType: "workflow-finalize", content: prompts.FINALIZE, display: true }, { triggerTurn: true, deliverAs: "followUp" });
+			return;
+		}
 		await setPhase(ctx, "execute");
-		pi.sendMessage(
-			{
-				customType: "workflow-execute",
-				content: APPROVED,
-				display: true,
-			},
-			{ triggerTurn: true, deliverAs: "followUp" },
-		);
+		state.approvedPlan = lastPlanText || undefined;
+		persist();
+		pi.sendMessage({ customType: "workflow-execute", content: APPROVED, display: true }, { triggerTurn: true, deliverAs: "followUp" });
 	}
 
 	async function escalate(ctx: ExtensionContext): Promise<void> {
@@ -427,9 +449,9 @@ export default function workflow(pi: ExtensionAPI) {
 		| { kind: "same"; prev: LastJudge };
 
 	/** Whether the judge reviews the whole diff, only the changes since its last round, or nothing (no changes since). */
-	async function reviewPlan(cwd: string, diff: Diff, full: boolean): Promise<ReviewPlan> {
+	async function reviewPlan(cwd: string, diff: Diff, full: boolean, skipSame = false): Promise<ReviewPlan> {
 		const prev = state.lastJudge;
-		if (!full && prev?.hash === diff.hash) return { kind: "same", prev };
+		if (!full && !skipSame && prev?.hash === diff.hash) return { kind: "same", prev };
 		const [tree, head] = await Promise.all([snapshotTree(cwd), git(cwd, "rev-parse", "HEAD").then((r) => r.stdout.trim())]);
 		const fullPlan = { kind: "full" as const, tree, head };
 		// A commit, rebase or branch switch since, or another base: the last round no longer lines up.
@@ -445,8 +467,9 @@ export default function workflow(pi: ExtensionAPI) {
 	 * last round plus its findings (cheaper, fresh each time). A large change that passes on a
 	 * re-review gets one final full review. `full` forces a full review.
 	 */
-	async function judge(ctx: ExtensionContext, diff: Diff, focus: string | undefined, signal?: AbortSignal, onChange?: (run: RunView) => void, full = false): Promise<JudgeResult & { run: RunView }> {
-		const plan = await reviewPlan(ctx.cwd, diff, full);
+	async function judge(ctx: ExtensionContext, diff: Diff, focus: string | undefined, signal?: AbortSignal, onChange?: (run: RunView) => void, full = false, disputes?: string): Promise<JudgeResult & { run: RunView }> {
+		// Disputes need a fresh look at the code, so they never get the "no changes" shortcut (a recheck still applies).
+		const plan = await reviewPlan(ctx.cwd, diff, full, Boolean(disputes));
 		if (plan.kind === "same") {
 			const run = view.start("judge", "no changes since the last round");
 			view.finish(run, plan.prev.verdict === "PASS", `${plan.prev.verdict} · unchanged, previous result`);
@@ -454,18 +477,29 @@ export default function workflow(pi: ExtensionAPI) {
 			seenDiffs.add(diff.hash);
 			return { verdict: plan.prev.verdict, text: `No changes since the last judge round; its result stands.\n\n${plan.prev.text}`, hash: diff.hash, usage: emptyUsage(), run };
 		}
-		let r = await judgeOnce(ctx, diff, focus, plan, signal, onChange);
+		let r = await judgeOnce(ctx, diff, focus, plan, signal, onChange, disputes);
 		const limit = cfg.judge.finalFullReviewOverChars;
 		if (r.verdict === "PASS" && plan.kind === "recheck" && limit > 0 && diff.chars > limit) {
-			const final = await judgeOnce(ctx, diff, focus, { kind: "full", tree: plan.tree, head: plan.head }, signal, onChange);
+			const final = await judgeOnce(ctx, diff, focus, { kind: "full", tree: plan.tree, head: plan.head }, signal, onChange, disputes);
 			r = { ...final, usage: addUsage(addUsage(emptyUsage(), r.usage), final.usage) };
 		}
-		if (r.verdict === "PASS") {
-			state.passedDiff = diff.hash;
-			state.judgeRounds = 0;
-			persist();
-		}
+		// A pass that questions the plan is not a pass yet: resolvePlanFlaw decides.
+		if (r.verdict === "PASS" && !hasPlanFlaw(r.text)) markPassed(diff.hash);
 		return r;
+	}
+
+	function markPassed(hash: string): void {
+		state.passedDiff = hash;
+		state.judgeRounds = 0;
+		persist();
+	}
+
+	/** The approved plan for the judge and the arbiter; a very long one loses its middle, never its amendments. */
+	function planForJudge(): string {
+		const plan = state.approvedPlan;
+		if (!plan) return "None recorded: judge the diff on its own.";
+		if (plan.length <= MAX_PLAN_CHARS) return plan;
+		return `${plan.slice(0, 45_000)}\n\n[... middle of the plan omitted ...]\n\n${plan.slice(-15_000)}`;
 	}
 
 	/** One judge run: the whole diff, or for a re-review the changes since the last round with its findings. */
@@ -476,6 +510,7 @@ export default function workflow(pi: ExtensionAPI) {
 		plan: Exclude<ReviewPlan, { kind: "same" }>,
 		signal?: AbortSignal,
 		onChange?: (run: RunView) => void,
+		disputes?: string,
 	): Promise<JudgeResult & { run: RunView }> {
 		const recheck = plan.kind === "recheck";
 		const max = cfg.judge.maxDiffChars;
@@ -483,11 +518,13 @@ export default function workflow(pi: ExtensionAPI) {
 			? [
 					prompts.JUDGE,
 					prompts.JUDGE_RECHECK,
+					`## Approved plan\n\n${planForJudge()}`,
 					`## Findings of the last round (${plan.prev.verdict})\n\n${plan.prev.text}`,
 					`## Every file in the whole change (${diff.names.length})\n\n${diff.names.join("\n")}`,
 					`## Changes since the last round\n\n${plan.delta.length > max ? `${plan.delta.slice(0, max)}\n\n[truncated; read the files for the rest]` : plan.delta}`,
 				]
-			: [prompts.JUDGE, `## Diff under review (${diff.files} file(s)${diff.truncated ? ", truncated" : ""})\n\n${diff.text}`];
+			: [prompts.JUDGE, `## Approved plan\n\n${planForJudge()}`, `## Diff under review (${diff.files} file(s)${diff.truncated ? ", truncated" : ""})\n\n${diff.text}`];
+		if (disputes) systemPrompts.push(`## Executor's disputes (claims; verify each against the code)\n\n${disputes}`);
 		const focusNote = focus ? ` Focus: ${focus}` : "";
 		view.stage = "judge";
 		const { result, run } = await runRole(
@@ -550,12 +587,12 @@ export default function workflow(pi: ExtensionAPI) {
 		name: "explore",
 		label: "Explore",
 		description:
-			"Fallback for code lookups when the normal search tools are not enough. Fans out read/grep lookups to cheap parallel reader agents. Each query is a self-contained question about the codebase (e.g. 'where is the save system serialized?'). Returns only file:line references with a short note, so you can read just the lines you need.",
-		promptSnippet: "explore: fallback parallel codebase lookups (file:line references) when normal search is not enough",
+			"Ask a cheap explorer model questions about the codebase, in parallel. Use it for open questions and multi-file searches ('how does the save system serialize state?', 'where is X handled?'); read files you already know yourself. Each query is self-contained. Returns a short answer with file:line evidence; check the evidence before relying on it.",
+		promptSnippet: "explore: ask a cheap model open questions about the codebase (answer + file:line evidence)",
 		parameters: Type.Object({
 			reason: StringEnum(EXPLORE_REASONS, {
 				description:
-					"Why the normal tools are not enough: timeout (a search timed out), too_much_output (a search returned too much to narrow), location_unknown (no idea where to look), parallel_lookups (several independent lookups, e.g. across repos)",
+					"Why: question (an open question about how something works), broad_search (a search across many files), timeout, too_much_output, location_unknown (no idea where to look), parallel_lookups (several independent lookups, e.g. across repos)",
 			}),
 			queries: Type.Array(Type.String({ description: "One self-contained lookup question" }), {
 				description: "Lookups to run in parallel",
@@ -568,7 +605,7 @@ export default function workflow(pi: ExtensionAPI) {
 			const results = await mapLimit(queries, cfg.explore.concurrency, async (q) => {
 				const { result, run } = await runRole("explore", `[${params.reason}] ${q}`, { systemPrompts: [prompts.EXPLORE], tools: cfg.explore.tools, task: q, cwd: ctx.cwd, signal }, progress.track);
 				if (result.ok) {
-					const refs = result.text.trim() === "none" ? 0 : result.text.split("\n").filter((l) => /:\d/.test(l)).length;
+					const refs = result.text.split("\n").filter((l) => /^(?:[-*]\s+)?\S+:\d+/.test(l.trim())).length;
 					view.finish(run, true, refs ? `${refs} ref${refs === 1 ? "" : "s"}` : "nothing found");
 				}
 				progress.track(run);
@@ -641,16 +678,26 @@ export default function workflow(pi: ExtensionAPI) {
 			full: Type.Optional(
 				Type.Boolean({ description: "Review the whole diff, not only the changes since the last round. Use once before committing a risky change." }),
 			),
+			disputes: Type.Optional(
+				Type.String({ description: "Findings from the last round you believe are wrong, and the evidence (file:line). The judge verifies them against the code; it does not take them on trust." }),
+			),
 		}),
 		async execute(_id, params, signal, onUpdate, ctx) {
 			const diff = await collectDiff(ctx.cwd, params.base || "HEAD");
 			if (!diff) throw new Error("not a git work tree; the judge reviews git diffs");
 			if (!diff.text) return { content: [{ type: "text", text: "No changes to review." }], details: undefined };
 			const progress = toolProgress(onUpdate);
-			const r = await judge(ctx, diff, params.focus, signal, progress.track, params.full === true);
+			const r = await judge(ctx, diff, params.focus, signal, progress.track, params.full === true, params.disputes);
 			if (r.verdict === "ERROR") throw new Error(r.text);
 			if (r.verdict === "FAIL") state.judgeRounds++;
-			return { content: [{ type: "text", text: r.text }], details: { runs: progress.snapshot(), verdict: r.verdict }, usage: r.usage };
+			let text = r.text;
+			// Every call replaces the pending report, so a stale one never outlives a clean review.
+			state.pendingPlanFlaw = hasPlanFlaw(r.text) ? r.text : undefined;
+			if (state.pendingPlanFlaw) {
+				text += "\n\nThis review questions the plan. Do not change the plan's design yourself: end your turn now; the workflow resolves it.";
+			}
+			persist();
+			return { content: [{ type: "text", text }], details: { runs: progress.snapshot(), verdict: r.verdict }, usage: r.usage };
 		},
 		renderCall(args, theme) {
 			return new Text(`${title(theme, "judge", "judge")} ${theme.fg("dim", String(args.focus ?? "current diff"))}`, 0, 0);
@@ -663,7 +710,7 @@ export default function workflow(pi: ExtensionAPI) {
 	// ----------------------------------------------------------------------
 
 	pi.on("before_agent_start", async (event) => {
-		if (state.phase === "plan") return { systemPrompt: `${event.systemPrompt}\n\n${prompts.PLAN_PHASE}` };
+		if (state.phase === "plan") return { systemPrompt: `${event.systemPrompt}\n\n${prompts.planPhase(cfg.finalizePlan)}` };
 		if (state.phase === "execute") return { systemPrompt: `${event.systemPrompt}\n\n${prompts.EXECUTE_PHASE}` };
 	});
 
@@ -813,7 +860,17 @@ export default function workflow(pi: ExtensionAPI) {
 		if (state.phase !== "plan" || event.source === "extension" || event.streamingBehavior) return { action: "continue" };
 		// Without a plan on screen, "yes, do that" answers a question; it doesn't approve anything.
 		if (!planReady || !approveRe().test(event.text.trim())) return { action: "continue" };
+		if (cfg.finalizePlan) {
+			// Same as the menu: the planner writes the final plan first, in its reply to this message.
+			planReady = false;
+			state.finalizing = true;
+			persist();
+			ctx.ui.notify("workflow: plan approved, the planner writes the final plan", "info");
+			return { action: "transform", text: `${event.text.trim()}\n\n${prompts.FINALIZE}` };
+		}
 		await setPhase(ctx, "execute");
+		state.approvedPlan = lastPlanText || undefined;
+		persist();
 		ctx.ui.notify(`workflow: plan approved, executing on ${describeRole(cfg.roles.execute)}`, "info");
 		return { action: "transform", text: `${event.text.trim()}\n\n${APPROVED}` };
 	});
@@ -843,6 +900,21 @@ export default function workflow(pi: ExtensionAPI) {
 			}
 		}
 
+		if (state.phase === "plan" && state.finalizing) {
+			state.finalizing = false;
+			const finalText = assistantText(last).trim();
+			if (last?.role === "assistant" && last.stopReason === "stop" && /^##\s*Plan:/m.test(finalText)) {
+				await setPhase(ctx, "execute");
+				state.approvedPlan = finalText;
+				persist();
+				pi.sendMessage({ customType: "workflow-execute", content: APPROVED_FINAL, display: true }, { triggerTurn: true, deliverAs: "followUp" });
+				return;
+			}
+			// Not a final plan (error, abort, or a question back): nothing starts; the normal plan handling below offers the menu again.
+			persist();
+			ctx.ui.notify("workflow: that reply is not a final plan (a '## Plan:' section). Approve again to retry.", "warning");
+		}
+
 		if (!ctx.hasUI) return;
 		const stoppedNormally = last?.role === "assistant" && last.stopReason === "stop" && assistantText(last).trim().length > 0;
 
@@ -852,6 +924,7 @@ export default function workflow(pi: ExtensionAPI) {
 			const text = assistantText(last).trim();
 			planReady = isPlanReady(text, stoppedNormally);
 			if (!stoppedNormally) return;
+			lastPlanText = text;
 			if (!cfg.planPrompt) {
 				ctx.ui.notify(`workflow: say "go" to execute on ${describeRole(cfg.roles.execute)}, or keep discussing.`, "info");
 				return;
@@ -866,6 +939,27 @@ export default function workflow(pi: ExtensionAPI) {
 
 		if (state.phase !== "execute") return;
 		if (skipJudge(last)) return;
+		if (state.pendingPlanFlaw) {
+			// The executor's own judge call questioned the plan; it was told to stop, so the workflow decides.
+			const report = state.pendingPlanFlaw;
+			state.pendingPlanFlaw = undefined;
+			persist();
+			const flawed = await collectDiff(ctx.cwd);
+			if (flawed) {
+				const outcome = await resolvePlanFlaw(ctx, report, flawed);
+				if (outcome !== "continue") return;
+				if (state.lastJudge?.hash === flawed.hash) {
+					if (state.lastJudge.verdict === "PASS") markPassed(flawed.hash);
+					else {
+						await fixOrAsk(ctx, undefined);
+						return;
+					}
+				} else {
+					// No record of that review: let reviewDiff judge this diff again.
+					seenDiffs.delete(flawed.hash);
+				}
+			}
+		}
 		if (state.commitPending) await summarizeCommit(ctx);
 		await reviewDiff(ctx, false);
 	});
@@ -924,19 +1018,15 @@ export default function workflow(pi: ExtensionAPI) {
 		}
 		// The verdict travels with the next instruction, so they reach the transcript in order.
 		const report = `**Judge: ${r.verdict}**\n\n${r.text}`;
+		if (hasPlanFlaw(r.text)) {
+			const outcome = await resolvePlanFlaw(ctx, report, diff);
+			if (outcome !== "continue") return;
+			if (r.verdict === "PASS") markPassed(diff.hash);
+		}
 		if (r.verdict === "FAIL") {
 			state.judgeRounds++;
 			persist();
-			if (state.judgeRounds >= cfg.maxJudgeRounds) {
-				pi.sendMessage({ customType: "workflow-judge", content: report, display: true }, { triggerTurn: false });
-				ctx.ui.notify(`workflow: judge failed ${state.judgeRounds} rounds in a row — your call (/flow escalate?)`, "warning");
-				summarizeFlow(`stopped: judge failed ${state.judgeRounds} rounds`, false);
-				return;
-			}
-			pi.sendMessage(
-				{ customType: "workflow-fix", content: `${report}\n\nFix the blocker and major findings above, then call judge again.`, display: true },
-				{ triggerTurn: true, deliverAs: "followUp" },
-			);
+			await fixOrAsk(ctx, report);
 			return;
 		}
 
@@ -944,6 +1034,128 @@ export default function workflow(pi: ExtensionAPI) {
 			pi.sendMessage({ customType: "workflow-judge", content: report, display: true }, { triggerTurn: false });
 			summarizePass(diff.hash);
 		}
+	}
+
+	/** After a failed judge round: send the executor back to fix, or ask what to do once the round cap is hit. */
+	async function fixOrAsk(ctx: ExtensionContext, report: string | undefined): Promise<void> {
+		if (judgeCapReached(state.judgeRounds, cfg.maxJudgeRounds)) {
+			if (report) pi.sendMessage({ customType: "workflow-judge", content: report, display: true }, { triggerTurn: false });
+			const choice = await ctx.ui.select(`Judge failed ${state.judgeRounds} rounds in a row`, ["Keep fixing", "Escalate and keep fixing", "Stop"]);
+			if (choice === "Keep fixing" || choice === "Escalate and keep fixing") {
+				if (choice !== "Keep fixing") await escalate(ctx);
+				state.judgeRounds = 0;
+				persist();
+				pi.sendMessage({ customType: "workflow-fix", content: FIX_MESSAGE, display: true }, { triggerTurn: true, deliverAs: "followUp" });
+				return;
+			}
+			ctx.ui.notify(`workflow: stopped after ${state.judgeRounds} failed judge rounds`, "warning");
+			summarizeFlow(`stopped: judge failed ${state.judgeRounds} rounds`, false);
+			return;
+		}
+		pi.sendMessage(
+			{ customType: "workflow-fix", content: report ? `${report}\n\n${FIX_MESSAGE}` : FIX_MESSAGE, display: true },
+			{ triggerTurn: true, deliverAs: "followUp" },
+		);
+	}
+
+	/**
+	 * The judge says the approved plan itself is flawed. In "ask" mode the user decides; in "auto" mode
+	 * (or on request) the arbiter does, and asks the user only when it cannot decide.
+	 * "continue": carry on with the verdict. "amended": the plan was changed and the executor is on it.
+	 * "stop": back to planning, or the flow ended.
+	 */
+	async function resolvePlanFlaw(ctx: ExtensionContext, report: string, diff: Diff): Promise<"continue" | "amended" | "stop"> {
+		let arbiter = cfg.planFlaw === "auto";
+		let canAsk = true;
+		for (;;) {
+			if (arbiter) {
+				arbiter = false;
+				const outcome = await runArbiter(ctx, report, diff);
+				if (outcome !== "ask") return outcome;
+				canAsk = false; // the arbiter had its say; offer the rest
+			}
+			if (!ctx.hasUI) {
+				pi.sendMessage({ customType: "workflow-judge", content: report, display: true }, { triggerTurn: false });
+				summarizeFlow("stopped: judge questions the plan", false);
+				return "stop";
+			}
+			const options = ["Back to planning", ...(canAsk ? ["Let the arbiter decide"] : []), "Ignore and continue", "Stop"];
+			const choice = await ctx.ui.select("Judge questions the plan", options);
+			if (choice === "Back to planning") {
+				await setPhase(ctx, "plan");
+				pi.sendMessage({ customType: "workflow-judge", content: report, display: true }, { triggerTurn: false });
+				return "stop";
+			}
+			if (choice === "Let the arbiter decide") {
+				arbiter = true;
+				continue;
+			}
+			if (choice === "Ignore and continue") {
+				// Recorded, so the next review does not raise the same flaw and ask again.
+				const flaws = report.split("\n").filter((l) => /\[plan-flaw\]/.test(l));
+				state.approvedPlan = `${state.approvedPlan ?? ""}\n\n## Plan choices upheld by the user\n${flaws.join("\n")}`;
+				persist();
+				return "continue";
+			}
+			pi.sendMessage({ customType: "workflow-judge", content: report, display: true }, { triggerTurn: false });
+			summarizeFlow("stopped: judge questions the plan", false);
+			return "stop";
+		}
+	}
+
+	/** Runs the arbiter on the judge's plan-flaw report. "ask" means it could not or may not decide. */
+	async function runArbiter(ctx: ExtensionContext, report: string, diff: Diff): Promise<"continue" | "amended" | "ask"> {
+		ctx.ui.setWorkingMessage("arbiter checking the plan…");
+		let text: string;
+		try {
+			const max = cfg.judge.maxDiffChars;
+			const { result, run } = await runRole("arbiter", "plan-flaw", {
+				systemPrompts: [prompts.ARBITER, `## Approved plan\n\n${planForJudge()}`, `## Judge report\n\n${report}`, `## Diff\n\n${diff.text.length > max ? diff.text.slice(0, max) : diff.text}`],
+				tools: cfg.arbiter.tools,
+				task: "Decide on the [plan-flaw] findings in your system prompt.",
+				cwd: ctx.cwd,
+			});
+			if (!result.ok) {
+				ctx.ui.notify(`workflow: arbiter failed: ${result.error}`, "error");
+				return "ask";
+			}
+			text = result.text;
+			view.finish(run, true, parseArbiter(text)?.decision ?? "no decision");
+		} finally {
+			ctx.ui.setWorkingMessage();
+		}
+		const d = parseArbiter(text);
+		if (!d) {
+			ctx.ui.notify("workflow: the arbiter gave no decision", "warning");
+			return "ask";
+		}
+		if (d.decision === "KEEP") {
+			state.approvedPlan = `${state.approvedPlan ?? ""}\n\n## Plan choices upheld by the arbiter\n${d.reason}`;
+			persist();
+			pi.sendMessage({ customType: "workflow-judge", content: `**Arbiter: the plan stands.**\n\n${d.reason}`, display: true }, { triggerTurn: false });
+			return "continue";
+		}
+		if (d.decision === "REVISE") {
+			const done = state.planRevisions ?? 0;
+			if (done >= cfg.maxPlanRevisions) {
+				ctx.ui.notify(`workflow: the plan was already amended ${done} time(s); asking you instead`, "warning");
+				return "ask";
+			}
+			state.planRevisions = done + 1;
+			state.approvedPlan = `${state.approvedPlan ?? ""}\n\n## Amendment ${done + 1} (arbiter)\n${d.amendment}`;
+			persist();
+			pi.sendMessage(
+				{
+					customType: "workflow-amend",
+					content: `${report}\n\n**Arbiter: the plan is amended.**\n\n${d.reason}\n\n${d.amendment}\n\nImplement this amendment exactly, fix the other blocker and major findings above, then call judge again.`,
+					display: true,
+				},
+				{ triggerTurn: true, deliverAs: "followUp" },
+			);
+			return "amended";
+		}
+		ctx.ui.notify(`workflow: the arbiter hands this to you: ${d.reason.split("\n")[0]}`, "info");
+		return "ask";
 	}
 
 	/** Remembers a passed diff's flow as ended, so later runs on the same diff don't end another one. */

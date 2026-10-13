@@ -1,7 +1,7 @@
 // node --test agent-end.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { isPlanReady, shouldResume, skipJudge } from "./agent-end.ts";
+import { hasPlanFlaw, isPlanReady, judgeCapReached, parseArbiter, shouldResume, skipJudge } from "./agent-end.ts";
 
 const empty = { role: "assistant", content: [] };
 
@@ -49,4 +49,28 @@ test("judge is skipped only on an errored reply", () => {
 	assert.equal(skipJudge({ role: "assistant", stopReason: "error" }), true);
 	assert.equal(skipJudge({ role: "assistant", stopReason: "stop" }), false);
 	assert.equal(skipJudge(undefined), false);
+});
+
+test("the judge cap: 0 means no limit", () => {
+	assert.equal(judgeCapReached(5, 5), true);
+	assert.equal(judgeCapReached(4, 5), false);
+	assert.equal(judgeCapReached(99, 0), false);
+});
+
+test("hasPlanFlaw sees a tagged finding line only", () => {
+	assert.equal(hasPlanFlaw("a.ts:3 - major - [plan-flaw] the plan loses data"), true);
+	assert.equal(hasPlanFlaw("a.ts:3 - minor - [plan-flaw] x\nVERDICT: PASS"), true);
+	assert.equal(hasPlanFlaw("a.ts:3 - major - [design] x"), false);
+	assert.equal(hasPlanFlaw("Some prose that mentions [plan-flaw] in passing."), false);
+});
+
+test("parseArbiter reads the decision, the reason and the amendment", () => {
+	const revise = parseArbiter("DECISION: REVISE\nReason: the lock is taken twice (a.ts:9).\n## Plan amendment\n1. Take the lock once in b.ts.\n2. Add a test.");
+	assert.equal(revise?.decision, "REVISE");
+	assert.match(revise?.reason ?? "", /lock is taken twice/);
+	assert.match(revise?.amendment ?? "", /^1\. Take the lock once/);
+	assert.equal(parseArbiter("DECISION: REVISE\nReason: x")?.decision, "ASK_USER");
+	assert.equal(parseArbiter("decision: keep\nReason: the judge's scenario cannot happen (c.ts:2).")?.decision, "KEEP");
+	assert.equal(parseArbiter("DECISION: ASK_USER\nReason: touches D2")?.decision, "ASK_USER");
+	assert.equal(parseArbiter("I think the plan is fine."), null);
 });

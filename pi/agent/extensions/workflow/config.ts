@@ -13,7 +13,7 @@ import type { TokenWeights } from "./tokens.ts";
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 export type Thinking = (typeof THINKING_LEVELS)[number];
 
-export const ROLES = ["plan", "execute", "explore", "advisor", "judge", "escalate"] as const;
+export const ROLES = ["plan", "execute", "explore", "advisor", "judge", "arbiter", "escalate"] as const;
 export type Role = (typeof ROLES)[number];
 
 export interface RoleSpec {
@@ -30,8 +30,14 @@ export interface WorkflowConfig {
 	contextGuardTokens: number;
 	/** At the end of an execute run with an unreviewed diff: ask to run the judge, run it, or do nothing. */
 	autoJudge: "ask" | "auto" | "off";
-	/** Judge -> fix rounds before handing back to you. */
+	/** Judge -> fix rounds in a row before the flow asks you what to do. 0 means no limit. */
 	maxJudgeRounds: number;
+	/** After approval the planner writes one more reply, the final execution plan, which is stored and given to the judge. */
+	finalizePlan: boolean;
+	/** The judge says the approved plan itself is flawed: "ask" you, or let the "auto" arbiter decide. */
+	planFlaw: "ask" | "auto";
+	/** Amendments the arbiter may add to the plan in one flow before it asks you instead. */
+	maxPlanRevisions: number;
 	/** After the judge passes: ask, commit, commit and push, or do nothing. */
 	autoCommit: "ask" | "commit" | "push" | "off";
 	/** Branches never pushed automatically; the commit stays local. */
@@ -58,6 +64,7 @@ export interface WorkflowConfig {
 	tokenWeights: TokenWeights;
 	explore: { maxQueries: number; concurrency: number; tools: string[] };
 	advisor: { tools: string[]; maxTranscriptChars: number };
+	arbiter: { tools: string[] };
 	judge: {
 		tools: string[];
 		maxDiffChars: number;
@@ -80,12 +87,16 @@ export const DEFAULTS: WorkflowConfig = {
 		explore: { model: "claude-bridge/claude-haiku-5-5", thinking: "off" },
 		advisor: { model: "claude-bridge/claude-opus-5-5", thinking: "high" },
 		judge: { model: "claude-bridge/claude-opus-5-5", thinking: "high" },
+		arbiter: { model: "claude-bridge/claude-fable-5-1", thinking: "high" },
 		escalate: { model: "claude-bridge/claude-fable-5-1", thinking: "high" },
 	},
 	startPhase: "plan",
 	contextGuardTokens: 140_000,
 	autoJudge: "auto",
-	maxJudgeRounds: 3,
+	maxJudgeRounds: 5,
+	finalizePlan: true,
+	planFlaw: "ask",
+	maxPlanRevisions: 2,
 	autoCommit: "push",
 	protectedBranches: ["main", "master"],
 	approvePattern:
@@ -99,6 +110,7 @@ export const DEFAULTS: WorkflowConfig = {
 	tokenWeights: { input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1.25 },
 	explore: { maxQueries: 8, concurrency: 4, tools: ["read", "grep", "find", "ls"] },
 	advisor: { tools: ["read", "grep", "find", "ls"], maxTranscriptChars: 1_500_000 },
+	arbiter: { tools: ["read", "grep", "find", "ls"] },
 	judge: {
 		tools: ["read", "grep", "find", "ls"],
 		maxDiffChars: 400_000,

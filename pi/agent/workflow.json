@@ -21,6 +21,10 @@
       "model": "claude-bridge/claude-opus-5-5",
       "thinking": "high"
     },
+    "arbiter": {
+      "model": "claude-bridge/claude-fable-5-1",
+      "thinking": "high"
+    },
     "escalate": {
       "model": "claude-bridge/claude-fable-5-1",
       "thinking": "high"
@@ -29,7 +33,10 @@
   "startPhase": "plan",
   "contextGuardTokens": 140000,
   "autoJudge": "auto",
-  "maxJudgeRounds": 3,
+  "maxJudgeRounds": 5,
+  "finalizePlan": true,
+  "planFlaw": "ask",
+  "maxPlanRevisions": 2,
   "autoCommit": "push",
   "protectedBranches": [
     "main",
@@ -75,6 +82,14 @@
       "ls"
     ],
     "maxTranscriptChars": 1500000
+  },
+  "arbiter": {
+    "tools": [
+      "read",
+      "grep",
+      "find",
+      "ls"
+    ]
   },
   "judge": {
     "tools": [

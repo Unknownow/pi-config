@@ -24,7 +24,7 @@ import { countTokens, type Tok, type TokenWeights } from "./tokens.ts";
 import type { SubagentEvent } from "./subagent.ts";
 
 export type Stage = "plan" | "execute" | "judge" | "commit";
-export type SubRole = "explore" | "advisor" | "judge";
+export type SubRole = "explore" | "advisor" | "judge" | "arbiter";
 
 export interface RunView {
 	id: number;
@@ -284,7 +284,7 @@ export class FlowView {
 			tools: 0,
 			tokens: zero(),
 			liveTokens: zero(),
-			stage: role === "judge" ? "judge" : this.stage,
+			stage: role === "judge" || role === "arbiter" ? "judge" : this.stage,
 		};
 		const sub = (this.flow[run.stage].subs[role] ??= { tokens: zero(), runs: 0 });
 		sub.runs++;

@@ -21,18 +21,16 @@ not raw data.
 - On Windows `ctx_batch_execute` and `ctx_execute` with `language: shell` run PowerShell; for bash
   use the `bash` tool, or `tools.bash` from a `codemode` script.
 
-## Code search: explore only as a fallback
+## Code search: explore for open questions, read known files yourself
 
-Search with the normal tools first: context-mode, `grep`, `read`. Use the `explore` tool only when
-they are not enough:
+Read files you already know directly, with the normal tools: context-mode, `grep`, `read`. Use the
+`explore` tool for open questions and multi-file searches ("how does X flow through the code?",
+"where is Y handled?", several independent lookups at once, for example across repos), and when a
+search timed out or returned too much to narrow down. It runs a cheap model that decides for itself
+how much to read, and answers with a short answer plus `file:line` evidence.
 
-- a search timed out;
-- a search returned too much to narrow down;
-- you don't know where to look and would need several search rounds;
-- you need several independent lookups at once (for example across repos).
-
-Each `explore` call names its `reason`. Its `file:line` answers are pointers: check the lines before
-relying on them.
+Each `explore` call names its `reason`. Check the evidence before relying on it, and read the exact
+lines yourself when you are about to write a plan or an edit from them.
 
 ## Advisor: only at real decision points
 

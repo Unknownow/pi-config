@@ -151,6 +151,21 @@ Three behaviours worth knowing:
 
 Tests for the sync rules: `node --test bin/sync.test.js`.
 
+### Secret guard
+
+The deny list only names a few files, so two more layers keep credentials out of commits:
+
+- **Export skips them.** A file whose name looks like a credential (`*oauth*`, `*credentials*`, `*secret*`,
+  `*.pem`, `*.key`, `id_rsa`, ...) or whose content holds a key (private keys, `sk-`, GitHub, Slack, AWS,
+  Google, npm and GitLab tokens, JWTs, a literal `apiKey`/`token`/`password` value) is not copied. The
+  export prints `SKIPPED <file> (why)` and the extension warns once. Placeholders (`__X__`,
+  `${VAR}`, `Bearer ${TOKEN}`) are fine. Source and docs (`.js`, `.ts`, `.md`, ...) are exempt from the name rule
+  but not from the content scan.
+- **The pre-commit hook refuses them.** `.githooks/pre-commit` runs `bin/check-secrets.js --staged` on every
+  commit in this repo, including hand commits and the sync's own. `import` and the extension set
+  `core.hooksPath` to `.githooks`; on a checkout that never ran either, run `git config core.hooksPath .githooks`.
+  A false positive: unstage the file, or adjust `secretsIn` in `bin/lib.js`.
+
 `import.js` backs up any file it overwrites to `<name>.bak-<timestamp>` next to the original, and
 compares JSON by meaning rather than bytes — re-running it when nothing changed writes nothing.
 

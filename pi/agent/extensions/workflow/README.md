@@ -1,11 +1,15 @@
 # workflow
 
 Each kind of work gets its own model. Every model and thinking level is set in `~/.pi/agent/workflow.json`.
+The workflow is for software: system design, architecture and code. (The name stays `workflow`: the
+pi-config sync never deletes, so renaming the folder would leave the old extension loaded beside the new one.)
 
 ```
-you -> plan (Opus 5.5, high) -> approve -> execute (Sonnet 5.5, medium) -> judge (Opus 5.5) -> commit
-                                              |-- explore (Haiku 5.5, parallel): file:line only
-                                              `-- advisor (Opus 5.5): reads the full transcript
+you <-> plan (Opus 5.5, high) -> approve -> final plan (Opus) -> execute (Sonnet 5.5, medium) -> judge (Opus 5.5) -> commit
+                                                              ^                          |-- explore (Haiku 5.5, parallel): answer + file:line
+                                                              |                          `-- advisor (Opus 5.5): reads the full transcript
+                                                              `-- fix findings <------- judge (separate session; sees the plan and the diff, not the discussion)
+                                             judge says the plan is flawed -> you decide, or the arbiter (Fable 5.1) does
 escalation (manual): /flow escalate -> Fable 5.1 (high), /flow back
 context guard:       compacts at ~140k tokens on every model, after the run settles
 plan is read-only:   bash refuses commands that change files, git or GitHub
@@ -13,11 +17,12 @@ plan is read-only:   bash refuses commands that change files, git or GitHub
 
 | Role | Runs as | When |
 |---|---|---|
-| `plan` | main session model; edit/write off, bash read-only | new sessions start here (`startPhase`) |
+| `plan` | main session model; edit/write off, bash read-only | new sessions start here (`startPhase`). Discuss, investigate, agree; after approval it writes the final execution plan (`finalizePlan`) |
 | `execute` | main session model | after you approve the plan |
-| `explore` | `explore` tool, parallel sub-`pi` processes | fallback when normal search is not enough; every call names its `reason` |
+| `explore` | `explore` tool, parallel sub-`pi` processes | plan and execute send open questions and multi-file searches to it; it decides how much to read and answers with `Answer:` plus `Evidence:` (file:line). Known files are read directly. Judge and advisor do not use it |
 | `advisor` | `advisor` tool, sub-`pi` with the whole transcript | choosing an approach, after an error repeats (auto-nudged after `repeatedErrorThreshold` failures), before "done" |
 | `judge` | `judge` tool, sub-`pi` with the git diff | the diff is ready; when a run ends with an unreviewed diff it asks (`autoJudge`) |
+| `arbiter` | sub-`pi` with the plan, the judge's report and the diff | the judge questions the plan and `planFlaw` is `auto` (or you pick "Let the arbiter decide") |
 | `escalate` | main session model | `/flow escalate` |
 
 ## Hands-off run
@@ -31,13 +36,18 @@ reply had no "Plan:" section or ended with a question (it answers a question). E
 after approval runs on its own:
 
 ```
-"go" -> execute (Sonnet) -> judge (auto) -> FAIL: fix and judge again (max 3 rounds)
-                                         -> PASS: commit -> push the current branch
+"go" -> final plan (Opus) -> execute (Sonnet) -> judge (auto) -> FAIL: fix and judge again (menu after 5 rounds)
+                                                              -> PASS: commit -> push the current branch
 ```
 
 - **Push guard:** it never pushes `protectedBranches` (`main`, `master`) or a detached HEAD. It
   commits there and tells you. It never force-pushes or uses `--no-verify`, and stops if a hook fails.
-- **Where it stops for you:** when the judge fails `maxJudgeRounds` times in a row, or something errors.
+  This is enforced, not only asked for: while executing, a `git push` is refused unless it is the
+  workflow's own commit-and-push step, and force pushes, deletes, `+refspec`s, pushes to a protected
+  branch, `--no-verify` and changes to `core.hooksPath` / `GIT_CONFIG_*` are always refused (`push-guard.ts`).
+  Like the plan-phase checks it reads the command text: a guard against a drifting executor, not a sandbox.
+- **Where it stops for you:** when the judge fails `maxJudgeRounds` (5; 0 means no limit) times in a
+  row it asks: keep fixing, escalate and keep fixing, or stop. It also stops when something errors.
 - **Judge rounds after the first** review only what changed since the last round: a fresh judge gets
   that round's findings, the changes since, and the names of every file in the change, at
   `judge.recheckThinking` (medium). Calling it again with no changes returns the last result. It
@@ -45,8 +55,42 @@ after approval runs on its own:
   over `judge.recheckMaxShare` (half) of the whole diff. A change over
   `judge.finalFullReviewOverChars` (80,000 characters) that passes a re-review gets one final full
   review; the judge tool's `full: true` forces one. `"judge": { "recheck": false }` turns it off.
+- **Disputes:** if the executor thinks a finding is wrong it passes the finding and its file:line
+  evidence in the judge tool's `disputes` parameter. The judge treats that as a claim, decides it from
+  the code, and drops the finding only if the code shows the executor is right.
 - **Turning steps back to manual:** set `"autoJudge": "ask"`, `"autoCommit": "ask"` (or `"commit"` /
   `"off"`), and `"planPrompt": false` for a "say go" hint instead of the Approve menu.
+
+## The plan, the judge and the arbiter
+
+- **Plan phase** is for discussion: investigate, answer questions, weigh options, agree. Replies end
+  with a short `Plan:` section once the talk is heading toward a change. When you approve, the
+  planner writes the **final plan** in one more reply (`finalizePlan`, default on): goal and
+  non-goals, your decisions (D1, D2, ...), facts with file:line, a design section for changes that
+  add or reshape components, steps, tests, "done when", risks. The execute model follows it literally
+  and the judge checks the result against it. With `finalizePlan: false` the last `Plan:` reply is used.
+- **Execute** follows the plan exactly, in order. It stops and says so when a step cannot be done as
+  written. It never commits or pushes.
+- **The judge** runs in its own session. It sees the approved plan and the diff, not the discussion,
+  and assumes the change is wrong. What it trusts:
+
+  | Input | Trust |
+  |---|---|
+  | Goal, non-goals, your decisions, "done when" | **Trusted** as the target. It does not reopen them (unless unsafe or self-contradicting: `[plan-flaw]`) |
+  | The plan's steps, file:line facts, design reasoning | **Claims to verify** against the code. "The plan says so" is never evidence. Code that follows the plan but misses the target is a finding |
+  | The diff, comments, test names, "tests pass", the executor's disputes, the `focus` line | **Assumed wrong / framing only** |
+  | The previous judge round | **Untrusted too**: re-checked, dropped when the code disproves it |
+
+  Without a plan it cannot see work that was never done, and it may contradict decisions you made.
+  It checks correctness, the plan, security, the long run (scale, drift, platforms), and design
+  (coupling, interfaces, migrations), and each finding has a `Why:` and a `Fix:` a weaker model can follow.
+  Limits: it reads but cannot run code, and it shares a model with the planner by default.
+- **`[plan-flaw]`** findings mean the approved plan itself is wrong. They do not count toward FAIL and
+  are never fixed by the executor. `planFlaw: "ask"` (default) shows a menu: back to planning, let the
+  arbiter decide, ignore and continue, stop. `"auto"` lets the **arbiter** (Fable 5.1 by default, a
+  different model from the planner) decide from the code: `REVISE` appends a numbered amendment to the
+  plan (at most `maxPlanRevisions`, 2), `KEEP` records why the plan stands, `ASK_USER` shows the menu.
+  The arbiter cannot change your decisions or the goal. A plan flaw blocks the commit until resolved.
 
 ## Plan phase is read-only
 
@@ -70,17 +114,26 @@ its plan and hand over, even when you said "fix it" or "do it for me".
   (`node -e`, `python`), and any command not on the list.
 - **More commands:** add regexes over the command's words to `planBashAllow` (default: `unity cmd
   editor_status` / `console_status`). `"planReadOnlyBash": false` turns the check off.
+- Also allowed on purpose: `git fetch` (it only updates remote-tracking refs), and the knowledge-base tools
+  `ctx_index` / `ctx_fetch_and_index`. `git help <topic>` is refused (it opens a viewer), as are `rg --pre`,
+  `ag --pager`, `less -o`, `date -s`, `hostname <name>`, `git diff --ext-diff` / `--textconv`.
+- A repository's own git config (`core.fsmonitor`, `diff.external`, textconv) can still run programs on a
+  plain `git status` / `git diff`: plan an untrusted repo in a throwaway clone.
 - **context-mode tools** (`readonly-tools.ts`) are checked too. `ctx_execute` and
   `ctx_execute_file` with `shell` language get the shell check. With `javascript` or `python`
   they are refused when the code writes, deletes, runs programs, `eval`s, or sends a POST, PUT,
-  PATCH or DELETE request. Other languages are refused. `ctx_batch_execute` checks each command.
+  PATCH or DELETE request, or build names at runtime (`fs['wri'+'te']`, `require(x)`, `getattr`, a
+  `open()` mode that is not a plain read literal). Other languages are refused. `ctx_batch_execute`
+  checks each command. MCP tools are also refused when an argument holds a statement that changes data
+  (`INSERT`, `UPDATE ... SET`, `DELETE FROM`, `DROP`, a GraphQL `mutation`, ...).
   `ctx_purge` is refused.
 - Shell text on Windows: `ctx_execute` and `ctx_batch_execute` run PowerShell, so a command is
   checked as a shell command, and PowerShell-only cmdlets (`Set-Content`, `Remove-Item`, ...) are
   refused because they are not on the list.
-- It is a guard against the planner drifting into execution, not a sandbox. Code built at runtime
-  (`eval` of a string, an aliased import) can get past the word checks.
-- Tests: `node --test agent-end.test.ts readonly-bash.test.ts readonly-tools.test.ts tokens.test.ts`.
+- It is a guard against the planner drifting into execution, not a sandbox. The code checks are
+  regexes: a determined disguise (a computed lookup on an alias of `require('fs')`, say) can still get
+  past them.
+- Tests: `node --experimental-strip-types --test agent-end.test.ts readonly-bash.test.ts readonly-tools.test.ts tokens.test.ts push-guard.test.ts`.
 
 ## What you see
 
@@ -108,7 +161,7 @@ counts the current flow; `/flow status` lists the whole session. Both survive a 
 
 When a flow ends, a summary card goes into the transcript. It is display-only and never sent to the
 model. A flow ends when the commit step finishes, when the judge passes and nothing gets committed, or
-when the automatic judge loop stops after `maxJudgeRounds` failures. Then the widget starts again
+when you stop at the judge-rounds or plan-flaw menu. Then the widget starts again
 from zero:
 
 ```
