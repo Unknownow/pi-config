@@ -25,5 +25,10 @@
   "extensions": [
     "__PI_CONFIG_REPO__/extension"
   ],
-  "followUpMode": "one-at-a-time"
+  "followUpMode": "one-at-a-time",
+  "compaction": {
+    "enabled": true,
+    "reserveTokens": 40000,
+    "keepRecentTokens": 10000
+  }
 }
