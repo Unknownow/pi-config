@@ -3,6 +3,9 @@
   "theme": "dark",
   "defaultProvider": "claude-bridge",
   "defaultModel": "claude-opus-5-5",
+  "defaultTools": [
+    "+codemode"
+  ],
   "images": {
     "blockImages": false
   },
