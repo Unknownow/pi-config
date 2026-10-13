@@ -46,7 +46,7 @@ import {
 	type Thinking,
 	type WorkflowConfig,
 } from "./config.ts";
-import { hasPlanFlaw, isPlanReady, judgeCapReached, parseArbiter, shouldResume, skipJudge } from "./agent-end.ts";
+import { afterPass, fixableFindings, hasPlanFlaw, isPlanReady, judgeCapReached, minorFixOpen, parseArbiter, shouldResume, skipJudge } from "./agent-end.ts";
 import { countTokens, type Tok } from "./tokens.ts";
 import * as prompts from "./prompts.ts";
 import { pushProblem } from "./push-guard.ts";
@@ -86,6 +86,10 @@ interface FlowState {
 	/** Main session is on the escalate model instead of the phase's own. */
 	escalated: boolean;
 	judgeRounds: number;
+	/** Rounds spent fixing minor findings of passed reviews since the last commit. */
+	minorRounds?: number;
+	/** Diff the last minor-fix message was sent for. */
+	minorSentFor?: string;
 	/** Hash of the last diff the judge passed. */
 	passedDiff?: string;
 	/** The last judge round, so the next one reviews only what changed since. */
@@ -140,7 +144,7 @@ const SUMMARY_ENTRY = "workflow-summary";
 const APPROVED = "Plan approved. Execute it now, step by step, following the workflow rules.";
 const APPROVED_FINAL = "The final plan above is approved. Execute it exactly, step by step, following the workflow rules.";
 const FIX_MESSAGE =
-	"Fix every blocker and major finding by following its Fix directions. If a finding is wrong, put it in the `disputes` parameter of your next judge call instead of changing code. Then call judge again.";
+	"Fix every blocker and major finding by following its Fix directions, and the minor ones too. If a finding is wrong, put it in the `disputes` parameter of your next judge call instead of changing code. Then call judge again.";
 /** The judge reads at most this much of the plan; the end (the arbiter's amendments) is kept. */
 const MAX_PLAN_CHARS = 60_000;
 const OWN_TOOLS = new Set(["explore", "advisor", "judge"]);
@@ -299,6 +303,8 @@ export default function workflow(pi: ExtensionAPI) {
 		state.phase = phase;
 		state.escalated = false;
 		state.judgeRounds = 0;
+		state.minorRounds = 0;
+		state.minorSentFor = undefined;
 		state.commitPending = undefined;
 		state.finalizing = undefined;
 		state.planRevisions = undefined;
@@ -770,7 +776,7 @@ export default function workflow(pi: ExtensionAPI) {
 		name: "judge",
 		label: "Judge",
 		description:
-			"Adversarial review of the current uncommitted diff (plus untracked files) by a stronger model that assumes the change is wrong. Returns one line per finding and VERDICT: PASS or FAIL. Call it when the diff is ready; fix blocker and major findings and call it again. Rounds after the first review only the changes since the last round, with its findings. Do not commit before PASS.",
+			"Adversarial review of the current uncommitted diff (plus untracked files) by a stronger model that assumes the change is wrong. Returns one line per finding and VERDICT: PASS or FAIL. Call it when the diff is ready; fix every finding (minor ones too) and call it again. Rounds after the first review only the changes since the last round, with its findings. Do not commit before PASS.",
 		promptSnippet: "judge: adversarial review of the current diff; must PASS before commit",
 		parameters: Type.Object({
 			focus: Type.Optional(Type.String({ description: "What the change is meant to do, or areas to scrutinize" })),
@@ -1067,6 +1073,8 @@ export default function workflow(pi: ExtensionAPI) {
 	async function summarizeCommit(ctx: ExtensionContext): Promise<void> {
 		const { mode, head } = state.commitPending!;
 		state.commitPending = undefined;
+		state.minorRounds = 0;
+		state.minorSentFor = undefined;
 		const now = (await git(ctx.cwd, "rev-parse", "HEAD")).stdout.trim();
 		let shown: boolean;
 		if (!now || now === head) shown = summarizeFlow("commit step ended without a commit", false);
@@ -1093,7 +1101,16 @@ export default function workflow(pi: ExtensionAPI) {
 		}
 		// Already passed, e.g. the executor called judge itself: straight to commit.
 		if (!manual && diff.hash === state.passedDiff) {
-			if (!(await finishPassed(ctx, diff.hash))) summarizePass(diff.hash);
+			const prior = state.lastJudge?.hash === diff.hash ? state.lastJudge.text : "";
+			const open = minorFixOpen({
+				committed: committedDiffs.has(diff.hash),
+				commitPending: !!state.commitPending,
+				summarized: !!state.summarizedPasses?.includes(diff.hash),
+				sentFor: state.minorSentFor,
+				hash: diff.hash,
+			});
+			if (open && fixMinorFindings(prior, diff.hash)) return;
+			if (!(await finishPassed(ctx, diff.hash, prior ? `**Judge: PASS**\n\n${prior}` : undefined))) summarizePass(diff.hash);
 			return;
 		}
 		if (!manual && (cfg.autoJudge === "off" || seenDiffs.has(diff.hash))) return;
@@ -1130,6 +1147,7 @@ export default function workflow(pi: ExtensionAPI) {
 			return;
 		}
 
+		if (fixMinorFindings(r.text, diff.hash, report)) return;
 		if (!(await finishPassed(ctx, diff.hash, report))) {
 			pi.sendMessage({ customType: "workflow-judge", content: report, display: true }, { triggerTurn: false });
 			summarizePass(diff.hash);
@@ -1258,6 +1276,27 @@ export default function workflow(pi: ExtensionAPI) {
 		return "ask";
 	}
 
+	/** A pass with findings goes back for a fix round, up to maxMinorRounds. True if it sent the fix message. */
+	function fixMinorFindings(text: string, hash: string, report?: string): boolean {
+		const findings = fixableFindings(text);
+		// Same diff as the last fix message: the executor skipped the findings, so don't ask again.
+		if (state.minorSentFor === hash) return false;
+		if (afterPass(findings, state.minorRounds ?? 0, cfg.maxMinorRounds) !== "fix") return false;
+		state.minorRounds = (state.minorRounds ?? 0) + 1;
+		state.minorSentFor = hash;
+		persist();
+		const shown = report ?? `**Judge: PASS**\n\n${text}`;
+		pi.sendMessage(
+			{
+				customType: "workflow-fix",
+				content: `${shown}\n\nThe judge passed with ${findings} minor finding(s) to fix. Fix them by following their Fix directions, or put a wrong one in the \`disputes\` parameter of your next judge call instead of changing code. Then call judge again.`,
+				display: true,
+			},
+			{ triggerTurn: true, deliverAs: "followUp" },
+		);
+		return true;
+	}
+
 	/** Remembers a passed diff's flow as ended, so later runs on the same diff don't end another one. */
 	function markPassSummarized(hash: string): void {
 		state.summarizedPasses = [...(state.summarizedPasses ?? []).filter((h) => h !== hash), hash].slice(-20);
@@ -1265,6 +1304,8 @@ export default function workflow(pi: ExtensionAPI) {
 
 	/** The flow ends at a pass that won't be committed (autoCommit off, or "Not yet"). */
 	function summarizePass(hash: string): void {
+		state.minorRounds = 0;
+		state.minorSentFor = undefined;
 		if (state.summarizedPasses?.includes(hash)) return;
 		markPassSummarized(hash);
 		view.stage = "execute";

@@ -1,7 +1,7 @@
 // node --test agent-end.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { hasPlanFlaw, isPlanReady, judgeCapReached, parseArbiter, shouldResume, skipJudge } from "./agent-end.ts";
+import { afterPass, fixableFindings, hasPlanFlaw, isPlanReady, judgeCapReached, minorFixOpen, parseArbiter, shouldResume, skipJudge } from "./agent-end.ts";
 
 const empty = { role: "assistant", content: [] };
 
@@ -42,6 +42,19 @@ test("plan is ready with a Plan heading and no trailing question", () => {
 	assert.equal(isPlanReady("**Plan** \u2014 mode is on", true), false);
 	assert.equal(isPlanReady("**Plan**: mode is on", true), false);
 	assert.equal(isPlanReady("## Planning notes\nreading first", true), false);
+	assert.equal(isPlanReady("**Plan:** mode is on", true), false);
+	assert.equal(isPlanReady("**Plan \u2014** mode", true), false);
+	assert.equal(isPlanReady("Plan: mode is on, so I can only read files.", true), false);
+	assert.equal(isPlanReady("**Plan** to read the config first", true), false);
+	assert.equal(isPlanReady("_plan_ is to look at X first.", true), false);
+	assert.equal(isPlanReady("## Plan not ready yet", true), false);
+	assert.equal(isPlanReady("## Plan: mode switch redesign\n1. x", true), true);
+	assert.equal(isPlanReady("## Plan \u2014 mode toggle cleanup\n1. x", true), true);
+	assert.equal(isPlanReady("## Plan (not touching the API)\n1. x", true), true);
+	assert.equal(isPlanReady("## Plan \u2014 not including tests\n1. x", true), true);
+	assert.equal(isPlanReady("## Plan: pending\nreading", true), false);
+	// Known trade-off: "Plan mode <word>" reads as a plan heading, only "Plan mode" alone or "Plan mode is on" is a notice.
+	assert.equal(isPlanReady("## Plan mode restrictions\n1. x", true), true);
 	assert.equal(isPlanReady("Plan:\n1. x", false), false);
 });
 
@@ -73,4 +86,32 @@ test("parseArbiter reads the decision, the reason and the amendment", () => {
 	assert.equal(parseArbiter("decision: keep\nReason: the judge's scenario cannot happen (c.ts:2).")?.decision, "KEEP");
 	assert.equal(parseArbiter("DECISION: ASK_USER\nReason: touches D2")?.decision, "ASK_USER");
 	assert.equal(parseArbiter("I think the plan is fine."), null);
+});
+
+test("fixableFindings skips knowledge deviations, plan flaws and indented lines", () => {
+	assert.equal(fixableFindings("a.ts:3 - minor - [bug] x\n  Why: y\n  Fix: z\nVERDICT: PASS"), 1);
+	assert.equal(fixableFindings("a.ts:3 - minor - [knowledge r1] deviation from a recommended rule\nVERDICT: PASS"), 0);
+	assert.equal(fixableFindings("a.ts:3 - minor - [plan-flaw] x\nVERDICT: PASS"), 0);
+	assert.equal(fixableFindings("  Fix: split the file - minor - and retest\nVERDICT: PASS"), 0);
+	assert.equal(fixableFindings("a.ts:1 - minor - [design] a\r\nb.ts:2 - minor - [test] b\r\nVERDICT: PASS"), 2);
+	assert.equal(fixableFindings("VERDICT: PASS"), 0);
+});
+
+test("a passed diff gets one minor-fix round, not after commit, flow end or an earlier message", () => {
+	const open = { committed: false, commitPending: false, summarized: false, hash: "h" };
+	assert.equal(minorFixOpen(open), true);
+	assert.equal(minorFixOpen({ ...open, committed: true }), false);
+	assert.equal(minorFixOpen({ ...open, commitPending: true }), false);
+	// autoCommit off: the flow ended on this diff, so a later agent_end must not ask again
+	assert.equal(minorFixOpen({ ...open, summarized: true }), false);
+	assert.equal(minorFixOpen({ ...open, sentFor: "h" }), false);
+	assert.equal(minorFixOpen({ ...open, sentFor: "other" }), true);
+});
+
+test("a pass with findings is fixed while rounds are left, then committed", () => {
+	assert.equal(afterPass(0, 0, 2), "commit");
+	assert.equal(afterPass(2, 0, 2), "fix");
+	assert.equal(afterPass(1, 1, 2), "fix");
+	assert.equal(afterPass(1, 2, 2), "commit");
+	assert.equal(afterPass(3, 0, 0), "commit");
 });

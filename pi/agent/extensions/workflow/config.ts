@@ -51,6 +51,8 @@ export interface WorkflowConfig {
 	planFlaw: "ask" | "auto";
 	/** Amendments the arbiter may add to the plan in one flow before it asks you instead. */
 	maxPlanRevisions: number;
+	/** Extra judge -> fix rounds spent on minor findings after a pass, before committing anyway. 0 commits at once. */
+	maxMinorRounds: number;
 	/** After the judge passes: ask, commit, commit and push, or do nothing. */
 	autoCommit: "ask" | "commit" | "push" | "off";
 	/** Branches never pushed automatically; the commit stays local. */
@@ -108,6 +110,7 @@ export const DEFAULTS: WorkflowConfig = {
 	contextGuardTokens: 140_000,
 	autoJudge: "auto",
 	maxJudgeRounds: 5,
+	maxMinorRounds: 2,
 	finalizePlan: true,
 	planFlaw: "ask",
 	maxPlanRevisions: 2,

@@ -46,7 +46,7 @@ If a step can't be done as written, or the plan is wrong, stop and explain. Don'
 ${BATCH}
 - Reading: read the files the plan names directly. Use the \`explore\` tool for open questions and multi-file lookups (it answers with file:line evidence on a cheap model); check its evidence before relying on it.
 - Decision points: call \`advisor\` only when you must pick between approaches with real consequences, or after an error repeats. Not for routine steps or to check finished work. It reads the whole transcript, so each call is expensive; follow its guidance or say why not.
-- When done, run the plan's tests, then call \`judge\` with \`focus\` set to the plan's title. Fix every blocker and major finding by following its Fix directions. If a finding is wrong, don't change code for it: put the finding and your file:line evidence in the judge tool's \`disputes\` parameter on the next call. Then call \`judge\` again.
+- When done, run the plan's tests, then call \`judge\` with \`focus\` set to the plan's title. Fix every blocker and major finding by following its Fix directions, and the minor ones too (except knowledge deviations, below). If a finding is wrong, don't change code for it: put the finding and your file:line evidence in the judge tool's \`disputes\` parameter on the next call. Then call \`judge\` again.
 - A finding "[knowledge <id>] deviation from a recommended rule" is minor: you don't have to change the code for it. If you keep the code on purpose, give the reason in \`disputes\` on your next judge call; deviations go into the commit message.
 - Never change the plan's design to satisfy a [plan-flaw] finding. End your turn; the workflow resolves it.
 - Never commit or push: the workflow does that after the judge passes, and a push of your own is refused.
@@ -95,7 +95,7 @@ Then a final line: VERDICT: PASS or VERDICT: FAIL
 FAIL if there is any blocker or major finding that is not a [plan-flaw]. blocker: wrong results, data loss or a security hole. major: a likely bug, or a design problem that will cost real rework. minor: worth fixing, not worth another round. No praise, no style nits. If you find nothing, write only the verdict line.`;
 
 export const JUDGE_RECHECK = `This is a re-review. An earlier round reviewed the whole change and reported the findings below; the code has changed since. You get only the changes since that round, plus the names of every file in the whole change.
-The last round could be wrong too. Check that each blocker and major finding is fixed, re-verify any finding before you report it again, and drop findings the code disproves. If the executor disputes a finding, decide it from the code: drop it only if the code shows the executor is right.
+The last round could be wrong too. Check that each previous finding is fixed, minor ones included, re-verify any finding before you report it again, and drop findings the code disproves. If the executor disputes a finding, decide it from the code: drop it only if the code shows the executor is right.
 Look for problems the new changes introduce, including in code that calls them or that they call: read those files when a change could affect them.
 Report a previous finding again only if it is still there. Use the same output format, including Why and Fix; the verdict covers the whole change as it is now.`;
 

@@ -46,6 +46,9 @@ after approval runs on its own:
   workflow's own commit-and-push step, and force pushes, deletes, `+refspec`s, pushes to a protected
   branch, `--no-verify` and changes to `core.hooksPath` / `GIT_CONFIG_*` are always refused (`push-guard.ts`).
   Like the plan-phase checks it reads the command text: a guard against a drifting executor, not a sandbox.
+- **Minor findings:** a passed review with fixable minor findings goes back to the executor for up to `maxMinorRounds`
+  (default 2, `0` commits at once) fix rounds, then commits anyway. Fix them, or dispute a wrong one. `[knowledge ...]` and
+  `[plan-flaw]` findings never start a round.
 - **Where it stops for you:** when the judge fails `maxJudgeRounds` (5; 0 means no limit) times in a
   row it asks: keep fixing, escalate and keep fixing, or stop. It also stops when something errors.
 - **Judge rounds after the first** review only what changed since the last round: a fresh judge gets
