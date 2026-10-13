@@ -14,12 +14,12 @@ export function shouldResume(overflowRetry: boolean, last: { role?: string; cont
 
 /**
  * A typed "go" approves only a finished plan: the reply stopped normally, has a "Plan"
- * heading or bold line (text after it is fine), and does not end on a question.
+ * heading or bold line (Plan, plan or PLAN; text after it is fine; a bare line needs "Plan:" or "Plan ("), and does not end on a question.
  */
 export function isPlanReady(text: string, stoppedNormally: boolean): boolean {
 	if (!stoppedNormally) return false;
 	const t = text.trim();
-	return /^\s*(?:#+\s*[*_]*Plan\b|[*_]+Plan\b|Plan\s*[:(])/im.test(t) && !/\?[\s*_)"'`]*$/.test(t);
+	return /^\s*(?:#+\s*[*_]*(?:[Pp]lan|PLAN)[*_]*\s*(?:[:(]|$)|[*_]+(?:[Pp]lan|PLAN)[*_]*\s*(?:[:(]|$)|(?:Plan|PLAN)\s*[:(])/m.test(t) && !/\?[\s*_)"'`]*$/.test(t);
 }
 
 /** The judge runs after an execute reply unless the reply errored. */

@@ -21,6 +21,16 @@ test("plan is ready with a Plan heading and no trailing question", () => {
 	assert.equal(isPlanReady("Plan:\n1. do it\n\nOpen question: which db?", true), false);
 	assert.equal(isPlanReady("Plan:\n1. x\n\n**Which db?**", true), false);
 	assert.equal(isPlanReady("Here is an explanation of the planning", true), false);
+	assert.equal(isPlanReady("Plan mode is on, so I can only read files.", true), false);
+	assert.equal(isPlanReady("plan: none yet, reading X first.\n1. x", true), false);
+	assert.equal(isPlanReady("PLAN: x\n1. x", true), true);
+	assert.equal(isPlanReady("## plan\n1. x", true), true);
+	assert.equal(isPlanReady("**plan**\n1. x", true), true);
+	assert.equal(isPlanReady("## Plan\r\n1. x\r\n", true), true);
+	assert.equal(isPlanReady("Intro\r\n**Plan:**\r\n1. x", true), true);
+	assert.equal(isPlanReady("Plan:\r\n1. x\r\nWhich db?\r\n", true), false);
+	assert.equal(isPlanReady("**Plan** mode is on, so I can only read files.", true), false);
+	assert.equal(isPlanReady("## Plan mode\nreading first", true), false);
 	assert.equal(isPlanReady("Plan:\n1. x", false), false);
 });
 
