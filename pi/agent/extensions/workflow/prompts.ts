@@ -11,7 +11,7 @@ You are the planner. Settle the architecture and the approach; do not change any
 export const EXECUTE_PHASE = `## Workflow: EXECUTE phase
 You are the execution loop: write the code and run the tests for the approved plan.
 - Reading and searching: use the \`explore\` tool for anything wider than one or two files. It runs cheap parallel readers and returns file:line references. Then read only the lines you need.
-- Decision points: call \`advisor\` when you must pick between approaches, after an error repeats, and before you say you are done. It reads the whole transcript; follow its guidance or say why not.
+- Decision points: call \`advisor\` only when you must pick between approaches with real consequences, or after an error repeats. Not for routine steps or to check finished work. It reads the whole transcript, so each call is expensive; follow its guidance or say why not.
 - When the diff is ready: call \`judge\`. Fix every blocker and major finding, then call \`judge\` again. Do not commit or push yourself: once the judge passes, the workflow handles the commit.
 - Keep changes scoped to the plan. If the plan turns out to be wrong, stop and say so.`;
 

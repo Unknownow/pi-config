@@ -15,3 +15,10 @@ not raw data.
   `grep -n`. Don't dump whole files, long diffs or full logs "to have a look".
 - **Too little?** Narrow the next query; don't fall back to printing everything.
 - On Windows `ctx_batch_execute` runs PowerShell; for bash use `ctx_execute` with `language: shell`.
+
+## Advisor: only at real decision points
+
+The advisor reads the whole session transcript, so each call costs about as much as the session
+so far. Call it only when choosing between approaches with real consequences, or when the same
+error keeps repeating. Not for routine steps, small or low-risk changes, or to check finished
+work: the judge reviews the diff.

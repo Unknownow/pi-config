@@ -468,11 +468,11 @@ export default function workflow(pi: ExtensionAPI) {
 		name: "advisor",
 		label: "Advisor",
 		description:
-			"Ask a stronger model for guidance at a decision point. It reads the full session transcript, so describe only the question. Use it when choosing between approaches, when an error keeps repeating, and before declaring the task done.",
+			"Ask a stronger model for guidance at a decision point. It reads the full session transcript, which is expensive, so call it sparingly and describe only the question. Use it only when choosing between approaches with real consequences, or when the same error keeps repeating. Not for routine steps, small changes, or checking finished work (the judge reviews the diff).",
 		promptSnippet: "advisor: guidance from a stronger model that reads the whole transcript",
 		parameters: Type.Object({
-			situation: StringEnum(["approach", "error", "done", "other"] as const, {
-				description: "approach: pick between options; error: repeated failure; done: check before finishing",
+			situation: StringEnum(["approach", "error", "other"] as const, {
+				description: "approach: pick between options; error: repeated failure",
 			}),
 			question: Type.String({ description: "The decision or question, with the options you are weighing" }),
 		}),
