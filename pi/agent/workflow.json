@@ -6,12 +6,12 @@
       "thinking": "high"
     },
     "execute": {
-      "model": "claude-bridge/claude-sonnet-5-5",
+      "model": "claude-bridge/claude-haiku-5-5",
       "thinking": "medium"
     },
     "explore": {
       "model": "claude-bridge/claude-haiku-5-5",
-      "thinking": "off"
+      "thinking": "medium"
     },
     "advisor": {
       "model": "claude-bridge/claude-opus-5-5",

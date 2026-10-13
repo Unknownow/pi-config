@@ -14,7 +14,7 @@ context guard:       compacts at ~140k tokens on every model, after the run sett
 |---|---|---|
 | `plan` | main session model; edit/write off | new sessions start here (`startPhase`) |
 | `execute` | main session model | after you approve the plan |
-| `explore` | `explore` tool, parallel sub-`pi` processes | the executor fans out reads/greps |
+| `explore` | `explore` tool, parallel sub-`pi` processes | fallback when normal search is not enough; every call names its `reason` |
 | `advisor` | `advisor` tool, sub-`pi` with the whole transcript | choosing an approach, after an error repeats (auto-nudged after `repeatedErrorThreshold` failures), before "done" |
 | `judge` | `judge` tool, sub-`pi` with the git diff | the diff is ready; when a run ends with an unreviewed diff it asks (`autoJudge`) |
 | `escalate` | main session model | `/flow escalate` |
@@ -51,8 +51,8 @@ its tokens and the elapsed time.
 
 ```
 flow  plan opus-5-5·high 48k ▸ ● EXECUTE sonnet-5-5·medium 1.2M ▸ judge opus-5-5·high ▸ commit · Σ 1.3M
-  ├ ⠇ explore  haiku-5-5  where is the save system serialized?  grep /Serialize/ in Scripts · 1 tool · 12k tok · 4s
-  ├ ✓ explore  haiku-5-5  which scenes load the HUD prefab?  3 refs · 1 tool · 7s
+  ├ ⠇ explore  haiku-5-5  [location_unknown] where is the save system serialized?  grep /Serialize/ in Scripts · 1 tool · 12k tok · 4s
+  ├ ✓ explore  haiku-5-5  [location_unknown] which scenes load the HUD prefab?  3 refs · 1 tool · 7s
   └ ⠇ advisor  opus-5-5   [error] NullReferenceException in SaveM…  read Scripts/SaveManager.cs:40-80 · 0s
 ```
 

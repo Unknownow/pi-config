@@ -104,6 +104,7 @@ const STATE_ENTRY = "workflow-state";
 const SUMMARY_ENTRY = "workflow-summary";
 const APPROVED = "Plan approved. Execute it now, step by step, following the workflow rules.";
 const OWN_TOOLS = new Set(["explore", "advisor", "judge"]);
+const EXPLORE_REASONS = ["timeout", "too_much_output", "location_unknown", "parallel_lookups"] as const;
 const execFileAsync = promisify(execFile);
 
 interface Diff {
@@ -533,9 +534,13 @@ export default function workflow(pi: ExtensionAPI) {
 		name: "explore",
 		label: "Explore",
 		description:
-			"Fan out read/grep lookups to cheap parallel reader agents. Each query is a self-contained question about the codebase (e.g. 'where is the save system serialized?'). Returns only file:line references with a short note, so you can read just the lines you need.",
-		promptSnippet: "explore: parallel cheap codebase lookups that return file:line references",
+			"Fallback for code lookups when the normal search tools are not enough. Fans out read/grep lookups to cheap parallel reader agents. Each query is a self-contained question about the codebase (e.g. 'where is the save system serialized?'). Returns only file:line references with a short note, so you can read just the lines you need.",
+		promptSnippet: "explore: fallback parallel codebase lookups (file:line references) when normal search is not enough",
 		parameters: Type.Object({
+			reason: StringEnum(EXPLORE_REASONS, {
+				description:
+					"Why the normal tools are not enough: timeout (a search timed out), too_much_output (a search returned too much to narrow), location_unknown (no idea where to look), parallel_lookups (several independent lookups, e.g. across repos)",
+			}),
 			queries: Type.Array(Type.String({ description: "One self-contained lookup question" }), {
 				description: "Lookups to run in parallel",
 				minItems: 1,
@@ -545,7 +550,7 @@ export default function workflow(pi: ExtensionAPI) {
 			const queries = params.queries.slice(0, cfg.explore.maxQueries);
 			const progress = toolProgress(onUpdate);
 			const results = await mapLimit(queries, cfg.explore.concurrency, async (q) => {
-				const { result, run } = await runRole("explore", q, { systemPrompts: [prompts.EXPLORE], tools: cfg.explore.tools, task: q, cwd: ctx.cwd, signal }, progress.track);
+				const { result, run } = await runRole("explore", `[${params.reason}] ${q}`, { systemPrompts: [prompts.EXPLORE], tools: cfg.explore.tools, task: q, cwd: ctx.cwd, signal }, progress.track);
 				if (result.ok) {
 					const refs = result.text.trim() === "none" ? 0 : result.text.split("\n").filter((l) => /:\d/.test(l)).length;
 					view.finish(run, true, refs ? `${refs} ref${refs === 1 ? "" : "s"}` : "nothing found");
@@ -564,7 +569,8 @@ export default function workflow(pi: ExtensionAPI) {
 		},
 		renderCall(args, theme) {
 			const queries = (args.queries ?? []) as string[];
-			const head = `${title(theme, "explore", "explore")}${theme.fg("accent", ` ${queries.length} quer${queries.length === 1 ? "y" : "ies"}`)}`;
+			const reason = typeof args.reason === "string" ? theme.fg("warning", ` · ${args.reason.replace(/_/g, " ")}`) : "";
+			const head = `${title(theme, "explore", "explore")}${theme.fg("accent", ` ${queries.length} quer${queries.length === 1 ? "y" : "ies"}`)}${reason}`;
 			return new Text(head, 0, 0);
 		},
 		renderResult: (result, opts, theme) => renderRuns(result, opts, theme, 0),

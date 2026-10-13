@@ -21,6 +21,19 @@ not raw data.
 - On Windows `ctx_batch_execute` and `ctx_execute` with `language: shell` run PowerShell; for bash
   use the `bash` tool, or `tools.bash` from a `codemode` script.
 
+## Code search: explore only as a fallback
+
+Search with the normal tools first: context-mode, `grep`, `read`. Use the `explore` tool only when
+they are not enough:
+
+- a search timed out;
+- a search returned too much to narrow down;
+- you don't know where to look and would need several search rounds;
+- you need several independent lookups at once (for example across repos).
+
+Each `explore` call names its `reason`. Its `file:line` answers are pointers: check the lines before
+relying on them.
+
 ## Advisor: only at real decision points
 
 The advisor reads the whole session transcript, so each call costs about as much as the session
