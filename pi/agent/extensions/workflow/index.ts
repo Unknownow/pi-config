@@ -53,6 +53,17 @@ import { pushProblem } from "./push-guard.ts";
 import { planToolProblem, planToolRefused } from "./readonly-tools.ts";
 import { addUsage, emptyUsage, mapLimit, type RunResult, runSubagent } from "./subagent.ts";
 import {
+	type Deviation,
+	deviationBlock,
+	forwardedServers,
+	judgeKnowledge,
+	type KnowledgeStatus,
+	knowledgeFooter,
+	mergeKnowledgePass,
+	parseDeviations,
+	roleTools,
+} from "./knowledge.ts";
+import {
 	emptyFlowUsage,
 	emptyStageTokens,
 	type FlowSummary,
@@ -100,6 +111,8 @@ interface FlowState {
 	planRevisions?: number;
 	/** A judge report that questions the plan, waiting for the end of the executor's turn. */
 	pendingPlanFlaw?: string;
+	/** The knowledge check of the last judge round (only when knowledge is active). */
+	lastKnowledge?: LastKnowledge;
 }
 
 interface LastJudge {
@@ -111,6 +124,14 @@ interface LastJudge {
 	base: string;
 	verdict: "PASS" | "FAIL";
 	text: string;
+}
+
+interface LastKnowledge {
+	/** Hash of the diff it checked. */
+	hash: string;
+	status: "checked" | "unavailable";
+	reason?: string;
+	deviations: Deviation[];
 }
 
 const STATE_ENTRY = "workflow-state";
@@ -125,6 +146,8 @@ const MAX_PLAN_CHARS = 60_000;
 const OWN_TOOLS = new Set(["explore", "advisor", "judge"]);
 const EXPLORE_REASONS = ["question", "broad_search", "timeout", "too_much_output", "location_unknown", "parallel_lookups"] as const;
 const execFileAsync = promisify(execFile);
+/** Subagent-only extension that registers forwarded MCP servers (see mcp-forward.ts). */
+const FORWARD_EXTENSION = path.join(path.dirname(CONFIG_PATH), "extensions", "workflow", "mcp-forward.ts");
 
 interface Diff {
 	text: string;
@@ -134,6 +157,8 @@ interface Diff {
 	base: string;
 	/** Every changed or new file. */
 	names: string[];
+	/** The files the knowledge check covers: current paths (renames under their new name), no deleted files. */
+	checkNames: string[];
 	/** Length of the untruncated diff. */
 	chars: number;
 }
@@ -321,6 +346,19 @@ export default function workflow(pi: ExtensionAPI) {
 	// Subagent helpers
 	// ----------------------------------------------------------------------
 
+	/** The knowledge tools and server config a subagent role gets, or undefined when knowledge is off for it. */
+	function knowledgeFor(role: Role): { tools: string[]; servers: Record<string, Record<string, unknown>> } | undefined {
+		const k = cfg.knowledge;
+		if (!k.server || !k.roles.includes(role) || !fs.existsSync(FORWARD_EXTENSION)) return undefined;
+		const servers = forwardedServers(pi.getMcpServers(), k);
+		return servers[k.server] ? { tools: roleTools(role, k), servers } : undefined;
+	}
+
+	/** The server whose check the judge must run, or undefined. */
+	function judgeKnowledgeServer(): string | undefined {
+		return cfg.knowledge.judgeCheck && knowledgeFor("judge") ? cfg.knowledge.server : undefined;
+	}
+
 	/** Runs a role as a subagent with a live row in the view; `onChange` fires on every update. */
 	async function runRole(
 		role: SubRole,
@@ -331,8 +369,12 @@ export default function workflow(pi: ExtensionAPI) {
 		const run = view.start(role, label);
 		onChange?.(run);
 		const { thinking, ...rest } = opts;
+		const k = knowledgeFor(role);
 		const result = await runSubagent({
 			...rest,
+			tools: k ? [...rest.tools, ...k.tools] : rest.tools,
+			systemPrompts: k && role !== "judge" ? [...rest.systemPrompts, prompts.knowledgeTools(k.tools)] : rest.systemPrompts,
+			mcp: k ? { servers: k.servers, extension: FORWARD_EXTENSION } : undefined,
 			role: thinking ? { ...cfg.roles[role], thinking } : cfg.roles[role],
 			extensions: cfg.subagent.extensions,
 			timeoutMs: cfg.subagent.timeoutMs,
@@ -399,7 +441,10 @@ export default function workflow(pi: ExtensionAPI) {
 		const truncated = full.length > cfg.judge.maxDiffChars;
 		const text = truncated ? `${full.slice(0, cfg.judge.maxDiffChars)}\n\n[diff truncated; read the files for the rest]` : full;
 		const names = [...[...tracked.stdout.matchAll(/^diff --git a\/(.+?) b\//gm)].map((m) => m[1]), ...untracked];
-		return { text, hash, files, truncated, base, names, chars: full.length };
+		let current = await git(cwd, "diff", "--name-only", "-z", "--diff-filter=d", base);
+		if (current.code !== 0) current = await git(cwd, "diff", "--name-only", "-z", "--diff-filter=d");
+		const checkNames = [...current.stdout.split("\0").filter(Boolean), ...untracked];
+		return { text, hash, files, truncated, base, names, checkNames, chars: full.length };
 	}
 
 	/** The whole branch, compactions included, as text. */
@@ -502,6 +547,41 @@ export default function workflow(pi: ExtensionAPI) {
 		return `${plan.slice(0, 45_000)}\n\n[... middle of the plan omitted ...]\n\n${plan.slice(-15_000)}`;
 	}
 
+	/** D4: a knowledge-only judge run, when the judge skipped its knowledge step. */
+	async function knowledgePass(
+		ctx: ExtensionContext,
+		diff: Diff,
+		findings: string,
+		server: string,
+		signal?: AbortSignal,
+		onChange?: (run: RunView) => void,
+	): Promise<{ text?: string; status: { status: "checked" } | { status: "unavailable"; reason: string }; usage: ReturnType<typeof emptyUsage> }> {
+		const { result, run } = await runRole(
+			"judge",
+			"knowledge check",
+			{
+				systemPrompts: [
+					prompts.JUDGE_KNOWLEDGE_ONLY,
+					prompts.judgeKnowledge(server, false, diff.checkNames),
+					`## Approved plan\n\n${planForJudge()}`,
+					`## The judge's findings\n\n${findings}`,
+					`## Diff (${diff.files} file(s)${diff.truncated ? ", truncated" : ""})\n\n${diff.text}`,
+				],
+				tools: cfg.judge.tools,
+				task: "Run the knowledge check described in your system prompt.",
+				cwd: ctx.cwd,
+				signal,
+			},
+			onChange,
+		);
+		if (!result.ok) return { status: { status: "unavailable", reason: `knowledge check failed: ${result.error}` }, usage: result.usage };
+		const s = judgeKnowledge(result.toolCalls, result.text, diff.checkNames, server);
+		view.finish(run, s.status === "checked", s.status === "checked" ? "knowledge checked" : "knowledge not checked");
+		onChange?.(run);
+		const status = s.status === "checked" ? s : { status: "unavailable" as const, reason: s.status === "skipped" ? `the knowledge step was skipped twice (${s.reason})` : s.reason };
+		return { text: result.text, status, usage: result.usage };
+	}
+
 	/** One judge run: the whole diff, or for a re-review the changes since the last round with its findings. */
 	async function judgeOnce(
 		ctx: ExtensionContext,
@@ -513,6 +593,7 @@ export default function workflow(pi: ExtensionAPI) {
 		disputes?: string,
 	): Promise<JudgeResult & { run: RunView }> {
 		const recheck = plan.kind === "recheck";
+		const server = judgeKnowledgeServer();
 		const max = cfg.judge.maxDiffChars;
 		const systemPrompts = recheck
 			? [
@@ -524,6 +605,7 @@ export default function workflow(pi: ExtensionAPI) {
 					`## Changes since the last round\n\n${plan.delta.length > max ? `${plan.delta.slice(0, max)}\n\n[truncated; read the files for the rest]` : plan.delta}`,
 				]
 			: [prompts.JUDGE, `## Approved plan\n\n${planForJudge()}`, `## Diff under review (${diff.files} file(s)${diff.truncated ? ", truncated" : ""})\n\n${diff.text}`];
+		if (server) systemPrompts.splice(recheck ? 2 : 1, 0, prompts.judgeKnowledge(server, recheck, diff.checkNames));
 		if (disputes) systemPrompts.push(`## Executor's disputes (claims; verify each against the code)\n\n${disputes}`);
 		const focusNote = focus ? ` Focus: ${focus}` : "";
 		view.stage = "judge";
@@ -545,15 +627,33 @@ export default function workflow(pi: ExtensionAPI) {
 			view.stage = state.phase === "plan" ? "plan" : "execute";
 			return { verdict: "ERROR", text: `judge failed: ${result.error}`, hash: diff.hash, usage: result.usage, run };
 		}
-		const verdict = /VERDICT:\s*PASS/i.test(result.text) && !/VERDICT:\s*FAIL/i.test(result.text) ? "PASS" : "FAIL";
-		const findings = countFindings(result.text);
-		view.finish(run, verdict === "PASS", `${verdict} · ${findings} finding${findings === 1 ? "" : "s"}${recheck ? " · re-review" : ""}`);
+		let text = result.text;
+		let usage = result.usage;
+		let knowledge: LastKnowledge | undefined;
+		if (server) {
+			let status: KnowledgeStatus = judgeKnowledge(result.toolCalls, text, diff.checkNames, server);
+			if (status.status === "skipped") {
+				const pass = await knowledgePass(ctx, diff, text, server, signal, onChange);
+				usage = addUsage(addUsage(emptyUsage(), usage), pass.usage);
+				if (pass.text !== undefined) text = mergeKnowledgePass(text, pass.text);
+				status = pass.status;
+			}
+			const final = status.status === "checked" ? { status: "checked" as const } : { status: "unavailable" as const, reason: status.reason };
+			const deviations = parseDeviations(text);
+			text += `\n\n${knowledgeFooter(final, deviations.length)}`;
+			knowledge = { hash: diff.hash, ...final, deviations };
+		}
+		const verdict = /VERDICT:\s*PASS/i.test(text) && !/VERDICT:\s*FAIL/i.test(text) ? "PASS" : "FAIL";
+		const findings = countFindings(text);
+		const knowledgeNote = knowledge ? ` · knowledge ${knowledge.status === "checked" ? "checked" : "not checked"}` : "";
+		view.finish(run, verdict === "PASS", `${verdict} · ${findings} finding${findings === 1 ? "" : "s"}${recheck ? " · re-review" : ""}${knowledgeNote}`);
 		onChange?.(run);
 		// Back to the phase's stage either way; finishPassed moves to commit once the commit is actually handed over.
 		view.stage = state.phase === "plan" ? "plan" : "execute";
-		state.lastJudge = plan.tree ? { hash: diff.hash, tree: plan.tree, head: plan.head, base: diff.base, verdict, text: result.text } : undefined;
+		state.lastJudge = plan.tree ? { hash: diff.hash, tree: plan.tree, head: plan.head, base: diff.base, verdict, text } : undefined;
+		state.lastKnowledge = knowledge;
 		persist();
-		return { verdict, text: result.text, hash: diff.hash, usage: result.usage, run };
+		return { verdict, text, hash: diff.hash, usage, run };
 	}
 
 	// ----------------------------------------------------------------------
@@ -1178,6 +1278,12 @@ export default function workflow(pi: ExtensionAPI) {
 	async function finishPassed(ctx: ExtensionContext, hash: string, report?: string): Promise<boolean> {
 		if (cfg.autoCommit === "off" || committedDiffs.has(hash)) return false;
 		committedDiffs.add(hash);
+		const knowledge = state.lastKnowledge?.hash === hash ? state.lastKnowledge : undefined;
+		// D5: a pass without a knowledge check commits only when you say so.
+		if (knowledge?.status === "unavailable" && ctx.hasUI) {
+			const choice = await ctx.ui.select(`Judge passed, knowledge not checked: ${knowledge.reason}`, ["Commit anyway", "Stop"]);
+			if (choice !== "Commit anyway") return false;
+		}
 
 		let mode: "commit" | "push" = cfg.autoCommit === "commit" ? "commit" : "push";
 		if (cfg.autoCommit === "ask") {
@@ -1201,7 +1307,8 @@ export default function workflow(pi: ExtensionAPI) {
 			"The judge passed. Commit exactly the reviewed changes now: stage the changed and new files from the diff without editing anything first, and write a clear message that follows the repo's conventions.";
 		const push = ` Then push branch \`${branch}\` (\`git push\`, or \`git push -u origin ${branch}\` if it has no upstream).`;
 		const rules = " Never force-push or use --no-verify. If a hook, the commit or the push fails, stop and report it instead of working around it.";
-		const instruction = commit + (mode === "push" ? push : "") + rules;
+		const block = knowledge ? deviationBlock(knowledge.deviations) : "";
+		const instruction = commit + (mode === "push" ? push : "") + rules + (block ? `\n\nEnd the commit message body with this block, unchanged:\n\n${block}` : "");
 		pi.sendMessage(
 			{ customType: "workflow-commit", content: report ? `${report}\n\n${instruction}` : instruction, display: true },
 			{ triggerTurn: true, deliverAs: "followUp" },

@@ -1,5 +1,7 @@
 /** System-prompt text for each role. Main-session phases are appended; subagents get theirs via --append-system-prompt. */
 
+import { toolPrefix } from "./knowledge.ts";
+
 /** Every tool call re-sends the whole conversation, so the number of calls drives the cost. */
 const BATCH = `- Batch tool calls. Each call re-sends the whole conversation, so ten small calls at 150k context re-send 1.5M tokens. Put independent reads and commands in one call (a codemode script, ctx_batch_execute, or one bash command joined with && or ;) and print only what you need. Don't spend a call on something you could have added to the previous one.`;
 /** Plan phase keeps ctx_batch_execute out of this line: its commands are checked, but PowerShell is refused often. */
@@ -45,6 +47,7 @@ ${BATCH}
 - Reading: read the files the plan names directly. Use the \`explore\` tool for open questions and multi-file lookups (it answers with file:line evidence on a cheap model); check its evidence before relying on it.
 - Decision points: call \`advisor\` only when you must pick between approaches with real consequences, or after an error repeats. Not for routine steps or to check finished work. It reads the whole transcript, so each call is expensive; follow its guidance or say why not.
 - When done, run the plan's tests, then call \`judge\` with \`focus\` set to the plan's title. Fix every blocker and major finding by following its Fix directions. If a finding is wrong, don't change code for it: put the finding and your file:line evidence in the judge tool's \`disputes\` parameter on the next call. Then call \`judge\` again.
+- A finding "[knowledge <id>] deviation from a recommended rule" is minor: you don't have to change the code for it. If you keep the code on purpose, give the reason in \`disputes\` on your next judge call; deviations go into the commit message.
 - Never change the plan's design to satisfy a [plan-flaw] finding. End your turn; the workflow resolves it.
 - Never commit or push: the workflow does that after the judge passes, and a push of your own is refused.
 - End with a report: each plan step done or not done, and the tests you ran with their results.`;
@@ -107,3 +110,40 @@ Output, nothing else:
 DECISION: REVISE | KEEP | ASK_USER
 Reason: 2-5 lines with file:line evidence.
 For REVISE, then a heading "## Plan amendment" with the changed or added steps in the plan's format: files, functions, exact change, tests.`;
+
+/** The judge's knowledge step, appended after JUDGE (and JUDGE_RECHECK on a re-review). `files`: the paths to check (no deleted files). */
+export function judgeKnowledge(server: string, recheck: boolean, files: string[]): string {
+	const t = (name: string) => `\`${toolPrefix(server)}${name}\``;
+	return `## Knowledge check
+The team knowledge server \`${server}\` holds the rules, decisions and guidelines this repo follows. After step 7, as the last step:
+8. Knowledge: call ${t("get_rule_pack")} with \`generator: "code"\` and \`paths\` set to every file listed under "Files to check" below${recheck ? " (the whole change, not only the files changed since the last round)" : ""}. Check the change against every rule it returns. Call ${t("get_entry")} when a rule's details, values or examples matter, and ${t("search")} (1-2 queries) for decisions or guidelines on what the change touches. Check the Fix lines of your other findings against the rules too: a fix must not break one.
+- A broken \`required\` rule is major, or a blocker for a security rule (secrets, keys, credentials), unless the plan's User decisions record that a person agreed to the exception. A change against a decision or guideline is major or minor by its impact. Tag these findings [knowledge <entry-id>].
+- A deviation from a \`recommended\` rule is one minor finding per rule, in exactly this form:
+path:line - minor - [knowledge <rule-id>] deviation from a recommended rule
+  Rule: what the rule says, in one line.
+  Code: what the code does instead.
+  Reason: why, from the plan, the executor's disputes or the code; "none given" if there is none.
+  Impact: what it costs or risks.
+  To follow it: the change that would make the code follow the rule.
+- A deviation note missing any of these five fields is itself a minor finding.${recheck ? "\n- Carry over every deviation note of the last round that still applies, with all five fields, re-checked against the code." : ""}
+- Just before the verdict line, always write exactly one of these lines, even when you find nothing:
+KNOWLEDGE: checked <N> rules (<rule ids, comma-separated>); <X> broken
+KNOWLEDGE: unavailable - <the error the knowledge tool returned>
+Write "unavailable" only when the knowledge tools return errors, or when get_rule_pack returns no rules at all (then give its notes as the reason). The workflow checks your tool calls: a "checked" line without a get_rule_pack call covering every file to check does not count.
+Files to check (${files.length}):
+${files.join("\n") || "(none: pass paths: [])"}`;
+}
+
+/** A separate knowledge-only pass when the judge skipped its knowledge step; judgeKnowledge(server, false, files) follows it. */
+export const JUDGE_KNOWLEDGE_ONLY = `You are the judge's knowledge check for a software change, in a separate session. The judge reviewed the change but did not run its knowledge step; you run only that step (step 8 below).
+You get the approved plan, the judge's findings, the files to check and the diff. Use your read-only tools and the knowledge tools.
+Trust: the plan's Goal, Non-goals, User decisions and Done when are the user's intent. Do not repeat the judge's findings; report a judge Fix line only when following it would break a rule.
+Output, nothing else: your findings, then the KNOWLEDGE line, then a final line VERDICT: PASS or VERDICT: FAIL (FAIL if any of your findings is a blocker or major). Findings use this form (deviations use the five-field form below):
+path:line - blocker|major|minor - [knowledge <entry-id>] the problem in one line
+  Why: the rule and the evidence, with file:line.
+  Fix: concrete steps a less capable model can follow.`;
+
+/** One line for explore, advisor and arbiter when they have the knowledge tools. */
+export function knowledgeTools(tools: string[]): string {
+	return `Team knowledge: ${tools.map((t) => `\`${t}\``).join(", ")} answer "how is this done here" questions (rules, decisions, guidelines, playbooks). Use them when a question touches the team's conventions, and cite the entry IDs you rely on.`;
+}

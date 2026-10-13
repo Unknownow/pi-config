@@ -133,7 +133,22 @@ its plan and hand over, even when you said "fix it" or "do it for me".
 - It is a guard against the planner drifting into execution, not a sandbox. The code checks are
   regexes: a determined disguise (a computed lookup on an alias of `require('fs')`, say) can still get
   past them.
-- Tests: `node --experimental-strip-types --test agent-end.test.ts readonly-bash.test.ts readonly-tools.test.ts tokens.test.ts push-guard.test.ts`.
+- Tests: `node --experimental-strip-types --test agent-end.test.ts readonly-bash.test.ts readonly-tools.test.ts tokens.test.ts push-guard.test.ts knowledge.test.ts mcp-forward.test.ts subagent.test.ts`.
+
+## Team knowledge
+
+When a pi package registers the MCP server named by `knowledge.server` (IEC game repos: `knowledge`),
+the subagents in `knowledge.roles` get its read tools (`knowledge.tools`; never `propose_entry`). Each
+subagent starts its own copy through `mcp-forward.ts`, with `knowledge.env` added
+(`KNOWLEDGE_OFFLINE=1`: use the team index the main session fetched).
+
+With `knowledge.judgeCheck`, the judge's last step is the knowledge check: `get_rule_pack` for every
+changed file, then each rule. The workflow verifies the judge's tool calls; a skipped check gets a
+separate knowledge pass. Broken required rules are major (security: blocker). Deviations from
+recommended rules are minor, documented (Rule, Code, Reason, Impact, To follow it) and listed in the
+commit message under `Knowledge deviations:`. When the server is unavailable the result ends with
+"Knowledge: not checked" and the commit asks first. Elsewhere nothing changes; `"server": ""` turns
+it off.
 
 ## What you see
 

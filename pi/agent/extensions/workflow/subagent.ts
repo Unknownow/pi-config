@@ -14,6 +14,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { Message, Usage } from "@earendil-works/pi-ai";
 import type { RoleSpec } from "./config.ts";
+import { FORWARD_ENV } from "./mcp-forward.ts";
 
 export interface RunOptions {
 	role: RoleSpec;
@@ -27,6 +28,8 @@ export interface RunOptions {
 	signal?: AbortSignal;
 	/** Live activity, for the workflow view. */
 	onEvent?: (event: SubagentEvent) => void;
+	/** MCP servers to connect in the subagent (name -> config), registered by `extension` (mcp-forward.ts). */
+	mcp?: { servers: Record<string, Record<string, unknown>>; extension: string };
 }
 
 export type SubagentEvent =
@@ -35,6 +38,19 @@ export type SubagentEvent =
 	/** Usage of the assistant message in flight (cumulative while streaming); `done` once it ends. */
 	| { type: "usage"; usage: Usage; done: boolean };
 
+export interface ToolCall {
+	id: string;
+	name: string;
+	args: Record<string, unknown>;
+	/** From tool_execution_end; undefined when the tool never finished. */
+	isError?: boolean;
+	/** The start of the result's text, from tool_execution_end. */
+	result?: string;
+}
+
+/** How much of a tool result ToolCall.result keeps. */
+const RESULT_CHARS = 4000;
+
 export interface RunResult {
 	ok: boolean;
 	text: string;
@@ -42,6 +58,8 @@ export interface RunResult {
 	model?: string;
 	turns: number;
 	usage: Usage;
+	/** Every tool call, in order. */
+	toolCalls: ToolCall[];
 }
 
 export function emptyUsage(): Usage {
@@ -68,6 +86,28 @@ export function addUsage(into: Usage, u: Partial<Usage> | undefined): Usage {
 	into.cost.cacheWrite += u.cost?.cacheWrite ?? 0;
 	into.cost.total += u.cost?.total ?? 0;
 	return into;
+}
+
+/** Records tool_execution_start / tool_execution_end events into `calls`; other events are ignored. */
+export function recordToolEvent(
+	calls: ToolCall[],
+	event: { type?: unknown; toolCallId?: unknown; toolName?: unknown; args?: unknown; isError?: unknown; result?: unknown },
+): void {
+	if (event.type === "tool_execution_start") {
+		const args = typeof event.args === "object" && event.args !== null ? (event.args as Record<string, unknown>) : {};
+		calls.push({ id: String(event.toolCallId ?? ""), name: String(event.toolName ?? ""), args });
+	} else if (event.type === "tool_execution_end") {
+		const call = calls.findLast((c) => c.id === String(event.toolCallId ?? "") && c.isError === undefined);
+		if (!call) return;
+		call.isError = event.isError === true;
+		const content = (event.result as { content?: unknown } | undefined)?.content;
+		if (Array.isArray(content)) {
+			call.result = content
+				.map((c) => (typeof c?.text === "string" ? c.text : ""))
+				.join("\n")
+				.slice(0, RESULT_CHARS);
+		}
+	}
 }
 
 /** Same resolution as Pi's subagent example: re-run the CLI script under the current runtime. */
@@ -101,12 +141,13 @@ function lastAssistantText(messages: Message[]): string {
 
 export async function runSubagent(opts: RunOptions): Promise<RunResult> {
 	const tmp = await fs.promises.mkdtemp(path.join(os.tmpdir(), "pi-workflow-"));
-	const result: RunResult = { ok: false, text: "", turns: 0, usage: emptyUsage() };
+	const result: RunResult = { ok: false, text: "", turns: 0, usage: emptyUsage(), toolCalls: [] };
 	const messages: Message[] = [];
 
 	try {
 		const args = ["--mode", "json", "-p", "--no-session", "--no-extensions", "--no-skills", "--no-prompt-templates"];
 		for (const ext of opts.extensions) args.push("-e", expandHome(ext));
+		if (opts.mcp) args.push("-e", "builtin:mcp", "-e", opts.mcp.extension);
 		args.push("--model", opts.role.model);
 		if (opts.role.thinking) args.push("--thinking", opts.role.thinking);
 		if (opts.tools.length > 0) args.push("--tools", opts.tools.join(","));
@@ -126,7 +167,12 @@ export async function runSubagent(opts: RunOptions): Promise<RunResult> {
 
 		const code = await new Promise<number>((resolve) => {
 			const inv = piInvocation(args);
-			const proc = spawn(inv.command, inv.args, { cwd: opts.cwd, shell: false, stdio: ["ignore", "pipe", "pipe"] });
+			const proc = spawn(inv.command, inv.args, {
+				cwd: opts.cwd,
+				shell: false,
+				stdio: ["ignore", "pipe", "pipe"],
+				env: opts.mcp ? { ...process.env, [FORWARD_ENV]: JSON.stringify(opts.mcp.servers) } : process.env,
+			});
 			let buffer = "";
 
 			const onLine = (line: string) => {
@@ -137,6 +183,7 @@ export async function runSubagent(opts: RunOptions): Promise<RunResult> {
 				} catch {
 					return;
 				}
+				recordToolEvent(result.toolCalls, event);
 				if (event.type === "tool_execution_start") {
 					opts.onEvent?.({ type: "tool", name: event.toolName, args: event.args ?? {} });
 					return;

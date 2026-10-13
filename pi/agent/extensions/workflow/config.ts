@@ -22,6 +22,19 @@ export interface RoleSpec {
 	thinking?: Thinking;
 }
 
+export interface KnowledgeConfig {
+	/** MCP server a pi package registers (IEC: "knowledge"). "" turns it off; off too when nothing registered it. */
+	server: string;
+	/** Subagent roles that get the server's tools. */
+	roles: Role[];
+	/** The server's tools those roles get. Never list one that writes (propose_entry). */
+	tools: string[];
+	/** Added to the environment of the subagents' copy of the server. */
+	env: Record<string, string>;
+	/** The judge's last step is the knowledge check; a skipped check gets a separate pass. */
+	judgeCheck: boolean;
+}
+
 export interface WorkflowConfig {
 	roles: Record<Role, RoleSpec>;
 	/** Phase a new session starts in. */
@@ -77,6 +90,7 @@ export interface WorkflowConfig {
 		/** A re-review that passes a whole diff over this many characters gets one final full review. 0 disables. */
 		finalFullReviewOverChars: number;
 	};
+	knowledge: KnowledgeConfig;
 	subagent: { extensions: string[]; timeoutMs: number };
 }
 
@@ -118,6 +132,13 @@ export const DEFAULTS: WorkflowConfig = {
 		recheckThinking: "medium",
 		recheckMaxShare: 0.5,
 		finalFullReviewOverChars: 80_000,
+	},
+	knowledge: {
+		server: "knowledge",
+		roles: ["explore", "advisor", "judge", "arbiter"],
+		tools: ["search", "get_entry", "get_rule_pack", "get_schema", "status"],
+		env: { KNOWLEDGE_OFFLINE: "1" },
+		judgeCheck: true,
 	},
 	subagent: {
 		extensions: ["~/.pi/agent/npm/node_modules/pi-claude-bridge/src/index.ts"],

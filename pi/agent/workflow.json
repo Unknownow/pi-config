@@ -100,6 +100,26 @@
     ],
     "maxDiffChars": 400000
   },
+  "knowledge": {
+    "server": "knowledge",
+    "roles": [
+      "explore",
+      "advisor",
+      "judge",
+      "arbiter"
+    ],
+    "tools": [
+      "search",
+      "get_entry",
+      "get_rule_pack",
+      "get_schema",
+      "status"
+    ],
+    "env": {
+      "KNOWLEDGE_OFFLINE": "1"
+    },
+    "judgeCheck": true
+  },
   "subagent": {
     "extensions": [
       "~/.pi/agent/npm/node_modules/pi-claude-bridge/src/index.ts"
