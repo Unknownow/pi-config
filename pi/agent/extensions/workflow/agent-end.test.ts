@@ -39,6 +39,8 @@ test("plan is ready with a Plan heading and no trailing question", () => {
 	assert.equal(isPlanReady("**Plan-mode** on", true), false);
 	assert.equal(isPlanReady("## Plan\n- Mode toggle\n1. x", true), true);
 	assert.equal(isPlanReady("**Plan**\n\nMode: strict", true), true);
+	assert.equal(isPlanReady("**Plan** \u2014 mode is on", true), false);
+	assert.equal(isPlanReady("**Plan**: mode is on", true), false);
 	assert.equal(isPlanReady("## Planning notes\nreading first", true), false);
 	assert.equal(isPlanReady("Plan:\n1. x", false), false);
 });

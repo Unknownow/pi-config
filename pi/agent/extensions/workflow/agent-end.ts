@@ -19,7 +19,7 @@ export function shouldResume(overflowRetry: boolean, last: { role?: string; cont
 export function isPlanReady(text: string, stoppedNormally: boolean): boolean {
 	if (!stoppedNormally) return false;
 	const t = text.trim();
-	return /^\s*(?:#+\s*[*_]*(?:[Pp]lan|PLAN)(?![A-Za-z])(?![*_]*[ \t-]+[Mm][Oo][Dd][Ee]\b)|[*_]+(?:[Pp]lan|PLAN)(?![A-Za-z])(?![*_]*[ \t-]+[Mm][Oo][Dd][Ee]\b)|(?:Plan|PLAN)\s*[:(])/m.test(t) && !/\?[\s*_)"'`]*$/.test(t);
+	return /^\s*(?:#+\s*[*_]*(?:[Pp]lan|PLAN)(?![A-Za-z])(?![*_]*[ \t:\u2013\u2014-]+[Mm][Oo][Dd][Ee]\b)|[*_]+(?:[Pp]lan|PLAN)(?![A-Za-z])(?![*_]*[ \t:\u2013\u2014-]+[Mm][Oo][Dd][Ee]\b)|(?:Plan|PLAN)\s*[:(])/m.test(t) && !/\?[\s*_)"'`]*$/.test(t);
 }
 
 /** The judge runs after an execute reply unless the reply errored. */
