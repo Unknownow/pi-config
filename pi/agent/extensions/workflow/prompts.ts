@@ -41,3 +41,7 @@ Output format, nothing else:
 - One line per finding: path:line - blocker|major|minor - problem - fix
 - Then a final line: VERDICT: PASS or VERDICT: FAIL
 FAIL if there is any blocker or major finding. Do not pad with praise or minor style nits. If you find nothing, write only the verdict line.`;
+
+export const JUDGE_RECHECK = `This is a re-review. An earlier round reviewed the whole change and reported the findings below; the code has changed since. You get only the changes since that round, plus the names of every file in the whole change.
+Check that each blocker and major finding is fixed. Look for problems the new changes introduce, including in code that calls them or that they call: read those files when a change could affect them.
+Report a previous finding again only if it is still there. Same output format; the verdict covers the whole change as it is now.`;

@@ -44,7 +44,18 @@ export interface WorkflowConfig {
 	planBlockedTools: string[];
 	explore: { maxQueries: number; concurrency: number; tools: string[] };
 	advisor: { tools: string[]; maxTranscriptChars: number };
-	judge: { tools: string[]; maxDiffChars: number };
+	judge: {
+		tools: string[];
+		maxDiffChars: number;
+		/** Rounds after the first review only the changes since the last round, with its findings. */
+		recheck: boolean;
+		/** Thinking level of those re-reviews. */
+		recheckThinking: Thinking;
+		/** Full review instead when the changes since the last round exceed this share of the whole diff. */
+		recheckMaxShare: number;
+		/** A re-review that passes a whole diff over this many characters gets one final full review. 0 disables. */
+		finalFullReviewOverChars: number;
+	};
 	subagent: { extensions: string[]; timeoutMs: number };
 }
 
@@ -70,7 +81,14 @@ export const DEFAULTS: WorkflowConfig = {
 	planBlockedTools: ["edit", "write"],
 	explore: { maxQueries: 8, concurrency: 4, tools: ["read", "grep", "find", "ls"] },
 	advisor: { tools: ["read", "grep", "find", "ls"], maxTranscriptChars: 1_500_000 },
-	judge: { tools: ["read", "grep", "find", "ls"], maxDiffChars: 400_000 },
+	judge: {
+		tools: ["read", "grep", "find", "ls"],
+		maxDiffChars: 400_000,
+		recheck: true,
+		recheckThinking: "medium",
+		recheckMaxShare: 0.5,
+		finalFullReviewOverChars: 80_000,
+	},
 	subagent: {
 		extensions: ["~/.pi/agent/npm/node_modules/pi-claude-bridge/src/index.ts"],
 		timeoutMs: 15 * 60_000,

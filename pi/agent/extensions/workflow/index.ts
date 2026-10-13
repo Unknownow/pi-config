@@ -17,9 +17,12 @@
  * and its model, plus a row per running subagent with what it is doing now.
  */
 
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
+import { promisify } from "node:util";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { type Message, StringEnum } from "@earendil-works/pi-ai";
 import {
@@ -40,6 +43,7 @@ import {
 	ROLES,
 	type Role,
 	saveRole,
+	type Thinking,
 	type WorkflowConfig,
 } from "./config.ts";
 import * as prompts from "./prompts.ts";
@@ -69,6 +73,8 @@ interface FlowState {
 	judgeRounds: number;
 	/** Hash of the last diff the judge passed. */
 	passedDiff?: string;
+	/** The last judge round, so the next one reviews only what changed since. */
+	lastJudge?: LastJudge;
 	/** Active tools before plan mode switched some off. */
 	toolsBeforePlan?: string[];
 	/** Tokens spent per pipeline stage this session. */
@@ -82,17 +88,34 @@ interface FlowState {
 	summarizedPasses?: string[];
 }
 
+interface LastJudge {
+	/** Hash of the full diff it reviewed. */
+	hash: string;
+	/** The working tree it reviewed, as a git tree id. */
+	tree: string;
+	head: string;
+	base: string;
+	verdict: "PASS" | "FAIL";
+	text: string;
+}
+
 const STATE_ENTRY = "workflow-state";
 /** Display-only entry (never sent to the model) with the token breakdown of a finished flow. */
 const SUMMARY_ENTRY = "workflow-summary";
 const APPROVED = "Plan approved. Execute it now, step by step, following the workflow rules.";
 const OWN_TOOLS = new Set(["explore", "advisor", "judge"]);
+const execFileAsync = promisify(execFile);
 
 interface Diff {
 	text: string;
 	hash: string;
 	files: number;
 	truncated: boolean;
+	base: string;
+	/** Every changed or new file. */
+	names: string[];
+	/** Length of the untruncated diff. */
+	chars: number;
 }
 
 function assistantText(m: AgentMessage | undefined): string {
@@ -263,14 +286,15 @@ export default function workflow(pi: ExtensionAPI) {
 	async function runRole(
 		role: SubRole,
 		label: string,
-		opts: { systemPrompts: string[]; tools: string[]; task: string; cwd: string; signal?: AbortSignal },
+		opts: { systemPrompts: string[]; tools: string[]; task: string; cwd: string; signal?: AbortSignal; thinking?: Thinking },
 		onChange?: (run: RunView) => void,
 	): Promise<{ result: RunResult; run: RunView }> {
 		const run = view.start(role, label);
 		onChange?.(run);
+		const { thinking, ...rest } = opts;
 		const result = await runSubagent({
-			...opts,
-			role: cfg.roles[role],
+			...rest,
+			role: thinking ? { ...cfg.roles[role], thinking } : cfg.roles[role],
 			extensions: cfg.subagent.extensions,
 			timeoutMs: cfg.subagent.timeoutMs,
 			onEvent: (e) => {
@@ -335,7 +359,8 @@ export default function workflow(pi: ExtensionAPI) {
 		const hash = createHash("sha1").update(full).digest("hex");
 		const truncated = full.length > cfg.judge.maxDiffChars;
 		const text = truncated ? `${full.slice(0, cfg.judge.maxDiffChars)}\n\n[diff truncated; read the files for the rest]` : full;
-		return { text, hash, files, truncated };
+		const names = [...[...tracked.stdout.matchAll(/^diff --git a\/(.+?) b\//gm)].map((m) => m[1]), ...untracked];
+		return { text, hash, files, truncated, base, names, chars: full.length };
 	}
 
 	/** The whole branch, compactions included, as text. */
@@ -362,16 +387,100 @@ export default function workflow(pi: ExtensionAPI) {
 		usage: ReturnType<typeof emptyUsage>;
 	}
 
-	async function judge(ctx: ExtensionContext, diff: Diff, focus: string | undefined, signal?: AbortSignal, onChange?: (run: RunView) => void): Promise<JudgeResult & { run: RunView }> {
-		const header = `## Diff under review (${diff.files} file(s)${diff.truncated ? ", truncated" : ""})\n\n`;
+	/** The working tree (tracked and untracked files, minus ignored ones) as a git tree id, or null. Uses a temporary index. */
+	async function snapshotTree(cwd: string): Promise<string | null> {
+		const tmp = path.join(os.tmpdir(), `workflow-judge-index-${process.pid}-${Date.now()}`);
+		const run = (args: string[]) =>
+			execFileAsync("git", ["-C", cwd, ...args], { env: { ...process.env, GIT_INDEX_FILE: tmp }, timeout: 60_000, maxBuffer: 16 * 1024 * 1024 });
+		try {
+			const index = path.resolve(cwd, (await execFileAsync("git", ["-C", cwd, "rev-parse", "--git-path", "index"])).stdout.trim());
+			if (fs.existsSync(index)) fs.copyFileSync(index, tmp); // warm start: only changed files get hashed
+			await run(["add", "-A"]);
+			return (await run(["write-tree"])).stdout.trim() || null;
+		} catch {
+			return null;
+		} finally {
+			fs.rmSync(tmp, { force: true });
+		}
+	}
+
+	type ReviewPlan =
+		| { kind: "full"; tree: string | null; head: string }
+		| { kind: "recheck"; tree: string; head: string; prev: LastJudge; delta: string }
+		| { kind: "same"; prev: LastJudge };
+
+	/** Whether the judge reviews the whole diff, only the changes since its last round, or nothing (no changes since). */
+	async function reviewPlan(cwd: string, diff: Diff, full: boolean): Promise<ReviewPlan> {
+		const prev = state.lastJudge;
+		if (!full && prev?.hash === diff.hash) return { kind: "same", prev };
+		const [tree, head] = await Promise.all([snapshotTree(cwd), git(cwd, "rev-parse", "HEAD").then((r) => r.stdout.trim())]);
+		const fullPlan = { kind: "full" as const, tree, head };
+		// A commit, rebase or branch switch since, or another base: the last round no longer lines up.
+		if (full || !cfg.judge.recheck || !prev || !tree || prev.head !== head || prev.base !== diff.base) return fullPlan;
+		const delta = (await git(cwd, "diff", "--no-color", prev.tree, tree)).stdout;
+		// Fixes that rewrite most of the change get a full review: little to save, more to miss.
+		if (!delta.trim() || delta.length > diff.chars * cfg.judge.recheckMaxShare) return fullPlan;
+		return { kind: "recheck", tree, head, prev, delta };
+	}
+
+	/**
+	 * Reviews `diff`. The first round sees the whole diff; later rounds see only the changes since the
+	 * last round plus its findings (cheaper, fresh each time). A large change that passes on a
+	 * re-review gets one final full review. `full` forces a full review.
+	 */
+	async function judge(ctx: ExtensionContext, diff: Diff, focus: string | undefined, signal?: AbortSignal, onChange?: (run: RunView) => void, full = false): Promise<JudgeResult & { run: RunView }> {
+		const plan = await reviewPlan(ctx.cwd, diff, full);
+		if (plan.kind === "same") {
+			const run = view.start("judge", "no changes since the last round");
+			view.finish(run, plan.prev.verdict === "PASS", `${plan.prev.verdict} · unchanged, previous result`);
+			onChange?.(run);
+			seenDiffs.add(diff.hash);
+			return { verdict: plan.prev.verdict, text: `No changes since the last judge round; its result stands.\n\n${plan.prev.text}`, hash: diff.hash, usage: emptyUsage(), run };
+		}
+		let r = await judgeOnce(ctx, diff, focus, plan, signal, onChange);
+		const limit = cfg.judge.finalFullReviewOverChars;
+		if (r.verdict === "PASS" && plan.kind === "recheck" && limit > 0 && diff.chars > limit) {
+			const final = await judgeOnce(ctx, diff, focus, { kind: "full", tree: plan.tree, head: plan.head }, signal, onChange);
+			r = { ...final, usage: addUsage(addUsage(emptyUsage(), r.usage), final.usage) };
+		}
+		if (r.verdict === "PASS") {
+			state.passedDiff = diff.hash;
+			state.judgeRounds = 0;
+			persist();
+		}
+		return r;
+	}
+
+	/** One judge run: the whole diff, or for a re-review the changes since the last round with its findings. */
+	async function judgeOnce(
+		ctx: ExtensionContext,
+		diff: Diff,
+		focus: string | undefined,
+		plan: Exclude<ReviewPlan, { kind: "same" }>,
+		signal?: AbortSignal,
+		onChange?: (run: RunView) => void,
+	): Promise<JudgeResult & { run: RunView }> {
+		const recheck = plan.kind === "recheck";
+		const max = cfg.judge.maxDiffChars;
+		const systemPrompts = recheck
+			? [
+					prompts.JUDGE,
+					prompts.JUDGE_RECHECK,
+					`## Findings of the last round (${plan.prev.verdict})\n\n${plan.prev.text}`,
+					`## Every file in the whole change (${diff.names.length})\n\n${diff.names.join("\n")}`,
+					`## Changes since the last round\n\n${plan.delta.length > max ? `${plan.delta.slice(0, max)}\n\n[truncated; read the files for the rest]` : plan.delta}`,
+				]
+			: [prompts.JUDGE, `## Diff under review (${diff.files} file(s)${diff.truncated ? ", truncated" : ""})\n\n${diff.text}`];
+		const focusNote = focus ? ` Focus: ${focus}` : "";
 		view.stage = "judge";
 		const { result, run } = await runRole(
 			"judge",
-			focus || `${diff.files} changed file(s)`,
+			recheck ? `re-review: changes since the last round${focus ? ` · ${focus}` : ""}` : focus || `${diff.files} changed file(s)`,
 			{
-				systemPrompts: [prompts.JUDGE, header + diff.text],
+				systemPrompts,
 				tools: cfg.judge.tools,
-				task: `Review the diff in your system prompt.${focus ? ` Focus: ${focus}` : ""}`,
+				thinking: recheck ? cfg.judge.recheckThinking : undefined,
+				task: recheck ? `Re-review the changes in your system prompt against the last round's findings.${focusNote}` : `Review the diff in your system prompt.${focusNote}`,
 				cwd: ctx.cwd,
 				signal,
 			},
@@ -384,15 +493,12 @@ export default function workflow(pi: ExtensionAPI) {
 		}
 		const verdict = /VERDICT:\s*PASS/i.test(result.text) && !/VERDICT:\s*FAIL/i.test(result.text) ? "PASS" : "FAIL";
 		const findings = countFindings(result.text);
-		view.finish(run, verdict === "PASS", `${verdict} · ${findings} finding${findings === 1 ? "" : "s"}`);
+		view.finish(run, verdict === "PASS", `${verdict} · ${findings} finding${findings === 1 ? "" : "s"}${recheck ? " · re-review" : ""}`);
 		onChange?.(run);
 		// Back to the phase's stage either way; finishPassed moves to commit once the commit is actually handed over.
 		view.stage = state.phase === "plan" ? "plan" : "execute";
-		if (verdict === "PASS") {
-			state.passedDiff = diff.hash;
-			state.judgeRounds = 0;
-			persist();
-		}
+		state.lastJudge = plan.tree ? { hash: diff.hash, tree: plan.tree, head: plan.head, base: diff.base, verdict, text: result.text } : undefined;
+		persist();
 		return { verdict, text: result.text, hash: diff.hash, usage: result.usage, run };
 	}
 
@@ -505,18 +611,21 @@ export default function workflow(pi: ExtensionAPI) {
 		name: "judge",
 		label: "Judge",
 		description:
-			"Adversarial review of the current uncommitted diff (plus untracked files) by a stronger model that assumes the change is wrong. Returns one line per finding and VERDICT: PASS or FAIL. Call it when the diff is ready; fix blocker and major findings and call it again. Do not commit before PASS.",
+			"Adversarial review of the current uncommitted diff (plus untracked files) by a stronger model that assumes the change is wrong. Returns one line per finding and VERDICT: PASS or FAIL. Call it when the diff is ready; fix blocker and major findings and call it again. Rounds after the first review only the changes since the last round, with its findings. Do not commit before PASS.",
 		promptSnippet: "judge: adversarial review of the current diff; must PASS before commit",
 		parameters: Type.Object({
 			focus: Type.Optional(Type.String({ description: "What the change is meant to do, or areas to scrutinize" })),
 			base: Type.Optional(Type.String({ description: "Git ref to diff against. Default HEAD" })),
+			full: Type.Optional(
+				Type.Boolean({ description: "Review the whole diff, not only the changes since the last round. Use once before committing a risky change." }),
+			),
 		}),
 		async execute(_id, params, signal, onUpdate, ctx) {
 			const diff = await collectDiff(ctx.cwd, params.base || "HEAD");
 			if (!diff) throw new Error("not a git work tree; the judge reviews git diffs");
 			if (!diff.text) return { content: [{ type: "text", text: "No changes to review." }], details: undefined };
 			const progress = toolProgress(onUpdate);
-			const r = await judge(ctx, diff, params.focus, signal, progress.track);
+			const r = await judge(ctx, diff, params.focus, signal, progress.track, params.full === true);
 			if (r.verdict === "ERROR") throw new Error(r.text);
 			if (r.verdict === "FAIL") state.judgeRounds++;
 			return { content: [{ type: "text", text: r.text }], details: { runs: progress.snapshot(), verdict: r.verdict }, usage: r.usage };
