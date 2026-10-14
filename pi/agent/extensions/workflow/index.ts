@@ -55,8 +55,8 @@ import { branchName, combineOutcomes, type Delivery, type DeliveryOptions, DELIV
 import { combineRepoTexts, parseAddDir, repoKey } from "./repos.ts";
 import { shellProblem } from "./push-guard.ts";
 import { COMMIT_GUARD_ENV, type CommitGuardSpec } from "./commit-guard.ts";
-import { commitPlan, type Finished, mergeChecklist, newFlowId, type PlanStatus, planCard, pruneIds, renderPlanFile, type ChecklistItem } from "./plan-doc.ts";
-import { deleteLocal, type Git, plansDir, readLocalStatuses, repoInfo, writeLocal } from "./plan-store.ts";
+import { commitPlan, type Finished, mergeChecklist, newFlowId, parseChecklist, type PlanStatus, planCard, pruneIds, renderPlanFile, splitPlanFile, type ChecklistItem } from "./plan-doc.ts";
+import { adoptHigher, commitRef, deleteLocal, deleteRef, fetchMirror, type Git, listRefs, plansDir, pushRef, readLocalStatuses, readPlanMd, refRev, remoteOf, repoInfo, type RefEntry, writeLocal } from "./plan-store.ts";
 import { nextStage, parseStages, stageDelivery, stageLine, stageNote, stageStart, stagesOutcome } from "./stages.ts";
 import { planToolProblem, planToolRefused } from "./readonly-tools.ts";
 import { addUsage, emptyUsage, mapLimit, type RunResult, runSubagent } from "./subagent.ts";
@@ -869,6 +869,8 @@ export default function workflow(pi: ExtensionAPI) {
 		delivery?: string;
 		touched: string[];
 		finished?: Finished;
+		/** A restore of the file (no new rev): never commits over a newer ref. */
+		retry?: boolean;
 	}
 
 	async function writePlan(ctx: ExtensionContext, snap: PlanSnap): Promise<void> {
@@ -894,7 +896,8 @@ export default function workflow(pi: ExtensionAPI) {
 			...(snap.finished ? { finished: snap.finished } : {}),
 			repos: infos.map((info, i) => ({ ...info, primary: i === 0 })),
 		};
-		writeLocal(dir, snap.flowId, renderPlanFile(snap.flowId, snap.plan, snap.checklist, snap.finished), status);
+		const planMd = renderPlanFile(snap.flowId, snap.plan, snap.checklist, snap.finished);
+		writeLocal(dir, snap.flowId, planMd, status);
 		planDirs.set(snap.flowId, dir);
 		planLast.set(snap.flowId, { dir, status });
 		const live = state.planDoc?.flowId === snap.flowId ? state.planDoc : undefined;
@@ -902,7 +905,71 @@ export default function workflow(pi: ExtensionAPI) {
 			live.roots = roots;
 			persist();
 		}
+		const revs = await mapLimit(roots, 3, (root) => syncRoot(ctx, root, snap, planMd, status));
+		const top = Math.max(snap.rev, ...revs);
+		if (live && top > live.rev) {
+			live.rev = top;
+			persist();
+		}
 		if (snap.finished && cfg.plans.keepCount === 0) deleteLocal(dir, snap.flowId);
+	}
+
+	function planWarn(ctx: ExtensionContext, flowId: string, text: string): void {
+		if (planWarned.has(flowId)) return;
+		planWarned.add(flowId);
+		ctx.ui.notify(`workflow: ${text}`, "warning");
+	}
+
+	/** Whether plan refs of a repo with this remote URL may be pushed. */
+	function syncAllowed(url: string): boolean {
+		const u = url.toLowerCase();
+		return cfg.plans.sync === "remote" && !cfg.plans.localOnly.some((s) => s && u.includes(s.toLowerCase()));
+	}
+
+	/** Commits the plan into the repo's plan ref and pushes it. Returns the highest rev written (a rejected push is redone on top of the remote's commit). Never throws. */
+	async function syncRoot(ctx: ExtensionContext, root: string, snap: PlanSnap, planMd: string, status0: PlanStatus): Promise<number> {
+		let status = status0;
+		try {
+			const remote = await remoteOf(gitEnv, root);
+			const push = !!remote && syncAllowed(remote.url);
+			if (snap.finished && cfg.plans.keepCount === 0) {
+				await deleteRef(gitEnv, root, snap.flowId, push ? remote?.name : undefined);
+				return 0;
+			}
+			const cur = await refRev(gitEnv, root, snap.flowId);
+			if (cur !== null) {
+				if (snap.retry) {
+					if (cur > status.rev) {
+						planWarn(ctx, snap.flowId, "this flow moved on in another device; use /flow resume");
+						return cur;
+					}
+				} else if (cur >= status.rev) status = { ...status, rev: cur + 1 };
+			}
+			if (!(await commitRef(gitEnv, root, snap.flowId, planMd, `${JSON.stringify(status, null, 2)}\n`))) {
+				planWarn(ctx, snap.flowId, `could not save the plan ref in ${root}`);
+				return 0;
+			}
+			if (!push || !remote) return status.rev;
+			const first = await pushRef(gitEnv, root, remote.name, snap.flowId);
+			if (first === "ok") return status.rev;
+			if (first === "failed") {
+				planWarn(ctx, snap.flowId, `could not push the plan to ${remote.url} (it stays local; plans.sync "local" or plans.localOnly turns pushing off)`);
+				return status.rev;
+			}
+			const theirs = (await fetchMirror(gitEnv, root, remote.name)) ? (await listRefs(gitEnv, root, "remote-plans")).find((e) => e.flowId === snap.flowId) : undefined;
+			if (!theirs) {
+				planWarn(ctx, snap.flowId, `could not push the plan to ${remote.url}: it changed there`);
+				return status.rev;
+			}
+			const rev = Math.max(status.rev, theirs.status?.rev ?? 0) + 1;
+			const next: PlanStatus = { ...status, rev };
+			const commit = await commitRef(gitEnv, root, snap.flowId, planMd, `${JSON.stringify(next, null, 2)}\n`, theirs.commit);
+			if (!commit || (await pushRef(gitEnv, root, remote.name, snap.flowId)) !== "ok") planWarn(ctx, snap.flowId, `could not push the plan to ${remote.url}: it changed there`);
+			return rev;
+		} catch (e) {
+			planWarn(ctx, snap.flowId, `plan sync failed in ${root}: ${(e as Error).message}`);
+			return 0;
+		}
 	}
 
 	/** A point where the plan file is rewritten: approval, an amendment, a stage end, the flow's end. Runs in the background, in order; `bump: false` only restores the file. */
@@ -922,6 +989,7 @@ export default function workflow(pi: ExtensionAPI) {
 			delivery: state.delivery,
 			touched: [...(state.touchedRepos ?? [])],
 			finished: doc.finished,
+			retry: !bump,
 		};
 		const c = ctx ?? lastCtx;
 		if (!c) return;
@@ -973,8 +1041,194 @@ export default function workflow(pi: ExtensionAPI) {
 				});
 				for (const id of pruneIds(entries, { keepDays: cfg.plans.keepDays, keepCount: cfg.plans.keepCount, now: Date.now(), activeId: active })) deleteLocal(dir, id);
 			}
+			const repos = await flowRepos(ctx);
+			planChain = planChain.then(() => mapLimit(repos, 3, (r) => pruneRefs(r.root, active))).then(() => {}, () => {});
+			await planChain;
 			if (active && state.approvedPlan) planMilestone(ctx, undefined, false);
 		} catch {}
+	}
+
+	/** The plan refs of one repo: fetch the remote's, keep the higher revs, delete those past retention (also on the remote). */
+	async function pruneRefs(root: string, activeId: string | undefined): Promise<void> {
+		try {
+			const remote = await remoteOf(gitEnv, root);
+			const sync = !!remote && syncAllowed(remote.url);
+			if (remote && sync && (await fetchMirror(gitEnv, root, remote.name))) {
+				for (const e of await listRefs(gitEnv, root, "remote-plans")) await adoptHigher(gitEnv, root, e.flowId);
+			}
+			const entries = (await listRefs(gitEnv, root, "plans")).map((e) => {
+				const t = e.status ? Date.parse(e.status.updated) : NaN;
+				return { flowId: e.flowId, updated: Number.isFinite(t) ? t : e.date, finished: e.status ? !!e.status.finished : true };
+			});
+			for (const id of pruneIds(entries, { keepDays: cfg.plans.keepDays, keepCount: cfg.plans.keepCount, now: Date.now(), activeId })) {
+				await deleteRef(gitEnv, root, id, sync ? remote?.name : undefined);
+			}
+		} catch {}
+	}
+
+	const isDir = (p: string): boolean => {
+		try {
+			return fs.statSync(p).isDirectory();
+		} catch {
+			return false;
+		}
+	};
+
+	/** `/flow resume`: rebuilds an unfinished flow from its plan ref, found in the working folder's repo or an added folder. */
+	async function resumeFlow(ctx: ExtensionContext, wanted: string | undefined): Promise<void> {
+		const notify = (text: string, level: "info" | "warning" = "warning") => ctx.ui.notify(`workflow: ${text}`, level);
+		const busy = state.phase === "execute" && state.planDoc && !state.planDoc.finished ? state.planDoc.flowId : undefined;
+		if (busy && (!wanted || !busy.startsWith(wanted))) {
+			notify(`a flow is already running (${busy}); finish or leave it before resuming another`);
+			return;
+		}
+		const cwdRoot = await gitRoot(ctx.cwd);
+		if (!cwdRoot) {
+			notify("the working folder is not in a git repo, so there is no plan to resume");
+			return;
+		}
+		const searchRoots: string[] = [cwdRoot];
+		for (const f of existingFolders()) {
+			const r = await gitRoot(f);
+			if (r && !searchRoots.some((s) => repoKey(s) === repoKey(r))) searchRoots.push(r);
+		}
+		const found = new Map<string, { entry: RefEntry; root: string }>();
+		planChain = planChain
+			.then(async () => {
+				for (const root of searchRoots) {
+					const remote = await remoteOf(gitEnv, root);
+					if (remote && (await fetchMirror(gitEnv, root, remote.name))) {
+						for (const e of await listRefs(gitEnv, root, "remote-plans")) await adoptHigher(gitEnv, root, e.flowId);
+					}
+				}
+			})
+			.then(() => {}, () => {});
+		await planChain;
+		for (const root of searchRoots) {
+			for (const e of await listRefs(gitEnv, root, "plans")) {
+				if (!e.status || e.status.finished) continue;
+				const prev = found.get(e.flowId);
+				if (!prev || (prev.entry.status?.rev ?? 0) < e.status.rev) found.set(e.flowId, { entry: e, root });
+			}
+		}
+		let candidates = [...found.values()].sort((a, b) => Date.parse(b.entry.status?.updated ?? "") - Date.parse(a.entry.status?.updated ?? ""));
+		if (wanted) candidates = candidates.filter((c) => c.entry.flowId.startsWith(wanted));
+		if (!candidates.length) {
+			notify(wanted ? `no unfinished plan matches "${wanted}" in this repo or the added folders` : "no unfinished plan found in this repo or the added folders");
+			return;
+		}
+		let pick = candidates[0];
+		if (candidates.length > 1) {
+			const labels = candidates.map((c) => `${c.entry.status?.title} \u2014 ${c.entry.status?.updated.slice(0, 16).replace("T", " ")}${c.entry.status?.stage ? `, stage ${c.entry.status.stage}` : ""} (${c.entry.flowId})`);
+			const chosen = await ctx.ui.select("Resume which flow?", labels);
+			const i = chosen ? labels.indexOf(chosen) : -1;
+			if (i < 0) return;
+			pick = candidates[i];
+		}
+		if (busy && busy !== pick.entry.flowId) {
+			notify(`a flow is already running (${busy}); finish or leave it before resuming another`);
+			return;
+		}
+		const status = pick.entry.status;
+		const md = await readPlanMd(gitEnv, pick.root, pick.entry.commit);
+		if (!status || !md) {
+			notify("the plan ref is unreadable");
+			return;
+		}
+		const plan = splitPlanFile(md);
+
+		const mine = new Map<string, string>();
+		for (const root of searchRoots) {
+			const remote = await remoteOf(gitEnv, root);
+			if (remote) mine.set(remote.url, root);
+		}
+		const parent = path.dirname(cwdRoot);
+		let siblings: string[] | undefined;
+		const findSibling = async (url: string): Promise<string | undefined> => {
+			if (!siblings) {
+				try {
+					siblings = fs.readdirSync(parent).slice(0, 200).map((n) => path.join(parent, n)).filter((d) => fs.existsSync(path.join(d, ".git")));
+				} catch {
+					siblings = [];
+				}
+			}
+			for (const d of siblings) {
+				const remote = await remoteOf(gitEnv, d);
+				if (remote?.url === url) return (await gitRoot(d)) ?? undefined;
+			}
+			return undefined;
+		};
+		const roots: { root: string; branch?: string; remote?: string }[] = [];
+		for (const r of status.repos) {
+			let root = r.remote ? mine.get(r.remote) : undefined;
+			if (!root && r.remote) root = await findSibling(r.remote);
+			if (!root) {
+				const label = r.remote ?? "a repo without a remote";
+				const answer = r.remote ? (await ctx.ui.input(`Where is ${label} on this device?`, "path to the repo, empty to skip"))?.trim() : "";
+				const abs = answer ? path.resolve(ctx.cwd, answer).replace(/\\/g, "/") : "";
+				root = abs && isDir(abs) ? ((await gitRoot(abs)) ?? undefined) : undefined;
+				if (!root) {
+					notify(`${label}: not found on this device, skipped`);
+					continue;
+				}
+			}
+			if (!roots.some((x) => repoKey(x.root) === repoKey(root))) roots.push({ root, branch: r.branch, remote: r.remote });
+		}
+		if (!roots.some((x) => repoKey(x.root) === repoKey(cwdRoot))) roots.unshift({ root: cwdRoot });
+
+		for (const r of roots) {
+			if (!r.branch) continue;
+			if (r.branch.startsWith("-") || r.branch.includes("@{") || (await gitEnv(r.root, ["check-ref-format", "--branch", r.branch])).code !== 0) {
+				notify(`${r.root}: the plan names an invalid branch, left alone`);
+				continue;
+			}
+			const info = await repoInfo(gitEnv, r.root);
+			const dirty = await gitEnv(r.root, ["status", "--porcelain"]);
+			if (dirty.code !== 0 || dirty.stdout.trim()) {
+				notify(`${r.root} has uncommitted changes; it stays on ${info.branch ?? "a detached HEAD"} (the flow used ${r.branch})`);
+				continue;
+			}
+			const remote = await remoteOf(gitEnv, r.root);
+			const fetched = remote ? (await gitEnv(r.root, ["fetch", "--quiet", remote.name, `+refs/heads/${r.branch}:refs/remotes/${remote.name}/${r.branch}`])).code === 0 : false;
+			const stuck = () => notify(`${r.root}: could not bring ${r.branch} up to ${remote?.name ?? "the remote"}/${r.branch}; check it by hand`);
+			if (info.branch !== r.branch && (await gitEnv(r.root, ["switch", "--quiet", r.branch])).code !== 0) {
+				stuck();
+				continue;
+			}
+			if (remote && fetched && (await gitEnv(r.root, ["merge", "--ff-only", "--quiet", `${remote.name}/${r.branch}`])).code !== 0) stuck();
+		}
+
+		await setPhase(ctx, "execute");
+		const folders = [...(state.folders ?? [])];
+		let added = 0;
+		for (const r of roots) {
+			const abs = path.resolve(r.root).replace(/\\/g, "/");
+			if (repoKey(abs) === repoKey(ctx.cwd) || repoKey(abs) === repoKey(cwdRoot) || folders.some((f) => repoKey(f) === repoKey(abs))) continue;
+			folders.push(abs);
+			added++;
+		}
+		state.folders = folders;
+		state.approvedPlan = plan;
+		state.delivery = isDelivery(status.delivery) ? status.delivery : defaultDelivery();
+		state.stage = status.stage;
+		state.stageOutcomes = undefined;
+		state.stageJudged = undefined;
+		state.checklist = parseChecklist(plan).map((i) => ({ ...i, done: status.done.includes(i.id) }));
+		if (!state.checklist.length) state.checklist = undefined;
+		state.planDoc = { flowId: status.flowId, rev: status.rev, roots: roots.map((r) => r.root) };
+		persist();
+		updateStatus(ctx);
+		planMilestone(ctx);
+		await planChain;
+		pi.sendMessage(
+			{ customType: "workflow-resume-plan", content: `Resumed on this device: check \`git status\` and the branch in each repo, then continue with the open steps.\n\n${planCardText()}`, display: true },
+			{ triggerTurn: false },
+		);
+		notify(`resumed "${status.title}"${status.stage ? ` at stage ${status.stage}` : ""}; send a message to continue${added ? ` (reloading to add ${added} folder${added === 1 ? "" : "s"})` : ""}`, "info");
+		if (added) {
+			await ctx.waitForIdle();
+			await ctx.reload();
+		}
 	}
 
 	/** A very long plan loses its middle, never its amendments. */
@@ -2302,6 +2556,7 @@ ${instruction}` : instruction);
 		{ value: "tokens", label: "tokens - token breakdown of the current flow so far" },
 		{ value: "model", label: "model <role> <provider/id[:thinking]> - set a role's model" },
 		{ value: "reload", label: "reload - re-read workflow.json" },
+		{ value: "resume", label: "resume [flowId] - pick up an unfinished flow from its plan ref (e.g. on another device)" },
 	];
 
 	function statusText(): string {
@@ -2420,6 +2675,9 @@ ${instruction}` : instruction);
 					return;
 				case "approve":
 					await approve(ctx);
+					return;
+				case "resume":
+					await resumeFlow(ctx, rest[0]);
 					return;
 				case "delivery": {
 					const want = rest[0]?.toLowerCase();
