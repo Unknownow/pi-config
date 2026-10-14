@@ -46,7 +46,7 @@ import {
 	type Thinking,
 	type WorkflowConfig,
 } from "./config.ts";
-import { afterPass, fixableFindings, hasPlanFlaw, isPlanReady, judgeCapReached, minorFixOpen, parseArbiter, phaseAfterFlow, shouldResume, skipJudge } from "./agent-end.ts";
+import { afterPass, arbiterFirst, fixableFindings, hasPlanFlaw, isPlanReady, judgeCapReached, minorFixOpen, parseArbiter, phaseAfterFlow, shouldResume, skipJudge } from "./agent-end.ts";
 import { countTokens, type Tok } from "./tokens.ts";
 import * as prompts from "./prompts.ts";
 import { branchName, type Delivery, DELIVERIES, DELIVERY_LABELS, deliveryChoices, deliveryInstruction, deliveryMenuLabel, deliveryOutcome, freshPr, isDelivery, planTitle, type PrState } from "./delivery.ts";
@@ -108,6 +108,8 @@ interface FlowState {
 	commitPending?: { mode: Exclude<Delivery, "off">; head: string; branch?: string; prBefore?: number };
 	/** What happens after the judge passes in this flow, chosen at approval; unset means `delivery.default`. */
 	delivery?: Delivery;
+	/** Plan flaws go straight to the arbiter in this flow, chosen at approval; unset means `cfg.planFlaw`. */
+	planFlaw?: "auto";
 	/** Passed diffs whose flow already ended (or will, at the commit run's end). */
 	summarizedPasses?: string[];
 	/** The plan the user approved (the final plan, plus arbiter amendments); the judge and the arbiter read it. */
@@ -322,6 +324,7 @@ export default function workflow(pi: ExtensionAPI) {
 		if (phase === "plan") {
 			state.approvedPlan = undefined;
 			state.delivery = undefined;
+			state.planFlaw = undefined;
 		}
 		consecutiveErrors = 0;
 		if (phase !== "off") await applyRole(ctx, phase);
@@ -329,8 +332,9 @@ export default function workflow(pi: ExtensionAPI) {
 		updateStatus(ctx);
 	}
 
-	async function approve(ctx: ExtensionContext, delivery?: Delivery): Promise<void> {
+	async function approve(ctx: ExtensionContext, delivery?: Delivery, arbiterOnFlaw = false): Promise<void> {
 		state.delivery = delivery ?? (await chooseDelivery(ctx));
+		state.planFlaw = arbiterOnFlaw ? "auto" : undefined;
 		if (cfg.finalizePlan) {
 			// One more planner reply, the final execution plan, before the execute model starts.
 			planReady = false;
@@ -1010,6 +1014,7 @@ export default function workflow(pi: ExtensionAPI) {
 		// Without a plan on screen, "yes, do that" answers a question; it doesn't approve anything.
 		if (!planReady || !approveRe().test(event.text.trim())) return { action: "continue" };
 		state.delivery = await chooseDelivery(ctx);
+		state.planFlaw = undefined;
 		if (cfg.finalizePlan) {
 			// Same as the menu: the planner writes the final plan first, in its reply to this message.
 			planReady = false;
@@ -1082,7 +1087,12 @@ export default function workflow(pi: ExtensionAPI) {
 			const def = menuDefault();
 			const options = cfg.delivery.ask ? deliveryChoices(def) : [def];
 			const labels = options.map((d) => `Approve → ${deliveryMenuLabel(d, def)}`);
-			const choice = await ctx.ui.select(`Plan phase · execute on ${describeRole(cfg.roles.execute)}`, [...labels, "Keep discussing"]);
+			const arbiterLabel = "Approve, arbiter solves plan flaws →";
+			const choice = await ctx.ui.select(`Plan phase · execute on ${describeRole(cfg.roles.execute)}`, [...labels, ...(cfg.planFlaw === "ask" ? [arbiterLabel] : []), "Keep discussing"]);
+			if (choice === arbiterLabel && cfg.planFlaw === "ask") {
+				await approve(ctx, undefined, true);
+				return;
+			}
 			const i = choice ? labels.indexOf(choice) : -1;
 			if (i >= 0) await approve(ctx, options[i]);
 			return;
@@ -1124,6 +1134,7 @@ export default function workflow(pi: ExtensionAPI) {
 		state.minorRounds = 0;
 		state.minorSentFor = undefined;
 		state.delivery = undefined; // the flow is over; the next one chooses again
+		state.planFlaw = undefined;
 		// The commits' branch; HEAD when detached, unknown (state saved by an older version) or gone (deleted after the merge).
 		const named = !!branch && branch !== "HEAD" && (await git(ctx.cwd, "rev-parse", "--verify", "--quiet", `refs/heads/${branch}`)).code === 0;
 		const rev = named ? (branch as string) : "HEAD";
@@ -1248,12 +1259,12 @@ export default function workflow(pi: ExtensionAPI) {
 
 	/**
 	 * The judge says the approved plan itself is flawed. In "ask" mode the user decides; in "auto" mode
-	 * (or on request) the arbiter does, and asks the user only when it cannot decide.
+	 * (or on request, or when chosen at approval) the arbiter does, and asks the user only when it cannot decide.
 	 * "continue": carry on with the verdict. "amended": the plan was changed and the executor is on it.
 	 * "stop": back to planning, or the flow ended.
 	 */
 	async function resolvePlanFlaw(ctx: ExtensionContext, report: string, diff: Diff): Promise<"continue" | "amended" | "stop"> {
-		let arbiter = cfg.planFlaw === "auto";
+		let arbiter = arbiterFirst(state.planFlaw, cfg.planFlaw);
 		let canAsk = true;
 		for (;;) {
 			if (arbiter) {
@@ -1379,6 +1390,7 @@ export default function workflow(pi: ExtensionAPI) {
 		state.minorRounds = 0;
 		state.minorSentFor = undefined;
 		state.delivery = undefined;
+		state.planFlaw = undefined;
 		if (state.summarizedPasses?.includes(hash)) return;
 		markPassSummarized(hash);
 		view.stage = "execute";
@@ -1517,6 +1529,7 @@ export default function workflow(pi: ExtensionAPI) {
 		const lines = [
 			`phase      ${state.phase}${state.escalated ? " (escalated)" : ""}`,
 			`judge     ${state.judgeRounds} failed round(s); auto=${cfg.autoJudge}; then ${DELIVERY_LABELS[state.delivery ?? defaultDelivery()]}${state.delivery ? "" : " (default)"}`,
+			state.planFlaw === "auto" ? "flaws     arbiter (this flow)" : `flaws     ${cfg.planFlaw === "auto" ? "arbiter" : "ask"} (config)`,
 			`guard     compact at ${cfg.contextGuardTokens || "off"} tokens`,
 			`tokens    ${STAGES.map((s) => `${s} ${fmtTok(view.sessionTokens(s))}`).join(" · ")} · session total ${fmtTok(STAGES.reduce((n, s) => ({ raw: n.raw + view.sessionTokens(s).raw, cost: n.cost + view.sessionTokens(s).cost }), { raw: 0, cost: 0 }))}`,
 			"",

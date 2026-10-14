@@ -22,14 +22,15 @@ plan is read-only:   bash refuses commands that change files, git or GitHub
 | `explore` | `explore` tool, parallel sub-`pi` processes | plan and execute send open questions and multi-file searches to it; it decides how much to read and answers with `Answer:` plus `Evidence:` (file:line). Known files are read directly. Judge and advisor do not use it |
 | `advisor` | `advisor` tool, sub-`pi` with the whole transcript | choosing an approach, after an error repeats (auto-nudged after `repeatedErrorThreshold` failures), before "done" |
 | `judge` | `judge` tool, sub-`pi` with the git diff | the diff is ready; when a run ends with an unreviewed diff it asks (`autoJudge`) |
-| `arbiter` | sub-`pi` with the plan, the judge's report and the diff | the judge questions the plan and `planFlaw` is `auto` (or you pick "Let the arbiter decide") |
+| `arbiter` | sub-`pi` with the plan, the judge's report and the diff | the judge questions the plan and `planFlaw` is `auto` (or you pick "Let the arbiter decide", or you picked *Approve, arbiter solves plan flaws* for this flow) |
 | `escalate` | main session model | `/flow escalate` |
 
 ## Hands-off run
 
 You discuss the plan with the planner. After every finished planner reply, an **Approve** menu
 pops up (`planPrompt`): one `Approve → <delivery>` entry per delivery (see below), the default first, then
-Keep discussing. Right after such a reply you can also type a short approval
+Keep discussing. With `planFlaw: "ask"` the menu also has `Approve, arbiter solves plan flaws →`: it opens the
+delivery menu, and in that flow plan flaws go straight to the arbiter. A typed approval uses the config. Right after such a reply you can also type a short approval
 as the whole message (a second menu then asks for the delivery; Escape takes the default):
 "go", "ok go", "lgtm", "do it", "do it for me", "yeah do that", "implement the plan", "ship it" and
 the like; see `approvePattern`. Longer messages ("do it but skip step 3") keep planning, and so does "yes, do that" when the last
@@ -110,6 +111,7 @@ after approval runs on its own:
   arbiter decide, ignore and continue, stop. `"auto"` lets the **arbiter** (Fable 5.1 by default, a
   different model from the planner) decide from the code: `REVISE` appends a numbered amendment to the
   plan (at most `maxPlanRevisions`, 2), `KEEP` records why the plan stands, `ASK_USER` shows the menu.
+  Picking *Approve, arbiter solves plan flaws* in the plan menu gives `auto` for that flow only.
   The arbiter cannot change your decisions or the goal. A plan flaw blocks the commit until resolved.
 
 ## Plan phase is read-only

@@ -1,7 +1,7 @@
 // node --test agent-end.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { afterPass, fixableFindings, hasPlanFlaw, isPlanReady, judgeCapReached, minorFixOpen, parseArbiter, phaseAfterFlow, shouldResume, skipJudge } from "./agent-end.ts";
+import { afterPass, arbiterFirst, fixableFindings, hasPlanFlaw, isPlanReady, judgeCapReached, minorFixOpen, parseArbiter, phaseAfterFlow, shouldResume, skipJudge } from "./agent-end.ts";
 
 const empty = { role: "assistant", content: [] };
 
@@ -68,6 +68,13 @@ test("the judge cap: 0 means no limit", () => {
 	assert.equal(judgeCapReached(5, 5), true);
 	assert.equal(judgeCapReached(4, 5), false);
 	assert.equal(judgeCapReached(99, 0), false);
+});
+
+test("arbiterFirst: this flow's choice, else the config", () => {
+	assert.equal(arbiterFirst("auto", "ask"), true);
+	assert.equal(arbiterFirst(undefined, "ask"), false);
+	assert.equal(arbiterFirst(undefined, "auto"), true);
+	assert.equal(arbiterFirst("auto", "auto"), true);
 });
 
 test("hasPlanFlaw sees a tagged finding line only", () => {

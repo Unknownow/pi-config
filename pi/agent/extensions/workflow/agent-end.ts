@@ -76,6 +76,11 @@ export function hasPlanFlaw(text: string): boolean {
 	return /^\S.*\s-\s*(blocker|major|minor)\s*-\s*\[plan-flaw\]/im.test(text);
 }
 
+/** Plan flaws go to the arbiter before the user: this flow's choice at approval, else the config. */
+export function arbiterFirst(flow: "auto" | undefined, config: "ask" | "auto"): boolean {
+	return (flow ?? config) === "auto";
+}
+
 /**
  * Findings of a judge report the executor should fix after a pass: finding lines (not the indented Why/Fix lines)
  * except [knowledge <id>] deviations from a recommended rule, which may stay with a reason, and [plan-flaw] findings, which the arbiter or the user decides.
