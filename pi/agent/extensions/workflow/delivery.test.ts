@@ -168,3 +168,14 @@ test("combineOutcomes", () => {
 	assert.deepEqual(combineOutcomes([{ name: "a", outcome: { text: "committed (1 commit)", ok: true } }, { name: "b", outcome: null }]), { text: "a: committed (1 commit); b: no commit", ok: false });
 	assert.equal(combineOutcomes([{ name: "a", outcome: { text: "x", ok: true } }, { name: "b", outcome: { text: "y", ok: true } }]).ok, true);
 });
+
+test("instruction asks to chain steps", () => {
+	const c = deliveryInstruction(base);
+	assert.ok(c.includes("Use as few tool calls as you can"));
+	assert.ok(!c.includes("Run the push and any pull request commands"));
+	for (const mode of ["push", "pr", "merge"] as const) {
+		const t = deliveryInstruction({ ...base, mode });
+		assert.ok(t.includes("Use as few tool calls as you can"), mode);
+		assert.ok(t.includes("Run the push and any pull request commands"), mode);
+	}
+});

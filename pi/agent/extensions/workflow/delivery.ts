@@ -60,6 +60,10 @@ const SPLIT =
 	"Commit exactly the reviewed changes now, without editing any file first. Split them into commits by function: one commit per logical change (a feature, a fix, a refactor, config, docs), each with the tests that cover it. Follow the plan's Commits section when it has one, adjusted to the actual diff; a change with one function is one commit. Stage each commit's files by path (`git add <paths>`, never `git add -A` or `git add .`), commit, then stage the next. A file whose changes serve several functions stays whole, in the commit of its main change; don't stage parts of files. Order the commits so each one builds on the ones before it. Each message follows the repo's conventions (check `git log --oneline -10`), and its subject says what that commit does. When you are done, `git status --short` shows none of the reviewed files.";
 const SINGLE =
 	"Commit exactly the reviewed changes now: stage the changed and new files from the diff without editing anything first, and write a clear message that follows the repo's conventions.";
+const CHAIN =
+	"Use as few tool calls as you can: chain steps that depend on each other with `&&` in one bash call, so a failure stops the chain (for example each commit's `git add <paths> && git commit …`, and several commits in one call).";
+const CHAIN_REMOTE =
+	"Run the push and any pull request commands that follow it in one bash call where the next step doesn't depend on reading their output.";
 const RULES =
 	"Never force-push, use --no-verify, or use `--admin` or `--auto` when merging. If a hook, the commit, the push or a gh command fails, stop and report it instead of working around it.";
 
@@ -87,6 +91,8 @@ export function deliveryInstruction(o: DeliveryOptions): string {
 			`Then merge it: wait for its checks with \`gh pr checks <number> --watch --fail-fast\` (a pull request without checks is fine). If a check fails, stop and report it; don't merge. Then run \`gh pr merge <number> --${method}${o.deleteBranch ? " --delete-branch" : ""}\`. If GitHub refuses the merge (a required review, a conflict, a branch rule), stop and report why; don't approve it yourself.`,
 		);
 	}
+	parts.push(CHAIN);
+	if (o.mode !== "commit") parts.push(CHAIN_REMOTE);
 	parts.push(RULES);
 	let text = parts.join("\n\n");
 	if (o.deviations) {
