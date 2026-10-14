@@ -1,7 +1,7 @@
 // node --test agent-end.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { afterPass, noChangeStage, arbiterFirst, fixableFindings, hasPlanFlaw, isPlanReady, judgeCapReached, minorFixOpen, parseArbiter, phaseAfterFlow, shouldResume, skipJudge } from "./agent-end.ts";
+import { afterPass, noChangeStage, arbiterFirst, fixableFindings, hasPlanFlaw, canApprove, hasPlanLine, isPlanReady, judgeCapReached, minorFixOpen, parseArbiter, phaseAfterFlow, shouldResume, skipJudge } from "./agent-end.ts";
 
 const empty = { role: "assistant", content: [] };
 
@@ -12,6 +12,16 @@ test("resume only after an overflow retry with an empty reply, at most twice", (
 	assert.equal(shouldResume(false, empty, 0), false);
 	assert.equal(shouldResume(true, { role: "assistant", content: [{ type: "text" }] }, 0), false);
 	assert.equal(shouldResume(true, undefined, 0), false);
+});
+
+test("canApprove after a proposed plan", () => {
+	assert.equal(canApprove("Sounds good, step 2 uses the cache.", true, true), true);
+	assert.equal(canApprove("Sounds good, step 2 uses the cache.", true, false), false);
+	assert.equal(canApprove("Plan:\n1. x", true, false), true);
+	assert.equal(canApprove("Which db do you want?", true, true), false);
+	assert.equal(canApprove("Fine.", false, true), false);
+	assert.equal(hasPlanLine("## Plan: x\n1. y"), true);
+	assert.equal(hasPlanLine("Plan mode is on."), false);
 });
 
 test("plan is ready with a Plan heading and no trailing question", () => {

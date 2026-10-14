@@ -48,7 +48,7 @@ import {
 	type Thinking,
 	type WorkflowConfig,
 } from "./config.ts";
-import { afterPass, noChangeStage, arbiterFirst, fixableFindings, hasPlanFlaw, isPlanReady, judgeCapReached, minorFixOpen, parseArbiter, phaseAfterFlow, shouldResume, skipJudge } from "./agent-end.ts";
+import { afterPass, noChangeStage, arbiterFirst, fixableFindings, canApprove, hasPlanFlaw, hasPlanLine, isPlanReady, judgeCapReached, minorFixOpen, parseArbiter, phaseAfterFlow, shouldResume, skipJudge } from "./agent-end.ts";
 import { countTokens, type Tok } from "./tokens.ts";
 import * as prompts from "./prompts.ts";
 import { branchName, combineOutcomes, type Delivery, type DeliveryOptions, DELIVERIES, DELIVERY_LABELS, deliveryChoices, deliveryInstruction, deliveryMenuLabel, deliveryOutcome, freshPr, isDelivery, planTitle, type PrState, repoDeliveryInstruction } from "./delivery.ts";
@@ -258,6 +258,8 @@ export default function workflow(pi: ExtensionAPI) {
 	let consecutiveErrors = 0;
 	/** The planner's last reply has a "Plan:" section and no open question; only then does a typed "go" / "do it" approve. */
 	let planReady = false;
+	/** A planner reply in the current plan discussion had a plan line; with planRecap "changes" a typed "go" then approves later replies without one. Reset when the phase changes. */
+	let planProposed = false;
 	/** The planner's last finished reply, kept as the approved plan when finalizePlan is off. */
 	let lastPlanText = "";
 	let guardTokens: number | null = null;
@@ -358,6 +360,7 @@ export default function workflow(pi: ExtensionAPI) {
 
 	async function setPhase(ctx: ExtensionContext, phase: Phase): Promise<void> {
 		planReady = false;
+		planProposed = false;
 		if (state.phase === "plan" && phase !== "plan") restorePlanTools();
 		if (phase === "plan") blockPlanTools();
 		state.phase = phase;
@@ -1067,7 +1070,7 @@ export default function workflow(pi: ExtensionAPI) {
 				}
 			}
 		}
-		if (state.phase === "plan") return { systemPrompt: `${event.systemPrompt}\n\n${prompts.planPhase(cfg.finalizePlan, cfg.stagedPlans)}` };
+		if (state.phase === "plan") return { systemPrompt: `${event.systemPrompt}\n\n${prompts.planPhase(cfg.finalizePlan, cfg.stagedPlans, cfg.planRecap)}` };
 		if (state.phase === "execute") {
 			const staged = currentStages();
 			return { systemPrompt: `${event.systemPrompt}\n\n${prompts.EXECUTE_PHASE}${staged ? `\n${stageLine(staged.stages, staged.current)}` : ""}` };
@@ -1337,7 +1340,9 @@ export default function workflow(pi: ExtensionAPI) {
 			// Every finished reply offers the choice; aborted or errored ones do not.
 			// A typed "go" approves only a finished plan that is not waiting on an answer.
 			const text = assistantText(last).trim();
-			planReady = isPlanReady(text, stoppedNormally);
+			const recapChanges = cfg.finalizePlan && cfg.planRecap === "changes";
+			if (stoppedNormally && hasPlanLine(text)) planProposed = true;
+			planReady = recapChanges ? canApprove(text, stoppedNormally, planProposed) : isPlanReady(text, stoppedNormally);
 			if (!stoppedNormally) return;
 			lastPlanText = text;
 			if (!cfg.planPrompt) {
@@ -1348,7 +1353,12 @@ export default function workflow(pi: ExtensionAPI) {
 			const options = cfg.delivery.ask ? deliveryChoices(def) : [def];
 			const labels = options.map((d) => `Approve → ${deliveryMenuLabel(d, def)}`);
 			const arbiterLabel = "Approve, arbiter solves plan flaws →";
-			const choice = await ctx.ui.select(`Plan phase · execute on ${describeRole(cfg.roles.execute)}`, [...labels, ...(cfg.planFlaw === "ask" ? [arbiterLabel] : []), "Keep discussing"]);
+			const showLabel = "Show the full plan";
+			const choice = await ctx.ui.select(`Plan phase · execute on ${describeRole(cfg.roles.execute)}`, [...labels, ...(cfg.planFlaw === "ask" ? [arbiterLabel] : []), ...(recapChanges ? [showLabel] : []), "Keep discussing"]);
+			if (recapChanges && choice === showLabel) {
+				pi.sendMessage({ customType: "workflow-show-plan", content: prompts.SHOW_PLAN, display: true }, { triggerTurn: true, deliverAs: "followUp" });
+				return;
+			}
 			if (choice === arbiterLabel && cfg.planFlaw === "ask") {
 				await approve(ctx, undefined, true);
 				return;

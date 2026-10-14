@@ -39,6 +39,7 @@
   "returnToPlan": true,
   "planFlaw": "ask",
   "stagedPlans": "auto",
+  "planRecap": "changes",
   "maxPlanRevisions": 2,
   "delivery": {
     "ask": true,

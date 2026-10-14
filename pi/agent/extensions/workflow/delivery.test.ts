@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { branchName, combineOutcomes, repoDeliveryInstruction, deliveryChoices, freshPr, deliveryInstruction, deliveryMenuLabel, deliveryOutcome, isDelivery, planTitle, type DeliveryOptions } from "./delivery.ts";
-import { finalize, planPhase } from "./prompts.ts";
+import { finalize, planPhase, SHOW_PLAN } from "./prompts.ts";
 
 const d = new Date(2026, 9, 14, 9, 5);
 const base: DeliveryOptions = { mode: "commit", branch: "feat", base: "", split: true, mergeMethod: "merge", deleteBranch: true, deviations: "" };
@@ -134,6 +134,19 @@ test("planner proposes stages unless onRequest", () => {
 	assert.ok(manual.includes("Staged delivery") && !manual.includes("Propose stages yourself"));
 	assert.ok(planPhase(false).includes("### Stage 1:"));
 	assert.ok(planPhase(false, "onRequest").includes("### Stage 1:"));
+});
+
+test("planner repeats only plan changes unless always", () => {
+	const d = planPhase(true);
+	assert.ok(d.includes("don't repeat it") && d.includes("only the changes") && !d.includes("(the plan so far)"));
+	const a = planPhase(true, "auto", "always");
+	assert.ok(a.includes("(the plan so far)") && !a.includes("don't repeat it"));
+	const n = planPhase(false);
+	assert.ok(n.includes("(the plan so far)") && !n.includes("don't repeat it"));
+});
+
+test("show plan message", () => {
+	assert.ok(SHOW_PLAN.includes("whole current plan") && SHOW_PLAN.includes("Plan:"));
 });
 
 test("repoDeliveryInstruction lists each repo", () => {

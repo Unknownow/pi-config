@@ -29,12 +29,12 @@ plan is read-only:   bash refuses commands that change files, git or GitHub
 
 You discuss the plan with the planner. After every finished planner reply, an **Approve** menu
 pops up (`planPrompt`): one `Approve → <delivery>` entry per delivery (see below), the default first, then
-Keep discussing. With `planFlaw: "ask"` the menu also has `Approve, arbiter solves plan flaws →`: it opens the
+Show the full plan (prints the whole current plan, approves nothing; with `planRecap: "changes"`), Keep discussing. With `planFlaw: "ask"` the menu also has `Approve, arbiter solves plan flaws →`: it opens the
 delivery menu, and in that flow plan flaws go straight to the arbiter. A typed approval uses the config. Right after such a reply you can also type a short approval
 as the whole message (a second menu then asks for the delivery; Escape takes the default):
 "go", "ok go", "lgtm", "do it", "do it for me", "yeah do that", "implement the plan", "ship it" and
 the like; see `approvePattern`. Longer messages ("do it but skip step 3") keep planning, and so does "yes, do that" when the last
-reply had no "Plan:" section or ended with a question (it answers a question). Everything
+reply ended with a question (it answers a question). With `planRecap: "changes"` (default, needs `finalizePlan`) an approval works after any finished reply once a plan was proposed in this discussion; with `"always"` or `finalizePlan: false` the last reply needs a "Plan:" section. Everything
 after approval runs on its own:
 
 ```
@@ -88,12 +88,11 @@ after approval runs on its own:
   the code, and drops the finding only if the code shows the executor is right.
 - **Turning steps back to manual:** set `"autoJudge": "ask"`, `"delivery": { "default": "off" }`
   (nothing is committed unless you pick it at approval), and `"planPrompt": false` for a "say go" hint instead of the Approve menu.
-  `"returnToPlan": false` stays in execute after a flow ends. `"stagedPlans": "onRequest"` makes the planner use stages only when you ask for delivery in parts.
+  `"returnToPlan": false` stays in execute after a flow ends. `"planRecap": "always"` makes every planner reply repeat the plan. `"stagedPlans": "onRequest"` makes the planner use stages only when you ask for delivery in parts.
 
 ## The plan, the judge and the arbiter
 
-- **Plan phase** is for discussion: investigate, answer questions, weigh options, agree. Replies end
-  with a short `Plan:` section once the talk is heading toward a change. When you approve, the
+- **Plan phase** is for discussion: investigate, answer questions, weigh options, agree. The planner proposes the plan in a short `Plan:` section once the talk is heading toward a change, then continues from the context: later replies carry a `Plan:` section only for what changed (`planRecap: "changes"`, default; `"always"` repeats the plan in every reply). When you approve, the
   planner writes the **final plan** in one more reply (`finalizePlan`, default on): goal and
   non-goals, your decisions (D1, D2, ...), facts with file:line, a design section for changes that
   add or reshape components, steps, tests, "done when", risks. The plan gives direction and

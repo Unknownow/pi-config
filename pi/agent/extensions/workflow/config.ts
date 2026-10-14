@@ -56,6 +56,9 @@ export interface DeliveryConfig {
 /** "auto": the planner proposes stages itself when the work warrants them; "onRequest": only when the user asks for delivery in parts. */
 export type StagedPlans = "auto" | "onRequest";
 
+/** "changes": after a plan is proposed, planner replies repeat only what changed; "always": every reply ends with the full plan. */
+export type PlanRecap = "changes" | "always";
+
 export interface WorkflowConfig {
 	roles: Record<Role, RoleSpec>;
 	/** Phase a new session starts in. */
@@ -74,6 +77,8 @@ export interface WorkflowConfig {
 	planFlaw: "ask" | "auto";
 	/** When the planner splits a plan into stages, each executed, judged and delivered on its own. */
 	stagedPlans: StagedPlans;
+	/** How much of the plan the planner repeats in later discussion replies (needs finalizePlan; otherwise it always repeats it). */
+	planRecap: PlanRecap;
 	/** Amendments the arbiter may add to the plan in one flow before it asks you instead. */
 	maxPlanRevisions: number;
 	/** Extra judge -> fix rounds spent on minor findings after a pass, before committing anyway. 0 commits at once. */
@@ -140,6 +145,7 @@ export const DEFAULTS: WorkflowConfig = {
 	returnToPlan: true,
 	planFlaw: "ask",
 	stagedPlans: "auto",
+	planRecap: "changes",
 	maxPlanRevisions: 2,
 	delivery: { ask: true, default: "commit", splitCommits: true, mergeMethod: "merge", deleteBranch: true, base: "", branchPrefix: "flow/" },
 	protectedBranches: ["main", "master"],
@@ -201,6 +207,7 @@ export function loadConfig(): { config: WorkflowConfig; error?: string } {
 		if (!isObject(config.delivery)) config.delivery = DEFAULTS.delivery;
 		for (const k of ["base", "branchPrefix"] as const) if (typeof config.delivery[k] !== "string") config.delivery[k] = DEFAULTS.delivery[k];
 		if (config.stagedPlans !== "auto" && config.stagedPlans !== "onRequest") config.stagedPlans = DEFAULTS.stagedPlans;
+		if (config.planRecap !== "changes" && config.planRecap !== "always") config.planRecap = DEFAULTS.planRecap;
 		return { config };
 	} catch (e) {
 		return { config: DEFAULTS, error: `${CONFIG_PATH}: ${(e as Error).message}` };

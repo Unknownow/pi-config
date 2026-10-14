@@ -37,13 +37,22 @@ function planLineRest(line: string): string | null {
  * "## Plan: mode switch redesign" does.
  */
 export function isPlanReady(text: string, stoppedNormally: boolean): boolean {
-	if (!stoppedNormally) return false;
-	const t = text.trim();
-	if (/\?[\s*_)"'`]*$/.test(t)) return false;
-	return t.split(/\r?\n/).some((line) => {
+	return stoppedNormally && !ENDS_IN_QUESTION.test(text.trim()) && hasPlanLine(text);
+}
+
+/** True when some line of the reply is a plan heading or label (not a notice such as "Plan mode"). */
+export function hasPlanLine(text: string): boolean {
+	return text.trim().split(/\r?\n/).some((line) => {
 		const rest = planLineRest(line);
 		return rest !== null && !NOTICE.test(rest.replace(/^[\s*_:()\u2013\u2014-]+/, ""));
 	});
+}
+
+const ENDS_IN_QUESTION = /\?[\s*_)"'`]*$/;
+
+/** A typed approval works after a finished reply that does not end on a question, if it has a plan line or a plan was proposed earlier in this discussion. */
+export function canApprove(text: string, stoppedNormally: boolean, planProposed: boolean): boolean {
+	return stoppedNormally && !ENDS_IN_QUESTION.test(text.trim()) && (hasPlanLine(text) || planProposed);
 }
 
 /** A passed diff is sent back for a minor-fix round only once: not after its commit step started, its flow ended, or a fix message already went out for it. */

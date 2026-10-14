@@ -1,6 +1,6 @@
 /** System-prompt text for each role. Main-session phases are appended; subagents get theirs via --append-system-prompt. */
 
-import type { StagedPlans } from "./config.ts";
+import type { PlanRecap, StagedPlans } from "./config.ts";
 import { toolPrefix } from "./knowledge.ts";
 
 /** Every tool call re-sends the whole conversation, so the number of calls drives the cost. */
@@ -13,7 +13,11 @@ const STAGE_WHEN = "the work splits into parts that each leave the code working 
 const STAGE_LIMITS = "Use 2-5 stages, one per part. Don't stage a small or tightly coupled change, or when the user asked for it in one go.";
 
 /** The planner prompt. `finalize`: after approval the planner writes the final execution plan in one more reply. `staging`: whether it proposes stages on its own. */
-export function planPhase(finalize: boolean, staging: StagedPlans = "auto"): string {
+export function planPhase(finalize: boolean, staging: StagedPlans = "auto", recap: PlanRecap = "changes"): string {
+	const proposing =
+		finalize && recap === "changes"
+			? "Once the conversation is heading toward a change, propose the plan in a short `Plan:` section. After that, don't repeat it: continue the discussion from the context and refer to plan points by number. Write a `Plan:` section only when the reply changes the plan, and then list only the changes (\"step 3 now ...\", \"new step 5: ...\"), plus any open questions. Pure questions and discussion don't need one. The final plan is written in full after approval."
+			: "Once the conversation is heading toward a change, end the reply with a short `Plan:` section (the plan so far) and any open questions. Pure questions and discussion don't need one.";
 	const listing = ` List the stages in the \`Plan:\` section ("Stages: 1. <title>: <scope>; 2. ...") so the user can change them before approving.`;
 	const headings = finalize ? "" : " Write the steps of that `Plan:` section under headings `### Stage 1: <title>`, `### Stage 2: <title>`, ...: the workflow runs the stages from them.";
 	const stages =
@@ -31,7 +35,7 @@ ${PLAN_BATCH}
 - Investigating: read targeted files yourself when you know where to look or need exact lines. Hand open questions and multi-file lookups to the \`explore\` tool: it answers a question with file:line evidence, on a cheap model. Check its evidence before relying on it.
 - Recommend one option instead of listing them all. Ask about anything ambiguous before committing to an approach.
 - For design or architecture questions, cover components and their responsibilities, interfaces and data contracts, data model and migrations, failure modes, expected scale (numbers, not adjectives), and the options you rejected and why.
-- Once the conversation is heading toward a change, end the reply with a short \`Plan:\` section (the plan so far) and any open questions. Pure questions and discussion don't need one.
+- ${proposing}
 - ${ending}
 - A cheaper model executes the plan and writes the code, and an independent judge checks the result against it. Leave no design decision open, but give direction, not implementation: say what to change, why and how it must behave, not the code.${stages}`;
 }
@@ -61,6 +65,9 @@ Goal, Non-goals, User decisions and Done when are the target. The judge and the 
 Give direction, not implementation. Don't write the code: the executor writes it. Code appears only where an exact contract must match (a signature, a type, a config key, a message or file format, a pattern the tests check), a few lines at most each.
 Include every decision from the discussion. Leave no design decision open: every behaviour, interface and edge case is settled. How to write the code is the executor's job.`;
 }
+
+/** Sent by the plan menu's "Show the full plan" entry: prints the plan, approves nothing. */
+export const SHOW_PLAN = "Write the whole current plan now as a `Plan:` section: every step agreed so far, with the changes from the discussion folded in, then any open questions. This doesn't approve anything; the discussion continues afterwards.";
 
 export const EXECUTE_PHASE = `## Workflow: EXECUTE phase
 You are the execution loop. Carry out the approved plan, steps in order. The plan gives direction and contracts; you write the code. Choose the implementation within its contracts and the existing code it points to. No redesign, no extra features, no refactors outside the plan: changing behaviour, interfaces or design beyond the plan is not your call; stop and say why.
