@@ -65,6 +65,8 @@ export interface WorkflowConfig {
 	startPhase: "plan" | "execute" | "off";
 	/** Compact once context crosses this many tokens, whatever the model's window, when the run settles (never mid-run). 0 disables. */
 	contextGuardTokens: number;
+	/** At a handover to execute, a minor-fix round or the next stage, compact first when the context is over this many tokens (the plan is re-sent). 0 disables. */
+	handoverCompactTokens: number;
 	/** At the end of an execute run with an unreviewed diff: ask to run the judge, run it, or do nothing. */
 	autoJudge: "ask" | "auto" | "off";
 	/** Judge -> fix rounds in a row before the flow asks you what to do. 0 means no limit. */
@@ -138,6 +140,7 @@ export const DEFAULTS: WorkflowConfig = {
 	},
 	startPhase: "plan",
 	contextGuardTokens: 140_000,
+	handoverCompactTokens: 30_000,
 	autoJudge: "auto",
 	maxJudgeRounds: 5,
 	maxMinorRounds: 2,
@@ -206,6 +209,7 @@ export function loadConfig(): { config: WorkflowConfig; error?: string } {
 		// A delivery that is not an object (the old autoCommit style, null) would crash the first approval.
 		if (!isObject(config.delivery)) config.delivery = DEFAULTS.delivery;
 		for (const k of ["base", "branchPrefix"] as const) if (typeof config.delivery[k] !== "string") config.delivery[k] = DEFAULTS.delivery[k];
+		if (typeof config.handoverCompactTokens !== "number" || !Number.isFinite(config.handoverCompactTokens) || config.handoverCompactTokens < 0) config.handoverCompactTokens = DEFAULTS.handoverCompactTokens;
 		if (config.stagedPlans !== "auto" && config.stagedPlans !== "onRequest") config.stagedPlans = DEFAULTS.stagedPlans;
 		if (config.planRecap !== "changes" && config.planRecap !== "always") config.planRecap = DEFAULTS.planRecap;
 		return { config };

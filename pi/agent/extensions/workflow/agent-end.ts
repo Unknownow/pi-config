@@ -80,6 +80,17 @@ export function phaseAfterFlow(returnToPlan: boolean, phase: "off" | "plan" | "e
 	return returnToPlan && phase === "execute" ? "plan" : undefined;
 }
 
+/** Whether a pending handover message is sent after compacting the session first. An aborted run holds it: the user stopped the flow. */
+export function handoverAction(s: { aborted: boolean; idle: boolean; compacting: boolean; hasPlan: boolean; tokens: number | null; threshold: number }): "compact" | "send" | "hold" {
+	if (s.aborted) return "hold";
+	return s.idle && !s.compacting && s.hasPlan && s.threshold > 0 && s.tokens !== null && s.tokens > s.threshold ? "compact" : "send";
+}
+
+/** A handover message with the approved plan repeated under it (the conversation was just compacted). */
+export function withPlan(content: string, plan: string): string {
+	return `${content}\n\n## The approved plan (repeated in full: the conversation was just compacted)\n\n${plan}`;
+}
+
 /** The judge reports that the approved plan itself is flawed: a finding line tagged [plan-flaw]. */
 export function hasPlanFlaw(text: string): boolean {
 	return /^\S.*\s-\s*(blocker|major|minor)\s*-\s*\[plan-flaw\]/im.test(text);

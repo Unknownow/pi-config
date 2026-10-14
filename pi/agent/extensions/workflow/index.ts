@@ -48,7 +48,7 @@ import {
 	type Thinking,
 	type WorkflowConfig,
 } from "./config.ts";
-import { afterPass, noChangeStage, arbiterFirst, fixableFindings, canApprove, hasPlanFlaw, hasPlanLine, isPlanReady, judgeCapReached, minorFixOpen, parseArbiter, phaseAfterFlow, shouldResume, skipJudge } from "./agent-end.ts";
+import { handoverAction, withPlan, afterPass, noChangeStage, arbiterFirst, fixableFindings, canApprove, hasPlanFlaw, hasPlanLine, isPlanReady, judgeCapReached, minorFixOpen, parseArbiter, phaseAfterFlow, shouldResume, skipJudge } from "./agent-end.ts";
 import { countTokens, type Tok } from "./tokens.ts";
 import * as prompts from "./prompts.ts";
 import { branchName, combineOutcomes, type Delivery, type DeliveryOptions, DELIVERIES, DELIVERY_LABELS, deliveryChoices, deliveryInstruction, deliveryMenuLabel, deliveryOutcome, freshPr, isDelivery, planTitle, type PrState, repoDeliveryInstruction } from "./delivery.ts";
@@ -161,7 +161,7 @@ const STATE_ENTRY = "workflow-state";
 /** Display-only entry (never sent to the model) with the token breakdown of a finished flow. */
 const SUMMARY_ENTRY = "workflow-summary";
 const APPROVED = "Plan approved. Execute it now, step by step, following the workflow rules.";
-const APPROVED_FINAL = "The final plan above is approved. Execute it exactly, step by step, following the workflow rules.";
+const APPROVED_FINAL = "The final plan is approved. Execute it exactly, step by step, following the workflow rules.";
 const FIX_MESSAGE =
 	"Fix every blocker and major finding by following its Fix directions, and the minor ones too (except [knowledge ...] deviations: give your reason in `disputes` to keep the code). If a finding is wrong, put it in the `disputes` parameter of your next judge call instead of changing code. Then call judge again.";
 /** The judge reads at most this much of the plan; the end (the arbiter's amendments) is kept. */
@@ -267,6 +267,9 @@ export default function workflow(pi: ExtensionAPI) {
 	let compacting = false;
 	/** The guard threshold was crossed during a run; compact when the run settles. */
 	let compactPending = false;
+	/** A handover message (execute, fix round, next stage) sent from agent_end; it goes out when the run settles, after an optional compaction. */
+	let pendingHandover: { customType: string; content: string } | undefined;
+	let inAgentEnd = false;
 	/** An overflow compaction is retrying the turn; the bridge may answer that retry with an empty reply. */
 	let overflowRetry = false;
 	/** Automatic resumes since the user's last prompt. */
@@ -786,8 +789,13 @@ export default function workflow(pi: ExtensionAPI) {
 		if (!plan) return "None recorded: judge the diff on its own.";
 		const staged = currentStages();
 		const note = staged ? `\n\n${stageNote(staged.stages, staged.current)}` : "";
-		if (plan.length <= MAX_PLAN_CHARS) return plan + note;
-		return `${plan.slice(0, 45_000)}\n\n[... middle of the plan omitted ...]\n\n${plan.slice(-15_000)}${note}`;
+		return trimPlan(plan) + note;
+	}
+
+	/** A very long plan loses its middle, never its amendments. */
+	function trimPlan(plan: string): string {
+		if (plan.length <= MAX_PLAN_CHARS) return plan;
+		return `${plan.slice(0, 45_000)}\n\n[... middle of the plan omitted ...]\n\n${plan.slice(-15_000)}`;
 	}
 
 	/** D4: a knowledge-only judge run, when the judge skipped its knowledge step. */
@@ -796,6 +804,7 @@ export default function workflow(pi: ExtensionAPI) {
 		diff: Diff,
 		findings: string,
 		server: string,
+		files: string[],
 		signal?: AbortSignal,
 		onChange?: (run: RunView) => void,
 	): Promise<{ text?: string; status: { status: "checked" } | { status: "unavailable"; reason: string }; usage: ReturnType<typeof emptyUsage> }> {
@@ -804,7 +813,6 @@ export default function workflow(pi: ExtensionAPI) {
 			"knowledge check",
 			{
 				systemPrompts: [
-		files: string[],
 					...(diff.multi ? [prompts.repoNote(repoRoots(diff))] : []),
 					prompts.JUDGE_KNOWLEDGE_ONLY,
 					prompts.judgeKnowledge(server, false, files),
@@ -839,6 +847,8 @@ export default function workflow(pi: ExtensionAPI) {
 	): Promise<JudgeResult & { run: RunView }> {
 		const recheck = plan.kind === "recheck";
 		const server = judgeKnowledgeServer();
+		const prevChecked = plan.kind === "recheck" && state.lastKnowledge?.status === "checked" && state.lastKnowledge.hash === plan.prev.hash;
+		const { files: knowledgeFiles, scoped } = plan.kind === "recheck" ? recheckKnowledgeFiles(prevChecked, plan.changed, diff.checkNames) : { files: diff.checkNames, scoped: false };
 		const max = cfg.judge.maxDiffChars;
 		const systemPrompts = recheck
 			? [
@@ -847,8 +857,6 @@ export default function workflow(pi: ExtensionAPI) {
 					`## Approved plan\n\n${planForJudge()}`,
 					`## Findings of the last round (${plan.prev.verdict})\n\n${plan.prev.text}`,
 					`## Every file in the whole change (${diff.names.length})\n\n${diff.names.join("\n")}`,
-		const prevChecked = plan.kind === "recheck" && state.lastKnowledge?.status === "checked" && state.lastKnowledge.hash === plan.prev.hash;
-		const { files: knowledgeFiles, scoped } = plan.kind === "recheck" ? recheckKnowledgeFiles(prevChecked, plan.changed, diff.checkNames) : { files: diff.checkNames, scoped: false };
 					`## Changes since the last round\n\n${plan.delta.length > max ? `${plan.delta.slice(0, max)}\n\n[truncated; read the files for the rest]` : plan.delta}`,
 				]
 			: [prompts.JUDGE, `## Approved plan\n\n${planForJudge()}`, `## Diff under review (${diff.files} file(s)${diff.truncated ? ", truncated" : ""})\n\n${diff.text}`];
@@ -1250,6 +1258,39 @@ export default function workflow(pi: ExtensionAPI) {
 		view.settleMain();
 		const tracked = state.phase !== "off" || state.tokens !== undefined;
 		if (tracked && STAGES.some((s) => view.used[s].raw !== (state.tokens?.[s]?.raw ?? 0) || view.used[s].cost !== (state.tokens?.[s]?.cost ?? 0))) persist();
+		if (pendingHandover) {
+			const msg = pendingHandover;
+			pendingHandover = undefined;
+			const send = (content: string) => pi.sendMessage({ customType: msg.customType, content, display: true }, { triggerTurn: true, deliverAs: "followUp" });
+			const held = ctx.getContextUsage()?.tokens ?? null;
+			const plan = state.approvedPlan;
+			const action = handoverAction({ aborted: event.aborted, idle: ctx.isIdle(), compacting, hasPlan: !!plan, tokens: held, threshold: cfg.handoverCompactTokens });
+			if (action === "hold") {
+				ctx.ui.notify("workflow: handover held: the run was aborted. Send a message or use /flow to continue.", "warning");
+				return;
+			}
+			if (action !== "compact" || !plan) {
+				send(msg.content);
+				return;
+			}
+			compactPending = false;
+			compacting = true;
+			ctx.ui.notify(`workflow: handing over at ${Math.round((held ?? 0) / 1000)}k tokens, compacting first`, "info");
+			ctx.compact({
+				customInstructions: prompts.HANDOVER_COMPACT,
+				onComplete: () => {
+					compacting = false;
+					guardTokens = null;
+					send(withPlan(msg.content, trimPlan(plan)));
+				},
+				onError: (e) => {
+					compacting = false;
+					ctx.ui.notify(`workflow: compaction failed: ${e.message}`, "error");
+					send(msg.content);
+				},
+			});
+			return;
+		}
 		if (!compactPending || compacting || event.aborted || !ctx.isIdle()) return;
 		const tokens = ctx.getContextUsage()?.tokens ?? null;
 		compactPending = false;
@@ -1308,7 +1349,25 @@ export default function workflow(pi: ExtensionAPI) {
 		if (event.reason === "overflow" && event.willRetry) overflowRetry = true;
 	});
 
+	/** Sends a workflow message that starts the next executor turn. From agent_end it waits for the run to settle, so the session can be compacted first. */
+	function handover(customType: string, content: string): void {
+		if (inAgentEnd) {
+			pendingHandover = { customType, content };
+			return;
+		}
+		pi.sendMessage({ customType, content, display: true }, { triggerTurn: true, deliverAs: "followUp" });
+	}
+
 	pi.on("agent_end", async (event, ctx) => {
+		inAgentEnd = true;
+		try {
+			await onAgentEnd(event, ctx);
+		} finally {
+			inAgentEnd = false;
+		}
+	});
+
+	async function onAgentEnd(event: { messages: AgentMessage[] }, ctx: ExtensionContext): Promise<void> {
 		const last = [...event.messages].reverse().find((m) => m.role === "assistant");
 
 		// "Prompt is too long": pi compacts and retries, but the retry ends on a tool result and the
@@ -1336,7 +1395,7 @@ export default function workflow(pi: ExtensionAPI) {
 				await setPhase(ctx, "execute");
 				const extra = startExecution(ctx, finalText);
 				persist();
-				pi.sendMessage({ customType: "workflow-execute", content: APPROVED_FINAL + extra, display: true }, { triggerTurn: true, deliverAs: "followUp" });
+				handover("workflow-execute", APPROVED_FINAL + extra);
 				return;
 			}
 			// Not a final plan (error, abort, or a question back): nothing starts; the normal plan handling below offers the menu again.
@@ -1407,7 +1466,7 @@ export default function workflow(pi: ExtensionAPI) {
 			if (advanced === "advanced" || state.phase !== "execute") return; // the next stage started, or the flow ended and went back to planning
 		}
 		await reviewDiff(ctx, false);
-	});
+	}
 
 	/** Staged plan: moves on to the next stage and sends its start message. */
 	function startNextStage(ctx: ExtensionContext, stages: ReturnType<typeof parseStages>, outcome: string): void {
@@ -1423,10 +1482,7 @@ export default function workflow(pi: ExtensionAPI) {
 		view.changed();
 		persist();
 		ctx.ui.notify(`workflow: stage ${next} of ${stages.length}: ${stages[next - 1].title}`, "info");
-		pi.sendMessage(
-			{ customType: "workflow-stage", content: nextStage(stages, next, state.delivery ?? defaultDelivery(), outcome), display: true },
-			{ triggerTurn: true, deliverAs: "followUp" },
-		);
+		handover("workflow-stage", nextStage(stages, next, state.delivery ?? defaultDelivery(), outcome));
 	}
 
 	/** A staged plan's turn ended with nothing new to review: it ends the stage only if the executor handed it over (judge called) or the user confirms. */
@@ -1744,13 +1800,9 @@ export default function workflow(pi: ExtensionAPI) {
 		state.minorSentFor = hash;
 		persist();
 		const shown = report ?? `**Judge: PASS**\n\n${text}`;
-		pi.sendMessage(
-			{
-				customType: "workflow-fix",
-				content: `${shown}\n\nThe judge passed with ${findings} finding(s) to fix (knowledge deviations excluded; give a reason in \`disputes\` to keep one). Fix them by following their Fix directions, or put a wrong one in the \`disputes\` parameter of your next judge call instead of changing code. Then call judge again.`,
-				display: true,
-			},
-			{ triggerTurn: true, deliverAs: "followUp" },
+		handover(
+			"workflow-fix",
+			`${shown}\n\nThe judge passed with ${findings} finding(s) to fix (knowledge deviations excluded; give a reason in \`disputes\` to keep one). Fix them by following their Fix directions, or put a wrong one in the \`disputes\` parameter of your next judge call instead of changing code. Then call judge again.`,
 		);
 		return true;
 	}
