@@ -52,7 +52,7 @@ import { afterPass, arbiterFirst, fixableFindings, hasPlanFlaw, isPlanReady, jud
 import { countTokens, type Tok } from "./tokens.ts";
 import * as prompts from "./prompts.ts";
 import { branchName, combineOutcomes, type Delivery, type DeliveryOptions, DELIVERIES, DELIVERY_LABELS, deliveryChoices, deliveryInstruction, deliveryMenuLabel, deliveryOutcome, freshPr, isDelivery, planTitle, type PrState, repoDeliveryInstruction } from "./delivery.ts";
-import { combineRepoTexts, parseAddDir, repoKey, repoTexts } from "./repos.ts";
+import { combineRepoTexts, parseAddDir, repoKey, fallbackTexts, repoTexts } from "./repos.ts";
 import { pushProblem } from "./push-guard.ts";
 import { planToolProblem, planToolRefused } from "./readonly-tools.ts";
 import { addUsage, emptyUsage, mapLimit, type RunResult, runSubagent } from "./subagent.ts";
@@ -1071,7 +1071,7 @@ export default function workflow(pi: ExtensionAPI) {
 			};
 			for (const { text, powershell } of gitTexts) {
 				// The GIT_CONFIG rule spans commands, so such a text is checked whole; otherwise each command against the repo it runs in.
-				const groups = multi && !/GIT_CONFIG/i.test(text) ? repoTexts(text, roots, ctx.cwd, process.platform, { powershell }) : [{ root: undefined, text }];
+				const groups = multi && !/GIT_CONFIG/i.test(text) ? repoTexts(text, roots, ctx.cwd, process.platform, { powershell }) : fallbackTexts(text, powershell).map((t) => ({ root: undefined, text: t }));
 				for (const group of groups) {
 					const branch = await branchOf(group.root ?? ctx.cwd);
 					const own = group.root ? state.commitPending?.repos?.find((r) => repoKey(r.root) === repoKey(group.root as string)) : undefined;

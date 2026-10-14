@@ -1,7 +1,7 @@
 // node --test repos.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { combineRepoTexts, parseAddDir, repoKey, repoTexts, uniqueRoots } from "./repos.ts";
+import { combineRepoTexts, parseAddDir, repoKey, fallbackTexts, repoTexts, shellText, uniqueRoots } from "./repos.ts";
 import { pushProblem } from "./push-guard.ts";
 
 test("repoKey normalizes", () => {
@@ -92,4 +92,25 @@ test("parseAddDir", () => {
 	assert.deepEqual(parseAddDir(undefined), []);
 	assert.deepEqual(parseAddDir(true), []);
 	assert.deepEqual(parseAddDir("/a:/b", "linux"), ["/a", "/b"]);
+});
+
+test("shellText reads PowerShell backslashes as separators", () => {
+	const opts = { branch: "feat", protectedBranches: ["main"], pushAllowed: false, prAllowed: false, mergeAllowed: false };
+	assert.equal(shellText("cd D:\\b\\; git push", true), "cd D:/b/; git push");
+	assert.equal(shellText("cd D:\\b\\; git push", false), "cd D:\\b\\; git push");
+	assert.ok(pushProblem(shellText("cd D:\\b\\; git push", true), opts));
+	assert.equal(pushProblem("cd D:\\b\\; git push", opts), null);
+	assert.ok(pushProblem("bash -c 'git pu\\sh'", opts));
+	assert.equal(pushProblem(shellText("bash -c 'git pu\\sh'", true), opts), null);
+});
+
+test("fallbackTexts checks PowerShell text converted and as written", () => {
+	const opts = { branch: "feat", protectedBranches: ["main"], pushAllowed: false, prAllowed: false, mergeAllowed: false };
+	const both = fallbackTexts("bash -c 'git pu\\sh'", true);
+	assert.equal(both.length, 2);
+	assert.ok(both.some((t) => pushProblem(t, opts)));
+	assert.deepEqual(fallbackTexts("git push", false), ["git push"]);
+	assert.deepEqual(both, ["bash -c 'git pu/sh'", "bash -c 'git pu\\sh'"]);
+	assert.ok(fallbackTexts("cd D:\\b\\; git push", true).some((t) => pushProblem(t, opts)));
+	assert.deepEqual(fallbackTexts("git push", true), ["git push"]);
 });

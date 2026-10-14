@@ -49,6 +49,17 @@ function quoteWord(w: string): string {
 	return SAFE_WORD.test(w) ? w : `'${w.replace(/'/g, "'\\''")}'`;
 }
 
+/** PowerShell has no `\` escapes, so there `\` is a path separator. */
+export function shellText(text: string, powershell: boolean): string {
+	return powershell ? text.replace(/\\/g, "/") : text;
+}
+
+/** The texts the push guard checks for an unattributed command: `\` as a separator, plus as written for PowerShell (a `bash -c` script keeps bash escapes). */
+export function fallbackTexts(text: string, powershell: boolean): string[] {
+	const converted = shellText(text, powershell);
+	return powershell && converted !== text ? [converted, text] : [converted];
+}
+
 /**
  * Splits shell text by the repo each command runs in: the one named by `git -C <p>` (that command only)
  * or by the last `cd`/`pushd`/`Set-Location`, else `undefined` (the working folder's). Commands are
@@ -56,7 +67,7 @@ function quoteWord(w: string): string {
  * With `powershell`, `\` is read as a path separator.
  */
 export function repoTexts(rawText: string, roots: string[], cwd: string, platform: NodeJS.Platform = process.platform, opts: { powershell?: boolean } = {}): { root: string | undefined; text: string }[] {
-	const text = opts.powershell ? rawText.replace(/\\/g, "/") : rawText;
+	const text = shellText(rawText, !!opts.powershell);
 	const cwdKey = repoKey(cwd, platform);
 	const resolve = (arg: string, base: string): string => {
 		if (!arg || arg === "-" || /[$`~]/.test(arg)) return cwdKey;

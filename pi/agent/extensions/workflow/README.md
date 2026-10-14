@@ -151,7 +151,9 @@ its plan and hand over, even when you said "fix it" or "do it for me".
   `ctx_purge` is refused.
 - Shell text on Windows: `ctx_execute` and `ctx_batch_execute` run PowerShell, so a command is
   checked as a shell command, and PowerShell-only cmdlets (`Set-Content`, `Remove-Item`, ...) are
-  refused because they are not on the list.
+  refused because they are not on the list. With only the working folder's repo, the push
+  guard checks a PowerShell text twice: with `\` read as a path separator, and as written (a `bash -c`
+  script keeps bash escapes).
 - It is a guard against the planner drifting into execution, not a sandbox. The code checks are
   regexes: a determined disguise (a computed lookup on an alias of `require('fs')`, say) can still get
   past them.
@@ -251,8 +253,10 @@ and any repo where the executor changed a file with `edit` or `write`.
 - With only the working folder's repo, nothing changes.
 
 Limits: `cd` does not move the guard when the command text has `$(…)`, backticks, or parentheses
-outside quotes (such commands are checked against the working folder's branch); in PowerShell texts,
-`\` is read as a path separator for this check; changes made only through `bash` in an unlisted repo are not noticed (add the folder);
+outside quotes (such commands are checked against the working folder's branch); changes made
+only through `bash` in an unlisted repo are not noticed (add the folder); when a flow spans several
+repos, PowerShell texts are checked only with `\` read as a path separator, so a bash script passed on
+such a text is not seen with its escapes;
 extensions in the added folders' `.pi/extensions` are not loaded; after `/resume`, run `/reload`
 to pick up that session's folder skills.
 
