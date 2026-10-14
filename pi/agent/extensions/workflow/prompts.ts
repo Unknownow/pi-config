@@ -57,7 +57,7 @@ Use exactly this structure:
 2. User decisions: every explicit choice the user made in the discussion, one line each, labelled D1, D2, ...
 3. Facts the executor needs, with file:line.
 4. Design, only when the change adds or reshapes components, interfaces, data or concurrency: components and responsibilities; interfaces and contracts (signatures, message or file formats); data model and migration or compatibility; failure handling; scale assumptions with numbers, and the limit at which this design stops working; alternatives rejected and why.
-5. Steps in order.${stages} For each: the file and function (file:line anchor); what to change and why, in words; the behaviour it must have (inputs, outputs, edge cases, error handling); the existing code to model it on (file:line).
+5. Steps in order. Number every step S1, S2, ... across the whole plan (don't restart per stage); start its first line with \`**S<n>.**\`.${stages} For each: the file and function (file:line anchor); what to change and why, in words; the behaviour it must have (inputs, outputs, edge cases, error handling); the existing code to model it on (file:line).
 6. Tests: each new or changed test (file, name, input, expected result), plus the commands to run and the expected output.
 7. Done when: acceptance criteria.
 8. Risks, rollback, and what not to touch.${item}
@@ -75,6 +75,8 @@ If a step can't be done as written, or the plan is wrong, stop and explain. Don'
 ${BATCH}
 - Reading: read the files the plan names directly. Use the \`explore\` tool for open questions and multi-file lookups (it answers with file:line evidence on a cheap model); check its evidence before relying on it.
 - Decision points: call \`advisor\` only when you must pick between approaches with real consequences, or after an error repeats. Not for routine steps or to check finished work. It reads the whole transcript, so each call is expensive; follow its guidance or say why not.
+- After finishing a step, call \`plan_check\` with its ID.
+- After a compaction you get a plan card; read the plan file it names, or the full plan it carries when it names none, for a step's details.
 - When done, run the plan's tests, then call \`judge\` with \`focus\` set to the plan's title. Fix every blocker and major finding by following its Fix directions. When the judge passes, end your turn: the workflow decides whether the minor findings get a fix round. If a finding is wrong, don't change code for it: put the finding and your file:line evidence in the judge tool's \`disputes\` parameter on the next call. Then call \`judge\` again.
 - A finding "[knowledge <id>] deviation from a recommended rule" is minor: you don't have to change the code for it. If you keep the code on purpose, give the reason in \`disputes\` on your next judge call; deviations go into the commit message.
 - Never change the plan's design to satisfy a [plan-flaw] finding. End your turn; the workflow resolves it.
@@ -130,7 +132,7 @@ Look for problems the new changes introduce, including in code that calls them o
 Report a previous finding again only if it is still there. Use the same output format, including Why and Fix; the verdict covers the whole change as it is now.`;
 
 /** Compaction instructions when the workflow hands over to the next step (execute, a fix round, the next stage, the commit step). */
-export const HANDOVER_COMPACT = `The workflow is handing over to the next step (executing the approved plan, a fix round, the next stage, or the commit step). The approved plan is repeated in full in the next message, so don't copy it into the summary.
+export const HANDOVER_COMPACT = `The workflow is handing over to the next step (executing the approved plan, a fix round, the next stage, or the commit step). The next message carries a plan card (goal, decisions, done-when, open steps, file path), so don't copy the plan into the summary.
 Keep: the user's decisions and requests, the files changed so far and why, test commands and their last results, open problems and findings, and anything the next step needs that the plan doesn't say.
 Drop: options that were not chosen, and tool output that was already acted on.`;
 

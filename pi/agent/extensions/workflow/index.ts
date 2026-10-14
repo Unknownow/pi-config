@@ -48,13 +48,14 @@ import {
 	type Thinking,
 	type WorkflowConfig,
 } from "./config.ts";
-import { handoverAction, withPlan, afterPass, noChangeStage, arbiterFirst, fixableFindings, canApprove, hasPlanFlaw, hasPlanLine, isPlanReady, judgeCapReached, minorFixOpen, parseArbiter, phaseAfterFlow, shouldResume, skipJudge } from "./agent-end.ts";
+import { handoverAction, afterPass, noChangeStage, arbiterFirst, fixableFindings, canApprove, hasPlanFlaw, hasPlanLine, isPlanReady, judgeCapReached, minorFixOpen, parseArbiter, phaseAfterFlow, shouldResume, skipJudge } from "./agent-end.ts";
 import { countTokens, type Tok } from "./tokens.ts";
 import * as prompts from "./prompts.ts";
 import { branchName, combineOutcomes, type Delivery, type DeliveryOptions, DELIVERIES, DELIVERY_LABELS, deliveryChoices, deliveryInstruction, deliveryMenuLabel, deliveryOutcome, freshPr, isDelivery, planTitle, type PrState, repoDeliveryInstruction } from "./delivery.ts";
 import { combineRepoTexts, parseAddDir, repoKey } from "./repos.ts";
 import { shellProblem } from "./push-guard.ts";
 import { COMMIT_GUARD_ENV, type CommitGuardSpec } from "./commit-guard.ts";
+import { commitPlan, mergeChecklist, planCard, type ChecklistItem } from "./plan-doc.ts";
 import { nextStage, parseStages, stageDelivery, stageLine, stageNote, stageStart, stagesOutcome } from "./stages.ts";
 import { planToolProblem, planToolRefused } from "./readonly-tools.ts";
 import { addUsage, emptyUsage, mapLimit, type RunResult, runSubagent } from "./subagent.ts";
@@ -120,6 +121,8 @@ interface FlowState {
 	summarizedPasses?: string[];
 	/** The plan the user approved (the final plan, plus arbiter amendments); the judge and the arbiter read it. */
 	approvedPlan?: string;
+	/** The plan's steps (S1, S2, ...) with the executor's ticks; claims, not proof. */
+	checklist?: ChecklistItem[];
 	/** The planner is writing the final execution plan; its reply becomes approvedPlan. */
 	finalizing?: boolean;
 	/** Amendments the arbiter added in this flow. */
@@ -333,6 +336,8 @@ export default function workflow(pi: ExtensionAPI) {
 		else if (view.stage === "plan") view.stage = "execute";
 		if (ctx.hasUI) view.mount(ctx.ui);
 		const n = existingFolders().length + (state.touchedRepos?.length ?? 0);
+		const cl = state.checklist;
+		if (ctx.hasUI) ctx.ui.setStatus("workflow-plan", cl?.length && state.phase === "execute" ? `plan ${cl.filter((i) => i.done).length}/${cl.length}` : undefined);
 		if (ctx.hasUI) ctx.ui.setStatus("workflow-folders", n ? `+${n} folder${n === 1 ? "" : "s"}` : undefined);
 	}
 
@@ -386,6 +391,7 @@ export default function workflow(pi: ExtensionAPI) {
 		state.stageOutcomes = undefined;
 		if (phase === "plan") {
 			state.approvedPlan = undefined;
+			state.checklist = undefined;
 			state.delivery = undefined;
 			state.planFlaw = undefined;
 		}
@@ -395,9 +401,18 @@ export default function workflow(pi: ExtensionAPI) {
 		updateStatus(ctx);
 	}
 
+	/** Re-reads the steps from the approved plan (after an amendment too), keeping the ticks of the steps still in it. */
+	function refreshChecklist(): void {
+		const list = state.approvedPlan ? mergeChecklist(state.approvedPlan, state.checklist) : [];
+		state.checklist = list.length ? list : undefined;
+	}
+
 	/** Records the plan that starts executing; for a staged plan also stage 1. Returns the text to add to the start message. */
 	function startExecution(ctx: ExtensionContext, plan: string | undefined): string {
 		state.approvedPlan = plan || undefined;
+		state.checklist = undefined;
+		refreshChecklist();
+		updateStatus(ctx);
 		state.stageOutcomes = undefined;
 		state.stageJudged = undefined;
 		const stages = parseStages(plan);
@@ -793,7 +808,22 @@ export default function workflow(pi: ExtensionAPI) {
 		if (!plan) return "None recorded: judge the diff on its own.";
 		const staged = currentStages();
 		const note = staged ? `\n\n${stageNote(staged.stages, staged.current)}` : "";
-		return trimPlan(plan) + note;
+		const list = state.checklist?.length ? `\n\n## Executor's checklist (claims, not proof)\n${state.checklist.map((i) => `- [${i.done ? "x" : " "}] ${i.id} ${i.text}`).join("\n")}` : "";
+		return trimPlan(plan) + note + list;
+	}
+
+	/** The commit step's view of the plan: goal, commits, amendments and the stage being delivered; the whole plan when it has no Commits section. */
+	function commitExcerpt(): string {
+		const excerpt = commitPlan(state.approvedPlan ?? "");
+		if (!excerpt) return `## Approved plan\n\n${planForJudge()}`;
+		const staged = currentStages();
+		return staged ? `${excerpt}\n\n${stageNote(staged.stages, staged.current)}` : excerpt;
+	}
+
+	/** The short plan sent after a compaction in place of the full plan. */
+	function planCardText(): string {
+		const staged = currentStages();
+		return planCard(trimPlan(state.approvedPlan ?? ""), state.checklist, staged?.current, staged?.stages.length);
 	}
 
 	/** A very long plan loses its middle, never its amendments. */
@@ -988,6 +1018,43 @@ export default function workflow(pi: ExtensionAPI) {
 			return new Text(head, 0, 0);
 		},
 		renderResult: (result, opts, theme) => renderRuns(result, opts, theme, 0),
+	});
+
+	pi.registerTool({
+		name: "plan_check",
+		label: "Plan check",
+		description: "Tick the plan's steps you finished (their IDs, e.g. S3), or untick ones with `undone`. Keeps the checklist in step with your work; the judge still checks the diff.",
+		promptSnippet: "plan_check: tick finished plan steps by ID (S1, S2, ...)",
+		parameters: Type.Object({
+			done: Type.Array(Type.String({ description: "Step ID, e.g. S3" }), { description: "Steps you finished" }),
+			undone: Type.Optional(Type.Array(Type.String({ description: "Step ID, e.g. S3" }), { description: "Steps to untick again" })),
+		}),
+		async execute(_id, params, _signal, _onUpdate, ctx) {
+			const list = state.checklist;
+			const reply = (text: string) => ({ content: [{ type: "text" as const, text }], details: {} });
+			if (state.phase !== "execute" || !list?.length) return reply("No plan checklist is active (it exists only while executing a plan whose steps are numbered S1, S2, ...). Nothing changed.");
+			const norm = (ids: string[] | undefined) => (ids ?? []).map((s) => s.trim().toUpperCase());
+			const unknown: string[] = [];
+			for (const [ids, value] of [[norm(params.done), true], [norm(params.undone), false]] as const) {
+				for (const id of ids) {
+					const item = list.find((i) => i.id === id);
+					if (item) item.done = value;
+					else unknown.push(id);
+				}
+			}
+			persist();
+			updateStatus(ctx);
+			const staged = currentStages();
+			const open = list.filter((i) => !i.done && (!staged || i.stage === undefined || i.stage === staged.current));
+			const done = list.filter((i) => i.done).length;
+			const head = `${done} of ${list.length} steps done${unknown.length ? `; unknown IDs: ${unknown.join(", ")}` : ""}.`;
+			const rest = open.length ? `Open${staged ? ` in stage ${staged.current}` : ""}:\n${open.map((i) => `- ${i.id} ${i.text}`).join("\n")}` : `No open steps${staged ? " in this stage" : ""}.`;
+			return reply(`${head}\n${rest}`);
+		},
+		renderCall(args, theme) {
+			const ids = [...((args.done ?? []) as string[]), ...((args.undone ?? []) as string[]).map((s) => `-${s}`)];
+			return new Text(`${title(theme, "plan_check", "execute")}${theme.fg("accent", ` ${ids.join(", ")}`)}`, 0, 0);
+		},
 	});
 
 	pi.registerTool({
@@ -1277,7 +1344,7 @@ export default function workflow(pi: ExtensionAPI) {
 				onComplete: () => {
 					compacting = false;
 					guardTokens = null;
-					send(withPlan(msg.content, trimPlan(plan)));
+					send(`${msg.content}\n\n${msg.customType === "workflow-commit" ? commitExcerpt() : planCardText()}`);
 				},
 				onError: (e) => {
 					compacting = false;
@@ -1297,6 +1364,7 @@ export default function workflow(pi: ExtensionAPI) {
 			onComplete: () => {
 				compacting = false;
 				guardTokens = null;
+				if (state.phase === "execute" && state.approvedPlan) pi.sendMessage({ customType: "workflow-plan-card", content: planCardText(), display: true }, { triggerTurn: false });
 			},
 			onError: (e) => {
 				compacting = false;
@@ -1722,6 +1790,7 @@ export default function workflow(pi: ExtensionAPI) {
 				// Recorded, so the next review does not raise the same flaw and ask again.
 				const flaws = report.split("\n").filter((l) => /\[plan-flaw\]/.test(l));
 				state.approvedPlan = `${state.approvedPlan ?? ""}\n\n## Plan choices upheld by the user\n${flaws.join("\n")}`;
+				refreshChecklist();
 				persist();
 				return "continue";
 			}
@@ -1760,6 +1829,7 @@ export default function workflow(pi: ExtensionAPI) {
 		}
 		if (d.decision === "KEEP") {
 			state.approvedPlan = `${state.approvedPlan ?? ""}\n\n## Plan choices upheld by the arbiter\n${d.reason}`;
+			refreshChecklist();
 			persist();
 			pi.sendMessage({ customType: "workflow-judge", content: `**Arbiter: the plan stands.**\n\n${d.reason}`, display: true }, { triggerTurn: false });
 			return "continue";
@@ -1772,6 +1842,7 @@ export default function workflow(pi: ExtensionAPI) {
 			}
 			state.planRevisions = done + 1;
 			state.approvedPlan = `${state.approvedPlan ?? ""}\n\n## Amendment ${done + 1} (arbiter)\n${d.amendment}`;
+			refreshChecklist();
 			persist();
 			pi.sendMessage(
 				{
@@ -1953,7 +2024,7 @@ ${instruction}` : instruction);
 			};
 			ctx.ui.setWorkingMessage("commit step running…");
 			const ran = await runRole("commit", DELIVERY_LABELS[chosen], {
-				systemPrompts: [prompts.COMMIT, `## Approved plan\n\n${planForJudge()}`],
+				systemPrompts: [prompts.COMMIT, commitExcerpt()],
 				tools: ["bash"],
 				task: instruction,
 				cwd: ctx.cwd,

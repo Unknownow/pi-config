@@ -1,7 +1,7 @@
 // node --test agent-end.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { handoverAction, withPlan, afterPass, noChangeStage, arbiterFirst, fixableFindings, hasPlanFlaw, canApprove, hasPlanLine, isPlanReady, judgeCapReached, minorFixOpen, parseArbiter, phaseAfterFlow, shouldResume, skipJudge } from "./agent-end.ts";
+import { handoverAction, afterPass, noChangeStage, arbiterFirst, fixableFindings, hasPlanFlaw, canApprove, hasPlanLine, isPlanReady, judgeCapReached, minorFixOpen, parseArbiter, phaseAfterFlow, shouldResume, skipJudge } from "./agent-end.ts";
 
 const empty = { role: "assistant", content: [] };
 
@@ -159,8 +159,4 @@ test("handoverAction compacts only an idle, unaborted run over the threshold wit
 	assert.equal(handoverAction({ ...ok, aborted: true, hasPlan: false }), "hold");
 	assert.equal(handoverAction({ ...ok, aborted: true, commit: true }), "send");
 	assert.equal(handoverAction({ ...ok, aborted: true, commit: true, tokens: 1000 }), "send");
-});
-
-test("withPlan appends the plan under its heading", () => {
-	assert.equal(withPlan("Go.", "## Plan: x"), "Go.\n\n## The approved plan (repeated in full: the conversation was just compacted)\n\n## Plan: x");
 });

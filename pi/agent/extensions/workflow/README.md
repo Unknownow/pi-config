@@ -12,7 +12,7 @@ you <-> plan (Opus 5.5, high) -> approve -> final plan (Opus) -> execute (Sonnet
                                              judge says the plan is flawed -> you decide, or the arbiter (Fable 5.1) does
 escalation (manual): /flow escalate -> Fable 5.1 (high), /flow back
 context guard:       compacts at ~140k tokens on every model, after the run settles
-handover:            compacts (and re-sends the plan) when handing over to execute, a fix round, the next stage or the commit step, above 30k tokens
+handover:            compacts (and sends a short plan card) when handing over to execute, a fix round, the next stage or the commit step, above 30k tokens
 plan is read-only:   bash refuses commands that change files, git or GitHub
 ```
 
@@ -24,7 +24,7 @@ plan is read-only:   bash refuses commands that change files, git or GitHub
 | `advisor` | `advisor` tool, sub-`pi` with the whole transcript | choosing an approach, after an error repeats (auto-nudged after `repeatedErrorThreshold` failures), before "done" |
 | `judge` | `judge` tool, sub-`pi` with the git diff | the diff is ready; when a run ends with an unreviewed diff it asks (`autoJudge`) |
 | `arbiter` | sub-`pi` with the plan, the judge's report and the diff | the judge questions the plan and `planFlaw` is `auto` (or you pick "Let the arbiter decide", or you picked *Approve, arbiter solves plan flaws* for this flow) |
-| `commit` | sub-`pi` with bash only, the plan and the delivery instruction, and its own push guard (`commit-guard.ts`) | after the judge passes; `delivery.runner: "main"` runs it in the main session instead (compacted first at the handover) |
+| `commit` | sub-`pi` with bash only, the plan's goal and Commits section and the delivery instruction, and its own push guard (`commit-guard.ts`) | after the judge passes; `delivery.runner: "main"` runs it in the main session instead (compacted first at the handover) |
 | `escalate` | main session model | `/flow escalate` |
 
 ## Hands-off run
@@ -44,6 +44,7 @@ after approval runs on its own:
                                                               -> PASS: commit, split by function [-> push -> pull request -> merge, as chosen at approval]
 ```
 
+- **Step checklist:** the final plan numbers its steps `**S1.**`, `**S2.**`, ... across the whole plan. The executor ticks finished steps with the `plan_check` tool (execute phase only); the status bar shows `plan done/total`, the judge and the arbiter see the ticks as claims, and the plan card lists only the open steps (of the current stage). A plan without step IDs has no checklist and the card shows none.
 - **Staged plans:** when the planner proposes them (`stagedPlans: "auto"`, default: parts that build on each other,
   a large change, separate features) or you ask for delivery between parts, the planner lists the stages in its
   `Plan:` section before you approve, and the final plan groups its steps under
@@ -89,7 +90,7 @@ after approval runs on its own:
 - **Knowledge on re-reviews:** when the last round's knowledge check passed, a re-review runs `get_rule_pack` only for the files changed since that round and carries over the other files' deviation notes. Otherwise it checks the whole change. Full reviews always check everything.
 - **Judge read budget:** the judge prompts ask for about 15 read/grep/find/ls calls on a full review and about 8 on a re-review (knowledge calls excluded). A soft aim, not a limit.
 - **Commit calls:** the commit instruction asks the model to chain dependent steps with `&&` to keep the call count low.
-- **Handover compaction:** when a run hands over to the next step (final plan to execute, a minor-fix round, the next stage, the commit step) and the context is over `handoverCompactTokens` (30,000; `0` turns it off), the session is compacted first and the approved plan is repeated in full in the handover message. A failed compaction still sends the message. An aborted run holds the handover: nothing is sent, except the commit step, which is sent without compaction so the pending commit is not lost.
+- **Handover compaction:** when a run hands over to the next step (final plan to execute, a minor-fix round, the next stage, the commit step) and the context is over `handoverCompactTokens` (30,000; `0` turns it off), the session is compacted first and the handover message carries a plan card (goal, user decisions, done-when, amendments and the open steps) instead of the full plan. The 140k context guard sends the same card after its compaction. A failed compaction still sends the message. An aborted run holds the handover: nothing is sent, except the commit step, which is sent without compaction so the pending commit is not lost.
 - **Disputes:** if the executor thinks a finding is wrong it passes the finding and its file:line
   evidence in the judge tool's `disputes` parameter. The judge treats that as a claim, decides it from
   the code, and drops the finding only if the code shows the executor is right.
