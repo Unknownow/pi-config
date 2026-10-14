@@ -179,3 +179,9 @@ test("instruction asks to chain steps", () => {
 		assert.ok(t.includes("Run the push and any pull request commands"), mode);
 	}
 });
+
+test("deliveryOutcome says the PR state is unknown when gh can't run", () => {
+	assert.deepEqual(deliveryOutcome("merge", undefined, true, null, true), { text: "committed, pushed, pull request state unknown (gh not found)", ok: false });
+	assert.deepEqual(deliveryOutcome("merge", 1, true, { number: 5, state: "MERGED" }, true), { text: "committed (1 commit), PR #5 merged", ok: true });
+	assert.deepEqual(deliveryOutcome("pr", 1, true, null), { text: "committed (1 commit), pushed, no open pull request", ok: false });
+});

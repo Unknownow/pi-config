@@ -52,6 +52,7 @@ import { handoverAction, afterPass, noChangeStage, arbiterFirst, fixableFindings
 import { countTokens, type Tok } from "./tokens.ts";
 import * as prompts from "./prompts.ts";
 import { branchName, combineOutcomes, type Delivery, type DeliveryOptions, DELIVERIES, DELIVERY_LABELS, deliveryChoices, deliveryInstruction, deliveryMenuLabel, deliveryOutcome, freshPr, isDelivery, planTitle, type PrState, repoDeliveryInstruction } from "./delivery.ts";
+import { ghCandidates, withPathDir } from "./gh-path.ts";
 import { combineRepoTexts, parseAddDir, repoKey } from "./repos.ts";
 import { shellProblem } from "./push-guard.ts";
 import { COMMIT_GUARD_ENV, type CommitGuardSpec } from "./commit-guard.ts";
@@ -1828,11 +1829,18 @@ export default function workflow(pi: ExtensionAPI) {
 		pi.sendMessage({ customType, content, display: true }, { triggerTurn: true, deliverAs: "followUp" });
 	}
 
+	// True while handling the end of a run the user aborted: stageAdvance "auto" must not move on then.
+	let turnAborted = false;
+
 	pi.on("agent_end", async (event, ctx) => {
 		inAgentEnd++;
+		const prevAborted = turnAborted;
+		const lastMsg = [...event.messages].reverse().find((m) => m.role === "assistant") as { stopReason?: string } | undefined;
+		turnAborted = !!event.aborted || lastMsg?.stopReason === "aborted";
 		try {
 			await onAgentEnd(event, ctx);
 		} finally {
+			turnAborted = prevAborted;
 			inAgentEnd--;
 		}
 	});
@@ -1959,8 +1967,10 @@ export default function workflow(pi: ExtensionAPI) {
 
 	/** A staged plan's turn ended with nothing new to review: it ends the stage only if the executor handed it over (judge called) or the user confirms. */
 	async function noChangeTurn(ctx: ExtensionContext, staged: { stages: ReturnType<typeof parseStages>; current: number }): Promise<void> {
-		const what = noChangeStage(!!state.stageJudged, ctx.hasUI);
+		const auto = cfg.stageAdvance === "auto" && !turnAborted;
+		const what = noChangeStage(!!state.stageJudged, ctx.hasUI, auto);
 		if (what === "wait") return;
+		if (what === "advance" && auto && !state.stageJudged) ctx.ui.notify(`workflow: stage ${staged.current} ended with no changes; continuing (stageAdvance: auto)`, "info");
 		if (what === "ask") {
 			const yes = "Mark done and continue";
 			if ((await ctx.ui.select(`Stage ${staged.current} ended with no changes`, [yes, "Wait"])) !== yes) return;
@@ -2017,7 +2027,10 @@ export default function workflow(pi: ExtensionAPI) {
 			state.stageOutcomes = [...(state.stageOutcomes ?? []), outcome];
 			if (staged.current < staged.stages.length) {
 				let go = outcome.ok;
-				if (!go && ctx.hasUI) {
+				if (!go && cfg.stageAdvance === "auto" && !turnAborted) {
+					ctx.ui.notify(`workflow: stage ${staged.current} delivery incomplete (${outcome.text}); continuing with stage ${staged.current + 1} (stageAdvance: auto)`, "warning");
+					go = true;
+				} else if (!go && ctx.hasUI) {
 					const more = `Continue with stage ${staged.current + 1}`;
 					go = (await ctx.ui.select(`Stage ${staged.current} delivery incomplete: ${outcome.text}`, [more, "Stop"])) === more;
 				}
@@ -2044,14 +2057,42 @@ export default function workflow(pi: ExtensionAPI) {
 		const named = !!branch && branch !== "HEAD" && (await git(dir, "rev-parse", "--verify", "--quiet", `refs/heads/${branch}`)).code === 0;
 		const rev = named ? (branch as string) : "HEAD";
 		const now = (await git(dir, "rev-parse", rev)).stdout.trim();
-		const pr = (mode === "pr" || mode === "merge") && branch && branch !== "HEAD" ? freshPr(await prState(dir, branch), prBefore) : null;
+		const wantsPr = mode === "pr" || mode === "merge";
+		const ghOk = wantsPr ? await ghReady : true;
+		const pr = wantsPr && branch && branch !== "HEAD" ? freshPr(await prState(dir, branch), prBefore) : null;
 		if (pr?.state !== "MERGED" && (!now || now === head)) return null;
 		// A merge that deleted the branch leaves HEAD on the base branch, whose count would include other commits.
 		const counted = named || !branch || branch === "HEAD" ? await git(dir, "rev-list", "--count", `${head}..${rev}`) : undefined;
 		const commits = counted?.code === 0 ? Number(counted.stdout.trim()) : undefined;
 		const ahead = mode === "commit" ? undefined : await git(dir, "rev-list", "--count", `${named ? branch : ""}@{u}..${rev}`);
 		const pushed = ahead?.code === 0 && ahead.stdout.trim() === "0";
-		return deliveryOutcome(mode, commits, pushed, pr);
+		return deliveryOutcome(mode, commits, pushed, pr, !ghOk);
+	}
+
+	let ghReady: Promise<boolean> = Promise.resolve(true);
+	let ghNoticed = false;
+
+	/** Makes `gh` runnable: when it is not on PATH, adds a standard GitHub CLI install folder to this process's PATH. */
+	async function ensureGh(ctx: ExtensionContext): Promise<boolean> {
+		const works = async () => {
+			try {
+				return (await pi.exec("gh", ["--version"], { timeout: 10_000 })).code === 0;
+			} catch {
+				return false;
+			}
+		};
+		if (await works()) return true;
+		const found = ghCandidates(process.env, process.platform).find((c) => fs.existsSync(c));
+		if (!found) return false;
+		const dir = path.dirname(found);
+		const { key, value } = withPathDir(process.env, dir, path.delimiter);
+		process.env[key] = value;
+		if (!(await works())) return false;
+		if (!ghNoticed) {
+			ghNoticed = true;
+			ctx.ui.notify(`workflow: gh was not on PATH; added ${dir}`, "info");
+		}
+		return true;
 	}
 
 	/** The pull request for `branch` as gh sees it, or null when there is none or gh fails. */
@@ -2499,6 +2540,7 @@ ${instruction}` : instruction);
 		cfg = loaded.config;
 		configError = loaded.error;
 		if (configError) ctx.ui.notify(`workflow: bad config, using defaults: ${configError}`, "error");
+		ghReady = ensureGh(ctx).catch(() => false);
 
 		const saved = ctx.sessionManager
 			.getBranch()

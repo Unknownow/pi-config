@@ -125,7 +125,7 @@ export function parseArbiter(text: string): ArbiterDecision | null {
 	return { decision, reason, amendment };
 }
 
-/** A staged plan's turn ended with no new changes: advance if the executor handed the stage over (judge called), else ask the user (UI) or wait. */
-export function noChangeStage(judged: boolean, hasUI: boolean): "advance" | "ask" | "wait" {
-	return judged ? "advance" : hasUI ? "ask" : "wait";
+/** A staged plan's turn ended with no new changes: advance if the executor handed the stage over (judge called) or `auto` (stageAdvance), else ask the user (UI) or wait. */
+export function noChangeStage(judged: boolean, hasUI: boolean, auto = false): "advance" | "ask" | "wait" {
+	return judged || auto ? "advance" : hasUI ? "ask" : "wait";
 }

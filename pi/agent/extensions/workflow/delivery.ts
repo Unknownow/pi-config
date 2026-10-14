@@ -113,13 +113,14 @@ export function freshPr(pr: PrState | null, prBefore: number | undefined): PrSta
 }
 
 /** The flow summary's outcome after the commit step, and whether it did what the delivery asked. `commits` undefined: not counted. */
-export function deliveryOutcome(mode: Exclude<Delivery, "off">, commits: number | undefined, pushed: boolean, pr: PrState | null): { text: string; ok: boolean } {
+export function deliveryOutcome(mode: Exclude<Delivery, "off">, commits: number | undefined, pushed: boolean, pr: PrState | null, prUnknown = false): { text: string; ok: boolean } {
 	const n = commits === undefined ? "" : ` (${commits} commit${commits === 1 ? "" : "s"})`;
 	if (mode === "commit") return { text: `committed${n}`, ok: true };
 	if ((mode === "pr" || mode === "merge") && pr?.state === "MERGED") return { text: `committed${n}, PR #${pr.number} merged`, ok: true };
 	const text = `committed${n}, ${pushed ? "pushed" : "not pushed"}`;
 	if (mode === "push") return { text, ok: pushed };
 	if (pr?.state === "OPEN") return { text: `${text}, PR #${pr.number} open${mode === "merge" ? ", not merged" : ""}`, ok: pushed && mode === "pr" };
+	if (prUnknown && !pr) return { text: `${text}, pull request state unknown (gh not found)`, ok: false };
 	return { text: `${text}, no open pull request`, ok: false };
 }
 

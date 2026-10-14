@@ -93,6 +93,8 @@ export interface WorkflowConfig {
 	planFlaw: "ask" | "auto";
 	/** When the planner splits a plan into stages, each executed, judged and delivered on its own. */
 	stagedPlans: StagedPlans;
+	/** Staged plans: "auto" starts the next stage at once, even after an incomplete delivery or a stage with no changes; "ask" asks you first. */
+	stageAdvance: "auto" | "ask";
 	/** How much of the plan the planner repeats in later discussion replies (needs finalizePlan; otherwise it always repeats it). */
 	planRecap: PlanRecap;
 	/** Amendments the arbiter may add to the plan in one flow before it asks you instead. */
@@ -164,6 +166,7 @@ export const DEFAULTS: WorkflowConfig = {
 	returnToPlan: true,
 	planFlaw: "ask",
 	stagedPlans: "auto",
+	stageAdvance: "auto",
 	planRecap: "changes",
 	maxPlanRevisions: 2,
 	delivery: { ask: true, default: "commit", splitCommits: true, mergeMethod: "merge", deleteBranch: true, base: "", branchPrefix: "flow/", runner: "subagent" },
@@ -233,6 +236,7 @@ export function loadConfig(): { config: WorkflowConfig; error?: string } {
 		if (!Array.isArray(config.plans.localOnly) || config.plans.localOnly.some((s) => typeof s !== "string")) config.plans.localOnly = DEFAULTS.plans.localOnly;
 		for (const k of ["keepDays", "keepCount"] as const) if (typeof config.plans[k] !== "number" || !Number.isFinite(config.plans[k]) || config.plans[k] < 0) config.plans[k] = DEFAULTS.plans[k];
 		if (config.stagedPlans !== "auto" && config.stagedPlans !== "onRequest") config.stagedPlans = DEFAULTS.stagedPlans;
+		if (config.stageAdvance !== "auto" && config.stageAdvance !== "ask") config.stageAdvance = DEFAULTS.stageAdvance;
 		if (config.planRecap !== "changes" && config.planRecap !== "always") config.planRecap = DEFAULTS.planRecap;
 		return { config };
 	} catch (e) {
