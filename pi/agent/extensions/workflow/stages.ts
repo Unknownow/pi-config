@@ -10,7 +10,7 @@ export interface PlanStage {
 	delivery?: Exclude<Delivery, "off">;
 }
 
-export const HEADING = /^#{2,4}\s*[*_]*Stage\s+(\d+)[*_]*\s*[:.\u2013\u2014-]\s*(.*?)\s*[*_]*\s*$/i;
+const HEADING = /^#{2,4}\s*[*_]*Stage\s+(\d+)[*_]*\s*[:.\u2013\u2014-]\s*(.*?)\s*[*_]*\s*$/i;
 const TAG = /\s*\(\s*deliver(?:y)?\s*:\s*([a-z]+)\s*\)\s*$/i;
 const MODES = ["commit", "push", "pr", "merge"] as const;
 
