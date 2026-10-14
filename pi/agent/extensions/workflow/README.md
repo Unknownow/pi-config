@@ -12,7 +12,7 @@ you <-> plan (Opus 5.5, high) -> approve -> final plan (Opus) -> execute (Sonnet
                                              judge says the plan is flawed -> you decide, or the arbiter (Fable 5.1) does
 escalation (manual): /flow escalate -> Fable 5.1 (high), /flow back
 context guard:       compacts at ~140k tokens on every model, after the run settles
-handover:            compacts (and re-sends the plan) when handing over to execute, a fix round or the next stage, above 30k tokens
+handover:            compacts (and re-sends the plan) when handing over to execute, a fix round, the next stage or the commit step, above 30k tokens
 plan is read-only:   bash refuses commands that change files, git or GitHub
 ```
 
@@ -86,7 +86,8 @@ after approval runs on its own:
   review; the judge tool's `full: true` forces one. `"judge": { "recheck": false }` turns it off.
 - **Knowledge on re-reviews:** when the last round's knowledge check passed, a re-review runs `get_rule_pack` only for the files changed since that round and carries over the other files' deviation notes. Otherwise it checks the whole change. Full reviews always check everything.
 - **Judge read budget:** the judge prompts ask for about 15 read/grep/find/ls calls on a full review and about 8 on a re-review (knowledge calls excluded). A soft aim, not a limit.
-- **Handover compaction:** when a run hands over to the next step (final plan to execute, a minor-fix round, the next stage) and the context is over `handoverCompactTokens` (30,000; `0` turns it off), the session is compacted first and the approved plan is repeated in full in the handover message. A failed compaction still sends the message. An aborted run holds the handover: nothing is sent.
+- **Commit calls:** the commit instruction asks the model to chain dependent steps with `&&` to keep the call count low.
+- **Handover compaction:** when a run hands over to the next step (final plan to execute, a minor-fix round, the next stage, the commit step) and the context is over `handoverCompactTokens` (30,000; `0` turns it off), the session is compacted first and the approved plan is repeated in full in the handover message. A failed compaction still sends the message. An aborted run holds the handover: nothing is sent, except the commit step, which is sent without compaction so the pending commit is not lost.
 - **Disputes:** if the executor thinks a finding is wrong it passes the finding and its file:line
   evidence in the judge tool's `disputes` parameter. The judge treats that as a claim, decides it from
   the code, and drops the finding only if the code shows the executor is right.

@@ -129,8 +129,8 @@ The last round could be wrong too. Check that each previous finding is fixed, mi
 Look for problems the new changes introduce, including in code that calls them or that they call: read those files when a change could affect them. Aim for at most about 8 read/grep/find/ls calls, reading only code the changes since the last round can affect.
 Report a previous finding again only if it is still there. Use the same output format, including Why and Fix; the verdict covers the whole change as it is now.`;
 
-/** Compaction instructions when the workflow hands over to the next step (execute, a fix round, the next stage). */
-export const HANDOVER_COMPACT = `The workflow is handing over to the next step (executing the approved plan, a fix round, or the next stage). The approved plan is repeated in full in the next message, so don't copy it into the summary.
+/** Compaction instructions when the workflow hands over to the next step (execute, a fix round, the next stage, the commit step). */
+export const HANDOVER_COMPACT = `The workflow is handing over to the next step (executing the approved plan, a fix round, the next stage, or the commit step). The approved plan is repeated in full in the next message, so don't copy it into the summary.
 Keep: the user's decisions and requests, the files changed so far and why, test commands and their last results, open problems and findings, and anything the next step needs that the plan doesn't say.
 Drop: options that were not chosen, and tool output that was already acted on.`;
 

@@ -265,6 +265,7 @@ export default function workflow(pi: ExtensionAPI) {
 	let lastPlanText = "";
 	let guardTokens: number | null = null;
 	let compacting = false;
+	let commitHandoverInFlight = false; // the commit instruction waits for a handover compaction: a run ending meanwhile must not close the commit
 	/** The guard threshold was crossed during a run; compact when the run settles. */
 	let compactPending = false;
 	/** A handover message (execute, fix round, next stage) sent from agent_end; it goes out when the run settles, after an optional compaction. */
@@ -1261,10 +1262,13 @@ export default function workflow(pi: ExtensionAPI) {
 		if (pendingHandover) {
 			const msg = pendingHandover;
 			pendingHandover = undefined;
-			const send = (content: string) => pi.sendMessage({ customType: msg.customType, content, display: true }, { triggerTurn: true, deliverAs: "followUp" });
+			const send = (content: string) => {
+				commitHandoverInFlight = false;
+				pi.sendMessage({ customType: msg.customType, content, display: true }, { triggerTurn: true, deliverAs: "followUp" });
+			};
 			const held = ctx.getContextUsage()?.tokens ?? null;
 			const plan = state.approvedPlan;
-			const action = handoverAction({ aborted: event.aborted, idle: ctx.isIdle(), compacting, hasPlan: !!plan, tokens: held, threshold: cfg.handoverCompactTokens });
+			const action = handoverAction({ aborted: event.aborted, commit: msg.customType === "workflow-commit", idle: ctx.isIdle(), compacting, hasPlan: !!plan, tokens: held, threshold: cfg.handoverCompactTokens });
 			if (action === "hold") {
 				ctx.ui.notify("workflow: handover held: the run was aborted. Send a message or use /flow to continue.", "warning");
 				return;
@@ -1275,6 +1279,7 @@ export default function workflow(pi: ExtensionAPI) {
 			}
 			compactPending = false;
 			compacting = true;
+			commitHandoverInFlight = msg.customType === "workflow-commit";
 			ctx.ui.notify(`workflow: handing over at ${Math.round((held ?? 0) / 1000)}k tokens, compacting first`, "info");
 			ctx.compact({
 				customInstructions: prompts.HANDOVER_COMPACT,
@@ -1461,6 +1466,7 @@ export default function workflow(pi: ExtensionAPI) {
 				}
 			}
 		}
+		if (commitHandoverInFlight) return;
 		if (state.commitPending) {
 			const advanced = await summarizeCommit(ctx);
 			if (advanced === "advanced" || state.phase !== "execute") return; // the next stage started, or the flow ended and went back to planning
@@ -1924,12 +1930,9 @@ export default function workflow(pi: ExtensionAPI) {
 		view.changed();
 		markPassSummarized(hash); // the commit run's end summarizes this flow
 		persist();
-		pi.sendMessage(
-			{ customType: "workflow-commit", content: report ? `${report}
+		handover("workflow-commit", report ? `${report}
 
-${instruction}` : instruction, display: true },
-			{ triggerTurn: true, deliverAs: "followUp" },
-		);
+${instruction}` : instruction);
 		return true;
 	}
 

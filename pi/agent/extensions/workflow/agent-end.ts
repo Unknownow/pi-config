@@ -80,9 +80,9 @@ export function phaseAfterFlow(returnToPlan: boolean, phase: "off" | "plan" | "e
 	return returnToPlan && phase === "execute" ? "plan" : undefined;
 }
 
-/** Whether a pending handover message is sent after compacting the session first. An aborted run holds it: the user stopped the flow. */
-export function handoverAction(s: { aborted: boolean; idle: boolean; compacting: boolean; hasPlan: boolean; tokens: number | null; threshold: number }): "compact" | "send" | "hold" {
-	if (s.aborted) return "hold";
+/** Whether a pending handover message is sent after compacting the session first. An aborted run holds it (the user stopped the flow), except the commit step, which is sent uncompacted so the pending commit is not lost. */
+export function handoverAction(s: { aborted: boolean; commit: boolean; idle: boolean; compacting: boolean; hasPlan: boolean; tokens: number | null; threshold: number }): "compact" | "send" | "hold" {
+	if (s.aborted) return s.commit ? "send" : "hold";
 	return s.idle && !s.compacting && s.hasPlan && s.threshold > 0 && s.tokens !== null && s.tokens > s.threshold ? "compact" : "send";
 }
 

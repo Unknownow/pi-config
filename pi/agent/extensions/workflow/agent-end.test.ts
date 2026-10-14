@@ -149,7 +149,7 @@ test("a no-change stage advances only when judged", () => {
 });
 
 test("handoverAction compacts only an idle, unaborted run over the threshold with a plan", () => {
-	const ok = { aborted: false, idle: true, compacting: false, hasPlan: true, tokens: 50_000, threshold: 30_000 };
+	const ok = { aborted: false, commit: false, idle: true, compacting: false, hasPlan: true, tokens: 50_000, threshold: 30_000 };
 	assert.equal(handoverAction(ok), "compact");
 	for (const o of [{ idle: false }, { compacting: true }, { hasPlan: false }, { tokens: null }, { tokens: 30_000 }, { threshold: 0 }]) {
 		assert.equal(handoverAction({ ...ok, ...o }), "send");
@@ -157,6 +157,8 @@ test("handoverAction compacts only an idle, unaborted run over the threshold wit
 	assert.equal(handoverAction({ ...ok, aborted: true }), "hold");
 	assert.equal(handoverAction({ ...ok, aborted: true, tokens: 1000 }), "hold");
 	assert.equal(handoverAction({ ...ok, aborted: true, hasPlan: false }), "hold");
+	assert.equal(handoverAction({ ...ok, aborted: true, commit: true }), "send");
+	assert.equal(handoverAction({ ...ok, aborted: true, commit: true, tokens: 1000 }), "send");
 });
 
 test("withPlan appends the plan under its heading", () => {
