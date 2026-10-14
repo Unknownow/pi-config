@@ -48,12 +48,13 @@ import {
 	type Thinking,
 	type WorkflowConfig,
 } from "./config.ts";
-import { afterPass, arbiterFirst, fixableFindings, hasPlanFlaw, isPlanReady, judgeCapReached, minorFixOpen, parseArbiter, phaseAfterFlow, shouldResume, skipJudge } from "./agent-end.ts";
+import { afterPass, noChangeStage, arbiterFirst, fixableFindings, hasPlanFlaw, isPlanReady, judgeCapReached, minorFixOpen, parseArbiter, phaseAfterFlow, shouldResume, skipJudge } from "./agent-end.ts";
 import { countTokens, type Tok } from "./tokens.ts";
 import * as prompts from "./prompts.ts";
 import { branchName, combineOutcomes, type Delivery, type DeliveryOptions, DELIVERIES, DELIVERY_LABELS, deliveryChoices, deliveryInstruction, deliveryMenuLabel, deliveryOutcome, freshPr, isDelivery, planTitle, type PrState, repoDeliveryInstruction } from "./delivery.ts";
 import { combineRepoTexts, parseAddDir, repoKey, fallbackTexts, repoTexts } from "./repos.ts";
 import { pushProblem } from "./push-guard.ts";
+import { nextStage, parseStages, stageDelivery, stageLine, stageNote, stageStart, stagesOutcome } from "./stages.ts";
 import { planToolProblem, planToolRefused } from "./readonly-tools.ts";
 import { addUsage, emptyUsage, mapLimit, type RunResult, runSubagent } from "./subagent.ts";
 import {
@@ -125,6 +126,12 @@ interface FlowState {
 	pendingPlanFlaw?: string;
 	/** The knowledge check of the last judge round (only when knowledge is active). */
 	lastKnowledge?: LastKnowledge;
+	/** The current stage (1-based) of a staged plan; unset when the plan is not staged. */
+	stage?: number;
+	/** The executor asked for a review in the current stage: a no-change turn may then end the stage. */
+	stageJudged?: boolean;
+	/** Outcomes of the stages delivered so far in this flow. */
+	stageOutcomes?: { text: string; ok: boolean }[];
 	/** Folders added with /folders or --add-dir: absolute, forward slashes, in the order added. */
 	folders?: string[];
 	/** Git roots edited in this flow that are neither the working folder's repo nor an added folder's repo. */
@@ -363,6 +370,9 @@ export default function workflow(pi: ExtensionAPI) {
 		state.planRevisions = undefined;
 		state.pendingPlanFlaw = undefined;
 		state.touchedRepos = undefined;
+		state.stage = undefined;
+		state.stageJudged = undefined;
+		state.stageOutcomes = undefined;
 		if (phase === "plan") {
 			state.approvedPlan = undefined;
 			state.delivery = undefined;
@@ -374,6 +384,24 @@ export default function workflow(pi: ExtensionAPI) {
 		updateStatus(ctx);
 	}
 
+	/** Records the plan that starts executing; for a staged plan also stage 1. Returns the text to add to the start message. */
+	function startExecution(ctx: ExtensionContext, plan: string | undefined): string {
+		state.approvedPlan = plan || undefined;
+		state.stageOutcomes = undefined;
+		state.stageJudged = undefined;
+		const stages = parseStages(plan);
+		state.stage = stages.length ? 1 : undefined;
+		if (!stages.length) return "";
+		ctx.ui.notify(`workflow: staged plan, ${stages.length} stages; stage 1: ${stages[0].title}`, "info");
+		return `\n\n${stageStart(stages, 1, state.delivery ?? defaultDelivery())}`;
+	}
+
+	/** The stages of the approved plan and the current one, or null when the plan is not staged. */
+	function currentStages() {
+		const stages = state.stage ? parseStages(state.approvedPlan) : [];
+		return stages.length && state.stage ? { stages, current: state.stage } : null;
+	}
+
 	async function approve(ctx: ExtensionContext, delivery?: Delivery, arbiterOnFlaw = false): Promise<void> {
 		state.delivery = delivery ?? (await chooseDelivery(ctx));
 		state.planFlaw = arbiterOnFlaw ? "auto" : undefined;
@@ -382,13 +410,13 @@ export default function workflow(pi: ExtensionAPI) {
 			planReady = false;
 			state.finalizing = true;
 			persist();
-			pi.sendMessage({ customType: "workflow-finalize", content: prompts.finalize(cfg.delivery.splitCommits), display: true }, { triggerTurn: true, deliverAs: "followUp" });
+			pi.sendMessage({ customType: "workflow-finalize", content: prompts.finalize(cfg.delivery.splitCommits, DELIVERY_LABELS[state.delivery]), display: true }, { triggerTurn: true, deliverAs: "followUp" });
 			return;
 		}
 		await setPhase(ctx, "execute");
-		state.approvedPlan = lastPlanText || undefined;
+		const extra = startExecution(ctx, lastPlanText);
 		persist();
-		pi.sendMessage({ customType: "workflow-execute", content: APPROVED, display: true }, { triggerTurn: true, deliverAs: "followUp" });
+		pi.sendMessage({ customType: "workflow-execute", content: APPROVED + extra, display: true }, { triggerTurn: true, deliverAs: "followUp" });
 	}
 
 	async function escalate(ctx: ExtensionContext): Promise<void> {
@@ -746,8 +774,10 @@ export default function workflow(pi: ExtensionAPI) {
 	function planForJudge(): string {
 		const plan = state.approvedPlan;
 		if (!plan) return "None recorded: judge the diff on its own.";
-		if (plan.length <= MAX_PLAN_CHARS) return plan;
-		return `${plan.slice(0, 45_000)}\n\n[... middle of the plan omitted ...]\n\n${plan.slice(-15_000)}`;
+		const staged = currentStages();
+		const note = staged ? `\n\n${stageNote(staged.stages, staged.current)}` : "";
+		if (plan.length <= MAX_PLAN_CHARS) return plan + note;
+		return `${plan.slice(0, 45_000)}\n\n[... middle of the plan omitted ...]\n\n${plan.slice(-15_000)}${note}`;
 	}
 
 	/** D4: a knowledge-only judge run, when the judge skipped its knowledge step. */
@@ -990,6 +1020,10 @@ export default function workflow(pi: ExtensionAPI) {
 		async execute(_id, params, signal, onUpdate, ctx) {
 			const diff = await collectFlowDiff(ctx, params.base || "HEAD");
 			if (!diff) throw new Error("no git work tree in this flow (working folder, /folders, or repos edited this flow); the judge reviews git diffs");
+			if (state.phase === "execute" && currentStages()) {
+				state.stageJudged = true;
+				persist();
+			}
 			if (!diff.text) return { content: [{ type: "text", text: "No changes to review." }], details: undefined };
 			const progress = toolProgress(onUpdate);
 			const r = await judge(ctx, diff, params.focus, signal, progress.track, params.full === true, params.disputes);
@@ -1034,7 +1068,10 @@ export default function workflow(pi: ExtensionAPI) {
 			}
 		}
 		if (state.phase === "plan") return { systemPrompt: `${event.systemPrompt}\n\n${prompts.planPhase(cfg.finalizePlan)}` };
-		if (state.phase === "execute") return { systemPrompt: `${event.systemPrompt}\n\n${prompts.EXECUTE_PHASE}` };
+		if (state.phase === "execute") {
+			const staged = currentStages();
+			return { systemPrompt: `${event.systemPrompt}\n\n${prompts.EXECUTE_PHASE}${staged ? `\n${stageLine(staged.stages, staged.current)}` : ""}` };
+		}
 	});
 
 	// Plan phase is read-only: the planner settles the approach, the execute model changes things.
@@ -1083,7 +1120,7 @@ export default function workflow(pi: ExtensionAPI) {
 						prAllowed: mode === "pr" || mode === "merge",
 						mergeAllowed: mode === "merge",
 					});
-					if (problem) return { block: true, reason: `Refused: ${problem}. Do not push, open or merge pull requests, or skip hooks yourself; the workflow does that after the judge passes, as this flow's delivery says.` };
+					if (problem) return { block: true, reason: `Refused: ${problem}. Do not push, open or merge pull requests, or skip hooks yourself: finish the code, get the judge's pass and end your turn; the workflow delivers it as this flow's delivery says.` };
 				}
 			}
 			return;
@@ -1244,13 +1281,13 @@ export default function workflow(pi: ExtensionAPI) {
 			state.finalizing = true;
 			persist();
 			ctx.ui.notify(`workflow: plan approved (then ${DELIVERY_LABELS[state.delivery]}), the planner writes the final plan`, "info");
-			return { action: "transform", text: `${event.text.trim()}\n\n${prompts.finalize(cfg.delivery.splitCommits)}` };
+			return { action: "transform", text: `${event.text.trim()}\n\n${prompts.finalize(cfg.delivery.splitCommits, DELIVERY_LABELS[state.delivery])}` };
 		}
 		await setPhase(ctx, "execute");
-		state.approvedPlan = lastPlanText || undefined;
+		const extra = startExecution(ctx, lastPlanText);
 		persist();
 		ctx.ui.notify(`workflow: plan approved, executing on ${describeRole(cfg.roles.execute)}, then ${DELIVERY_LABELS[state.delivery]}`, "info");
-		return { action: "transform", text: `${event.text.trim()}\n\n${APPROVED}` };
+		return { action: "transform", text: `${event.text.trim()}\n\n${APPROVED}${extra}` };
 	});
 
 	pi.on("session_compact", async (event) => {
@@ -1283,9 +1320,9 @@ export default function workflow(pi: ExtensionAPI) {
 			const finalText = assistantText(last).trim();
 			if (last?.role === "assistant" && last.stopReason === "stop" && /^##\s*Plan:/m.test(finalText)) {
 				await setPhase(ctx, "execute");
-				state.approvedPlan = finalText;
+				const extra = startExecution(ctx, finalText);
 				persist();
-				pi.sendMessage({ customType: "workflow-execute", content: APPROVED_FINAL, display: true }, { triggerTurn: true, deliverAs: "followUp" });
+				pi.sendMessage({ customType: "workflow-execute", content: APPROVED_FINAL + extra, display: true }, { triggerTurn: true, deliverAs: "followUp" });
 				return;
 			}
 			// Not a final plan (error, abort, or a question back): nothing starts; the normal plan handling below offers the menu again.
@@ -1345,19 +1382,79 @@ export default function workflow(pi: ExtensionAPI) {
 			}
 		}
 		if (state.commitPending) {
-			await summarizeCommit(ctx);
-			if (state.phase !== "execute") return; // the flow ended and went back to planning
+			const advanced = await summarizeCommit(ctx);
+			if (advanced === "advanced" || state.phase !== "execute") return; // the next stage started, or the flow ended and went back to planning
 		}
 		await reviewDiff(ctx, false);
 	});
 
-	async function summarizeCommit(ctx: ExtensionContext): Promise<void> {
+	/** Staged plan: moves on to the next stage and sends its start message. */
+	function startNextStage(ctx: ExtensionContext, stages: ReturnType<typeof parseStages>, outcome: string): void {
+		const next = (state.stage ?? 0) + 1;
+		state.stage = next;
+		state.judgeRounds = 0;
+		state.minorRounds = 0;
+		state.minorSentFor = undefined;
+		state.stageJudged = undefined;
+		if (state.passedDiff) markPassSummarized(state.passedDiff); // a leftover diff from the stage before is not this stage's
+		state.lastJudge = undefined; // a new stage gets a full review, not a re-review of the last one
+		view.stage = "execute";
+		view.changed();
+		persist();
+		ctx.ui.notify(`workflow: stage ${next} of ${stages.length}: ${stages[next - 1].title}`, "info");
+		pi.sendMessage(
+			{ customType: "workflow-stage", content: nextStage(stages, next, state.delivery ?? defaultDelivery(), outcome), display: true },
+			{ triggerTurn: true, deliverAs: "followUp" },
+		);
+	}
+
+	/** A staged plan's turn ended with nothing new to review: it ends the stage only if the executor handed it over (judge called) or the user confirms. */
+	async function noChangeTurn(ctx: ExtensionContext, staged: { stages: ReturnType<typeof parseStages>; current: number }): Promise<void> {
+		const what = noChangeStage(!!state.stageJudged, ctx.hasUI);
+		if (what === "wait") return;
+		if (what === "ask") {
+			const yes = "Mark done and continue";
+			if ((await ctx.ui.select(`Stage ${staged.current} ended with no changes`, [yes, "Wait"])) !== yes) return;
+		}
+		await stageWithoutChanges(ctx, staged);
+	}
+
+	/** A staged plan's stage ended with nothing to review: records it and starts the next stage, or ends the flow after the last one. */
+	async function stageWithoutChanges(ctx: ExtensionContext, staged: { stages: ReturnType<typeof parseStages>; current: number }): Promise<void> {
+		const outcome = { text: "no changes", ok: true };
+		state.stageOutcomes = [...(state.stageOutcomes ?? []), outcome];
+		if (staged.current < staged.stages.length) {
+			startNextStage(ctx, staged.stages, outcome.text);
+			return;
+		}
+		const final = stagesOutcome(state.stageOutcomes, staged.stages.length);
+		state.minorRounds = 0;
+		state.minorSentFor = undefined;
+		state.delivery = undefined;
+		state.planFlaw = undefined;
+		state.stage = undefined;
+		state.stageOutcomes = undefined;
+		view.stage = "execute";
+		if (!summarizeFlow(final.text, final.ok)) persist();
+		await endFlow(ctx);
+	}
+
+	/** The summary text for a flow that stops early: the stages already delivered, then `text`. Clears the stage state. */
+	function stoppedSummary(text: string): string {
+		const staged = currentStages();
+		const done = state.stageOutcomes ?? [];
+		state.stage = undefined;
+		state.stageOutcomes = undefined;
+		if (!staged || done.length === 0) return text;
+		return `${done.map((p, i) => `stage ${i + 1}: ${p.text}`).join("; ")}; ${text}`;
+	}
+
+	/** The commit step ended. "advanced": a staged plan moved on to its next stage; "ended": the flow is over. */
+	async function summarizeCommit(ctx: ExtensionContext): Promise<"advanced" | "ended"> {
 		const { mode, head, branch, prBefore, repos } = state.commitPending!;
 		state.commitPending = undefined;
 		state.minorRounds = 0;
 		state.minorSentFor = undefined;
-		state.delivery = undefined; // the flow is over; the next one chooses again
-		state.planFlaw = undefined;
 		let outcome: { text: string; ok: boolean };
 		if (repos?.length) {
 			const parts = [];
@@ -1366,9 +1463,30 @@ export default function workflow(pi: ExtensionAPI) {
 		} else {
 			outcome = (await repoOutcome(ctx.cwd, mode, head, branch, prBefore)) ?? { text: "commit step ended without a commit", ok: false };
 		}
+		const staged = currentStages();
+		if (staged) {
+			state.stageOutcomes = [...(state.stageOutcomes ?? []), outcome];
+			if (staged.current < staged.stages.length) {
+				let go = outcome.ok;
+				if (!go && ctx.hasUI) {
+					const more = `Continue with stage ${staged.current + 1}`;
+					go = (await ctx.ui.select(`Stage ${staged.current} delivery incomplete: ${outcome.text}`, [more, "Stop"])) === more;
+				}
+				if (go) {
+					startNextStage(ctx, staged.stages, outcome.text);
+					return "advanced";
+				}
+			}
+			outcome = stagesOutcome(state.stageOutcomes, staged.stages.length);
+		}
+		state.delivery = undefined; // the flow is over; the next one chooses again
+		state.planFlaw = undefined;
+		state.stage = undefined;
+		state.stageOutcomes = undefined;
 		const shown = summarizeFlow(outcome.text, outcome.ok);
 		if (!shown) persist(); // commitPending was cleared
 		await endFlow(ctx);
+		return "ended";
 	}
 
 	/** What one repo's commit step achieved, or null when it made no commit (and merged nothing). */
@@ -1409,6 +1527,10 @@ export default function workflow(pi: ExtensionAPI) {
 		}
 		if (!diff?.text) {
 			if (manual) ctx.ui.notify("workflow: no changes to review", "info");
+			else {
+				const staged = currentStages();
+				if (staged) await noChangeTurn(ctx, staged);
+			}
 			return;
 		}
 		// Already passed, e.g. the executor called judge itself: straight to commit.
@@ -1479,7 +1601,7 @@ export default function workflow(pi: ExtensionAPI) {
 				return;
 			}
 			ctx.ui.notify(`workflow: stopped after ${state.judgeRounds} failed judge rounds`, "warning");
-			summarizeFlow(`stopped: judge failed ${state.judgeRounds} rounds`, false);
+			summarizeFlow(stoppedSummary(`stopped: judge failed ${state.judgeRounds} rounds`), false);
 			await endFlow(ctx);
 			return;
 		}
@@ -1507,7 +1629,7 @@ export default function workflow(pi: ExtensionAPI) {
 			}
 			if (!ctx.hasUI) {
 				pi.sendMessage({ customType: "workflow-judge", content: report, display: true }, { triggerTurn: false });
-				summarizeFlow("stopped: judge questions the plan", false);
+				summarizeFlow(stoppedSummary("stopped: judge questions the plan"), false);
 				await endFlow(ctx);
 				return "stop";
 			}
@@ -1530,7 +1652,7 @@ export default function workflow(pi: ExtensionAPI) {
 				return "continue";
 			}
 			pi.sendMessage({ customType: "workflow-judge", content: report, display: true }, { triggerTurn: false });
-			summarizeFlow("stopped: judge questions the plan", false);
+			summarizeFlow(stoppedSummary("stopped: judge questions the plan"), false);
 			await endFlow(ctx);
 			return "stop";
 		}
@@ -1619,14 +1741,29 @@ export default function workflow(pi: ExtensionAPI) {
 
 	/** The flow ends at a pass that won't be committed (delivery off, or Stop at the knowledge prompt), and may go back to planning. */
 	async function summarizePass(ctx: ExtensionContext, hash: string): Promise<void> {
+		const staged = currentStages();
+		if (state.summarizedPasses?.includes(hash)) {
+			// A staged plan's stage added nothing to the diff that was already passed.
+			if (staged) await noChangeTurn(ctx, staged);
+			return;
+		}
+		const passed = { text: "judge passed, not committed", ok: true };
+		if (staged) state.stageOutcomes = [...(state.stageOutcomes ?? []), passed];
+		if (staged && staged.current < staged.stages.length && stageDelivery(state.delivery ?? defaultDelivery(), staged.stages[staged.current - 1]) === "off") {
+			markPassSummarized(hash);
+			startNextStage(ctx, staged.stages, passed.text);
+			return;
+		}
+		const outcome = staged ? stagesOutcome(state.stageOutcomes ?? [passed], staged.stages.length) : passed;
 		state.minorRounds = 0;
 		state.minorSentFor = undefined;
 		state.delivery = undefined;
 		state.planFlaw = undefined;
-		if (state.summarizedPasses?.includes(hash)) return;
+		state.stage = undefined;
+		state.stageOutcomes = undefined;
 		markPassSummarized(hash);
 		view.stage = "execute";
-		if (!summarizeFlow("judge passed, not committed", true)) persist();
+		if (!summarizeFlow(outcome.text, outcome.ok)) persist();
 		await endFlow(ctx);
 	}
 
@@ -1665,7 +1802,9 @@ export default function workflow(pi: ExtensionAPI) {
 	/** Sends the commit step's instruction (commit, push, pull request, merge, as this flow's delivery says), prefixed with `report`. False if nothing was sent. */
 	async function finishPassed(ctx: ExtensionContext, diff: Diff, report?: string): Promise<boolean> {
 		const hash = diff.hash;
-		const chosen = state.delivery ?? defaultDelivery();
+		const staged = currentStages();
+		const stage = staged?.stages[staged.current - 1];
+		const chosen = stageDelivery(state.delivery ?? defaultDelivery(), stage);
 		if (chosen === "off" || committedDiffs.has(hash)) return false;
 		const changed = diff.multi ? diff.repos.filter((r) => r.changed) : [];
 		if (diff.multi && changed.length === 0) return false;
@@ -1677,7 +1816,7 @@ export default function workflow(pi: ExtensionAPI) {
 			if (choice !== "Commit anyway") return false;
 		}
 
-		const seed = branchName(cfg.delivery.branchPrefix, planTitle(state.approvedPlan), new Date());
+		const seed = branchName(cfg.delivery.branchPrefix, stage?.title || planTitle(state.approvedPlan), new Date());
 		const deviations = knowledge ? deviationBlock(knowledge.deviations) : "";
 		const options = (p: Awaited<ReturnType<typeof prepareDelivery>>): DeliveryOptions => ({
 			mode: p.mode,
@@ -1822,6 +1961,7 @@ ${instruction}` : instruction, display: true },
 		const lines = [
 			`phase      ${state.phase}${state.escalated ? " (escalated)" : ""}`,
 			`judge     ${state.judgeRounds} failed round(s); auto=${cfg.autoJudge}; then ${DELIVERY_LABELS[state.delivery ?? defaultDelivery()]}${state.delivery ? "" : " (default)"}`,
+			...(currentStages() ? [`stage     ${currentStages()!.current} of ${currentStages()!.stages.length}: ${currentStages()!.stages[currentStages()!.current - 1].title}`] : []),
 			state.planFlaw === "auto" ? "flaws     arbiter (this flow)" : `flaws     ${cfg.planFlaw === "auto" ? "arbiter" : "ask"} (config)`,
 			`guard     compact at ${cfg.contextGuardTokens || "off"} tokens`,
 			`tokens    ${STAGES.map((s) => `${s} ${fmtTok(view.sessionTokens(s))}`).join(" · ")} · session total ${fmtTok(STAGES.reduce((n, s) => ({ raw: n.raw + view.sessionTokens(s).raw, cost: n.cost + view.sessionTokens(s).cost }), { raw: 0, cost: 0 }))}`,

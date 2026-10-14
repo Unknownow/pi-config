@@ -103,6 +103,8 @@ test("an old merged PR is not this flow's", () => {
 test("final plan asks for commits only when splitting", () => {
 	assert.ok(finalize(true).includes("9. Commits:"));
 	assert.ok(!finalize(false).includes("9. Commits"));
+	assert.ok(finalize(true, "commit + push").includes("### Stage 1:"));
+	assert.ok(finalize(true, "commit + push").includes("commit + push"));
 	for (const f of [finalize(true), finalize(false)]) {
 		assert.ok(f.includes("8. Risks, rollback"));
 		assert.ok(f.endsWith("How to write the code is the executor's job."));

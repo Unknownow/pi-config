@@ -26,10 +26,11 @@ ${PLAN_BATCH}
 }
 
 /** Sent after approval when finalizePlan is on: the planner's last job. `commits`: the plan also says how the change splits into commits. */
-export function finalize(commits: boolean): string {
+export function finalize(commits: boolean, delivery?: string): string {
 	const item = commits
 		? "\n9. Commits: how the change splits into commits by function, one line each: the commit message subject and its files. A change with one function is one commit; tests go with the code they test."
 		: "";
+	const stages = ` Only when the user asked for the work to be delivered in parts (commit, push, pull request or merge between parts), group the steps under headings \`### Stage 1: <title>\`, \`### Stage 2: <title>\`, ...: each stage is executed, judged and delivered on its own, in order. A stage is delivered with the flow's delivery${delivery ? ` (this flow: ${delivery})` : ""}; add \` (delivery: commit|push|pr|merge)\` to a heading only when the user asked for a different delivery for that stage. Otherwise write no stage headings.`;
 	return `The user approved. Write the final execution plan now, for a less capable execute model that follows it step by step and writes the code, and an independent judge that checks the result against it. Call tools only to confirm a detail.
 Use exactly this structure:
 ## Plan: <title>
@@ -37,7 +38,7 @@ Use exactly this structure:
 2. User decisions: every explicit choice the user made in the discussion, one line each, labelled D1, D2, ...
 3. Facts the executor needs, with file:line.
 4. Design, only when the change adds or reshapes components, interfaces, data or concurrency: components and responsibilities; interfaces and contracts (signatures, message or file formats); data model and migration or compatibility; failure handling; scale assumptions with numbers, and the limit at which this design stops working; alternatives rejected and why.
-5. Steps in order. For each: the file and function (file:line anchor); what to change and why, in words; the behaviour it must have (inputs, outputs, edge cases, error handling); the existing code to model it on (file:line).
+5. Steps in order.${stages} For each: the file and function (file:line anchor); what to change and why, in words; the behaviour it must have (inputs, outputs, edge cases, error handling); the existing code to model it on (file:line).
 6. Tests: each new or changed test (file, name, input, expected result), plus the commands to run and the expected output.
 7. Done when: acceptance criteria.
 8. Risks, rollback, and what not to touch.${item}
@@ -55,7 +56,7 @@ ${BATCH}
 - When done, run the plan's tests, then call \`judge\` with \`focus\` set to the plan's title. Fix every blocker and major finding by following its Fix directions. When the judge passes, end your turn: the workflow decides whether the minor findings get a fix round. If a finding is wrong, don't change code for it: put the finding and your file:line evidence in the judge tool's \`disputes\` parameter on the next call. Then call \`judge\` again.
 - A finding "[knowledge <id>] deviation from a recommended rule" is minor: you don't have to change the code for it. If you keep the code on purpose, give the reason in \`disputes\` on your next judge call; deviations go into the commit message.
 - Never change the plan's design to satisfy a [plan-flaw] finding. End your turn; the workflow resolves it.
-- Never commit or push: the workflow does that after the judge passes, and a push of your own is refused.
+- Never commit, push, or open or merge a pull request yourself, even when the plan says to: delivery is the workflow's step, and a push of your own is refused. When the plan reaches such a point (or a stage ends), finish the code, get the judge's pass and end your turn. The workflow delivers it as the flow's delivery says and, for a staged plan, sends you the next stage. Don't report this as a blocker.
 - End with a report: each plan step done or not done, and the tests you ran with their results.`;
 
 export const EXPLORE = `You are the explorer: a fast, read-only helper for the planner and the executor.

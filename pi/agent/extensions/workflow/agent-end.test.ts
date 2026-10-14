@@ -1,7 +1,7 @@
 // node --test agent-end.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { afterPass, arbiterFirst, fixableFindings, hasPlanFlaw, isPlanReady, judgeCapReached, minorFixOpen, parseArbiter, phaseAfterFlow, shouldResume, skipJudge } from "./agent-end.ts";
+import { afterPass, noChangeStage, arbiterFirst, fixableFindings, hasPlanFlaw, isPlanReady, judgeCapReached, minorFixOpen, parseArbiter, phaseAfterFlow, shouldResume, skipJudge } from "./agent-end.ts";
 
 const empty = { role: "assistant", content: [] };
 
@@ -129,4 +129,11 @@ test("a finished flow returns to plan only from execute, when enabled", () => {
 	assert.equal(phaseAfterFlow(false, "execute"), undefined);
 	assert.equal(phaseAfterFlow(true, "plan"), undefined);
 	assert.equal(phaseAfterFlow(true, "off"), undefined);
+});
+
+test("a no-change stage advances only when judged", () => {
+	assert.equal(noChangeStage(true, false), "advance");
+	assert.equal(noChangeStage(true, true), "advance");
+	assert.equal(noChangeStage(false, true), "ask");
+	assert.equal(noChangeStage(false, false), "wait");
 });

@@ -42,6 +42,14 @@ after approval runs on its own:
                                                               -> PASS: commit, split by function [-> push -> pull request -> merge, as chosen at approval]
 ```
 
+- **Staged plans:** when you ask for delivery between parts, the final plan groups its steps under
+  `### Stage N: <title>` headings (numbers 1, 2, 3, ... in order, at least two). The flow then loops: execute
+  stage 1, judge, deliver it (commit, push, pull request, merge), then the executor gets stage 2, and so on. The
+  flow ends after the last stage. A heading may end in `(delivery: commit|push|pr|merge)` to deliver that stage
+  differently; otherwise the flow's delivery applies, and `off` for the flow wins (nothing is delivered, the
+  stages still follow one another after each judge pass). If a stage's delivery is incomplete (push failed, merge
+  blocked, no commit), a menu asks to continue with the next stage or stop; without a UI it stops. The judge is told
+  which stage it reviews.
 - **Delivery** (chosen for each flow at approval; `delivery` in workflow.json): `commit` only (default),
   `push`, `pr` (also opens a pull request, or reuses the branch's open one), `merge` (also waits for the
   checks with `gh pr checks --watch`, then `gh pr merge --merge --delete-branch`), or `off`. Commits are split by
@@ -90,7 +98,7 @@ after approval runs on its own:
   contracts, not code: what to change, why and how it must behave. The execute model writes the code
   and the judge checks the result against it. With `finalizePlan: false` the last `Plan:` reply is used.
 - **Execute** follows the plan in order and writes the code within its contracts.
-  It stops and says so when a step cannot be done as written. It never commits or pushes.
+  It stops and says so when a step cannot be done as written. It never commits or pushes: at a delivery point it ends its turn after the judge passes.
   When the flow ends it switches back to the plan phase (`returnToPlan`, default on).
 - **The judge** runs in its own session. It sees the approved plan and the diff, not the discussion,
   and assumes the change is wrong. What it trusts:
@@ -157,7 +165,7 @@ its plan and hand over, even when you said "fix it" or "do it for me".
 - It is a guard against the planner drifting into execution, not a sandbox. The code checks are
   regexes: a determined disguise (a computed lookup on an alias of `require('fs')`, say) can still get
   past them.
-- Tests: `node --experimental-strip-types --test agent-end.test.ts readonly-bash.test.ts readonly-tools.test.ts tokens.test.ts push-guard.test.ts knowledge.test.ts mcp-forward.test.ts subagent.test.ts delivery.test.ts repos.test.ts`.
+- Tests: `node --experimental-strip-types --test agent-end.test.ts readonly-bash.test.ts readonly-tools.test.ts tokens.test.ts push-guard.test.ts knowledge.test.ts mcp-forward.test.ts subagent.test.ts delivery.test.ts repos.test.ts stages.test.ts`.
 
 ## Team knowledge
 
