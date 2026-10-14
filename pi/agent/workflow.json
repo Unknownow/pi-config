@@ -34,6 +34,7 @@
   "contextGuardTokens": 140000,
   "autoJudge": "auto",
   "maxJudgeRounds": 5,
+  "maxMinorRounds": 2,
   "finalizePlan": true,
   "planFlaw": "ask",
   "maxPlanRevisions": 2,

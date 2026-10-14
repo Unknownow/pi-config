@@ -91,6 +91,7 @@ test("parseArbiter reads the decision, the reason and the amendment", () => {
 test("fixableFindings skips knowledge deviations, plan flaws and indented lines", () => {
 	assert.equal(fixableFindings("a.ts:3 - minor - [bug] x\n  Why: y\n  Fix: z\nVERDICT: PASS"), 1);
 	assert.equal(fixableFindings("a.ts:3 - minor - [knowledge r1] deviation from a recommended rule\nVERDICT: PASS"), 0);
+	assert.equal(fixableFindings("a.ts:3 - minor - [knowledge r1] the required rule about locks is broken\nVERDICT: PASS"), 1);
 	assert.equal(fixableFindings("a.ts:3 - minor - [plan-flaw] x\nVERDICT: PASS"), 0);
 	assert.equal(fixableFindings("  Fix: split the file - minor - and retest\nVERDICT: PASS"), 0);
 	assert.equal(fixableFindings("a.ts:1 - minor - [design] a\r\nb.ts:2 - minor - [test] b\r\nVERDICT: PASS"), 2);

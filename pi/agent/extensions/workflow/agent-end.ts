@@ -73,12 +73,12 @@ export function hasPlanFlaw(text: string): boolean {
 
 /**
  * Findings of a judge report the executor should fix after a pass: finding lines (not the indented Why/Fix lines)
- * except [knowledge ...] deviations, which may stay with a reason, and [plan-flaw] findings, which the arbiter or the user decides.
+ * except [knowledge <id>] deviations from a recommended rule, which may stay with a reason, and [plan-flaw] findings, which the arbiter or the user decides.
  */
 export function fixableFindings(text: string): number {
 	return text
 		.split(/\r?\n/)
-		.filter((l) => /^\S.*\s-\s*(blocker|major|minor)\s*-/i.test(l) && !/-\s*\[(knowledge\b|plan-flaw\])/i.test(l)).length;
+		.filter((l) => /^\S.*\s-\s*(blocker|major|minor)\s*-/i.test(l) && !/-\s*(\[plan-flaw\]|\[knowledge\b[^\]]*\]\s*deviation from a recommended rule)/i.test(l)).length;
 }
 
 export interface ArbiterDecision {

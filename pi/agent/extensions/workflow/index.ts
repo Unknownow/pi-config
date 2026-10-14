@@ -144,7 +144,7 @@ const SUMMARY_ENTRY = "workflow-summary";
 const APPROVED = "Plan approved. Execute it now, step by step, following the workflow rules.";
 const APPROVED_FINAL = "The final plan above is approved. Execute it exactly, step by step, following the workflow rules.";
 const FIX_MESSAGE =
-	"Fix every blocker and major finding by following its Fix directions, and the minor ones too. If a finding is wrong, put it in the `disputes` parameter of your next judge call instead of changing code. Then call judge again.";
+	"Fix every blocker and major finding by following its Fix directions, and the minor ones too (except [knowledge ...] deviations: give your reason in `disputes` to keep the code). If a finding is wrong, put it in the `disputes` parameter of your next judge call instead of changing code. Then call judge again.";
 /** The judge reads at most this much of the plan; the end (the arbiter's amendments) is kept. */
 const MAX_PLAN_CHARS = 60_000;
 const OWN_TOOLS = new Set(["explore", "advisor", "judge"]);
@@ -776,7 +776,7 @@ export default function workflow(pi: ExtensionAPI) {
 		name: "judge",
 		label: "Judge",
 		description:
-			"Adversarial review of the current uncommitted diff (plus untracked files) by a stronger model that assumes the change is wrong. Returns one line per finding and VERDICT: PASS or FAIL. Call it when the diff is ready; fix every finding (minor ones too) and call it again. Rounds after the first review only the changes since the last round, with its findings. Do not commit before PASS.",
+			"Adversarial review of the current uncommitted diff (plus untracked files) by a stronger model that assumes the change is wrong. Returns one line per finding and VERDICT: PASS or FAIL. Call it when the diff is ready; fix blocker and major findings and call it again. On a pass, end your turn: the workflow decides whether minor findings get a fix round. Rounds after the first review only the changes since the last round, with its findings. Do not commit before PASS.",
 		promptSnippet: "judge: adversarial review of the current diff; must PASS before commit",
 		parameters: Type.Object({
 			focus: Type.Optional(Type.String({ description: "What the change is meant to do, or areas to scrutinize" })),
@@ -1289,7 +1289,7 @@ export default function workflow(pi: ExtensionAPI) {
 		pi.sendMessage(
 			{
 				customType: "workflow-fix",
-				content: `${shown}\n\nThe judge passed with ${findings} minor finding(s) to fix. Fix them by following their Fix directions, or put a wrong one in the \`disputes\` parameter of your next judge call instead of changing code. Then call judge again.`,
+				content: `${shown}\n\nThe judge passed with ${findings} finding(s) to fix (knowledge deviations excluded; give a reason in \`disputes\` to keep one). Fix them by following their Fix directions, or put a wrong one in the \`disputes\` parameter of your next judge call instead of changing code. Then call judge again.`,
 				display: true,
 			},
 			{ triggerTurn: true, deliverAs: "followUp" },
