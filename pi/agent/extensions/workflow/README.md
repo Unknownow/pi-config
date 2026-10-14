@@ -73,7 +73,7 @@ after approval runs on its own:
   are always refused.
   Like the plan-phase checks it reads the command text: a guard against a drifting executor, not a sandbox.
 - **Minor findings:** a passed review with fixable minor findings goes back to the executor for up to `maxMinorRounds`
-  (default 2, `0` commits at once) fix rounds, then commits anyway. Fix them, or dispute a wrong one. `[knowledge ...]` and
+  (default 1, `0` commits at once) fix rounds, then commits anyway. Fix them, or dispute a wrong one. `[knowledge ...]` and
   `[plan-flaw]` findings never start a round.
 - **Where it stops for you:** when the judge fails `maxJudgeRounds` (5; 0 means no limit) times in a
   row it asks: keep fixing, escalate and keep fixing, or stop. It also stops when something errors.
