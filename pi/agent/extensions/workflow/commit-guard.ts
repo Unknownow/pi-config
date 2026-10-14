@@ -12,6 +12,8 @@ export const COMMIT_GUARD_ENV = "PI_WORKFLOW_COMMIT_GUARD";
 
 export interface CommitGuardSpec {
 	protectedBranches: string[];
+	/** Every repo of a multi-repo flow, changed or not; empty for a single repo. */
+	roots: string[];
 	/** The delivery mode of the working folder (commit, push, pr, merge). */
 	mode?: string;
 	/** Several repos: each one's own mode. */
@@ -33,12 +35,14 @@ export function parseGuardSpec(raw: string | undefined): CommitGuardSpec | null 
 	const o = p as Record<string, unknown>;
 	if (!isStrings(o.protectedBranches)) return null;
 	if (o.mode !== undefined && typeof o.mode !== "string") return null;
+	const roots = o.roots === undefined ? [] : o.roots;
+	if (!isStrings(roots)) return null;
 	const repos = o.repos === undefined ? [] : o.repos;
 	if (!Array.isArray(repos)) return null;
 	for (const r of repos) {
 		if (typeof r !== "object" || r === null || typeof (r as { root?: unknown }).root !== "string" || typeof (r as { mode?: unknown }).mode !== "string") return null;
 	}
-	return { protectedBranches: o.protectedBranches, mode: o.mode as string | undefined, repos: repos as CommitGuardSpec["repos"] };
+	return { protectedBranches: o.protectedBranches, roots, mode: o.mode as string | undefined, repos: repos as CommitGuardSpec["repos"] };
 }
 
 export default function commitGuard(pi: ExtensionAPI): void {
@@ -58,7 +62,7 @@ export default function commitGuard(pi: ExtensionAPI): void {
 		};
 		const modeOf = (root: string | undefined) => (root ? spec.repos.find((r) => repoKey(r.root) === repoKey(root))?.mode : undefined) ?? spec.mode;
 		const problem = await shellProblem(command, false, {
-			roots: spec.repos.length ? spec.repos.map((r) => r.root) : undefined,
+			roots: spec.roots.length ? spec.roots : undefined,
 			cwd: ctx.cwd,
 			protectedBranches: spec.protectedBranches,
 			branchOf,

@@ -272,7 +272,8 @@ export default function workflow(pi: ExtensionAPI) {
 	let compactPending = false;
 	/** A handover message (execute, fix round, next stage) sent from agent_end; it goes out when the run settles, after an optional compaction. */
 	let pendingHandover: { customType: string; content: string } | undefined;
-	let inAgentEnd = false;
+	let inAgentEnd = 0; // nesting depth: a run can end while a handler still waits on the commit subagent
+	let commitSubagentRunning = false; // a run ending meanwhile must not close the commit
 	/** An overflow compaction is retrying the turn; the bridge may answer that retry with an empty reply. */
 	let overflowRetry = false;
 	/** Automatic resumes since the user's last prompt. */
@@ -1354,11 +1355,11 @@ export default function workflow(pi: ExtensionAPI) {
 	}
 
 	pi.on("agent_end", async (event, ctx) => {
-		inAgentEnd = true;
+		inAgentEnd++;
 		try {
 			await onAgentEnd(event, ctx);
 		} finally {
-			inAgentEnd = false;
+			inAgentEnd--;
 		}
 	});
 
@@ -1456,7 +1457,7 @@ export default function workflow(pi: ExtensionAPI) {
 				}
 			}
 		}
-		if (commitHandoverInFlight) return;
+		if (commitHandoverInFlight || commitSubagentRunning) return;
 		if (state.commitPending) {
 			const advanced = await summarizeCommit(ctx);
 			if (advanced === "advanced" || state.phase !== "execute") return; // the next stage started, or the flow ended and went back to planning
@@ -1935,19 +1936,22 @@ ${instruction}` : instruction);
 		if (report) pi.sendMessage({ customType: "workflow-judge", content: report, display: true }, { triggerTurn: false });
 		if (!fs.existsSync(COMMIT_GUARD_EXTENSION)) {
 			pi.sendMessage({ customType: "workflow-commit", content: `**Commit step** failed: commit guard extension not found at ${COMMIT_GUARD_EXTENSION}`, display: true }, { triggerTurn: false });
-			await summarizeCommit(ctx);
+			if (state.commitPending) await summarizeCommit(ctx);
 			resetCommitStage();
 			return;
 		}
 		const pending = state.commitPending;
-		const spec: CommitGuardSpec = {
-			protectedBranches: cfg.protectedBranches,
-			mode: pending?.mode,
-			repos: (pending?.repos ?? []).map((r) => ({ root: r.root, mode: r.mode })),
-		};
-		ctx.ui.setWorkingMessage("commit step running…");
+		commitSubagentRunning = true;
 		let result: RunResult;
 		try {
+			const multi = (state.folders?.length ?? 0) > 0 || (state.touchedRepos?.length ?? 0) > 0;
+			const spec: CommitGuardSpec = {
+				protectedBranches: cfg.protectedBranches,
+				roots: multi ? (await flowRepos(ctx)).map((r) => r.root) : [],
+				mode: pending?.mode,
+				repos: (pending?.repos ?? []).map((r) => ({ root: r.root, mode: r.mode })),
+			};
+			ctx.ui.setWorkingMessage("commit step running…");
 			const ran = await runRole("commit", DELIVERY_LABELS[chosen], {
 				systemPrompts: [prompts.COMMIT, `## Approved plan\n\n${planForJudge()}`],
 				tools: ["bash"],
@@ -1959,10 +1963,11 @@ ${instruction}` : instruction);
 			result = ran.result;
 			if (result.ok) view.finish(ran.run, true, "report ready");
 		} finally {
+			commitSubagentRunning = false;
 			ctx.ui.setWorkingMessage();
 		}
 		pi.sendMessage({ customType: "workflow-commit", content: `**Commit step** (${describeRole(cfg.roles.commit)})\n\n${result.ok ? result.text : `failed: ${result.error}`}`, display: true }, { triggerTurn: false });
-		await summarizeCommit(ctx);
+		if (state.commitPending) await summarizeCommit(ctx);
 		resetCommitStage();
 	}
 
