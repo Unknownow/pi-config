@@ -66,6 +66,7 @@ import {
 	knowledgeFooter,
 	mergeKnowledgePass,
 	parseDeviations,
+	recheckKnowledgeFiles,
 	roleTools,
 } from "./knowledge.ts";
 import {
@@ -702,7 +703,7 @@ export default function workflow(pi: ExtensionAPI) {
 
 	type ReviewPlan =
 		| { kind: "full"; snaps: Snaps | null }
-		| { kind: "recheck"; snaps: Snaps; prev: LastJudge; delta: string }
+		| { kind: "recheck"; snaps: Snaps; prev: LastJudge; delta: string; changed: string[] }
 		| { kind: "same"; prev: LastJudge };
 
 	/** Each repo's working tree and HEAD, or null when a tree cannot be built. */
@@ -738,7 +739,13 @@ export default function workflow(pi: ExtensionAPI) {
 		const delta = diff.multi ? combineRepoTexts(parts) : parts[0].text;
 		// Fixes that rewrite most of the change get a full review: little to save, more to miss.
 		if (!delta.trim() || delta.length > diff.chars * cfg.judge.recheckMaxShare) return fullPlan;
-		return { kind: "recheck", snaps, prev, delta };
+		const changed: string[] = [];
+		for (const r of diff.repos) {
+			const k = repoKey(r.root);
+			const names = (await git(r.dir, "diff", "--name-only", "-z", "--diff-filter=d", before[k].tree, snaps[k].tree)).stdout.split("\0").filter(Boolean);
+			for (const n of names) if (!changed.includes(n)) changed.push(n);
+		}
+		return { kind: "recheck", snaps, prev, delta, changed };
 	}
 
 	/**
@@ -797,9 +804,10 @@ export default function workflow(pi: ExtensionAPI) {
 			"knowledge check",
 			{
 				systemPrompts: [
+		files: string[],
 					...(diff.multi ? [prompts.repoNote(repoRoots(diff))] : []),
 					prompts.JUDGE_KNOWLEDGE_ONLY,
-					prompts.judgeKnowledge(server, false, diff.checkNames),
+					prompts.judgeKnowledge(server, false, files),
 					`## Approved plan\n\n${planForJudge()}`,
 					`## The judge's findings\n\n${findings}`,
 					`## Diff (${diff.files} file(s)${diff.truncated ? ", truncated" : ""})\n\n${diff.text}`,
@@ -812,7 +820,7 @@ export default function workflow(pi: ExtensionAPI) {
 			onChange,
 		);
 		if (!result.ok) return { status: { status: "unavailable", reason: `knowledge check failed: ${result.error}` }, usage: result.usage };
-		const s = judgeKnowledge(result.toolCalls, result.text, diff.checkNames, server);
+		const s = judgeKnowledge(result.toolCalls, result.text, files, server);
 		view.finish(run, s.status === "checked", s.status === "checked" ? "knowledge checked" : "knowledge not checked");
 		onChange?.(run);
 		const status = s.status === "checked" ? s : { status: "unavailable" as const, reason: s.status === "skipped" ? `the knowledge step was skipped twice (${s.reason})` : s.reason };
@@ -839,10 +847,12 @@ export default function workflow(pi: ExtensionAPI) {
 					`## Approved plan\n\n${planForJudge()}`,
 					`## Findings of the last round (${plan.prev.verdict})\n\n${plan.prev.text}`,
 					`## Every file in the whole change (${diff.names.length})\n\n${diff.names.join("\n")}`,
+		const prevChecked = plan.kind === "recheck" && state.lastKnowledge?.status === "checked" && state.lastKnowledge.hash === plan.prev.hash;
+		const { files: knowledgeFiles, scoped } = plan.kind === "recheck" ? recheckKnowledgeFiles(prevChecked, plan.changed, diff.checkNames) : { files: diff.checkNames, scoped: false };
 					`## Changes since the last round\n\n${plan.delta.length > max ? `${plan.delta.slice(0, max)}\n\n[truncated; read the files for the rest]` : plan.delta}`,
 				]
 			: [prompts.JUDGE, `## Approved plan\n\n${planForJudge()}`, `## Diff under review (${diff.files} file(s)${diff.truncated ? ", truncated" : ""})\n\n${diff.text}`];
-		if (server) systemPrompts.splice(recheck ? 2 : 1, 0, prompts.judgeKnowledge(server, recheck, diff.checkNames));
+		if (server) systemPrompts.splice(recheck ? 2 : 1, 0, prompts.judgeKnowledge(server, recheck, knowledgeFiles, scoped));
 		if (diff.multi) systemPrompts.splice(1, 0, prompts.repoNote(repoRoots(diff)));
 		if (disputes) systemPrompts.push(`## Executor's disputes (claims; verify each against the code)\n\n${disputes}`);
 		const focusNote = focus ? ` Focus: ${focus}` : "";
@@ -869,9 +879,10 @@ export default function workflow(pi: ExtensionAPI) {
 		let usage = result.usage;
 		let knowledge: LastKnowledge | undefined;
 		if (server) {
-			let status: KnowledgeStatus = judgeKnowledge(result.toolCalls, text, diff.checkNames, server);
+			let status: KnowledgeStatus = judgeKnowledge(result.toolCalls, text, knowledgeFiles, server);
 			if (status.status === "skipped") {
-				const pass = await knowledgePass(ctx, diff, text, server, signal, onChange);
+				// The fallback pass checks the whole change: it cannot carry over the last round's notes.
+				const pass = await knowledgePass(ctx, diff, text, server, diff.checkNames, signal, onChange);
 				usage = addUsage(addUsage(emptyUsage(), usage), pass.usage);
 				if (pass.text !== undefined) text = mergeKnowledgePass(text, pass.text);
 				status = pass.status;

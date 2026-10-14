@@ -53,6 +53,16 @@ function covers(paths: string[], file: string): boolean {
 	});
 }
 
+/**
+ * The files a judge run must knowledge-check. On a re-review after a round whose knowledge check passed,
+ * only the files changed since that round (that are still in the change); otherwise all of them.
+ */
+export function recheckKnowledgeFiles(prevChecked: boolean, changed: string[], all: string[]): { files: string[]; scoped: boolean } {
+	if (!prevChecked) return { files: all, scoped: false };
+	const files = all.filter((f) => covers(changed, f));
+	return files.length > 0 ? { files, scoped: true } : { files: all, scoped: false };
+}
+
 /** Whether the judge's tool calls show a real knowledge check of every changed file. */
 export function judgeKnowledge(calls: ToolCall[], text: string, files: string[], server: string): KnowledgeStatus {
 	const prefix = toolPrefix(server);

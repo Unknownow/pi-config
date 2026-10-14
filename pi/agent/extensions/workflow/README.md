@@ -84,6 +84,7 @@ after approval runs on its own:
   `judge.finalFullReviewOverChars` (80,000 characters) that passes a re-review gets one final full
   review; the judge tool's `full: true` forces one. `"judge": { "recheck": false }` turns it off.
 - **Disputes:** if the executor thinks a finding is wrong it passes the finding and its file:line
+- **Knowledge on re-reviews:** when the last round's knowledge check passed, a re-review runs `get_rule_pack` only for the files changed since that round and carries over the other files' deviation notes. Otherwise it checks the whole change. Full reviews always check everything.
   evidence in the judge tool's `disputes` parameter. The judge treats that as a claim, decides it from
   the code, and drops the finding only if the code shows the executor is right.
 - **Turning steps back to manual:** set `"autoJudge": "ask"`, `"delivery": { "default": "off" }`

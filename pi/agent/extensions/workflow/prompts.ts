@@ -141,11 +141,11 @@ Reason: 2-5 lines with file:line evidence.
 For REVISE, then a heading "## Plan amendment" with the changed or added steps in the plan's step format: file and function, what to change and why, the behaviour it must have, tests. Direction, not implementation code; code only for an exact contract (a signature, a type, a format).`;
 
 /** The judge's knowledge step, appended after JUDGE (and JUDGE_RECHECK on a re-review). `files`: the paths to check (no deleted files). */
-export function judgeKnowledge(server: string, recheck: boolean, files: string[]): string {
+export function judgeKnowledge(server: string, recheck: boolean, files: string[], scoped = false): string {
 	const t = (name: string) => `\`${toolPrefix(server)}${name}\``;
 	return `## Knowledge check
 The team knowledge server \`${server}\` holds the rules, decisions and guidelines this repo follows. After step 7, as the last step:
-8. Knowledge: call ${t("get_rule_pack")} with \`generator: "code"\` and \`paths\` set to every file listed under "Files to check" below${recheck ? " (the whole change, not only the files changed since the last round)" : ""}. Check the change against every rule it returns. Call ${t("get_entry")} when a rule's details, values or examples matter, and ${t("search")} (1-2 queries) for decisions or guidelines on what the change touches. Check the Fix lines of your other findings against the rules too: a fix must not break one.
+8. Knowledge: call ${t("get_rule_pack")} with \`generator: "code"\` and \`paths\` set to every file listed under "Files to check" below${recheck && !scoped ? " (the whole change, not only the files changed since the last round)" : ""}${recheck && scoped ? " (only the files listed below: they changed since the last round, and the last round already checked the rest of the change)" : ""}. Check the change against every rule it returns. Call ${t("get_entry")} when a rule's details, values or examples matter, and ${t("search")} (1-2 queries) for decisions or guidelines on what the change touches. Check the Fix lines of your other findings against the rules too: a fix must not break one.
 - A broken \`required\` rule is major, or a blocker for a security rule (secrets, keys, credentials), unless the plan's User decisions record that a person agreed to the exception. A change against a decision or guideline is major or minor by its impact. Tag these findings [knowledge <entry-id>].
 - A deviation from a \`recommended\` rule is one minor finding per rule, in exactly this form:
 path:line - minor - [knowledge <rule-id>] deviation from a recommended rule
@@ -154,7 +154,7 @@ path:line - minor - [knowledge <rule-id>] deviation from a recommended rule
   Reason: why, from the plan, the executor's disputes or the code; "none given" if there is none.
   Impact: what it costs or risks.
   To follow it: the change that would make the code follow the rule.
-- A deviation note missing any of these five fields is itself a minor finding.${recheck ? "\n- Carry over every deviation note of the last round that still applies, with all five fields, re-checked against the code." : ""}
+- A deviation note missing any of these five fields is itself a minor finding.${recheck && !scoped ? "\n- Carry over every deviation note of the last round that still applies, with all five fields, re-checked against the code." : ""}${recheck && scoped ? "\n- For files not listed below, carry over the last round's deviation notes and knowledge findings unchanged (all five fields), without calling get_rule_pack for them. Re-check the notes for the listed files against the code." : ""}
 - Just before the verdict line, always write exactly one of these lines, even when you find nothing:
 KNOWLEDGE: checked <N> rules (<rule ids, comma-separated>); <X> broken
 KNOWLEDGE: unavailable - <the error the knowledge tool returned>

@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { KnowledgeConfig } from "./config.ts";
+import { judgeKnowledge as knowledgePrompt } from "./prompts.ts";
 import {
 	deviationBlock,
 	forwardedServers,
@@ -9,6 +10,7 @@ import {
 	knowledgeFooter,
 	mergeKnowledgePass,
 	parseDeviations,
+	recheckKnowledgeFiles,
 	roleTools,
 	toolPrefix,
 } from "./knowledge.ts";
@@ -165,4 +167,21 @@ test("knowledgeFooter", () => {
 	assert.equal(knowledgeFooter({ status: "checked" }, 0), "Knowledge: checked.");
 	assert.equal(knowledgeFooter({ status: "checked" }, 2), "Knowledge: checked; 2 recommended-rule deviation(s) above go into the commit message.");
 	assert.equal(knowledgeFooter({ status: "unavailable", reason: "x." }, 0), "Knowledge: not checked - x.");
+});
+
+test("recheckKnowledgeFiles: scoped to changed files only after a checked round", () => {
+	const all = ["src/a.ts", "src/b.ts"];
+	assert.deepEqual(recheckKnowledgeFiles(true, ["src/a.ts"], all), { files: ["src/a.ts"], scoped: true });
+	assert.deepEqual(recheckKnowledgeFiles(false, ["src/a.ts"], all), { files: all, scoped: false });
+	assert.deepEqual(recheckKnowledgeFiles(true, ["src/c.ts"], ["src/a.ts"]), { files: ["src/a.ts"], scoped: false });
+	assert.deepEqual(recheckKnowledgeFiles(true, ["sub/x.ts"], ["x.ts"]), { files: ["x.ts"], scoped: true });
+	assert.deepEqual(recheckKnowledgeFiles(true, ["src\\a.ts"], ["src/a.ts"]), { files: ["src/a.ts"], scoped: true });
+});
+
+test("judgeKnowledge prompt: scoped re-check names the changed files", () => {
+	const scoped = knowledgePrompt("knowledge", true, ["a.ts"], true);
+	assert.match(scoped, /changed since the last round/);
+	assert.match(scoped, /carry over/);
+	assert.doesNotMatch(scoped, /the whole change, not only/);
+	assert.match(knowledgePrompt("knowledge", true, ["a.ts"]), /the whole change, not only/);
 });
