@@ -1,7 +1,7 @@
 // node --test delivery.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { branchName, deliveryChoices, freshPr, deliveryInstruction, deliveryMenuLabel, deliveryOutcome, isDelivery, planTitle, type DeliveryOptions } from "./delivery.ts";
+import { branchName, combineOutcomes, repoDeliveryInstruction, deliveryChoices, freshPr, deliveryInstruction, deliveryMenuLabel, deliveryOutcome, isDelivery, planTitle, type DeliveryOptions } from "./delivery.ts";
 import { finalize } from "./prompts.ts";
 
 const d = new Date(2026, 9, 14, 9, 5);
@@ -109,4 +109,24 @@ test("final plan asks for commits only when splitting", () => {
 		assert.ok(f.includes("Give direction, not implementation."));
 		assert.ok(!f.includes("code for non-trivial logic"));
 	}
+});
+
+test("repoDeliveryInstruction lists each repo", () => {
+	const t = repoDeliveryInstruction([
+		{ root: "D:/a", options: { ...base, mode: "push", branch: "feat" } },
+		{ root: "D:/b", options: { ...base, mode: "push", branch: "feat-2" } },
+	]);
+	assert.ok(t.startsWith("The judge passed. The change spans 2 repositories"));
+	const a = t.indexOf("### Repository `D:/a`");
+	const b = t.indexOf("### Repository `D:/b`");
+	assert.ok(a >= 0 && b > a);
+	assert.ok(t.includes("git -C D:/b"));
+	assert.ok(t.indexOf("feat-2") > b);
+	assert.equal(t.split("The judge passed.").length - 1, 1);
+});
+
+test("combineOutcomes", () => {
+	assert.deepEqual(combineOutcomes([{ name: "a", outcome: null }, { name: "b", outcome: null }]), { text: "commit step ended without a commit", ok: false });
+	assert.deepEqual(combineOutcomes([{ name: "a", outcome: { text: "committed (1 commit)", ok: true } }, { name: "b", outcome: null }]), { text: "a: committed (1 commit); b: no commit", ok: false });
+	assert.equal(combineOutcomes([{ name: "a", outcome: { text: "x", ok: true } }, { name: "b", outcome: { text: "y", ok: true } }]).ok, true);
 });

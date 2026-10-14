@@ -18,7 +18,7 @@
  */
 
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -29,6 +29,8 @@ import {
 	convertToLlm,
 	type ExtensionAPI,
 	type ExtensionContext,
+	getAgentDir,
+	loadProjectContextFiles,
 	serializeConversation,
 	type Theme,
 } from "@earendil-works/pi-coding-agent";
@@ -49,7 +51,8 @@ import {
 import { afterPass, arbiterFirst, fixableFindings, hasPlanFlaw, isPlanReady, judgeCapReached, minorFixOpen, parseArbiter, phaseAfterFlow, shouldResume, skipJudge } from "./agent-end.ts";
 import { countTokens, type Tok } from "./tokens.ts";
 import * as prompts from "./prompts.ts";
-import { branchName, type Delivery, DELIVERIES, DELIVERY_LABELS, deliveryChoices, deliveryInstruction, deliveryMenuLabel, deliveryOutcome, freshPr, isDelivery, planTitle, type PrState } from "./delivery.ts";
+import { branchName, combineOutcomes, type Delivery, type DeliveryOptions, DELIVERIES, DELIVERY_LABELS, deliveryChoices, deliveryInstruction, deliveryMenuLabel, deliveryOutcome, freshPr, isDelivery, planTitle, type PrState, repoDeliveryInstruction } from "./delivery.ts";
+import { combineRepoTexts, parseAddDir, repoKey, repoTexts } from "./repos.ts";
 import { pushProblem } from "./push-guard.ts";
 import { planToolProblem, planToolRefused } from "./readonly-tools.ts";
 import { addUsage, emptyUsage, mapLimit, type RunResult, runSubagent } from "./subagent.ts";
@@ -105,7 +108,7 @@ interface FlowState {
 	flow?: FlowUsage;
 	flowStarted?: number;
 	/** Set when the commit step's instruction goes out; the run after it ends the flow. `branch`: the branch the commits go on. `prBefore`: a closed or merged PR gh already showed for the branch before the step ran; it is not this flow's. */
-	commitPending?: { mode: Exclude<Delivery, "off">; head: string; branch?: string; prBefore?: number };
+	commitPending?: { mode: Exclude<Delivery, "off">; head: string; branch?: string; prBefore?: number; repos?: { root: string; mode: Exclude<Delivery, "off">; head: string; branch?: string; prBefore?: number }[] };
 	/** What happens after the judge passes in this flow, chosen at approval; unset means `delivery.default`. */
 	delivery?: Delivery;
 	/** Plan flaws go straight to the arbiter in this flow, chosen at approval; unset means `cfg.planFlaw`. */
@@ -122,14 +125,17 @@ interface FlowState {
 	pendingPlanFlaw?: string;
 	/** The knowledge check of the last judge round (only when knowledge is active). */
 	lastKnowledge?: LastKnowledge;
+	/** Folders added with /folders or --add-dir: absolute, forward slashes, in the order added. */
+	folders?: string[];
+	/** Git roots edited in this flow that are neither the working folder's repo nor an added folder's repo. */
+	touchedRepos?: string[];
 }
 
 interface LastJudge {
 	/** Hash of the full diff it reviewed. */
 	hash: string;
-	/** The working tree it reviewed, as a git tree id. */
-	tree: string;
-	head: string;
+	/** Per repo (key: repoKey(root)): the working tree it reviewed, as a git tree id, and HEAD then. Absent in state saved by older versions. */
+	repos?: Record<string, { tree: string; head: string }>;
 	base: string;
 	verdict: "PASS" | "FAIL";
 	text: string;
@@ -170,6 +176,28 @@ interface Diff {
 	checkNames: string[];
 	/** Length of the untruncated diff. */
 	chars: number;
+	/** The repos of this flow; `changed` marks those with changes. */
+	repos: RepoRef[];
+	/** The diff combines several repos (each section headed `=== repo: <root> ===`). */
+	multi: boolean;
+}
+
+interface RepoRef {
+	root: string;
+	/** Where git runs for it: the session's working folder for the primary repo, else the root. */
+	dir: string;
+	changed: boolean;
+}
+
+type Snaps = Record<string, { tree: string; head: string }>;
+
+interface RepoDiff {
+	full: string;
+	files: number;
+	names: string[];
+	checkNames: string[];
+	/** `names` with every path relative to the repo root. */
+	rootNames: string[];
 }
 
 function assistantText(m: AgentMessage | undefined): string {
@@ -235,6 +263,11 @@ export default function workflow(pi: ExtensionAPI) {
 	let resumes = 0;
 	const view = new FlowView(cfg.roles);
 
+	pi.registerFlag("add-dir", {
+		description: "Extra folders for this session, separated by ; on Windows and : elsewhere",
+		type: "string",
+	});
+
 	pi.registerFlag("flow", {
 		description: "Workflow phase to start in: plan, execute or off (default from workflow.json)",
 		type: "string",
@@ -254,8 +287,13 @@ export default function workflow(pi: ExtensionAPI) {
 
 	/** Ends the current flow: shows its token breakdown and starts counting the next one. False if it had none. */
 	function summarizeFlow(outcome: string, ok: boolean): boolean {
+		const hadTouched = (state.touchedRepos?.length ?? 0) > 0;
+		state.touchedRepos = undefined;
 		view.settleMain();
-		if (!view.hasFlowUsage()) return false;
+		if (!view.hasFlowUsage()) {
+			if (hadTouched) persist();
+			return false;
+		}
 		pi.appendEntry(SUMMARY_ENTRY, view.endFlow(outcome, ok));
 		persist();
 		return true;
@@ -263,6 +301,7 @@ export default function workflow(pi: ExtensionAPI) {
 
 	/** A flow has ended: back to the plan phase when returnToPlan says so. */
 	async function endFlow(ctx: ExtensionContext): Promise<void> {
+		updateStatus(ctx);
 		if (phaseAfterFlow(cfg.returnToPlan, state.phase) !== "plan") return;
 		await setPhase(ctx, "plan");
 		ctx.ui.notify(`workflow: flow done, back to planning on ${describeRole(cfg.roles.plan)}`, "info");
@@ -276,6 +315,8 @@ export default function workflow(pi: ExtensionAPI) {
 		if (state.phase === "plan") view.stage = "plan";
 		else if (view.stage === "plan") view.stage = "execute";
 		if (ctx.hasUI) view.mount(ctx.ui);
+		const n = existingFolders().length + (state.touchedRepos?.length ?? 0);
+		if (ctx.hasUI) ctx.ui.setStatus("workflow-folders", n ? `+${n} folder${n === 1 ? "" : "s"}` : undefined);
 	}
 
 	/** Switches the main session to a role's model and thinking level. */
@@ -321,6 +362,7 @@ export default function workflow(pi: ExtensionAPI) {
 		state.finalizing = undefined;
 		state.planRevisions = undefined;
 		state.pendingPlanFlaw = undefined;
+		state.touchedRepos = undefined;
 		if (phase === "plan") {
 			state.approvedPlan = undefined;
 			state.delivery = undefined;
@@ -452,8 +494,8 @@ export default function workflow(pi: ExtensionAPI) {
 		return pi.exec("git", ["-C", cwd, ...args], { timeout: 30_000 });
 	}
 
-	/** Tracked changes against `base` plus untracked files, or null outside a git work tree. */
-	async function collectDiff(cwd: string, base = "HEAD"): Promise<Diff | null> {
+	/** Tracked changes against `base` plus untracked files of one repo (untruncated), or null outside a git work tree. */
+	async function collectRepoDiff(cwd: string, base = "HEAD"): Promise<RepoDiff | null> {
 		if ((await git(cwd, "rev-parse", "--is-inside-work-tree")).code !== 0) return null;
 		let tracked = await git(cwd, "diff", "--no-color", base);
 		if (tracked.code !== 0) tracked = await git(cwd, "diff", "--no-color"); // no commits yet
@@ -481,14 +523,109 @@ export default function workflow(pi: ExtensionAPI) {
 		}
 
 		const full = parts.join("").trim();
-		const hash = createHash("sha1").update(full).digest("hex");
-		const truncated = full.length > cfg.judge.maxDiffChars;
-		const text = truncated ? `${full.slice(0, cfg.judge.maxDiffChars)}\n\n[diff truncated; read the files for the rest]` : full;
 		const names = [...[...tracked.stdout.matchAll(/^diff --git a\/(.+?) b\//gm)].map((m) => m[1]), ...untracked];
 		let current = await git(cwd, "diff", "--name-only", "-z", "--diff-filter=d", base);
 		if (current.code !== 0) current = await git(cwd, "diff", "--name-only", "-z", "--diff-filter=d");
 		const checkNames = [...current.stdout.split("\0").filter(Boolean), ...untracked];
-		return { text, hash, files, truncated, base, names, checkNames, chars: full.length };
+		// Names relative to the repo root (ls-files is relative to `cwd`), for the multi-repo file list.
+		const trackedNames = names.slice(0, names.length - untracked.length);
+		const rootUntracked = untracked.length ? (await git(cwd, "ls-files", "--others", "--exclude-standard", "--full-name", "-z")).stdout.split("\0").filter(Boolean) : [];
+		return { full, files, names, checkNames, rootNames: [...trackedNames, ...rootUntracked] };
+	}
+
+	/** A Diff from untruncated text: hash over all of it, text cut at the judge's limit. */
+	function makeDiff(full: string, files: number, names: string[], checkNames: string[], base: string, repos: RepoRef[], multi: boolean): Diff {
+		const hash = createHash("sha1").update(full).digest("hex");
+		const truncated = full.length > cfg.judge.maxDiffChars;
+		const text = truncated ? `${full.slice(0, cfg.judge.maxDiffChars)}\n\n[diff truncated; read the files for the rest]` : full;
+		return { text, hash, files, truncated, base, names, checkNames, chars: full.length, repos, multi };
+	}
+
+	/** One repo's diff, or null outside a git work tree. */
+	async function collectDiff(cwd: string, base = "HEAD"): Promise<Diff | null> {
+		const r = await collectRepoDiff(cwd, base);
+		if (!r) return null;
+		const root = (await gitRoot(cwd)) ?? cwd;
+		return makeDiff(r.full, r.files, r.names, r.checkNames, base, [{ root, dir: cwd, changed: r.full.length > 0 }], false);
+	}
+
+	const rootCache = new Map<string, string>();
+
+	/** The git work tree's top folder containing `dir`, or null. Only successes are cached. */
+	async function gitRoot(dir: string): Promise<string | null> {
+		const k = repoKey(dir);
+		const hit = rootCache.get(k);
+		if (hit) return hit;
+		if (!fs.existsSync(dir)) return null;
+		const r = await git(dir, "rev-parse", "--show-toplevel");
+		const root = r.code === 0 ? r.stdout.trim() : "";
+		if (!root) return null;
+		rootCache.set(k, root);
+		return root;
+	}
+
+	/** Folders added to the session that still exist. */
+	function existingFolders(): string[] {
+		return (state.folders ?? []).filter((f) => {
+			try {
+				return fs.statSync(f).isDirectory();
+			} catch {
+				return false;
+			}
+		});
+	}
+
+	/** The repos of this flow: the working folder's, the added folders', then those edited in the flow; git work trees only, no repeats. */
+	async function flowRepos(ctx: ExtensionContext): Promise<RepoRef[]> {
+		const out: RepoRef[] = [];
+		const seen = new Set<string>();
+		const add = (root: string | null, dir: string) => {
+			if (!root || seen.has(repoKey(root))) return;
+			seen.add(repoKey(root));
+			out.push({ root, dir, changed: false });
+		};
+		add(await gitRoot(ctx.cwd), ctx.cwd);
+		for (const f of existingFolders()) {
+			const root = await gitRoot(f);
+			add(root, root ?? f);
+		}
+		for (const t of state.touchedRepos ?? []) {
+			const root = await gitRoot(t);
+			add(root, root ?? t);
+		}
+		return out;
+	}
+
+	/** The diff of every repo in this flow. With only the working folder's repo it is exactly collectDiff(ctx.cwd). */
+	async function collectFlowDiff(ctx: ExtensionContext, base = "HEAD"): Promise<Diff | null> {
+		const refs = await flowRepos(ctx);
+		if (refs.length === 0) return null;
+		if (refs.length === 1 && refs[0].dir === ctx.cwd) return collectDiff(ctx.cwd, base);
+		const per = await mapLimit(refs, 4, async (ref) => {
+			let b = base;
+			// A base that exists only in the working folder's repo means HEAD in the others.
+			if (ref.dir !== ctx.cwd && base !== "HEAD" && (await git(ref.dir, "rev-parse", "--verify", "--quiet", `${base}^{commit}`)).code !== 0) b = "HEAD";
+			return collectRepoDiff(ref.dir, b);
+		});
+		const parts: { root: string; text: string }[] = [];
+		const names: string[] = [];
+		const checkNames: string[] = [];
+		let files = 0;
+		const repos = refs.map((ref, i) => {
+			const r = per[i];
+			if (r) {
+				parts.push({ root: ref.root, text: r.full });
+				names.push(...r.rootNames.map((n) => `${ref.root}/${n}`));
+				for (const n of r.checkNames) if (!checkNames.includes(n)) checkNames.push(n);
+				files += r.files;
+			}
+			return { ...ref, changed: !!r && r.full.length > 0 };
+		});
+		return makeDiff(combineRepoTexts(parts), files, names, checkNames, base, repos, true);
+	}
+
+	function repoRoots(diff: Diff): string[] {
+		return diff.repos.filter((r) => r.changed).map((r) => r.root);
 	}
 
 	/** The whole branch, compactions included, as text. */
@@ -517,7 +654,7 @@ export default function workflow(pi: ExtensionAPI) {
 
 	/** The working tree (tracked and untracked files, minus ignored ones) as a git tree id, or null. Uses a temporary index. */
 	async function snapshotTree(cwd: string): Promise<string | null> {
-		const tmp = path.join(os.tmpdir(), `workflow-judge-index-${process.pid}-${Date.now()}`);
+		const tmp = path.join(os.tmpdir(), `workflow-judge-index-${process.pid}-${randomUUID()}`); // unique: snapshotRepos runs this for several repos at once
 		const run = (args: string[]) =>
 			execFileAsync("git", ["-C", cwd, ...args], { env: { ...process.env, GIT_INDEX_FILE: tmp }, timeout: 60_000, maxBuffer: 16 * 1024 * 1024 });
 		try {
@@ -533,22 +670,44 @@ export default function workflow(pi: ExtensionAPI) {
 	}
 
 	type ReviewPlan =
-		| { kind: "full"; tree: string | null; head: string }
-		| { kind: "recheck"; tree: string; head: string; prev: LastJudge; delta: string }
+		| { kind: "full"; snaps: Snaps | null }
+		| { kind: "recheck"; snaps: Snaps; prev: LastJudge; delta: string }
 		| { kind: "same"; prev: LastJudge };
 
+	/** Each repo's working tree and HEAD, or null when a tree cannot be built. */
+	async function snapshotRepos(diff: Diff): Promise<Snaps | null> {
+		const per = await Promise.all(
+			diff.repos.map(async (r) => ({ key: repoKey(r.root), tree: await snapshotTree(r.dir), head: (await git(r.dir, "rev-parse", "HEAD")).stdout.trim() })),
+		);
+		const snaps: Snaps = {};
+		for (const p of per) {
+			if (!p.tree) return null;
+			snaps[p.key] = { tree: p.tree, head: p.head };
+		}
+		return snaps;
+	}
+
 	/** Whether the judge reviews the whole diff, only the changes since its last round, or nothing (no changes since). */
-	async function reviewPlan(cwd: string, diff: Diff, full: boolean, skipSame = false): Promise<ReviewPlan> {
+	async function reviewPlan(diff: Diff, full: boolean, skipSame = false): Promise<ReviewPlan> {
 		const prev = state.lastJudge;
 		if (!full && !skipSame && prev?.hash === diff.hash) return { kind: "same", prev };
-		const [tree, head] = await Promise.all([snapshotTree(cwd), git(cwd, "rev-parse", "HEAD").then((r) => r.stdout.trim())]);
-		const fullPlan = { kind: "full" as const, tree, head };
-		// A commit, rebase or branch switch since, or another base: the last round no longer lines up.
-		if (full || !cfg.judge.recheck || !prev || !tree || prev.head !== head || prev.base !== diff.base) return fullPlan;
-		const delta = (await git(cwd, "diff", "--no-color", prev.tree, tree)).stdout;
+		const snaps = await snapshotRepos(diff);
+		const fullPlan = { kind: "full" as const, snaps };
+		// A commit, rebase or branch switch since, another base or another set of repos: the last round no longer lines up.
+		if (full || !cfg.judge.recheck || !prev?.repos || !snaps || prev.base !== diff.base) return fullPlan;
+		const before = prev.repos;
+		const keys = Object.keys(snaps);
+		if (keys.length !== Object.keys(before).length || keys.some((k) => before[k]?.head !== snaps[k].head)) return fullPlan;
+		const parts = await Promise.all(
+			diff.repos.map(async (r) => {
+				const k = repoKey(r.root);
+				return { root: r.root, text: (await git(r.dir, "diff", "--no-color", before[k].tree, snaps[k].tree)).stdout };
+			}),
+		);
+		const delta = diff.multi ? combineRepoTexts(parts) : parts[0].text;
 		// Fixes that rewrite most of the change get a full review: little to save, more to miss.
 		if (!delta.trim() || delta.length > diff.chars * cfg.judge.recheckMaxShare) return fullPlan;
-		return { kind: "recheck", tree, head, prev, delta };
+		return { kind: "recheck", snaps, prev, delta };
 	}
 
 	/**
@@ -558,7 +717,7 @@ export default function workflow(pi: ExtensionAPI) {
 	 */
 	async function judge(ctx: ExtensionContext, diff: Diff, focus: string | undefined, signal?: AbortSignal, onChange?: (run: RunView) => void, full = false, disputes?: string): Promise<JudgeResult & { run: RunView }> {
 		// Disputes need a fresh look at the code, so they never get the "no changes" shortcut (a recheck still applies).
-		const plan = await reviewPlan(ctx.cwd, diff, full, Boolean(disputes));
+		const plan = await reviewPlan(diff, full, Boolean(disputes));
 		if (plan.kind === "same") {
 			const run = view.start("judge", "no changes since the last round");
 			view.finish(run, plan.prev.verdict === "PASS", `${plan.prev.verdict} · unchanged, previous result`);
@@ -569,7 +728,7 @@ export default function workflow(pi: ExtensionAPI) {
 		let r = await judgeOnce(ctx, diff, focus, plan, signal, onChange, disputes);
 		const limit = cfg.judge.finalFullReviewOverChars;
 		if (r.verdict === "PASS" && plan.kind === "recheck" && limit > 0 && diff.chars > limit) {
-			const final = await judgeOnce(ctx, diff, focus, { kind: "full", tree: plan.tree, head: plan.head }, signal, onChange, disputes);
+			const final = await judgeOnce(ctx, diff, focus, { kind: "full", snaps: plan.snaps }, signal, onChange, disputes);
 			r = { ...final, usage: addUsage(addUsage(emptyUsage(), r.usage), final.usage) };
 		}
 		// A pass that questions the plan is not a pass yet: resolvePlanFlaw decides.
@@ -605,6 +764,7 @@ export default function workflow(pi: ExtensionAPI) {
 			"knowledge check",
 			{
 				systemPrompts: [
+					...(diff.multi ? [prompts.repoNote(repoRoots(diff))] : []),
 					prompts.JUDGE_KNOWLEDGE_ONLY,
 					prompts.judgeKnowledge(server, false, diff.checkNames),
 					`## Approved plan\n\n${planForJudge()}`,
@@ -650,6 +810,7 @@ export default function workflow(pi: ExtensionAPI) {
 				]
 			: [prompts.JUDGE, `## Approved plan\n\n${planForJudge()}`, `## Diff under review (${diff.files} file(s)${diff.truncated ? ", truncated" : ""})\n\n${diff.text}`];
 		if (server) systemPrompts.splice(recheck ? 2 : 1, 0, prompts.judgeKnowledge(server, recheck, diff.checkNames));
+		if (diff.multi) systemPrompts.splice(1, 0, prompts.repoNote(repoRoots(diff)));
 		if (disputes) systemPrompts.push(`## Executor's disputes (claims; verify each against the code)\n\n${disputes}`);
 		const focusNote = focus ? ` Focus: ${focus}` : "";
 		view.stage = "judge";
@@ -694,7 +855,7 @@ export default function workflow(pi: ExtensionAPI) {
 		onChange?.(run);
 		// Back to the phase's stage either way; finishPassed moves to commit once the commit is actually handed over.
 		view.stage = state.phase === "plan" ? "plan" : "execute";
-		state.lastJudge = plan.tree ? { hash: diff.hash, tree: plan.tree, head: plan.head, base: diff.base, verdict, text } : undefined;
+		state.lastJudge = plan.snaps ? { hash: diff.hash, repos: plan.snaps, base: diff.base, verdict, text } : undefined;
 		state.lastKnowledge = knowledge;
 		persist();
 		return { verdict, text, hash: diff.hash, usage, run };
@@ -814,7 +975,7 @@ export default function workflow(pi: ExtensionAPI) {
 		name: "judge",
 		label: "Judge",
 		description:
-			"Adversarial review of the current uncommitted diff (plus untracked files) by a stronger model that assumes the change is wrong. Returns one line per finding and VERDICT: PASS or FAIL. Call it when the diff is ready; fix blocker and major findings and call it again. On a pass, end your turn: the workflow decides whether minor findings get a fix round. Rounds after the first review only the changes since the last round, with its findings. Do not commit before PASS.",
+			"Adversarial review of the current uncommitted diff (plus untracked files) of every git repo in this flow (the working folder's, the /folders ones, and repos edited this flow) by a stronger model that assumes the change is wrong. Returns one line per finding and VERDICT: PASS or FAIL. Call it when the diff is ready; fix blocker and major findings and call it again. On a pass, end your turn: the workflow decides whether minor findings get a fix round. Rounds after the first review only the changes since the last round, with its findings. Do not commit before PASS.",
 		promptSnippet: "judge: adversarial review of the current diff; must PASS before commit",
 		parameters: Type.Object({
 			focus: Type.Optional(Type.String({ description: "What the change is meant to do, or areas to scrutinize" })),
@@ -827,8 +988,8 @@ export default function workflow(pi: ExtensionAPI) {
 			),
 		}),
 		async execute(_id, params, signal, onUpdate, ctx) {
-			const diff = await collectDiff(ctx.cwd, params.base || "HEAD");
-			if (!diff) throw new Error("not a git work tree; the judge reviews git diffs");
+			const diff = await collectFlowDiff(ctx, params.base || "HEAD");
+			if (!diff) throw new Error("no git work tree in this flow (working folder, /folders, or repos edited this flow); the judge reviews git diffs");
 			if (!diff.text) return { content: [{ type: "text", text: "No changes to review." }], details: undefined };
 			const progress = toolProgress(onUpdate);
 			const r = await judge(ctx, diff, params.focus, signal, progress.track, params.full === true, params.disputes);
@@ -853,7 +1014,25 @@ export default function workflow(pi: ExtensionAPI) {
 	// Events
 	// ----------------------------------------------------------------------
 
-	pi.on("before_agent_start", async (event) => {
+	pi.on("before_agent_start", async (event, ctx) => {
+		const folders = existingFolders();
+		const touched = state.touchedRepos ?? [];
+		if (folders.length || touched.length) {
+			const opts = event.systemPromptOptions;
+			opts.sections.workspace = prompts.workspaceSection(ctx.cwd, folders, touched);
+			const have = new Set(opts.contextFiles.map((f) => repoKey(f.path)));
+			for (const folder of folders) {
+				try {
+					for (const f of loadProjectContextFiles({ cwd: folder, agentDir: getAgentDir() })) {
+						if (have.has(repoKey(f.path))) continue;
+						have.add(repoKey(f.path));
+						opts.contextFiles.push(f);
+					}
+				} catch {
+					// an unreadable folder just adds no context files
+				}
+			}
+		}
 		if (state.phase === "plan") return { systemPrompt: `${event.systemPrompt}\n\n${prompts.planPhase(cfg.finalizePlan)}` };
 		if (state.phase === "execute") return { systemPrompt: `${event.systemPrompt}\n\n${prompts.EXECUTE_PHASE}` };
 	});
@@ -864,12 +1043,13 @@ export default function workflow(pi: ExtensionAPI) {
 		if (state.phase === "execute") {
 			// Pushing is the workflow's job after the judge passes; the executor may not publish or skip hooks.
 			const input = (event.input ?? {}) as Record<string, unknown>;
-			const texts: string[] = [];
-			if (/(^|__)bash$/.test(event.toolName)) texts.push(String(input.command ?? ""));
+			const texts: { text: string; powershell: boolean }[] = [];
+			const win = process.platform === "win32";
+			if (/(^|__)bash$/.test(event.toolName)) texts.push({ text: String(input.command ?? ""), powershell: false });
 			else if (/(^|__)ctx_execute(_file)?$/.test(event.toolName)) {
 				const language = String(input.language ?? "").toLowerCase();
 				const code = String(input.code ?? "");
-				if (["shell", "bash", "sh", "zsh", "powershell", "pwsh", "ps1"].includes(language)) texts.push(code);
+				if (["shell", "bash", "sh", "zsh", "powershell", "pwsh", "ps1"].includes(language)) texts.push({ text: code, powershell: ["powershell", "pwsh", "ps1"].includes(language) || (language === "shell" && win) });
 				else if (/\bgit\b/.test(code) && /\bpush\b|\bcommit\b|--no-verify|hooksPath|GIT_CONFIG/i.test(code)) {
 					return { block: true, reason: "Refused: code that runs git push, skips hooks or changes hooks. The workflow commits and pushes after the judge passes." };
 				} else if (/\bgh\b/.test(code) && /\b(pr|api)\b/.test(code)) {
@@ -877,21 +1057,34 @@ export default function workflow(pi: ExtensionAPI) {
 				}
 			}
 			else if (/(^|__)ctx_batch_execute$/.test(event.toolName) && Array.isArray(input.commands)) {
-				for (const c of input.commands) texts.push(String((c as { command?: unknown })?.command ?? ""));
+				for (const c of input.commands) texts.push({ text: String((c as { command?: unknown })?.command ?? ""), powershell: win });
 			}
-			const gitTexts = texts.filter((t) => /\bgit\b|\bgh\b/i.test(t));
+			const gitTexts = texts.filter((t) => /\bgit\b|\bgh\b/i.test(t.text));
 			if (gitTexts.length === 0) return;
-			const branch = (await git(ctx.cwd, "rev-parse", "--abbrev-ref", "HEAD")).stdout.trim();
-			for (const text of gitTexts) {
-				const mode = state.commitPending?.mode;
-				const problem = pushProblem(text, {
-					branch,
-					protectedBranches: cfg.protectedBranches,
-					pushAllowed: mode === "push" || mode === "pr" || mode === "merge",
-					prAllowed: mode === "pr" || mode === "merge",
-					mergeAllowed: mode === "merge",
-				});
-				if (problem) return { block: true, reason: `Refused: ${problem}. Do not push, open or merge pull requests, or skip hooks yourself; the workflow does that after the judge passes, as this flow's delivery says.` };
+			// Several repos: a command is checked against the repo it points at (git -C, cd), else the working folder's.
+			const multi = (state.folders?.length ?? 0) > 0 || (state.touchedRepos?.length ?? 0) > 0;
+			const roots = multi ? (await flowRepos(ctx)).map((r) => r.root) : [];
+			const branches = new Map<string, string>();
+			const branchOf = async (dir: string) => {
+				if (!branches.has(dir)) branches.set(dir, (await git(dir, "rev-parse", "--abbrev-ref", "HEAD")).stdout.trim());
+				return branches.get(dir) as string;
+			};
+			for (const { text, powershell } of gitTexts) {
+				// The GIT_CONFIG rule spans commands, so such a text is checked whole; otherwise each command against the repo it runs in.
+				const groups = multi && !/GIT_CONFIG/i.test(text) ? repoTexts(text, roots, ctx.cwd, process.platform, { powershell }) : [{ root: undefined, text }];
+				for (const group of groups) {
+					const branch = await branchOf(group.root ?? ctx.cwd);
+					const own = group.root ? state.commitPending?.repos?.find((r) => repoKey(r.root) === repoKey(group.root as string)) : undefined;
+					const mode = own?.mode ?? state.commitPending?.mode;
+					const problem = pushProblem(group.text, {
+						branch,
+						protectedBranches: cfg.protectedBranches,
+						pushAllowed: mode === "push" || mode === "pr" || mode === "merge",
+						prAllowed: mode === "pr" || mode === "merge",
+						mergeAllowed: mode === "merge",
+					});
+					if (problem) return { block: true, reason: `Refused: ${problem}. Do not push, open or merge pull requests, or skip hooks yourself; the workflow does that after the judge passes, as this flow's delivery says.` };
+				}
 			}
 			return;
 		}
@@ -931,6 +1124,36 @@ export default function workflow(pi: ExtensionAPI) {
 			"Reading is fine: ls, cat, grep, find, git status/log/diff/show, gh ... view/list/checks, gh api GET.",
 		].join(" ");
 	}
+
+	// A repo edited with edit/write joins the flow, so the judge and the delivery cover it.
+	pi.on("tool_result", async (event, ctx) => {
+		if (!/(^|__)(edit|write)$/.test(event.toolName) || event.isError) return;
+		const input = (event.input ?? {}) as Record<string, unknown>;
+		const raw = String(input.path ?? input.file_path ?? "").replace(/^@/, "");
+		if (!raw) return;
+		let dir = path.dirname(path.resolve(ctx.cwd, raw));
+		while (!fs.existsSync(dir) && path.dirname(dir) !== dir) dir = path.dirname(dir);
+		const root = await gitRoot(dir);
+		if (!root) return;
+		const known = new Set((await flowRepos(ctx)).map((r) => repoKey(r.root)));
+		if (known.has(repoKey(root)) || (state.touchedRepos ?? []).some((t) => repoKey(t) === repoKey(root))) return;
+		state.touchedRepos = [...(state.touchedRepos ?? []), root];
+		persist();
+		updateStatus(ctx);
+		ctx.ui.notify(`workflow: ${root} joins this flow (edited ${raw})`, "info");
+	});
+
+	// Skills and prompts of the added folders.
+	pi.on("resources_discover", async () => {
+		const skillPaths: string[] = [];
+		const promptPaths: string[] = [];
+		for (const f of existingFolders()) {
+			for (const d of [path.join(f, ".pi", "skills"), path.join(f, ".agents", "skills")]) if (fs.existsSync(d)) skillPaths.push(d);
+			const dir = path.join(f, ".pi", "prompts");
+			if (fs.existsSync(dir)) promptPaths.push(dir);
+		}
+		return { skillPaths, promptPaths };
+	});
 
 	// "repeated error" decision point
 	pi.on("tool_result", async (event) => {
@@ -1105,7 +1328,7 @@ export default function workflow(pi: ExtensionAPI) {
 			const report = state.pendingPlanFlaw;
 			state.pendingPlanFlaw = undefined;
 			persist();
-			const flawed = await collectDiff(ctx.cwd);
+			const flawed = await collectFlowDiff(ctx);
 			if (flawed) {
 				const outcome = await resolvePlanFlaw(ctx, report, flawed);
 				if (outcome !== "continue") return;
@@ -1129,30 +1352,39 @@ export default function workflow(pi: ExtensionAPI) {
 	});
 
 	async function summarizeCommit(ctx: ExtensionContext): Promise<void> {
-		const { mode, head, branch, prBefore } = state.commitPending!;
+		const { mode, head, branch, prBefore, repos } = state.commitPending!;
 		state.commitPending = undefined;
 		state.minorRounds = 0;
 		state.minorSentFor = undefined;
 		state.delivery = undefined; // the flow is over; the next one chooses again
 		state.planFlaw = undefined;
-		// The commits' branch; HEAD when detached, unknown (state saved by an older version) or gone (deleted after the merge).
-		const named = !!branch && branch !== "HEAD" && (await git(ctx.cwd, "rev-parse", "--verify", "--quiet", `refs/heads/${branch}`)).code === 0;
-		const rev = named ? (branch as string) : "HEAD";
-		const now = (await git(ctx.cwd, "rev-parse", rev)).stdout.trim();
-		const pr = (mode === "pr" || mode === "merge") && branch && branch !== "HEAD" ? freshPr(await prState(ctx.cwd, branch), prBefore) : null;
-		let shown: boolean;
-		if (pr?.state !== "MERGED" && (!now || now === head)) shown = summarizeFlow("commit step ended without a commit", false);
-		else {
-			// A merge that deleted the branch leaves HEAD on the base branch, whose count would include other commits.
-			const counted = named || !branch || branch === "HEAD" ? await git(ctx.cwd, "rev-list", "--count", `${head}..${rev}`) : undefined;
-			const commits = counted?.code === 0 ? Number(counted.stdout.trim()) : undefined;
-			const ahead = mode === "commit" ? undefined : await git(ctx.cwd, "rev-list", "--count", `${named ? branch : ""}@{u}..${rev}`);
-			const pushed = ahead?.code === 0 && ahead.stdout.trim() === "0";
-			const outcome = deliveryOutcome(mode, commits, pushed, pr);
-			shown = summarizeFlow(outcome.text, outcome.ok);
+		let outcome: { text: string; ok: boolean };
+		if (repos?.length) {
+			const parts = [];
+			for (const r of repos) parts.push({ name: path.basename(r.root), outcome: await repoOutcome(r.root, r.mode, r.head, r.branch, r.prBefore) });
+			outcome = combineOutcomes(parts);
+		} else {
+			outcome = (await repoOutcome(ctx.cwd, mode, head, branch, prBefore)) ?? { text: "commit step ended without a commit", ok: false };
 		}
+		const shown = summarizeFlow(outcome.text, outcome.ok);
 		if (!shown) persist(); // commitPending was cleared
 		await endFlow(ctx);
+	}
+
+	/** What one repo's commit step achieved, or null when it made no commit (and merged nothing). */
+	async function repoOutcome(dir: string, mode: Exclude<Delivery, "off">, head: string, branch: string | undefined, prBefore: number | undefined): Promise<{ text: string; ok: boolean } | null> {
+		// The commits' branch; HEAD when detached, unknown (state saved by an older version) or gone (deleted after the merge).
+		const named = !!branch && branch !== "HEAD" && (await git(dir, "rev-parse", "--verify", "--quiet", `refs/heads/${branch}`)).code === 0;
+		const rev = named ? (branch as string) : "HEAD";
+		const now = (await git(dir, "rev-parse", rev)).stdout.trim();
+		const pr = (mode === "pr" || mode === "merge") && branch && branch !== "HEAD" ? freshPr(await prState(dir, branch), prBefore) : null;
+		if (pr?.state !== "MERGED" && (!now || now === head)) return null;
+		// A merge that deleted the branch leaves HEAD on the base branch, whose count would include other commits.
+		const counted = named || !branch || branch === "HEAD" ? await git(dir, "rev-list", "--count", `${head}..${rev}`) : undefined;
+		const commits = counted?.code === 0 ? Number(counted.stdout.trim()) : undefined;
+		const ahead = mode === "commit" ? undefined : await git(dir, "rev-list", "--count", `${named ? branch : ""}@{u}..${rev}`);
+		const pushed = ahead?.code === 0 && ahead.stdout.trim() === "0";
+		return deliveryOutcome(mode, commits, pushed, pr);
 	}
 
 	/** The pull request for `branch` as gh sees it, or null when there is none or gh fails. */
@@ -1169,7 +1401,7 @@ export default function workflow(pi: ExtensionAPI) {
 
 	/** diff ready -> judge -> fix loop, or commit (and push) once it passes. */
 	async function reviewDiff(ctx: ExtensionContext, manual: boolean): Promise<void> {
-		const diff = await collectDiff(ctx.cwd);
+		const diff = await collectFlowDiff(ctx);
 		// Committed, or changed since the judge passed: back to executing.
 		if (view.stage === "commit" && diff?.hash !== state.passedDiff) {
 			view.stage = "execute";
@@ -1190,7 +1422,7 @@ export default function workflow(pi: ExtensionAPI) {
 				hash: diff.hash,
 			});
 			if (open && fixMinorFindings(prior, diff.hash)) return;
-			if (!(await finishPassed(ctx, diff.hash, prior ? `**Judge: PASS**\n\n${prior}` : undefined))) await summarizePass(ctx, diff.hash);
+			if (!(await finishPassed(ctx, diff, prior ? `**Judge: PASS**\n\n${prior}` : undefined))) await summarizePass(ctx, diff.hash);
 			return;
 		}
 		if (!manual && (cfg.autoJudge === "off" || seenDiffs.has(diff.hash))) return;
@@ -1228,7 +1460,7 @@ export default function workflow(pi: ExtensionAPI) {
 		}
 
 		if (fixMinorFindings(r.text, diff.hash, report)) return;
-		if (!(await finishPassed(ctx, diff.hash, report))) {
+		if (!(await finishPassed(ctx, diff, report))) {
 			pi.sendMessage({ customType: "workflow-judge", content: report, display: true }, { triggerTurn: false });
 			await summarizePass(ctx, diff.hash);
 		}
@@ -1311,7 +1543,7 @@ export default function workflow(pi: ExtensionAPI) {
 		try {
 			const max = cfg.judge.maxDiffChars;
 			const { result, run } = await runRole("arbiter", "plan-flaw", {
-				systemPrompts: [prompts.ARBITER, `## Approved plan\n\n${planForJudge()}`, `## Judge report\n\n${report}`, `## Diff\n\n${diff.text.length > max ? diff.text.slice(0, max) : diff.text}`],
+				systemPrompts: [...(diff.multi ? [prompts.repoNote(repoRoots(diff))] : []), prompts.ARBITER, `## Approved plan\n\n${planForJudge()}`, `## Judge report\n\n${report}`, `## Diff\n\n${diff.text.length > max ? diff.text.slice(0, max) : diff.text}`],
 				tools: cfg.arbiter.tools,
 				task: "Decide on the [plan-flaw] findings in your system prompt.",
 				cwd: ctx.cwd,
@@ -1402,9 +1634,41 @@ export default function workflow(pi: ExtensionAPI) {
 	const committedDiffs = new Set<string>();
 
 	/** Sends the commit step's instruction (commit, push, pull request, merge, as this flow's delivery says), prefixed with `report`. False if nothing was sent. */
-	async function finishPassed(ctx: ExtensionContext, hash: string, report?: string): Promise<boolean> {
+	/** Where the commits of one repo go: the mode (a push on a protected branch falls back to commit), the branch, and what the instruction needs. `tag` names the repo in notices. */
+	async function prepareDelivery(ctx: ExtensionContext, dir: string, chosen: Exclude<Delivery, "off">, seed: string, tag: string) {
+		let mode = chosen;
+		const current = (await git(dir, "rev-parse", "--abbrev-ref", "HEAD")).stdout.trim();
+		const unsafe = !current || current === "HEAD" || cfg.protectedBranches.includes(current);
+		let branch = current;
+		let from: string | undefined;
+		if (unsafe && mode === "push") {
+			mode = "commit";
+			ctx.ui.notify(`workflow${tag}: on ${current || "a detached HEAD"}, committing without pushing`, "warning");
+		} else if (unsafe && (mode === "pr" || mode === "merge")) {
+			// A pull request never comes from a protected branch; the commits go on a new one.
+			from = current || "HEAD";
+			branch = await freeBranchName(dir, seed);
+			ctx.ui.notify(`workflow${tag}: on ${current || "a detached HEAD"}, committing on new branch ${branch}`, "info");
+		}
+		const base = cfg.delivery.base || (from && from !== "HEAD" ? from : "");
+
+		// An old closed or merged PR on this branch must not pass as this flow's (gh pr view falls back to it when none is open).
+		let prBefore: number | undefined;
+		if ((mode === "pr" || mode === "merge") && !from) {
+			const old = await prState(dir, branch);
+			if (old && old.state !== "OPEN") prBefore = old.number;
+		}
+		const head = (await git(dir, "rev-parse", "HEAD")).stdout.trim();
+		return { mode, branch, from, base, prBefore, head };
+	}
+
+	/** Sends the commit step's instruction (commit, push, pull request, merge, as this flow's delivery says), prefixed with `report`. False if nothing was sent. */
+	async function finishPassed(ctx: ExtensionContext, diff: Diff, report?: string): Promise<boolean> {
+		const hash = diff.hash;
 		const chosen = state.delivery ?? defaultDelivery();
 		if (chosen === "off" || committedDiffs.has(hash)) return false;
+		const changed = diff.multi ? diff.repos.filter((r) => r.changed) : [];
+		if (diff.multi && changed.length === 0) return false;
 		committedDiffs.add(hash);
 		const knowledge = state.lastKnowledge?.hash === hash ? state.lastKnowledge : undefined;
 		// D5: a pass without a knowledge check commits only when you say so.
@@ -1413,46 +1677,45 @@ export default function workflow(pi: ExtensionAPI) {
 			if (choice !== "Commit anyway") return false;
 		}
 
-		let mode: Exclude<Delivery, "off"> = chosen;
-		const current = (await git(ctx.cwd, "rev-parse", "--abbrev-ref", "HEAD")).stdout.trim();
-		const unsafe = !current || current === "HEAD" || cfg.protectedBranches.includes(current);
-		let branch = current;
-		let from: string | undefined;
-		if (unsafe && mode === "push") {
-			mode = "commit";
-			ctx.ui.notify(`workflow: on ${current || "a detached HEAD"}, committing without pushing`, "warning");
-		} else if (unsafe && (mode === "pr" || mode === "merge")) {
-			// A pull request never comes from a protected branch; the commits go on a new one.
-			from = current || "HEAD";
-			branch = await freeBranchName(ctx.cwd, branchName(cfg.delivery.branchPrefix, planTitle(state.approvedPlan), new Date()));
-			ctx.ui.notify(`workflow: on ${current || "a detached HEAD"}, committing on new branch ${branch}`, "info");
-		}
-		const base = cfg.delivery.base || (from && from !== "HEAD" ? from : "");
-
-		// An old closed or merged PR on this branch must not pass as this flow's (gh pr view falls back to it when none is open).
-		let prBefore: number | undefined;
-		if ((mode === "pr" || mode === "merge") && !from) {
-			const old = await prState(ctx.cwd, branch);
-			if (old && old.state !== "OPEN") prBefore = old.number;
+		const seed = branchName(cfg.delivery.branchPrefix, planTitle(state.approvedPlan), new Date());
+		const deviations = knowledge ? deviationBlock(knowledge.deviations) : "";
+		const options = (p: Awaited<ReturnType<typeof prepareDelivery>>): DeliveryOptions => ({
+			mode: p.mode,
+			branch: p.branch,
+			from: p.from,
+			base: p.base,
+			split: cfg.delivery.splitCommits,
+			mergeMethod: cfg.delivery.mergeMethod,
+			deleteBranch: cfg.delivery.deleteBranch,
+			deviations,
+		});
+		let instruction: string;
+		if (!diff.multi) {
+			const p = await prepareDelivery(ctx, ctx.cwd, chosen, seed, "");
+			state.commitPending = { mode: p.mode, head: p.head, branch: p.branch, prBefore: p.prBefore };
+			instruction = deliveryInstruction(options(p));
+		} else {
+			const prepared: { root: string; p: Awaited<ReturnType<typeof prepareDelivery>> }[] = [];
+			for (const ref of changed) prepared.push({ root: ref.root, p: await prepareDelivery(ctx, ref.dir, chosen, seed, ` [${ref.root}]`) });
+			const first = prepared[0].p;
+			state.commitPending = {
+				mode: first.mode,
+				head: first.head,
+				branch: first.branch,
+				prBefore: first.prBefore,
+				repos: prepared.map(({ root, p }) => ({ root, mode: p.mode, head: p.head, branch: p.branch, prBefore: p.prBefore })),
+			};
+			instruction = repoDeliveryInstruction(prepared.map(({ root, p }) => ({ root, options: options(p) })));
 		}
 
 		view.stage = "commit";
 		view.changed();
-		state.commitPending = { mode, head: (await git(ctx.cwd, "rev-parse", "HEAD")).stdout.trim(), branch, prBefore };
 		markPassSummarized(hash); // the commit run's end summarizes this flow
 		persist();
-		const instruction = deliveryInstruction({
-			mode,
-			branch,
-			from,
-			base,
-			split: cfg.delivery.splitCommits,
-			mergeMethod: cfg.delivery.mergeMethod,
-			deleteBranch: cfg.delivery.deleteBranch,
-			deviations: knowledge ? deviationBlock(knowledge.deviations) : "",
-		});
 		pi.sendMessage(
-			{ customType: "workflow-commit", content: report ? `${report}\n\n${instruction}` : instruction, display: true },
+			{ customType: "workflow-commit", content: report ? `${report}
+
+${instruction}` : instruction, display: true },
 			{ triggerTurn: true, deliverAs: "followUp" },
 		);
 		return true;
@@ -1465,6 +1728,33 @@ export default function workflow(pi: ExtensionAPI) {
 			if ((await git(cwd, "rev-parse", "--verify", "--quiet", `refs/heads/${candidate}`)).code !== 0) return candidate;
 		}
 		return `${name}-${Date.now()}`;
+	}
+
+	/** Folders from --add-dir join the session's list (existing folders only, no repeats, not the working folder). */
+	function applyAddDir(ctx: ExtensionContext): void {
+		const wanted = parseAddDir(pi.getFlag("add-dir"));
+		if (wanted.length === 0) return;
+		const folders = [...(state.folders ?? [])];
+		let changed = false;
+		for (const w of wanted) {
+			const abs = path.resolve(ctx.cwd, w).replace(/\\/g, "/");
+			const key = repoKey(abs);
+			let ok = false;
+			try {
+				ok = fs.statSync(abs).isDirectory();
+			} catch {
+				// not there
+			}
+			if (!ok) ctx.ui.notify(`workflow: --add-dir ${w}: not a folder, skipped`, "warning");
+			else if (key === repoKey(ctx.cwd)) ctx.ui.notify(`workflow: --add-dir ${w}: that is the working folder, skipped`, "warning");
+			else if (!folders.some((f) => repoKey(f) === key)) {
+				folders.push(abs);
+				changed = true;
+			}
+		}
+		if (!changed) return;
+		state.folders = folders;
+		persist();
 	}
 
 	pi.on("session_start", async (event, ctx) => {
@@ -1492,6 +1782,7 @@ export default function workflow(pi: ExtensionAPI) {
 			view.flowStarted = state.flowStarted;
 			if (state.commitPending) view.stage = "commit";
 			if (state.phase === "plan") blockPlanTools();
+			if (event.reason !== "reload") applyAddDir(ctx);
 			updateStatus(ctx);
 			return;
 		}
@@ -1503,7 +1794,9 @@ export default function workflow(pi: ExtensionAPI) {
 		view.used = emptyStageTokens();
 		view.flow = emptyFlowUsage();
 		view.flowStarted = undefined;
+		applyAddDir(ctx);
 		if (start !== "off") await setPhase(ctx, start);
+		else updateStatus(ctx);
 	});
 
 	// ----------------------------------------------------------------------
@@ -1540,6 +1833,78 @@ export default function workflow(pi: ExtensionAPI) {
 		if (configError) lines.push(`error     ${configError}`);
 		return lines.join("\n");
 	}
+
+	pi.registerCommand("folders", {
+		description: "Folders that are part of this session: add PATH, remove PATH or N, list",
+		getArgumentCompletions: (prefix) => {
+			const matches = ["add", "remove", "list"].filter((c) => c.startsWith(prefix.trim())).map((c) => ({ value: c, label: c }));
+			return matches.length > 0 ? matches : null;
+		},
+		handler: async (args, ctx) => {
+			const m = args.trim().match(/^(\S+)\s*([\s\S]*)$/);
+			const sub = (m?.[1] ?? "list").toLowerCase();
+			const arg = (m?.[2] ?? "").trim().replace(/^(["'])(.*)\1$/, "$2");
+			const folders = state.folders ?? [];
+			if (sub === "list") {
+				const lines = [`working folder  ${ctx.cwd}`];
+				for (const [i, f] of folders.entries()) {
+					const note = !fs.existsSync(f) ? " (missing)" : (await gitRoot(f)) ? "" : " (not a git repo)";
+					lines.push(`${i + 1}. ${f}${note}`);
+				}
+				for (const t of state.touchedRepos ?? []) lines.push(`   ${t} (edited in this flow)`);
+				ctx.ui.notify(lines.join("\n"), "info");
+				return;
+			}
+			if (sub !== "add" && sub !== "remove") {
+				ctx.ui.notify("Usage: /folders add PATH | remove PATH or N | list", "warning");
+				return;
+			}
+			if (!arg) {
+				ctx.ui.notify(`Usage: /folders ${sub} ${sub === "remove" ? "PATH or N" : "PATH"}`, "warning");
+				return;
+			}
+			if (sub === "add") {
+				const abs = path.resolve(ctx.cwd, arg).replace(/\\/g, "/");
+				let isDir = false;
+				try {
+					isDir = fs.statSync(abs).isDirectory();
+				} catch {
+					// not there
+				}
+				if (!isDir) {
+					ctx.ui.notify(`workflow: ${abs} is not a folder`, "warning");
+					return;
+				}
+				if (repoKey(abs) === repoKey(ctx.cwd)) {
+					ctx.ui.notify("workflow: that is already the working folder", "warning");
+					return;
+				}
+				if (folders.some((f) => repoKey(f) === repoKey(abs))) {
+					ctx.ui.notify(`workflow: ${abs} is already added`, "warning");
+					return;
+				}
+				state.folders = [...folders, abs];
+				persist();
+				updateStatus(ctx);
+				ctx.ui.notify(`workflow: added ${abs}; reloading`, "info");
+			} else {
+				const n = /^\d+$/.test(arg) ? Number(arg) - 1 : -1;
+				const i = n >= 0 ? n : folders.findIndex((f) => repoKey(f) === repoKey(path.resolve(ctx.cwd, arg)));
+				if (i < 0 || i >= folders.length) {
+					const touched = (state.touchedRepos ?? []).some((t) => repoKey(t) === repoKey(path.resolve(ctx.cwd, arg)));
+					ctx.ui.notify(touched ? "workflow: that repo was edited in this flow; it leaves when the flow ends" : `workflow: ${arg} is not in the folder list`, "warning");
+					return;
+				}
+				const [gone] = folders.splice(i, 1);
+				state.folders = folders;
+				persist();
+				updateStatus(ctx);
+				ctx.ui.notify(`workflow: removed ${gone}; reloading`, "info");
+			}
+			await ctx.waitForIdle();
+			await ctx.reload();
+		},
+	});
 
 	pi.registerCommand("flow", {
 		description: "Plan -> execute -> judge workflow with a model per role",

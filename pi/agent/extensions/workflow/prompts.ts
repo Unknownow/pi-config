@@ -153,3 +153,20 @@ path:line - blocker|major|minor - [knowledge <entry-id>] the problem in one line
 export function knowledgeTools(tools: string[]): string {
 	return `Team knowledge: ${tools.map((t) => `\`${t}\``).join(", ")} answer "how is this done here" questions (rules, decisions, guidelines, playbooks). Use them when a question touches the team's conventions, and cite the entry IDs you rely on.`;
 }
+
+/** The agent's view of the extra folders and repos in this session. */
+export function workspaceSection(cwd: string, folders: string[], touched: string[]): string {
+	const lines = [`Working folder: ${cwd}`];
+	if (folders.length) lines.push("Added folders (also part of this task):", ...folders.map((f) => `- ${f}`));
+	if (touched.length) lines.push("Repos edited in this flow:", ...touched.map((f) => `- ${f}`));
+	lines.push(
+		"Use absolute paths for files outside the working folder. bash starts in the working folder, so use `cd <folder>` or `git -C <folder>` for the others.",
+		"The judge reviews every git repo listed here, not only the working folder's.",
+	);
+	return lines.join("\n");
+}
+
+/** For the judge and the arbiter: the diff covers several repos. */
+export function repoNote(roots: string[]): string {
+	return `## Repositories\n\nThis change spans ${roots.length} repositories:\n${roots.map((r) => `- ${r}`).join("\n")}\n\nEach diff section starts with \`=== repo: <root> ===\`; paths inside a section are relative to that root. Read files by absolute path (root + path).`;
+}

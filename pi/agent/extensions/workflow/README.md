@@ -155,7 +155,7 @@ its plan and hand over, even when you said "fix it" or "do it for me".
 - It is a guard against the planner drifting into execution, not a sandbox. The code checks are
   regexes: a determined disguise (a computed lookup on an alias of `require('fs')`, say) can still get
   past them.
-- Tests: `node --experimental-strip-types --test agent-end.test.ts readonly-bash.test.ts readonly-tools.test.ts tokens.test.ts push-guard.test.ts knowledge.test.ts mcp-forward.test.ts subagent.test.ts delivery.test.ts`.
+- Tests: `node --experimental-strip-types --test agent-end.test.ts readonly-bash.test.ts readonly-tools.test.ts tokens.test.ts push-guard.test.ts knowledge.test.ts mcp-forward.test.ts subagent.test.ts delivery.test.ts repos.test.ts`.
 
 ## Team knowledge
 
@@ -232,6 +232,29 @@ next run starts.
 | `/flow model <role> <provider/id[:thinking]>` | set a role's model and save it to workflow.json |
 | `/flow reload` | re-read workflow.json |
 | `pi --flow execute` | start a session in a given phase |
+| `/folders add <path>` / `remove <path\|n>` / `list` | folders that are part of this session (reloads Pi) |
+| `pi --add-dir <path>` | start a session with extra folders (`;` separates several on Windows, `:` elsewhere) |
+
+## Several repos
+
+A session has one working folder, but a flow can span more repos. The flow's repos are the working
+folder's repo, the repos of the folders you add (`/folders add`, `--add-dir`; saved with the session),
+and any repo where the executor changed a file with `edit` or `write`.
+
+- The agent's prompt lists the extra folders and says to use absolute paths there. Their
+  `AGENTS.md`/`CLAUDE.md`, skills and prompts are loaded.
+- The judge reviews every repo of the flow in one diff, each part headed `=== repo: <root> ===`, and
+  re-reviews compare each repo with its last round.
+- After a pass, each repo with changes gets its own commits and its own push/PR/merge. Each command
+  is checked against the branch of the repo it runs in: the one named by `git -C` or the last `cd`,
+  otherwise the working folder's.
+- With only the working folder's repo, nothing changes.
+
+Limits: `cd` does not move the guard when the command text has `$(…)`, backticks, or parentheses
+outside quotes (such commands are checked against the working folder's branch); in PowerShell texts,
+`\` is read as a path separator for this check; changes made only through `bash` in an unlisted repo are not noticed (add the folder);
+extensions in the added folders' `.pi/extensions` are not loaded; after `/resume`, run `/reload`
+to pick up that session's folder skills.
 
 ## Prompt is too long
 

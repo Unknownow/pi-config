@@ -116,3 +116,23 @@ export function deliveryOutcome(mode: Exclude<Delivery, "off">, commits: number 
 	if (pr?.state === "OPEN") return { text: `${text}, PR #${pr.number} open${mode === "merge" ? ", not merged" : ""}`, ok: pushed && mode === "pr" };
 	return { text: `${text}, no open pull request`, ok: false };
 }
+
+/** One instruction for a change that spans several repositories: each repo's own delivery steps, run in that repo. */
+export function repoDeliveryInstruction(parts: { root: string; options: DeliveryOptions }[]): string {
+	const head = `The judge passed. The change spans ${parts.length} repositories; deliver each one below, one after the other.`;
+	const sections = parts.map((p) => {
+		const body = deliveryInstruction(p.options).replace(/^The judge passed\.\s*/, "");
+		const dir = /\s/.test(p.root) ? `"${p.root}"` : p.root;
+		return `### Repository \`${p.root}\`\n\nRun this repository's git commands as \`git -C ${dir} …\` and its gh commands as \`cd ${dir} && gh …\`.\n\n${body}`;
+	});
+	return [head, ...sections].join("\n\n");
+}
+
+/** The flow's outcome over several repositories; a null outcome is a repository with no commit. */
+export function combineOutcomes(parts: { name: string; outcome: { text: string; ok: boolean } | null }[]): { text: string; ok: boolean } {
+	if (parts.every((p) => p.outcome === null)) return { text: "commit step ended without a commit", ok: false };
+	return {
+		text: parts.map((p) => `${p.name}: ${p.outcome ? p.outcome.text : "no commit"}`).join("; "),
+		ok: parts.every((p) => p.outcome?.ok === true),
+	};
+}
