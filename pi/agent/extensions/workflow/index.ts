@@ -55,7 +55,8 @@ import { branchName, combineOutcomes, type Delivery, type DeliveryOptions, DELIV
 import { combineRepoTexts, parseAddDir, repoKey } from "./repos.ts";
 import { shellProblem } from "./push-guard.ts";
 import { COMMIT_GUARD_ENV, type CommitGuardSpec } from "./commit-guard.ts";
-import { commitPlan, mergeChecklist, planCard, type ChecklistItem } from "./plan-doc.ts";
+import { commitPlan, type Finished, mergeChecklist, newFlowId, type PlanStatus, planCard, pruneIds, renderPlanFile, type ChecklistItem } from "./plan-doc.ts";
+import { deleteLocal, type Git, plansDir, readLocalStatuses, repoInfo, writeLocal } from "./plan-store.ts";
 import { nextStage, parseStages, stageDelivery, stageLine, stageNote, stageStart, stagesOutcome } from "./stages.ts";
 import { planToolProblem, planToolRefused } from "./readonly-tools.ts";
 import { addUsage, emptyUsage, mapLimit, type RunResult, runSubagent } from "./subagent.ts";
@@ -123,6 +124,8 @@ interface FlowState {
 	approvedPlan?: string;
 	/** The plan's steps (S1, S2, ...) with the executor's ticks; claims, not proof. */
 	checklist?: ChecklistItem[];
+	/** The plan's file in the repo's git folder: its flow ID, how many milestones wrote it, the repos it covers, and how the flow ended. */
+	planDoc?: { flowId: string; rev: number; roots: string[]; finished?: Finished };
 	/** The planner is writing the final execution plan; its reply becomes approvedPlan. */
 	finalizing?: boolean;
 	/** Amendments the arbiter added in this flow. */
@@ -297,6 +300,8 @@ export default function workflow(pi: ExtensionAPI) {
 	// Phases and models
 	// ----------------------------------------------------------------------
 
+	let lastCtx: ExtensionContext | undefined;
+
 	function persist(): void {
 		state.tokens = { ...view.used };
 		state.tokenUnit = "both";
@@ -308,6 +313,7 @@ export default function workflow(pi: ExtensionAPI) {
 	/** Ends the current flow: shows its token breakdown and starts counting the next one. False if it had none. */
 	function summarizeFlow(outcome: string, ok: boolean): boolean {
 		const hadTouched = (state.touchedRepos?.length ?? 0) > 0;
+		if (state.planDoc && !state.planDoc.finished) planMilestone(undefined, { at: new Date().toISOString(), ok, text: outcome });
 		state.touchedRepos = undefined;
 		view.settleMain();
 		if (!view.hasFlowUsage()) {
@@ -328,6 +334,7 @@ export default function workflow(pi: ExtensionAPI) {
 	}
 
 	function updateStatus(ctx: ExtensionContext): void {
+		lastCtx = ctx;
 		view.roles = cfg.roles;
 		view.weights = cfg.tokenWeights;
 		view.phase = state.phase;
@@ -376,6 +383,7 @@ export default function workflow(pi: ExtensionAPI) {
 		planProposed = false;
 		if (state.phase === "plan" && phase !== "plan") restorePlanTools();
 		if (phase === "plan") blockPlanTools();
+		if (state.phase === "execute" && phase !== "execute" && state.planDoc && !state.planDoc.finished) planMilestone(ctx, { at: new Date().toISOString(), ok: false, text: "abandoned" });
 		state.phase = phase;
 		state.escalated = false;
 		state.judgeRounds = 0;
@@ -392,6 +400,7 @@ export default function workflow(pi: ExtensionAPI) {
 		if (phase === "plan") {
 			state.approvedPlan = undefined;
 			state.checklist = undefined;
+			state.planDoc = undefined;
 			state.delivery = undefined;
 			state.planFlaw = undefined;
 		}
@@ -411,12 +420,14 @@ export default function workflow(pi: ExtensionAPI) {
 	function startExecution(ctx: ExtensionContext, plan: string | undefined): string {
 		state.approvedPlan = plan || undefined;
 		state.checklist = undefined;
+		state.planDoc = undefined;
 		refreshChecklist();
 		updateStatus(ctx);
 		state.stageOutcomes = undefined;
 		state.stageJudged = undefined;
 		const stages = parseStages(plan);
 		state.stage = stages.length ? 1 : undefined;
+		planMilestone(ctx);
 		if (!stages.length) return "";
 		ctx.ui.notify(`workflow: staged plan, ${stages.length} stages; stage 1: ${stages[0].title}`, "info");
 		return `\n\n${stageStart(stages, 1, state.delivery ?? defaultDelivery())}`;
@@ -820,10 +831,150 @@ export default function workflow(pi: ExtensionAPI) {
 		return staged ? `${excerpt}\n\n${stageNote(staged.stages, staged.current)}` : excerpt;
 	}
 
-	/** The short plan sent after a compaction in place of the full plan. */
+	/** The short plan sent after a compaction in place of the full plan. Without a plan file it carries the (trimmed) plan itself. */
 	function planCardText(): string {
 		const staged = currentStages();
-		return planCard(trimPlan(state.approvedPlan ?? ""), state.checklist, staged?.current, staged?.stages.length);
+		const file = planFilePath();
+		const plan = state.approvedPlan ?? "";
+		return planCard(file ? plan : trimPlan(plan), state.checklist, staged?.current, staged?.stages.length, file);
+	}
+
+	// ----------------------------------------------------------------------
+	// Plan files
+	// ----------------------------------------------------------------------
+
+	const gitEnv: Git = async (cwd, args, env) => {
+		try {
+			const r = await execFileAsync("git", ["-C", cwd, ...args], { env: { ...process.env, ...env }, timeout: 60_000, maxBuffer: 16 * 1024 * 1024 });
+			return { code: 0, stdout: String(r.stdout), stderr: String(r.stderr) };
+		} catch (e) {
+			const err = e as { code?: unknown; stdout?: unknown; stderr?: unknown; message?: string };
+			return { code: typeof err.code === "number" ? err.code : 1, stdout: String(err.stdout ?? ""), stderr: String(err.stderr ?? err.message ?? "") };
+		}
+	};
+
+	/** Where each flow's plan folder lives, and what was last written there (so the file can be rewritten without git calls). */
+	const planDirs = new Map<string, string>();
+	const planLast = new Map<string, { dir: string; status: PlanStatus }>();
+	const planWarned = new Set<string>();
+	let planChain: Promise<void> = Promise.resolve();
+
+	interface PlanSnap {
+		flowId: string;
+		rev: number;
+		roots: string[];
+		plan: string;
+		checklist?: ChecklistItem[];
+		stage?: number;
+		delivery?: string;
+		touched: string[];
+		finished?: Finished;
+	}
+
+	async function writePlan(ctx: ExtensionContext, snap: PlanSnap): Promise<void> {
+		const roots = [...snap.roots];
+		const seen = new Set(roots.map(repoKey));
+		const found = [...(await flowRepos(ctx)).map((r) => r.root), ...(await Promise.all(snap.touched.map((t) => gitRoot(t))))];
+		for (const r of found) {
+			if (!r || seen.has(repoKey(r))) continue;
+			seen.add(repoKey(r));
+			roots.push(r);
+		}
+		const dir = planDirs.get(snap.flowId) ?? (await plansDir(gitEnv, roots[0] ?? null, getAgentDir()));
+		const infos = await Promise.all(roots.map((r) => repoInfo(gitEnv, r)));
+		const status: PlanStatus = {
+			v: 1,
+			flowId: snap.flowId,
+			rev: snap.rev,
+			updated: new Date().toISOString(),
+			title: planTitle(snap.plan),
+			...(snap.stage ? { stage: snap.stage } : {}),
+			...(snap.delivery ? { delivery: snap.delivery } : {}),
+			done: (snap.checklist ?? []).filter((i) => i.done).map((i) => i.id),
+			...(snap.finished ? { finished: snap.finished } : {}),
+			repos: infos.map((info, i) => ({ ...info, primary: i === 0 })),
+		};
+		writeLocal(dir, snap.flowId, renderPlanFile(snap.flowId, snap.plan, snap.checklist, snap.finished), status);
+		planDirs.set(snap.flowId, dir);
+		planLast.set(snap.flowId, { dir, status });
+		const live = state.planDoc?.flowId === snap.flowId ? state.planDoc : undefined;
+		if (live && roots.join("\n") !== live.roots.join("\n")) {
+			live.roots = roots;
+			persist();
+		}
+		if (snap.finished && cfg.plans.keepCount === 0) deleteLocal(dir, snap.flowId);
+	}
+
+	/** A point where the plan file is rewritten: approval, an amendment, a stage end, the flow's end. Runs in the background, in order; `bump: false` only restores the file. */
+	function planMilestone(ctx: ExtensionContext | undefined, finished?: Finished, bump = true): void {
+		const plan = state.approvedPlan;
+		if (!plan) return;
+		const doc = (state.planDoc ??= { flowId: newFlowId(planTitle(plan), new Date(), randomUUID().slice(0, 4)), rev: 0, roots: [] });
+		if (bump) doc.rev++;
+		if (finished) doc.finished = finished;
+		const snap: PlanSnap = {
+			flowId: doc.flowId,
+			rev: doc.rev,
+			roots: [...doc.roots],
+			plan,
+			checklist: state.checklist?.map((i) => ({ ...i })),
+			stage: state.stage,
+			delivery: state.delivery,
+			touched: [...(state.touchedRepos ?? [])],
+			finished: doc.finished,
+		};
+		const c = ctx ?? lastCtx;
+		if (!c) return;
+		planChain = planChain
+			.then(() => writePlan(c, snap))
+			.catch((e) => {
+				if (planWarned.has(snap.flowId)) return;
+				planWarned.add(snap.flowId);
+				c.ui.notify(`workflow: could not save the plan file: ${(e as Error).message}`, "warning");
+			});
+	}
+
+	/** Rewrites the current plan file from state (ticks changed). No rev, no git. Returns the path, or undefined when nothing was written before. */
+	function rewritePlanFile(): string | undefined {
+		const doc = state.planDoc;
+		const last = doc && planLast.get(doc.flowId);
+		if (!doc || !last || !state.approvedPlan) return undefined;
+		try {
+			const status: PlanStatus = { ...last.status, updated: new Date().toISOString(), done: (state.checklist ?? []).filter((i) => i.done).map((i) => i.id) };
+			const file = writeLocal(last.dir, doc.flowId, renderPlanFile(doc.flowId, state.approvedPlan, state.checklist, doc.finished), status);
+			last.status = status;
+			return file;
+		} catch {
+			return undefined;
+		}
+	}
+
+	/** The path of the plan file, rewritten from state first when it went missing; undefined when there is none yet. */
+	function planFilePath(): string | undefined {
+		const doc = state.planDoc;
+		const dir = doc && planDirs.get(doc.flowId);
+		if (!doc || !dir || !state.approvedPlan) return undefined;
+		const file = path.join(dir, doc.flowId, "plan.md");
+		if (fs.existsSync(file)) return file;
+		if (doc.finished && cfg.plans.keepCount === 0) return undefined;
+		return rewritePlanFile();
+	}
+
+	/** Deletes plans past the retention limits in this flow's plan folders, and restores the active flow's file. */
+	async function planHousekeeping(ctx: ExtensionContext): Promise<void> {
+		try {
+			const dirs = new Set<string>([await plansDir(gitEnv, null, getAgentDir())]);
+			for (const r of await flowRepos(ctx)) dirs.add(await plansDir(gitEnv, r.root, getAgentDir()));
+			const active = state.planDoc && !state.planDoc.finished ? state.planDoc.flowId : undefined;
+			for (const dir of dirs) {
+				const entries = readLocalStatuses(dir).map((e) => {
+					const t = e.status ? Date.parse(e.status.updated) : NaN;
+					return { flowId: e.flowId, updated: Number.isFinite(t) ? t : e.mtime, finished: e.status ? !!e.status.finished : true };
+				});
+				for (const id of pruneIds(entries, { keepDays: cfg.plans.keepDays, keepCount: cfg.plans.keepCount, now: Date.now(), activeId: active })) deleteLocal(dir, id);
+			}
+			if (active && state.approvedPlan) planMilestone(ctx, undefined, false);
+		} catch {}
 	}
 
 	/** A very long plan loses its middle, never its amendments. */
@@ -1044,6 +1195,7 @@ export default function workflow(pi: ExtensionAPI) {
 			}
 			persist();
 			updateStatus(ctx);
+			rewritePlanFile();
 			const staged = currentStages();
 			const open = list.filter((i) => !i.done && (!staged || i.stage === undefined || i.stage === staged.current));
 			const done = list.filter((i) => i.done).length;
@@ -1545,6 +1697,7 @@ export default function workflow(pi: ExtensionAPI) {
 		state.lastJudge = undefined; // a new stage gets a full review, not a re-review of the last one
 		view.stage = "execute";
 		view.changed();
+		planMilestone(ctx);
 		persist();
 		ctx.ui.notify(`workflow: stage ${next} of ${stages.length}: ${stages[next - 1].title}`, "info");
 		handover("workflow-stage", nextStage(stages, next, state.delivery ?? defaultDelivery(), outcome));
@@ -1791,6 +1944,7 @@ export default function workflow(pi: ExtensionAPI) {
 				const flaws = report.split("\n").filter((l) => /\[plan-flaw\]/.test(l));
 				state.approvedPlan = `${state.approvedPlan ?? ""}\n\n## Plan choices upheld by the user\n${flaws.join("\n")}`;
 				refreshChecklist();
+				planMilestone(ctx);
 				persist();
 				return "continue";
 			}
@@ -1830,6 +1984,7 @@ export default function workflow(pi: ExtensionAPI) {
 		if (d.decision === "KEEP") {
 			state.approvedPlan = `${state.approvedPlan ?? ""}\n\n## Plan choices upheld by the arbiter\n${d.reason}`;
 			refreshChecklist();
+			planMilestone(ctx);
 			persist();
 			pi.sendMessage({ customType: "workflow-judge", content: `**Arbiter: the plan stands.**\n\n${d.reason}`, display: true }, { triggerTurn: false });
 			return "continue";
@@ -1843,6 +1998,7 @@ export default function workflow(pi: ExtensionAPI) {
 			state.planRevisions = done + 1;
 			state.approvedPlan = `${state.approvedPlan ?? ""}\n\n## Amendment ${done + 1} (arbiter)\n${d.amendment}`;
 			refreshChecklist();
+			planMilestone(ctx);
 			persist();
 			pi.sendMessage(
 				{
@@ -2111,6 +2267,8 @@ ${instruction}` : instruction);
 			if (state.phase === "plan") blockPlanTools();
 			if (event.reason !== "reload") applyAddDir(ctx);
 			updateStatus(ctx);
+			if (event.reason !== "reload") void planHousekeeping(ctx);
+			else if (state.planDoc && !state.planDoc.finished && state.approvedPlan) planMilestone(ctx, undefined, false);
 			return;
 		}
 		if (event.reason === "reload") return;
@@ -2124,6 +2282,7 @@ ${instruction}` : instruction);
 		applyAddDir(ctx);
 		if (start !== "off") await setPhase(ctx, start);
 		else updateStatus(ctx);
+		void planHousekeeping(ctx);
 	});
 
 	// ----------------------------------------------------------------------

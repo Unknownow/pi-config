@@ -61,6 +61,18 @@ export type StagedPlans = "auto" | "onRequest";
 /** "changes": after a plan is proposed, planner replies repeat only what changed; "always": every reply ends with the full plan. */
 export type PlanRecap = "changes" | "always";
 
+/** Where approved plans are kept (inside each repo's .git folder) and how long. */
+export interface PlansConfig {
+	/** "remote": plan refs are pushed to each repo's remote (Stage 3); "local": never pushed. */
+	sync: "remote" | "local";
+	/** Repos whose normalised remote URL contains one of these (case-insensitive) are never pushed. */
+	localOnly: string[];
+	/** Plans last updated more than this many days ago are deleted. 0 means no age limit. */
+	keepDays: number;
+	/** Finished plans beyond the newest this many are deleted. 0 deletes a plan as soon as its flow ends. */
+	keepCount: number;
+}
+
 export interface WorkflowConfig {
 	roles: Record<Role, RoleSpec>;
 	/** Phase a new session starts in. */
@@ -91,6 +103,7 @@ export interface WorkflowConfig {
 	delivery: DeliveryConfig;
 	/** Branches never pushed automatically; the commit stays local. */
 	protectedBranches: string[];
+	plans: PlansConfig;
 	/** In plan phase, a message matching this (case-insensitive, whole message) approves the plan. */
 	approvePattern: string;
 	/** Pop up an Approve / Keep planning menu whenever a plan is ready (otherwise just a hint). */
@@ -155,6 +168,7 @@ export const DEFAULTS: WorkflowConfig = {
 	maxPlanRevisions: 2,
 	delivery: { ask: true, default: "commit", splitCommits: true, mergeMethod: "merge", deleteBranch: true, base: "", branchPrefix: "flow/", runner: "subagent" },
 	protectedBranches: ["main", "master"],
+	plans: { sync: "remote", localOnly: [], keepDays: 14, keepCount: 50 },
 	approvePattern:
 		"^((ok(ay)?|yes|yeah|yep|sure|alright|fine|great|good)[,.! ]+)?(then[, ]+)?(go|go ahead|go for it|do it|do that|do this|do them|do (it )?all( of (it|that|them))?|approved?|lgtm|ship it|execute( it| that| this| the plan)?|proceed|start|let'?s go|let'?s do it|run it|implement( it| that| this| the plan)?|build it|make it so)( for me)?( now)?( please)?[.! ]*$",
 	planPrompt: true,
@@ -214,6 +228,10 @@ export function loadConfig(): { config: WorkflowConfig; error?: string } {
 		for (const k of ["base", "branchPrefix"] as const) if (typeof config.delivery[k] !== "string") config.delivery[k] = DEFAULTS.delivery[k];
 		if (config.delivery.runner !== "subagent" && config.delivery.runner !== "main") config.delivery.runner = DEFAULTS.delivery.runner;
 		if (typeof config.handoverCompactTokens !== "number" || !Number.isFinite(config.handoverCompactTokens) || config.handoverCompactTokens < 0) config.handoverCompactTokens = DEFAULTS.handoverCompactTokens;
+		if (!isObject(config.plans)) config.plans = DEFAULTS.plans;
+		if (config.plans.sync !== "remote" && config.plans.sync !== "local") config.plans.sync = DEFAULTS.plans.sync;
+		if (!Array.isArray(config.plans.localOnly) || config.plans.localOnly.some((s) => typeof s !== "string")) config.plans.localOnly = DEFAULTS.plans.localOnly;
+		for (const k of ["keepDays", "keepCount"] as const) if (typeof config.plans[k] !== "number" || !Number.isFinite(config.plans[k]) || config.plans[k] < 0) config.plans[k] = DEFAULTS.plans[k];
 		if (config.stagedPlans !== "auto" && config.stagedPlans !== "onRequest") config.stagedPlans = DEFAULTS.stagedPlans;
 		if (config.planRecap !== "changes" && config.planRecap !== "always") config.planRecap = DEFAULTS.planRecap;
 		return { config };

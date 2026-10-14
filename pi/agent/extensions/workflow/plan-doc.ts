@@ -122,3 +122,111 @@ export function commitPlan(plan: string): string | null {
 	if (s.amendments) out.push(`### Amendments\n${s.amendments.replace(/^## /gm, "#### ")}`);
 	return out.join("\n\n");
 }
+
+export interface Finished {
+	at: string;
+	ok: boolean;
+	text: string;
+}
+
+export interface PlanStatus {
+	v: 1;
+	flowId: string;
+	rev: number;
+	/** ISO time of the last milestone. */
+	updated: string;
+	title: string;
+	stage?: number;
+	delivery?: string;
+	/** IDs of the ticked steps. */
+	done: string[];
+	finished?: Finished;
+	repos: { remote?: string; branch?: string; primary: boolean }[];
+}
+
+const FLOW_ID = /^\d{8}-\d{4}-[a-z0-9-]{1,40}-[0-9a-f]{4}$/;
+const FILE_HEADER = "<!-- pi-workflow plan v1 flow=";
+const STATUS_MARKER = "<!-- pi-workflow:status -->";
+
+export const isFlowId = (s: unknown): s is string => typeof s === "string" && FLOW_ID.test(s);
+
+/** `<yyyymmdd>-<hhmm>-<slug>-<hex4>` in local time. */
+export function newFlowId(title: string, now: Date, hex4: string): string {
+	const p = (n: number, w = 2) => String(n).padStart(w, "0");
+	const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+/, "").slice(0, 40).replace(/-+$/, "") || "flow";
+	return `${p(now.getFullYear(), 4)}${p(now.getMonth() + 1)}${p(now.getDate())}-${p(now.getHours())}${p(now.getMinutes())}-${slug}-${hex4}`;
+}
+
+/** The readable plan file: the approved text exactly, then a status block below a marker line. */
+export function renderPlanFile(flowId: string, plan: string, checklist: ChecklistItem[] | undefined, finished?: Finished): string {
+	const out = [`${FILE_HEADER}${flowId} -->`, plan, "", STATUS_MARKER];
+	if (checklist?.length) out.push("## Checklist", ...checklist.map((i) => `- [${i.done ? "x" : " "}] ${i.id} ${i.text}`));
+	if (finished) out.push("## Outcome", `${finished.at} — ${finished.ok ? "ok" : "failed"}: ${finished.text}`);
+	return `${out.join("\n")}\n`;
+}
+
+/** The approved text of a plan file; a text that is not a plan file comes back unchanged. */
+export function splitPlanFile(text: string): string {
+	if (!text.startsWith(FILE_HEADER)) return text;
+	const nl = text.indexOf("\n");
+	const rest = nl < 0 ? "" : text.slice(nl + 1);
+	const at = rest.lastIndexOf(STATUS_MARKER);
+	if (at < 0) return rest;
+	const body = rest.slice(0, at);
+	return body.endsWith("\n\n") ? body.slice(0, -2) : body.replace(/\n$/, "");
+}
+
+const isStr = (v: unknown): v is string => typeof v === "string";
+
+/** null for anything that is not a version-1 status with the right field types. */
+export function parseStatus(json: string): PlanStatus | null {
+	let o: any;
+	try {
+		o = JSON.parse(json);
+	} catch {
+		return null;
+	}
+	if (!o || typeof o !== "object" || o.v !== 1 || !isFlowId(o.flowId)) return null;
+	if (!Number.isInteger(o.rev) || !isStr(o.updated) || !isStr(o.title)) return null;
+	if (!Array.isArray(o.done) || !o.done.every(isStr) || !Array.isArray(o.repos)) return null;
+	if (o.stage !== undefined && !Number.isInteger(o.stage)) return null;
+	if (o.delivery !== undefined && !isStr(o.delivery)) return null;
+	const f = o.finished;
+	if (f !== undefined && !(f && isStr(f.at) && typeof f.ok === "boolean" && isStr(f.text))) return null;
+	for (const r of o.repos) {
+		if (!r || typeof r.primary !== "boolean" || (r.remote !== undefined && !isStr(r.remote)) || (r.branch !== undefined && !isStr(r.branch))) return null;
+	}
+	return o as PlanStatus;
+}
+
+export interface PruneEntry {
+	flowId: string;
+	/** Epoch ms of the last update. */
+	updated: number;
+	finished: boolean;
+}
+
+/** The plans to delete: finished ones beyond the newest keepCount, and any older than keepDays (0 = no age limit). Never the active one. */
+export function pruneIds(entries: PruneEntry[], opts: { keepDays: number; keepCount: number; now: number; activeId?: string }): string[] {
+	const rest = entries.filter((e) => e.flowId !== opts.activeId);
+	const drop = new Set<string>();
+	const finished = rest.filter((e) => e.finished).sort((a, b) => b.updated - a.updated);
+	for (const e of finished.slice(opts.keepCount)) drop.add(e.flowId);
+	if (opts.keepDays > 0) for (const e of rest) if (opts.now - e.updated > opts.keepDays * 86_400_000) drop.add(e.flowId);
+	return [...drop];
+}
+
+/** `git@github.com:Org/A.git` and `https://user@GitHub.com/Org/A.git` both become `github.com/Org/A`. */
+export function normalizeRemote(url: string): string {
+	let u = url.trim();
+	const proto = /^[a-z][a-z0-9+.-]*:\/\//i.exec(u);
+	if (proto) u = u.slice(proto[0].length);
+	u = u.replace(/^[^@/]*@/, "");
+	if (!proto) {
+		const m = /^([^/:]+):(.*)$/.exec(u);
+		if (m) u = `${m[1]}/${m[2].replace(/^\/+/, "")}`;
+	}
+	u = u.replace(/\/+$/, "").replace(/\.git$/, "");
+	const slash = u.indexOf("/");
+	return slash < 0 ? u.toLowerCase() : u.slice(0, slash).toLowerCase() + u.slice(slash);
+}

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { commitPlan, mergeChecklist, parseChecklist, planCard } from "./plan-doc.ts";
+import { commitPlan, isFlowId, mergeChecklist, newFlowId, normalizeRemote, parseChecklist, parseStatus, planCard, pruneIds, renderPlanFile, splitPlanFile } from "./plan-doc.ts";
 
 const PLAN = `## Plan: Demo
 ### 1. Goal and non-goals
@@ -88,4 +88,52 @@ test("planCard lists a step above the first stage heading as open in every stage
 	assert.ok(card.includes("- [ ] S1 early"));
 	assert.ok(card.includes("- [ ] S3 b"));
 	assert.ok(!card.includes("S2 a"));
+});
+
+test("renderPlanFile/splitPlanFile round-trip", () => {
+	const plan = "## Plan: x\n### 5. Steps\n**S1.** a\n## Checklist\nown text\n";
+	const list = parseChecklist(plan);
+	assert.equal(splitPlanFile(renderPlanFile("20261015-0930-x-a1b2", plan, list)), plan);
+	assert.equal(splitPlanFile(renderPlanFile("20261015-0930-x-a1b2", "no newline", [])), "no newline");
+	const done = renderPlanFile("20261015-0930-x-a1b2", plan, [{ ...list[0], done: true }], { at: "2026-10-15T09:30:00Z", ok: true, text: "delivered" });
+	assert.ok(done.includes("- [x] S1 a"));
+	assert.ok(done.includes("## Outcome"));
+	assert.ok(done.includes("— ok: delivered"));
+	assert.equal(splitPlanFile(done), plan);
+	assert.equal(splitPlanFile("plain"), "plain");
+});
+
+test("newFlowId format", () => {
+	assert.equal(newFlowId("Cheaper commit step!", new Date(2026, 9, 15, 9, 30), "a1b2"), "20261015-0930-cheaper-commit-step-a1b2");
+	assert.equal(newFlowId("", new Date(2026, 9, 15, 9, 30), "a1b2"), "20261015-0930-flow-a1b2");
+	const long = newFlowId("word ".repeat(30), new Date(2026, 0, 2, 3, 4), "ffff");
+	assert.ok(isFlowId(long));
+	assert.ok(long.length <= 14 + 40 + 5);
+});
+
+test("normalizeRemote", () => {
+	assert.equal(normalizeRemote("git@github.com:Org/A.git"), "github.com/Org/A");
+	assert.equal(normalizeRemote("https://user@GitHub.com/Org/A.git"), "github.com/Org/A");
+	assert.equal(normalizeRemote("ssh://git@host:22/x/y"), "host:22/x/y");
+});
+
+test("parseStatus rejects malformed", () => {
+	const ok = { v: 1, flowId: "20261015-0930-x-a1b2", rev: 2, updated: "2026-10-15T09:30:00Z", title: "x", stage: 2, delivery: "commit", done: ["S1"], repos: [{ remote: "h/x", branch: "main", primary: true }] };
+	assert.deepEqual(parseStatus(JSON.stringify(ok)), ok);
+	assert.equal(parseStatus(JSON.stringify({ ...ok, v: 2 })), null);
+	assert.equal(parseStatus(JSON.stringify({ ...ok, flowId: "bad" })), null);
+	assert.equal(parseStatus(JSON.stringify({ ...ok, done: "S1" })), null);
+	assert.equal(parseStatus("not json"), null);
+});
+
+test("pruneIds", () => {
+	const DAY = 86_400_000;
+	const now = 100 * DAY;
+	const e = (flowId: string, ago: number, finished: boolean) => ({ flowId, updated: now - ago * DAY, finished });
+	const three = [e("a", 3, true), e("b", 2, true), e("c", 1, true)];
+	assert.deepEqual(pruneIds(three, { keepDays: 14, keepCount: 2, now }), ["a"]);
+	assert.deepEqual(pruneIds([e("old", 20, false)], { keepDays: 14, keepCount: 50, now }), ["old"]);
+	assert.deepEqual(pruneIds([e("old", 20, false)], { keepDays: 14, keepCount: 50, now, activeId: "old" }), []);
+	assert.deepEqual(pruneIds([e("old", 90, true)], { keepDays: 0, keepCount: 50, now }), []);
+	assert.deepEqual(pruneIds([...three, e("act", 0, false)], { keepDays: 0, keepCount: 0, now, activeId: "act" }).sort(), ["a", "b", "c"]);
 });

@@ -55,6 +55,12 @@
     "branchPrefix": "flow/",
     "runner": "subagent"
   },
+  "plans": {
+    "sync": "remote",
+    "localOnly": [],
+    "keepDays": 14,
+    "keepCount": 50
+  },
   "protectedBranches": [
     "main",
     "master"
