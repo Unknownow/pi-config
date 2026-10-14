@@ -5,7 +5,7 @@ The workflow is for software: system design, architecture and code. (The name st
 pi-config sync never deletes, so renaming the folder would leave the old extension loaded beside the new one.)
 
 ```
-you <-> plan (Opus 5.5, high) -> approve -> final plan (Opus) -> execute (Sonnet 5.5, medium) -> judge (Opus 5.5) -> commit
+you <-> plan (Opus 5.5, high) -> approve -> final plan (Opus) -> execute (Sonnet 5.5, medium) -> judge (Opus 5.5) -> commit (subagent, Sonnet 5.5 low)
                                                               ^                          |-- explore (Haiku 5.5, parallel): answer + file:line
                                                               |                          `-- advisor (Opus 5.5): reads the full transcript
                                                               `-- fix findings <------- judge (separate session; sees the plan and the diff, not the discussion)
@@ -24,6 +24,7 @@ plan is read-only:   bash refuses commands that change files, git or GitHub
 | `advisor` | `advisor` tool, sub-`pi` with the whole transcript | choosing an approach, after an error repeats (auto-nudged after `repeatedErrorThreshold` failures), before "done" |
 | `judge` | `judge` tool, sub-`pi` with the git diff | the diff is ready; when a run ends with an unreviewed diff it asks (`autoJudge`) |
 | `arbiter` | sub-`pi` with the plan, the judge's report and the diff | the judge questions the plan and `planFlaw` is `auto` (or you pick "Let the arbiter decide", or you picked *Approve, arbiter solves plan flaws* for this flow) |
+| `commit` | sub-`pi` with bash only, the plan and the delivery instruction, and its own push guard (`commit-guard.ts`) | after the judge passes; `delivery.runner: "main"` runs it in the main session instead (compacted first at the handover) |
 | `escalate` | main session model | `/flow escalate` |
 
 ## Hands-off run
@@ -63,6 +64,7 @@ after approval runs on its own:
   uses `--admin` or `--auto`: a merge GitHub blocks (review required, conflict, failed check) stops and is
   reported. `/flow delivery <commit|push|pr|merge|off>` changes it for the current flow.
   `mergeMethod` (`merge`), `deleteBranch` (`true`), `ask` (`true`) and `default` (`commit`) are configurable.
+  `runner` (`subagent`) says where the commit step runs: a fresh `commit`-role subagent that does not carry the session's context, or `main` (the main session, compacted first at the handover).
 - **Push guard:** it never pushes `protectedBranches` (`main`, `master`) or a detached HEAD. It
   commits there and tells you. It never force-pushes or uses `--no-verify`, and stops if a hook fails.
   This is enforced, not only asked for: while executing, a `git push` is refused unless it is the
@@ -171,7 +173,7 @@ its plan and hand over, even when you said "fix it" or "do it for me".
 - It is a guard against the planner drifting into execution, not a sandbox. The code checks are
   regexes: a determined disguise (a computed lookup on an alias of `require('fs')`, say) can still get
   past them.
-- Tests: `node --experimental-strip-types --test agent-end.test.ts readonly-bash.test.ts readonly-tools.test.ts tokens.test.ts push-guard.test.ts knowledge.test.ts mcp-forward.test.ts subagent.test.ts delivery.test.ts repos.test.ts stages.test.ts`.
+- Tests: `node --experimental-strip-types --test agent-end.test.ts readonly-bash.test.ts readonly-tools.test.ts tokens.test.ts push-guard.test.ts knowledge.test.ts mcp-forward.test.ts subagent.test.ts delivery.test.ts repos.test.ts stages.test.ts commit-guard.test.ts`.
 
 ## Team knowledge
 

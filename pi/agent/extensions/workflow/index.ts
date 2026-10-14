@@ -52,8 +52,9 @@ import { handoverAction, withPlan, afterPass, noChangeStage, arbiterFirst, fixab
 import { countTokens, type Tok } from "./tokens.ts";
 import * as prompts from "./prompts.ts";
 import { branchName, combineOutcomes, type Delivery, type DeliveryOptions, DELIVERIES, DELIVERY_LABELS, deliveryChoices, deliveryInstruction, deliveryMenuLabel, deliveryOutcome, freshPr, isDelivery, planTitle, type PrState, repoDeliveryInstruction } from "./delivery.ts";
-import { combineRepoTexts, parseAddDir, repoKey, fallbackTexts, repoTexts } from "./repos.ts";
-import { pushProblem } from "./push-guard.ts";
+import { combineRepoTexts, parseAddDir, repoKey } from "./repos.ts";
+import { shellProblem } from "./push-guard.ts";
+import { COMMIT_GUARD_ENV, type CommitGuardSpec } from "./commit-guard.ts";
 import { nextStage, parseStages, stageDelivery, stageLine, stageNote, stageStart, stagesOutcome } from "./stages.ts";
 import { planToolProblem, planToolRefused } from "./readonly-tools.ts";
 import { addUsage, emptyUsage, mapLimit, type RunResult, runSubagent } from "./subagent.ts";
@@ -171,6 +172,7 @@ const EXPLORE_REASONS = ["question", "broad_search", "timeout", "too_much_output
 const execFileAsync = promisify(execFile);
 /** Subagent-only extension that registers forwarded MCP servers (see mcp-forward.ts). */
 const FORWARD_EXTENSION = path.join(path.dirname(CONFIG_PATH), "extensions", "workflow", "mcp-forward.ts");
+const COMMIT_GUARD_EXTENSION = path.join(path.dirname(CONFIG_PATH), "extensions", "workflow", "commit-guard.ts");
 
 interface Diff {
 	text: string;
@@ -485,12 +487,12 @@ export default function workflow(pi: ExtensionAPI) {
 	async function runRole(
 		role: SubRole,
 		label: string,
-		opts: { systemPrompts: string[]; tools: string[]; task: string; cwd: string; signal?: AbortSignal; thinking?: Thinking },
+		opts: { systemPrompts: string[]; tools: string[]; task: string; cwd: string; signal?: AbortSignal; thinking?: Thinking; env?: Record<string, string>; extensions?: string[] },
 		onChange?: (run: RunView) => void,
 	): Promise<{ result: RunResult; run: RunView }> {
 		const run = view.start(role, label);
 		onChange?.(run);
-		const { thinking, ...rest } = opts;
+		const { thinking, extensions, ...rest } = opts;
 		const k = knowledgeFor(role);
 		const result = await runSubagent({
 			...rest,
@@ -498,7 +500,7 @@ export default function workflow(pi: ExtensionAPI) {
 			systemPrompts: k && role !== "judge" ? [...rest.systemPrompts, prompts.knowledgeTools(k.tools)] : rest.systemPrompts,
 			mcp: k ? { servers: k.servers, extension: FORWARD_EXTENSION } : undefined,
 			role: thinking ? { ...cfg.roles[role], thinking } : cfg.roles[role],
-			extensions: cfg.subagent.extensions,
+			extensions: extensions ? [...cfg.subagent.extensions, ...extensions] : cfg.subagent.extensions,
 			timeoutMs: cfg.subagent.timeoutMs,
 			onEvent: (e) => {
 				view.event(run, e, opts.cwd);
@@ -1129,22 +1131,10 @@ export default function workflow(pi: ExtensionAPI) {
 				if (!branches.has(dir)) branches.set(dir, (await git(dir, "rev-parse", "--abbrev-ref", "HEAD")).stdout.trim());
 				return branches.get(dir) as string;
 			};
+			const modeOf = (root: string | undefined) => (root ? state.commitPending?.repos?.find((r) => repoKey(r.root) === repoKey(root))?.mode : undefined) ?? state.commitPending?.mode;
 			for (const { text, powershell } of gitTexts) {
-				// The GIT_CONFIG rule spans commands, so such a text is checked whole; otherwise each command against the repo it runs in.
-				const groups = multi && !/GIT_CONFIG/i.test(text) ? repoTexts(text, roots, ctx.cwd, process.platform, { powershell }) : fallbackTexts(text, powershell).map((t) => ({ root: undefined, text: t }));
-				for (const group of groups) {
-					const branch = await branchOf(group.root ?? ctx.cwd);
-					const own = group.root ? state.commitPending?.repos?.find((r) => repoKey(r.root) === repoKey(group.root as string)) : undefined;
-					const mode = own?.mode ?? state.commitPending?.mode;
-					const problem = pushProblem(group.text, {
-						branch,
-						protectedBranches: cfg.protectedBranches,
-						pushAllowed: mode === "push" || mode === "pr" || mode === "merge",
-						prAllowed: mode === "pr" || mode === "merge",
-						mergeAllowed: mode === "merge",
-					});
-					if (problem) return { block: true, reason: `Refused: ${problem}. Do not push, open or merge pull requests, or skip hooks yourself: finish the code, get the judge's pass and end your turn; the workflow delivers it as this flow's delivery says.` };
-				}
+				const problem = await shellProblem(text, powershell, { roots: multi ? roots : undefined, cwd: ctx.cwd, protectedBranches: cfg.protectedBranches, branchOf, modeOf });
+				if (problem) return { block: true, reason: `Refused: ${problem}. Do not push, open or merge pull requests, or skip hooks yourself: finish the code, get the judge's pass and end your turn; the workflow delivers it as this flow's delivery says.` };
 			}
 			return;
 		}
@@ -1930,10 +1920,56 @@ export default function workflow(pi: ExtensionAPI) {
 		view.changed();
 		markPassSummarized(hash); // the commit run's end summarizes this flow
 		persist();
+		if (cfg.delivery.runner === "subagent") {
+			await commitInSubagent(ctx, report, instruction, chosen);
+			return true;
+		}
 		handover("workflow-commit", report ? `${report}
 
 ${instruction}` : instruction);
 		return true;
+	}
+
+	/** Runs the commit step in a fresh subagent with its own push guard, then reads the outcome from git and gh. */
+	async function commitInSubagent(ctx: ExtensionContext, report: string | undefined, instruction: string, chosen: Delivery): Promise<void> {
+		if (report) pi.sendMessage({ customType: "workflow-judge", content: report, display: true }, { triggerTurn: false });
+		if (!fs.existsSync(COMMIT_GUARD_EXTENSION)) {
+			pi.sendMessage({ customType: "workflow-commit", content: `**Commit step** failed: commit guard extension not found at ${COMMIT_GUARD_EXTENSION}`, display: true }, { triggerTurn: false });
+			await summarizeCommit(ctx);
+			resetCommitStage();
+			return;
+		}
+		const pending = state.commitPending;
+		const spec: CommitGuardSpec = {
+			protectedBranches: cfg.protectedBranches,
+			mode: pending?.mode,
+			repos: (pending?.repos ?? []).map((r) => ({ root: r.root, mode: r.mode })),
+		};
+		ctx.ui.setWorkingMessage("commit step running…");
+		let result: RunResult;
+		try {
+			const ran = await runRole("commit", DELIVERY_LABELS[chosen], {
+				systemPrompts: [prompts.COMMIT, `## Approved plan\n\n${planForJudge()}`],
+				tools: ["bash"],
+				task: instruction,
+				cwd: ctx.cwd,
+				env: { [COMMIT_GUARD_ENV]: JSON.stringify(spec) },
+				extensions: [COMMIT_GUARD_EXTENSION],
+			});
+			result = ran.result;
+			if (result.ok) view.finish(ran.run, true, "report ready");
+		} finally {
+			ctx.ui.setWorkingMessage();
+		}
+		pi.sendMessage({ customType: "workflow-commit", content: `**Commit step** (${describeRole(cfg.roles.commit)})\n\n${result.ok ? result.text : `failed: ${result.error}`}`, display: true }, { triggerTurn: false });
+		await summarizeCommit(ctx);
+		resetCommitStage();
+	}
+
+	function resetCommitStage(): void {
+		if (view.stage !== "commit") return;
+		view.stage = state.phase === "plan" ? "plan" : "execute";
+		view.changed();
 	}
 
 	/** `name`, or `name-2`, `name-3`, ... when a local branch already has it. */

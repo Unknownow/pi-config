@@ -134,6 +134,12 @@ export const HANDOVER_COMPACT = `The workflow is handing over to the next step (
 Keep: the user's decisions and requests, the files changed so far and why, test commands and their last results, open problems and findings, and anything the next step needs that the plan doesn't say.
 Drop: options that were not chosen, and tool output that was already acted on.`;
 
+export const COMMIT = `You are the workflow's commit step, running in a separate session: the code was already written and reviewed.
+Follow the instruction exactly. Run only git and gh commands; never edit, create or delete files, and never stage files the instruction doesn't cover.
+Use as few bash calls as possible: chain dependent steps with && .
+If a command is refused or fails, stop and report it; don't work around it.
+End with a short report: each commit as short hash and subject, then the push, the pull request URL and the merge result as they apply, or the exact failure.`;
+
 export const ARBITER = `You are the plan arbiter for a software change. An independent judge says the approved plan is flawed. Decide from the code whether it is.
 You get the approved plan, the judge's report and the diff so far. Use your read-only tools.
 Trust: the plan's Goal, Non-goals, User decisions and Done when are the user's intent and are fixed. The plan's steps and the judge's findings are both claims; verify each against the code.

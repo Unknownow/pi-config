@@ -21,6 +21,10 @@
       "model": "claude-bridge/claude-opus-5-5",
       "thinking": "high"
     },
+    "commit": {
+      "model": "claude-bridge/claude-sonnet-5-5",
+      "thinking": "low"
+    },
     "arbiter": {
       "model": "claude-bridge/claude-fable-5-1",
       "thinking": "high"
@@ -48,7 +52,8 @@
     "mergeMethod": "merge",
     "deleteBranch": true,
     "base": "",
-    "branchPrefix": "flow/"
+    "branchPrefix": "flow/",
+    "runner": "subagent"
   },
   "protectedBranches": [
     "main",

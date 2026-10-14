@@ -30,6 +30,8 @@ export interface RunOptions {
 	onEvent?: (event: SubagentEvent) => void;
 	/** MCP servers to connect in the subagent (name -> config), registered by `extension` (mcp-forward.ts). */
 	mcp?: { servers: Record<string, Record<string, unknown>>; extension: string };
+	/** Extra environment for the subagent process. */
+	env?: Record<string, string>;
 }
 
 export type SubagentEvent =
@@ -171,7 +173,7 @@ export async function runSubagent(opts: RunOptions): Promise<RunResult> {
 				cwd: opts.cwd,
 				shell: false,
 				stdio: ["ignore", "pipe", "pipe"],
-				env: opts.mcp ? { ...process.env, [FORWARD_ENV]: JSON.stringify(opts.mcp.servers) } : process.env,
+				env: { ...process.env, ...opts.env, ...(opts.mcp ? { [FORWARD_ENV]: JSON.stringify(opts.mcp.servers) } : {}) },
 			});
 			let buffer = "";
 

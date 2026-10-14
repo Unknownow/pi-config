@@ -14,7 +14,7 @@ import type { TokenWeights } from "./tokens.ts";
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 export type Thinking = (typeof THINKING_LEVELS)[number];
 
-export const ROLES = ["plan", "execute", "explore", "advisor", "judge", "arbiter", "escalate"] as const;
+export const ROLES = ["plan", "execute", "explore", "advisor", "judge", "arbiter", "commit", "escalate"] as const;
 export type Role = (typeof ROLES)[number];
 
 export interface RoleSpec {
@@ -51,6 +51,8 @@ export interface DeliveryConfig {
 	base: string;
 	/** Pull request mode on a protected branch or a detached HEAD commits on a new branch: this prefix + a slug of the plan title. */
 	branchPrefix: string;
+	/** Where the commit step runs: a fresh subagent (`commit` role) or the main session (compacted first at the handover). */
+	runner: "subagent" | "main";
 }
 
 /** "auto": the planner proposes stages itself when the work warrants them; "onRequest": only when the user asks for delivery in parts. */
@@ -136,6 +138,7 @@ export const DEFAULTS: WorkflowConfig = {
 		advisor: { model: "claude-bridge/claude-opus-5-5", thinking: "high" },
 		judge: { model: "claude-bridge/claude-opus-5-5", thinking: "high" },
 		arbiter: { model: "claude-bridge/claude-fable-5-1", thinking: "high" },
+		commit: { model: "claude-bridge/claude-sonnet-5-5", thinking: "low" },
 		escalate: { model: "claude-bridge/claude-fable-5-1", thinking: "high" },
 	},
 	startPhase: "plan",
@@ -150,7 +153,7 @@ export const DEFAULTS: WorkflowConfig = {
 	stagedPlans: "auto",
 	planRecap: "changes",
 	maxPlanRevisions: 2,
-	delivery: { ask: true, default: "commit", splitCommits: true, mergeMethod: "merge", deleteBranch: true, base: "", branchPrefix: "flow/" },
+	delivery: { ask: true, default: "commit", splitCommits: true, mergeMethod: "merge", deleteBranch: true, base: "", branchPrefix: "flow/", runner: "subagent" },
 	protectedBranches: ["main", "master"],
 	approvePattern:
 		"^((ok(ay)?|yes|yeah|yep|sure|alright|fine|great|good)[,.! ]+)?(then[, ]+)?(go|go ahead|go for it|do it|do that|do this|do them|do (it )?all( of (it|that|them))?|approved?|lgtm|ship it|execute( it| that| this| the plan)?|proceed|start|let'?s go|let'?s do it|run it|implement( it| that| this| the plan)?|build it|make it so)( for me)?( now)?( please)?[.! ]*$",
@@ -209,6 +212,7 @@ export function loadConfig(): { config: WorkflowConfig; error?: string } {
 		// A delivery that is not an object (the old autoCommit style, null) would crash the first approval.
 		if (!isObject(config.delivery)) config.delivery = DEFAULTS.delivery;
 		for (const k of ["base", "branchPrefix"] as const) if (typeof config.delivery[k] !== "string") config.delivery[k] = DEFAULTS.delivery[k];
+		if (config.delivery.runner !== "subagent" && config.delivery.runner !== "main") config.delivery.runner = DEFAULTS.delivery.runner;
 		if (typeof config.handoverCompactTokens !== "number" || !Number.isFinite(config.handoverCompactTokens) || config.handoverCompactTokens < 0) config.handoverCompactTokens = DEFAULTS.handoverCompactTokens;
 		if (config.stagedPlans !== "auto" && config.stagedPlans !== "onRequest") config.stagedPlans = DEFAULTS.stagedPlans;
 		if (config.planRecap !== "changes" && config.planRecap !== "always") config.planRecap = DEFAULTS.planRecap;

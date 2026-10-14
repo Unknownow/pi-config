@@ -24,7 +24,7 @@ import { countTokens, type Tok, type TokenWeights } from "./tokens.ts";
 import type { SubagentEvent } from "./subagent.ts";
 
 export type Stage = "plan" | "execute" | "judge" | "commit";
-export type SubRole = "explore" | "advisor" | "judge" | "arbiter";
+export type SubRole = "explore" | "advisor" | "judge" | "arbiter" | "commit";
 
 export interface RunView {
 	id: number;
