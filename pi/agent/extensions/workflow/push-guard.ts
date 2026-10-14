@@ -2,7 +2,9 @@
  * Execute phase: refuses git commands that publish or skip the hooks. Pushing is the
  * workflow's job, after the judge passes; the executor may not push, force-push, push
  * to a protected branch, or commit with --no-verify. Checked on the command text, so it
- * is a guardrail against a drifting executor, not a sandbox.
+ * is a guardrail against a drifting executor, not a sandbox. It also refuses `gh` commands that
+ * open or merge pull requests unless the flow's delivery allows them, and `gh pr merge --admin`
+ * / `--auto` and `gh pr review --approve` always.
  */
 import { gitSubcommand, KEYWORDS, parseCommands, WRAPPERS } from "./readonly-bash.ts";
 
@@ -12,6 +14,10 @@ export interface PushContext {
 	protectedBranches: string[];
 	/** True only while the workflow's own commit-and-push instruction is running. */
 	pushAllowed: boolean;
+	/** True only while the workflow's commit step runs with a pull-request delivery (pr or merge). */
+	prAllowed: boolean;
+	/** True only while the workflow's commit step runs with the merge delivery. */
+	mergeAllowed: boolean;
 }
 
 /** `a` is the long option `full` or an abbreviation of it, which git accepts. */
@@ -62,6 +68,7 @@ function wordsProblem(input: string[], o: PushContext): string | null {
 	const name = commandName(words[0]);
 	const args = words.slice(1);
 	if (["bash", "sh", "zsh", "dash", "ksh"].includes(name) && /^-[a-zA-Z]*c[a-zA-Z]*$/.test(args[0] ?? "") && args[1] !== undefined) return pushProblem(args[1], o);
+	if (name === "gh") return ghOnly(args, o);
 	if (name !== "git") return null;
 	const g = gitSubcommand(args);
 	if (!g) return null;
@@ -98,5 +105,46 @@ function pushOnly(rest: string[], o: PushContext): string | null {
 		return `git push from ${o.branch || "a detached HEAD"} (protected or no branch)`;
 	}
 	if (!o.pushAllowed) return "pushing is the workflow's job; it pushes after the judge passes";
+	return null;
+}
+
+/** gh: opening and merging pull requests is the workflow's job; --admin and approving are never allowed. */
+function ghOnly(args: string[], o: PushContext): string | null {
+	const positional: string[] = [];
+	for (let i = 0; i < args.length; i++) {
+		const a = args[i];
+		if (a === "-R" || a === "--repo") i++;
+		else if (!a.startsWith("-")) positional.push(a);
+	}
+	const [group, sub] = positional;
+	if (group === "api") return ghApi(args.slice(args.indexOf("api") + 1), o);
+	if (group !== "pr") return null;
+	if (sub === "review" && args.some((a) => isLong(a, "--approve") || shortHas(a, "a"))) return "approving a pull request is never allowed";
+	if (sub === "merge") {
+		if (args.some((a) => isLong(a, "--admin"))) return "gh pr merge --admin bypasses the repo's branch rules";
+		if (args.some((a) => isLong(a, "--auto"))) return "gh pr merge --auto is never used; the workflow merges after the checks pass";
+		if (!o.mergeAllowed) return "merging a pull request is the workflow's job, when this flow's delivery includes merge";
+	}
+	if (sub === "create" && !o.prAllowed) return "opening a pull request is the workflow's job, when this flow's delivery includes one";
+	return null;
+}
+
+function ghApi(rest: string[], o: PushContext): string | null {
+	let method = "";
+	let fields = false;
+	for (let i = 0; i < rest.length; i++) {
+		const a = rest[i];
+		if (a === "-X" || a === "--method") method = (rest[i + 1] ?? "").toUpperCase();
+		else if (a.startsWith("--method=")) method = a.slice(9).toUpperCase();
+		else if (/^-X./.test(a)) method = a.slice(2).toUpperCase();
+		else if (["-f", "-F", "--field", "--raw-field", "--input"].includes(a) || /^--(field|raw-field|input)=/.test(a) || /^-[fF]./.test(a)) fields = true;
+	}
+	const text = rest.join(" ");
+	if (/mergePullRequest|enablePullRequestAutoMerge/.test(text) && !o.mergeAllowed) return "merging a pull request through gh api is the workflow's job";
+	if (/createPullRequest/.test(text) && !o.prAllowed) return "opening a pull request through gh api is the workflow's job";
+	const effective = method || (fields ? "POST" : "GET");
+	if (effective === "GET") return null;
+	if (/(^|\/)pulls\/[^/\s]+\/merge\b/.test(text) && !o.mergeAllowed) return "merging a pull request through gh api is the workflow's job";
+	if (/(^|\/)pulls\/?(?=\s|\?|$)/.test(text) && effective === "POST" && !o.prAllowed) return "opening a pull request through gh api is the workflow's job";
 	return null;
 }

@@ -8,6 +8,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { PLAN_TOOLS } from "./readonly-tools.ts";
+import type { Delivery, MergeMethod } from "./delivery.ts";
 import type { TokenWeights } from "./tokens.ts";
 
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
@@ -35,6 +36,23 @@ export interface KnowledgeConfig {
 	judgeCheck: boolean;
 }
 
+export interface DeliveryConfig {
+	/** Ask at each plan approval; otherwise `default` is used. */
+	ask: boolean;
+	/** Listed first in the menu, chosen on Escape, and used when not asking or when executing without approval. */
+	default: Delivery;
+	/** One commit per function (feature, fix, refactor, ...) instead of one commit for the whole change. */
+	splitCommits: boolean;
+	/** `gh pr merge --<method>`. "merge" keeps the per-function commits. */
+	mergeMethod: MergeMethod;
+	/** `gh pr merge --delete-branch`: delete the branch, local and remote, after the merge. */
+	deleteBranch: boolean;
+	/** Pull request base; "" uses the branch the flow started on when it had to make a new branch, else the repo's default branch. */
+	base: string;
+	/** Pull request mode on a protected branch or a detached HEAD commits on a new branch: this prefix + a slug of the plan title. */
+	branchPrefix: string;
+}
+
 export interface WorkflowConfig {
 	roles: Record<Role, RoleSpec>;
 	/** Phase a new session starts in. */
@@ -53,8 +71,8 @@ export interface WorkflowConfig {
 	maxPlanRevisions: number;
 	/** Extra judge -> fix rounds spent on minor findings after a pass, before committing anyway. 0 commits at once. */
 	maxMinorRounds: number;
-	/** After the judge passes: ask, commit, commit and push, or do nothing. */
-	autoCommit: "ask" | "commit" | "push" | "off";
+	/** After the judge passes: commit, push, pull request, merge or nothing, chosen for each flow at plan approval. */
+	delivery: DeliveryConfig;
 	/** Branches never pushed automatically; the commit stays local. */
 	protectedBranches: string[];
 	/** In plan phase, a message matching this (case-insensitive, whole message) approves the plan. */
@@ -114,7 +132,7 @@ export const DEFAULTS: WorkflowConfig = {
 	finalizePlan: true,
 	planFlaw: "ask",
 	maxPlanRevisions: 2,
-	autoCommit: "push",
+	delivery: { ask: true, default: "commit", splitCommits: true, mergeMethod: "merge", deleteBranch: true, base: "", branchPrefix: "flow/" },
 	protectedBranches: ["main", "master"],
 	approvePattern:
 		"^((ok(ay)?|yes|yeah|yep|sure|alright|fine|great|good)[,.! ]+)?(then[, ]+)?(go|go ahead|go for it|do it|do that|do this|do them|do (it )?all( of (it|that|them))?|approved?|lgtm|ship it|execute( it| that| this| the plan)?|proceed|start|let'?s go|let'?s do it|run it|implement( it| that| this| the plan)?|build it|make it so)( for me)?( now)?( please)?[.! ]*$",
@@ -169,7 +187,11 @@ function merge<T>(base: T, over: unknown): T {
 export function loadConfig(): { config: WorkflowConfig; error?: string } {
 	if (!fs.existsSync(CONFIG_PATH)) return { config: DEFAULTS };
 	try {
-		return { config: merge(DEFAULTS, JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8"))) };
+		const config = merge(DEFAULTS, JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8")));
+		// A delivery that is not an object (the old autoCommit style, null) would crash the first approval.
+		if (!isObject(config.delivery)) config.delivery = DEFAULTS.delivery;
+		for (const k of ["base", "branchPrefix"] as const) if (typeof config.delivery[k] !== "string") config.delivery[k] = DEFAULTS.delivery[k];
+		return { config };
 	} catch (e) {
 		return { config: DEFAULTS, error: `${CONFIG_PATH}: ${(e as Error).message}` };
 	}

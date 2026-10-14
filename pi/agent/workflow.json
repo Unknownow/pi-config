@@ -38,7 +38,15 @@
   "finalizePlan": true,
   "planFlaw": "ask",
   "maxPlanRevisions": 2,
-  "autoCommit": "push",
+  "delivery": {
+    "ask": true,
+    "default": "commit",
+    "splitCommits": true,
+    "mergeMethod": "merge",
+    "deleteBranch": true,
+    "base": "",
+    "branchPrefix": "flow/"
+  },
   "protectedBranches": [
     "main",
     "master"

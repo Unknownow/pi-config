@@ -25,8 +25,12 @@ ${PLAN_BATCH}
 - A cheaper model executes the plan literally and an independent judge checks the result against it, so leave no decision open.`;
 }
 
-/** Sent after approval when finalizePlan is on: the planner's last job. */
-export const FINALIZE = `The user approved. Write the final execution plan now, for a less capable execute model that follows it literally and an independent judge that checks the result against it. Call tools only to confirm a detail.
+/** Sent after approval when finalizePlan is on: the planner's last job. `commits`: the plan also says how the change splits into commits. */
+export function finalize(commits: boolean): string {
+	const item = commits
+		? "\n9. Commits: how the change splits into commits by function, one line each: the commit message subject and its files. A change with one function is one commit; tests go with the code they test."
+		: "";
+	return `The user approved. Write the final execution plan now, for a less capable execute model that follows it literally and an independent judge that checks the result against it. Call tools only to confirm a detail.
 Use exactly this structure:
 ## Plan: <title>
 1. Goal and non-goals.
@@ -36,9 +40,10 @@ Use exactly this structure:
 5. Steps in order: files and functions (file:line anchors), the exact change, code for non-trivial logic, and why.
 6. Tests: each new or changed test (file, name, input, expected result), plus the commands to run and the expected output.
 7. Done when: acceptance criteria.
-8. Risks, rollback, and what not to touch.
+8. Risks, rollback, and what not to touch.${item}
 Goal, Non-goals, User decisions and Done when are the target. The judge and the arbiter treat them as fixed. Everything else will be checked against the code.
 Include every decision from the discussion; leave nothing for the executor to decide.`;
+}
 
 export const EXECUTE_PHASE = `## Workflow: EXECUTE phase
 You are the execution loop. Carry out the approved plan exactly, steps in order. No redesign, no extra features, no refactors outside the plan. You may fill in mechanical details (imports, types), but nothing that changes behaviour or design.

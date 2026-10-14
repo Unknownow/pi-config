@@ -27,9 +27,10 @@ plan is read-only:   bash refuses commands that change files, git or GitHub
 
 ## Hands-off run
 
-You discuss the plan with the planner. After every finished planner reply, an **Approve / Keep
-discussing** menu pops up (`planPrompt`). Right after such a reply you can also type a short approval
-as the whole message:
+You discuss the plan with the planner. After every finished planner reply, an **Approve** menu
+pops up (`planPrompt`): one `Approve → <delivery>` entry per delivery (see below), the default first, then
+Keep discussing. Right after such a reply you can also type a short approval
+as the whole message (a second menu then asks for the delivery; Escape takes the default):
 "go", "ok go", "lgtm", "do it", "do it for me", "yeah do that", "implement the plan", "ship it" and
 the like; see `approvePattern`. Longer messages ("do it but skip step 3") keep planning, and so does "yes, do that" when the last
 reply had no "Plan:" section or ended with a question (it answers a question). Everything
@@ -37,14 +38,27 @@ after approval runs on its own:
 
 ```
 "go" -> final plan (Opus) -> execute (Sonnet) -> judge (auto) -> FAIL: fix and judge again (menu after 5 rounds)
-                                                              -> PASS: commit -> push the current branch
+                                                              -> PASS: commit, split by function [-> push -> pull request -> merge, as chosen at approval]
 ```
 
+- **Delivery** (chosen for each flow at approval; `delivery` in workflow.json): `commit` only (default),
+  `push`, `pr` (also opens a pull request, or reuses the branch's open one), `merge` (also waits for the
+  checks with `gh pr checks --watch`, then `gh pr merge --merge --delete-branch`), or `off`. Commits are split by
+  function (`splitCommits`): one per feature, fix, refactor, config or docs change, with its tests; the
+  final plan lists them in its Commits section. In `pr`/`merge` mode on a protected branch or a detached
+  HEAD the commits go on a new branch, `branchPrefix` + a slug of the plan title, and the pull request
+  targets the branch the flow started on (`base` overrides it). It never approves a pull request and never
+  uses `--admin` or `--auto`: a merge GitHub blocks (review required, conflict, failed check) stops and is
+  reported. `/flow delivery <commit|push|pr|merge|off>` changes it for the current flow.
+  `mergeMethod` (`merge`), `deleteBranch` (`true`), `ask` (`true`) and `default` (`commit`) are configurable.
 - **Push guard:** it never pushes `protectedBranches` (`main`, `master`) or a detached HEAD. It
   commits there and tells you. It never force-pushes or uses `--no-verify`, and stops if a hook fails.
   This is enforced, not only asked for: while executing, a `git push` is refused unless it is the
   workflow's own commit-and-push step, and force pushes, deletes, `+refspec`s, pushes to a protected
   branch, `--no-verify` and changes to `core.hooksPath` / `GIT_CONFIG_*` are always refused (`push-guard.ts`).
+  `gh pr create` and `gh pr merge` (and `gh api` calls that open or merge one) are refused unless the flow's
+  delivery includes them and its commit step is running; `gh pr merge --admin` / `--auto` and `gh pr review --approve`
+  are always refused.
   Like the plan-phase checks it reads the command text: a guard against a drifting executor, not a sandbox.
 - **Minor findings:** a passed review with fixable minor findings goes back to the executor for up to `maxMinorRounds`
   (default 2, `0` commits at once) fix rounds, then commits anyway. Fix them, or dispute a wrong one. `[knowledge ...]` and
@@ -61,8 +75,8 @@ after approval runs on its own:
 - **Disputes:** if the executor thinks a finding is wrong it passes the finding and its file:line
   evidence in the judge tool's `disputes` parameter. The judge treats that as a claim, decides it from
   the code, and drops the finding only if the code shows the executor is right.
-- **Turning steps back to manual:** set `"autoJudge": "ask"`, `"autoCommit": "ask"` (or `"commit"` /
-  `"off"`), and `"planPrompt": false` for a "say go" hint instead of the Approve menu.
+- **Turning steps back to manual:** set `"autoJudge": "ask"`, `"delivery": { "default": "off" }`
+  (nothing is committed unless you pick it at approval), and `"planPrompt": false` for a "say go" hint instead of the Approve menu.
 
 ## The plan, the judge and the arbiter
 
@@ -136,7 +150,7 @@ its plan and hand over, even when you said "fix it" or "do it for me".
 - It is a guard against the planner drifting into execution, not a sandbox. The code checks are
   regexes: a determined disguise (a computed lookup on an alias of `require('fs')`, say) can still get
   past them.
-- Tests: `node --experimental-strip-types --test agent-end.test.ts readonly-bash.test.ts readonly-tools.test.ts tokens.test.ts push-guard.test.ts knowledge.test.ts mcp-forward.test.ts subagent.test.ts`.
+- Tests: `node --experimental-strip-types --test agent-end.test.ts readonly-bash.test.ts readonly-tools.test.ts tokens.test.ts push-guard.test.ts knowledge.test.ts mcp-forward.test.ts subagent.test.ts delivery.test.ts`.
 
 ## Team knowledge
 
@@ -190,8 +204,8 @@ from zero:
   commit   █░░░░░░░░░░░░░░░░░░░     20,000 (4,200)   2%  sonnet-5 20,000 (4,200)
 ```
 
-The outcome says whether the commit really landed (HEAD moved) and whether it was pushed (nothing
-ahead of upstream). `/flow tokens` shows the same card for the flow in progress.
+The outcome says whether the commit really landed (HEAD moved), how many commits, whether it was pushed (nothing
+ahead of upstream), and the pull request's state (`gh pr view`). `/flow tokens` shows the same card for the flow in progress.
 
 When escalated, the phase's node turns yellow and shows `fable-5-1·high ↑`. The explore, advisor and
 judge rows in the transcript stream the same rows while they run. Then they collapse to the result:
@@ -206,6 +220,7 @@ next run starts.
 | `/flow` | status: phase, the model for each role, config path |
 | `/flow plan` / `execute` / `off` | switch phase (`off` leaves the model alone) |
 | `/flow approve` | approve the plan: switch to execute and start (also offered when a plan ends) |
+| `/flow delivery <commit\|push\|pr\|merge\|off>` | what happens after the judge passes, for the current flow |
 | `/flow escalate` (`fable`) / `/flow back` (`opusplan`) | manual escalation and return |
 | `/flow judge` | review the current diff now |
 | `/flow tokens` | token breakdown of the current flow so far |

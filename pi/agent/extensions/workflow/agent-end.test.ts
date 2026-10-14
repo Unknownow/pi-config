@@ -103,7 +103,7 @@ test("a passed diff gets one minor-fix round, not after commit, flow end or an e
 	assert.equal(minorFixOpen(open), true);
 	assert.equal(minorFixOpen({ ...open, committed: true }), false);
 	assert.equal(minorFixOpen({ ...open, commitPending: true }), false);
-	// autoCommit off: the flow ended on this diff, so a later agent_end must not ask again
+	// delivery off: the flow ended on this diff, so a later agent_end must not ask again
 	assert.equal(minorFixOpen({ ...open, summarized: true }), false);
 	assert.equal(minorFixOpen({ ...open, sentFor: "h" }), false);
 	assert.equal(minorFixOpen({ ...open, sentFor: "other" }), true);

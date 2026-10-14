@@ -49,6 +49,7 @@ import {
 import { afterPass, fixableFindings, hasPlanFlaw, isPlanReady, judgeCapReached, minorFixOpen, parseArbiter, shouldResume, skipJudge } from "./agent-end.ts";
 import { countTokens, type Tok } from "./tokens.ts";
 import * as prompts from "./prompts.ts";
+import { branchName, type Delivery, DELIVERIES, DELIVERY_LABELS, deliveryChoices, deliveryInstruction, deliveryMenuLabel, deliveryOutcome, freshPr, isDelivery, planTitle, type PrState } from "./delivery.ts";
 import { pushProblem } from "./push-guard.ts";
 import { planToolProblem, planToolRefused } from "./readonly-tools.ts";
 import { addUsage, emptyUsage, mapLimit, type RunResult, runSubagent } from "./subagent.ts";
@@ -103,8 +104,10 @@ interface FlowState {
 	/** The current flow's breakdown, until its summary is shown. */
 	flow?: FlowUsage;
 	flowStarted?: number;
-	/** Set when the commit (and push) instruction goes out; the run after it ends the flow. */
-	commitPending?: { mode: "commit" | "push"; head: string };
+	/** Set when the commit step's instruction goes out; the run after it ends the flow. `branch`: the branch the commits go on. `prBefore`: a closed or merged PR gh already showed for the branch before the step ran; it is not this flow's. */
+	commitPending?: { mode: Exclude<Delivery, "off">; head: string; branch?: string; prBefore?: number };
+	/** What happens after the judge passes in this flow, chosen at approval; unset means `delivery.default`. */
+	delivery?: Delivery;
 	/** Passed diffs whose flow already ended (or will, at the commit run's end). */
 	summarizedPasses?: string[];
 	/** The plan the user approved (the final plan, plus arbiter amendments); the judge and the arbiter read it. */
@@ -309,20 +312,24 @@ export default function workflow(pi: ExtensionAPI) {
 		state.finalizing = undefined;
 		state.planRevisions = undefined;
 		state.pendingPlanFlaw = undefined;
-		if (phase === "plan") state.approvedPlan = undefined;
+		if (phase === "plan") {
+			state.approvedPlan = undefined;
+			state.delivery = undefined;
+		}
 		consecutiveErrors = 0;
 		if (phase !== "off") await applyRole(ctx, phase);
 		persist();
 		updateStatus(ctx);
 	}
 
-	async function approve(ctx: ExtensionContext): Promise<void> {
+	async function approve(ctx: ExtensionContext, delivery?: Delivery): Promise<void> {
+		state.delivery = delivery ?? (await chooseDelivery(ctx));
 		if (cfg.finalizePlan) {
 			// One more planner reply, the final execution plan, before the execute model starts.
 			planReady = false;
 			state.finalizing = true;
 			persist();
-			pi.sendMessage({ customType: "workflow-finalize", content: prompts.FINALIZE, display: true }, { triggerTurn: true, deliverAs: "followUp" });
+			pi.sendMessage({ customType: "workflow-finalize", content: prompts.finalize(cfg.delivery.splitCommits), display: true }, { triggerTurn: true, deliverAs: "followUp" });
 			return;
 		}
 		await setPhase(ctx, "execute");
@@ -346,6 +353,26 @@ export default function workflow(pi: ExtensionAPI) {
 		persist();
 		updateStatus(ctx);
 		ctx.ui.notify(`workflow: back to ${state.phase}${state.phase === "off" ? "" : ` on ${describeRole(cfg.roles[state.phase])}`}`, "info");
+	}
+
+	function defaultDelivery(): Delivery {
+		return isDelivery(cfg.delivery.default) ? cfg.delivery.default : "commit";
+	}
+
+	/** The menu's first and Escape choice: the one set with /flow delivery, else the configured default. */
+	function menuDefault(): Delivery {
+		return state.delivery ?? defaultDelivery();
+	}
+
+	/** Asks what happens after the judge passes (default first); Escape, no UI or `ask: false` gives the default. */
+	async function chooseDelivery(ctx: ExtensionContext): Promise<Delivery> {
+		const def = menuDefault();
+		if (!cfg.delivery.ask || !ctx.hasUI) return def;
+		const options = deliveryChoices(def);
+		const labels = options.map((d) => deliveryMenuLabel(d, def));
+		const choice = await ctx.ui.select("After the judge passes", labels);
+		const i = choice ? labels.indexOf(choice) : -1;
+		return i >= 0 ? options[i] : def;
 	}
 
 	// ----------------------------------------------------------------------
@@ -834,17 +861,26 @@ export default function workflow(pi: ExtensionAPI) {
 				if (["shell", "bash", "sh", "zsh", "powershell", "pwsh", "ps1"].includes(language)) texts.push(code);
 				else if (/\bgit\b/.test(code) && /\bpush\b|\bcommit\b|--no-verify|hooksPath|GIT_CONFIG/i.test(code)) {
 					return { block: true, reason: "Refused: code that runs git push, skips hooks or changes hooks. The workflow commits and pushes after the judge passes." };
+				} else if (/\bgh\b/.test(code) && /\b(pr|api)\b/.test(code)) {
+					return { block: true, reason: "Refused: code that runs gh pr or gh api. The workflow opens and merges pull requests after the judge passes." };
 				}
 			}
 			else if (/(^|__)ctx_batch_execute$/.test(event.toolName) && Array.isArray(input.commands)) {
 				for (const c of input.commands) texts.push(String((c as { command?: unknown })?.command ?? ""));
 			}
-			const gitTexts = texts.filter((t) => /\bgit\b/i.test(t));
+			const gitTexts = texts.filter((t) => /\bgit\b|\bgh\b/i.test(t));
 			if (gitTexts.length === 0) return;
 			const branch = (await git(ctx.cwd, "rev-parse", "--abbrev-ref", "HEAD")).stdout.trim();
 			for (const text of gitTexts) {
-				const problem = pushProblem(text, { branch, protectedBranches: cfg.protectedBranches, pushAllowed: state.commitPending?.mode === "push" });
-				if (problem) return { block: true, reason: `Refused: ${problem}. Do not push or skip hooks yourself; the workflow commits and pushes after the judge passes.` };
+				const mode = state.commitPending?.mode;
+				const problem = pushProblem(text, {
+					branch,
+					protectedBranches: cfg.protectedBranches,
+					pushAllowed: mode === "push" || mode === "pr" || mode === "merge",
+					prAllowed: mode === "pr" || mode === "merge",
+					mergeAllowed: mode === "merge",
+				});
+				if (problem) return { block: true, reason: `Refused: ${problem}. Do not push, open or merge pull requests, or skip hooks yourself; the workflow does that after the judge passes, as this flow's delivery says.` };
 			}
 			return;
 		}
@@ -966,18 +1002,19 @@ export default function workflow(pi: ExtensionAPI) {
 		if (state.phase !== "plan" || event.source === "extension" || event.streamingBehavior) return { action: "continue" };
 		// Without a plan on screen, "yes, do that" answers a question; it doesn't approve anything.
 		if (!planReady || !approveRe().test(event.text.trim())) return { action: "continue" };
+		state.delivery = await chooseDelivery(ctx);
 		if (cfg.finalizePlan) {
 			// Same as the menu: the planner writes the final plan first, in its reply to this message.
 			planReady = false;
 			state.finalizing = true;
 			persist();
-			ctx.ui.notify("workflow: plan approved, the planner writes the final plan", "info");
-			return { action: "transform", text: `${event.text.trim()}\n\n${prompts.FINALIZE}` };
+			ctx.ui.notify(`workflow: plan approved (then ${DELIVERY_LABELS[state.delivery]}), the planner writes the final plan`, "info");
+			return { action: "transform", text: `${event.text.trim()}\n\n${prompts.finalize(cfg.delivery.splitCommits)}` };
 		}
 		await setPhase(ctx, "execute");
 		state.approvedPlan = lastPlanText || undefined;
 		persist();
-		ctx.ui.notify(`workflow: plan approved, executing on ${describeRole(cfg.roles.execute)}`, "info");
+		ctx.ui.notify(`workflow: plan approved, executing on ${describeRole(cfg.roles.execute)}, then ${DELIVERY_LABELS[state.delivery]}`, "info");
 		return { action: "transform", text: `${event.text.trim()}\n\n${APPROVED}` };
 	});
 
@@ -1035,11 +1072,12 @@ export default function workflow(pi: ExtensionAPI) {
 				ctx.ui.notify(`workflow: say "go" to execute on ${describeRole(cfg.roles.execute)}, or keep discussing.`, "info");
 				return;
 			}
-			const choice = await ctx.ui.select("Plan phase", [
-				`Approve: execute the plan on ${describeRole(cfg.roles.execute)}`,
-				"Keep discussing",
-			]);
-			if (choice?.startsWith("Approve")) await approve(ctx);
+			const def = menuDefault();
+			const options = cfg.delivery.ask ? deliveryChoices(def) : [def];
+			const labels = options.map((d) => `Approve → ${deliveryMenuLabel(d, def)}`);
+			const choice = await ctx.ui.select(`Plan phase · execute on ${describeRole(cfg.roles.execute)}`, [...labels, "Keep discussing"]);
+			const i = choice ? labels.indexOf(choice) : -1;
+			if (i >= 0) await approve(ctx, options[i]);
 			return;
 		}
 
@@ -1071,20 +1109,40 @@ export default function workflow(pi: ExtensionAPI) {
 	});
 
 	async function summarizeCommit(ctx: ExtensionContext): Promise<void> {
-		const { mode, head } = state.commitPending!;
+		const { mode, head, branch, prBefore } = state.commitPending!;
 		state.commitPending = undefined;
 		state.minorRounds = 0;
 		state.minorSentFor = undefined;
-		const now = (await git(ctx.cwd, "rev-parse", "HEAD")).stdout.trim();
+		state.delivery = undefined; // the flow is over; the next one chooses again
+		// The commits' branch; HEAD when detached, unknown (state saved by an older version) or gone (deleted after the merge).
+		const named = !!branch && branch !== "HEAD" && (await git(ctx.cwd, "rev-parse", "--verify", "--quiet", `refs/heads/${branch}`)).code === 0;
+		const rev = named ? (branch as string) : "HEAD";
+		const now = (await git(ctx.cwd, "rev-parse", rev)).stdout.trim();
+		const pr = (mode === "pr" || mode === "merge") && branch && branch !== "HEAD" ? freshPr(await prState(ctx.cwd, branch), prBefore) : null;
 		let shown: boolean;
-		if (!now || now === head) shown = summarizeFlow("commit step ended without a commit", false);
-		else if (mode === "commit") shown = summarizeFlow("committed", true);
+		if (pr?.state !== "MERGED" && (!now || now === head)) shown = summarizeFlow("commit step ended without a commit", false);
 		else {
-			const ahead = await git(ctx.cwd, "rev-list", "--count", "@{u}..HEAD");
-			const pushed = ahead.code === 0 && ahead.stdout.trim() === "0";
-			shown = summarizeFlow(pushed ? "committed and pushed" : "committed, not pushed", pushed);
+			// A merge that deleted the branch leaves HEAD on the base branch, whose count would include other commits.
+			const counted = named || !branch || branch === "HEAD" ? await git(ctx.cwd, "rev-list", "--count", `${head}..${rev}`) : undefined;
+			const commits = counted?.code === 0 ? Number(counted.stdout.trim()) : undefined;
+			const ahead = mode === "commit" ? undefined : await git(ctx.cwd, "rev-list", "--count", `${named ? branch : ""}@{u}..${rev}`);
+			const pushed = ahead?.code === 0 && ahead.stdout.trim() === "0";
+			const outcome = deliveryOutcome(mode, commits, pushed, pr);
+			shown = summarizeFlow(outcome.text, outcome.ok);
 		}
 		if (!shown) persist(); // commitPending was cleared
+	}
+
+	/** The pull request for `branch` as gh sees it, or null when there is none or gh fails. */
+	async function prState(cwd: string, branch: string): Promise<PrState | null> {
+		try {
+			const r = await pi.exec("gh", ["pr", "view", branch, "--json", "number,state"], { cwd, timeout: 30_000 });
+			if (r.code !== 0) return null;
+			const j = JSON.parse(r.stdout) as { number?: unknown; state?: unknown };
+			return typeof j.number === "number" && typeof j.state === "string" ? { number: j.number, state: j.state } : null;
+		} catch {
+			return null;
+		}
 	}
 
 	/** diff ready -> judge -> fix loop, or commit (and push) once it passes. */
@@ -1302,10 +1360,11 @@ export default function workflow(pi: ExtensionAPI) {
 		state.summarizedPasses = [...(state.summarizedPasses ?? []).filter((h) => h !== hash), hash].slice(-20);
 	}
 
-	/** The flow ends at a pass that won't be committed (autoCommit off, or "Not yet"). */
+	/** The flow ends at a pass that won't be committed (delivery off, or Stop at the knowledge prompt). */
 	function summarizePass(hash: string): void {
 		state.minorRounds = 0;
 		state.minorSentFor = undefined;
+		state.delivery = undefined;
 		if (state.summarizedPasses?.includes(hash)) return;
 		markPassSummarized(hash);
 		view.stage = "execute";
@@ -1315,9 +1374,10 @@ export default function workflow(pi: ExtensionAPI) {
 	/** Diffs already handed to the commit step, so a pass is committed once. */
 	const committedDiffs = new Set<string>();
 
-	/** Sends the commit (and push) instruction, prefixed with `report`. False if nothing was sent. */
+	/** Sends the commit step's instruction (commit, push, pull request, merge, as this flow's delivery says), prefixed with `report`. False if nothing was sent. */
 	async function finishPassed(ctx: ExtensionContext, hash: string, report?: string): Promise<boolean> {
-		if (cfg.autoCommit === "off" || committedDiffs.has(hash)) return false;
+		const chosen = state.delivery ?? defaultDelivery();
+		if (chosen === "off" || committedDiffs.has(hash)) return false;
 		committedDiffs.add(hash);
 		const knowledge = state.lastKnowledge?.hash === hash ? state.lastKnowledge : undefined;
 		// D5: a pass without a knowledge check commits only when you say so.
@@ -1326,35 +1386,58 @@ export default function workflow(pi: ExtensionAPI) {
 			if (choice !== "Commit anyway") return false;
 		}
 
-		let mode: "commit" | "push" = cfg.autoCommit === "commit" ? "commit" : "push";
-		if (cfg.autoCommit === "ask") {
-			const choice = await ctx.ui.select("Judge passed", ["Commit and push", "Commit", "Not yet"]);
-			if (!choice || choice === "Not yet") return false;
-			mode = choice === "Commit" ? "commit" : "push";
-		}
-
-		const branch = (await git(ctx.cwd, "rev-parse", "--abbrev-ref", "HEAD")).stdout.trim();
-		if (mode === "push" && (!branch || branch === "HEAD" || cfg.protectedBranches.includes(branch))) {
+		let mode: Exclude<Delivery, "off"> = chosen;
+		const current = (await git(ctx.cwd, "rev-parse", "--abbrev-ref", "HEAD")).stdout.trim();
+		const unsafe = !current || current === "HEAD" || cfg.protectedBranches.includes(current);
+		let branch = current;
+		let from: string | undefined;
+		if (unsafe && mode === "push") {
 			mode = "commit";
-			ctx.ui.notify(`workflow: on ${branch || "a detached HEAD"}, committing without pushing`, "warning");
+			ctx.ui.notify(`workflow: on ${current || "a detached HEAD"}, committing without pushing`, "warning");
+		} else if (unsafe && (mode === "pr" || mode === "merge")) {
+			// A pull request never comes from a protected branch; the commits go on a new one.
+			from = current || "HEAD";
+			branch = await freeBranchName(ctx.cwd, branchName(cfg.delivery.branchPrefix, planTitle(state.approvedPlan), new Date()));
+			ctx.ui.notify(`workflow: on ${current || "a detached HEAD"}, committing on new branch ${branch}`, "info");
+		}
+		const base = cfg.delivery.base || (from && from !== "HEAD" ? from : "");
+
+		// An old closed or merged PR on this branch must not pass as this flow's (gh pr view falls back to it when none is open).
+		let prBefore: number | undefined;
+		if ((mode === "pr" || mode === "merge") && !from) {
+			const old = await prState(ctx.cwd, branch);
+			if (old && old.state !== "OPEN") prBefore = old.number;
 		}
 
 		view.stage = "commit";
 		view.changed();
-		state.commitPending = { mode, head: (await git(ctx.cwd, "rev-parse", "HEAD")).stdout.trim() };
+		state.commitPending = { mode, head: (await git(ctx.cwd, "rev-parse", "HEAD")).stdout.trim(), branch, prBefore };
 		markPassSummarized(hash); // the commit run's end summarizes this flow
 		persist();
-		const commit =
-			"The judge passed. Commit exactly the reviewed changes now: stage the changed and new files from the diff without editing anything first, and write a clear message that follows the repo's conventions.";
-		const push = ` Then push branch \`${branch}\` (\`git push\`, or \`git push -u origin ${branch}\` if it has no upstream).`;
-		const rules = " Never force-push or use --no-verify. If a hook, the commit or the push fails, stop and report it instead of working around it.";
-		const block = knowledge ? deviationBlock(knowledge.deviations) : "";
-		const instruction = commit + (mode === "push" ? push : "") + rules + (block ? `\n\nEnd the commit message body with this block, unchanged:\n\n${block}` : "");
+		const instruction = deliveryInstruction({
+			mode,
+			branch,
+			from,
+			base,
+			split: cfg.delivery.splitCommits,
+			mergeMethod: cfg.delivery.mergeMethod,
+			deleteBranch: cfg.delivery.deleteBranch,
+			deviations: knowledge ? deviationBlock(knowledge.deviations) : "",
+		});
 		pi.sendMessage(
 			{ customType: "workflow-commit", content: report ? `${report}\n\n${instruction}` : instruction, display: true },
 			{ triggerTurn: true, deliverAs: "followUp" },
 		);
 		return true;
+	}
+
+	/** `name`, or `name-2`, `name-3`, ... when a local branch already has it. */
+	async function freeBranchName(cwd: string, name: string): Promise<string> {
+		for (let n = 1; n < 100; n++) {
+			const candidate = n === 1 ? name : `${name}-${n}`;
+			if ((await git(cwd, "rev-parse", "--verify", "--quiet", `refs/heads/${candidate}`)).code !== 0) return candidate;
+		}
+		return `${name}-${Date.now()}`;
 	}
 
 	pi.on("session_start", async (event, ctx) => {
@@ -1404,6 +1487,7 @@ export default function workflow(pi: ExtensionAPI) {
 		{ value: "status", label: "status - phase, models, config path" },
 		{ value: "plan", label: "plan - plan phase (read-only, planner model)" },
 		{ value: "approve", label: "approve - approve the plan, switch to execute and start" },
+		{ value: "delivery", label: "delivery <commit|push|pr|merge|off> - what happens after the judge passes, this flow" },
 		{ value: "execute", label: "execute - execute phase without sending anything" },
 		{ value: "off", label: "off - leave the workflow; model stays as is" },
 		{ value: "escalate", label: "escalate - switch to the escalate model (Fable)" },
@@ -1417,7 +1501,7 @@ export default function workflow(pi: ExtensionAPI) {
 	function statusText(): string {
 		const lines = [
 			`phase      ${state.phase}${state.escalated ? " (escalated)" : ""}`,
-			`judge     ${state.judgeRounds} failed round(s); auto=${cfg.autoJudge}; then ${cfg.autoCommit}`,
+			`judge     ${state.judgeRounds} failed round(s); auto=${cfg.autoJudge}; then ${DELIVERY_LABELS[state.delivery ?? defaultDelivery()]}${state.delivery ? "" : " (default)"}`,
 			`guard     compact at ${cfg.contextGuardTokens || "off"} tokens`,
 			`tokens    ${STAGES.map((s) => `${s} ${fmtTok(view.sessionTokens(s))}`).join(" · ")} · session total ${fmtTok(STAGES.reduce((n, s) => ({ raw: n.raw + view.sessionTokens(s).raw, cost: n.cost + view.sessionTokens(s).cost }), { raw: 0, cost: 0 }))}`,
 			"",
@@ -1435,6 +1519,9 @@ export default function workflow(pi: ExtensionAPI) {
 			const parts = prefix.trimStart().split(/\s+/);
 			if (parts[0] === "model" && parts.length === 2) {
 				return ROLES.filter((r) => r.startsWith(parts[1])).map((r) => ({ value: `model ${r} `, label: `${r} (${describeRole(cfg.roles[r])})` }));
+			}
+			if (parts[0] === "delivery" && parts.length === 2) {
+				return DELIVERIES.filter((d) => d.startsWith(parts[1])).map((d) => ({ value: `delivery ${d}`, label: `${d} - ${DELIVERY_LABELS[d]}` }));
 			}
 			const matches = SUBCOMMANDS.filter((c) => c.value.startsWith(prefix.trim()));
 			return matches.length > 0 ? matches : null;
@@ -1454,6 +1541,21 @@ export default function workflow(pi: ExtensionAPI) {
 				case "approve":
 					await approve(ctx);
 					return;
+				case "delivery": {
+					const want = rest[0]?.toLowerCase();
+					if (!want) {
+						ctx.ui.notify(`workflow: after the judge passes: ${DELIVERY_LABELS[state.delivery ?? defaultDelivery()]}. Usage: /flow delivery <${DELIVERIES.join("|")}>`, "info");
+						return;
+					}
+					if (!isDelivery(want)) {
+						ctx.ui.notify(`Usage: /flow delivery <${DELIVERIES.join("|")}>`, "warning");
+						return;
+					}
+					state.delivery = want;
+					persist();
+					ctx.ui.notify(`workflow: after the judge passes: ${DELIVERY_LABELS[want]} (this flow)`, "info");
+					return;
+				}
 				case "escalate":
 				case "fable":
 					await escalate(ctx);

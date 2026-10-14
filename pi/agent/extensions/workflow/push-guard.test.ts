@@ -3,9 +3,11 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { pushProblem } from "./push-guard.ts";
 
-const feature = { branch: "feat", protectedBranches: ["main", "master"], pushAllowed: false };
+const feature = { branch: "feat", protectedBranches: ["main", "master"], pushAllowed: false, prAllowed: false, mergeAllowed: false };
 const allowed = { ...feature, pushAllowed: true };
 const onMain = { ...allowed, branch: "main" };
+const prOk = { ...allowed, prAllowed: true };
+const mergeOk = { ...prOk, mergeAllowed: true };
 
 const refused: [string, typeof feature][] = [
 	["git push -f", allowed],
@@ -45,6 +47,19 @@ const refused: [string, typeof feature][] = [
 	["git $c -m x", feature],
 	["git com''mit -nm x", feature],
 	["git @a", feature],
+	["gh pr merge 12 --merge", prOk],
+	["gh pr merge 12 --merge --admin", mergeOk],
+	["gh pr create --fill", allowed],
+	["gh pr review 12 --approve", mergeOk],
+	["gh pr review 12 -a", mergeOk],
+	["gh api -X PUT repos/o/r/pulls/12/merge", prOk],
+	["gh api repos/o/r/pulls -f title=x -f head=b -f base=main", allowed],
+	["gh api graphql -f query='mutation { mergePullRequest(input: {}) { clientMutationId } }'", prOk],
+	["bash -c 'gh pr merge 1'", allowed],
+	["git status && gh pr create", feature],
+	["gh pr -R o/r merge 1", prOk],
+	["gh pr --repo o/r create --fill", allowed],
+	["gh pr merge 1 --auto --merge", mergeOk],
 ];
 for (const [cmd, ctx] of refused) test(`refuses: ${cmd}`, () => assert.notEqual(pushProblem(cmd, ctx), null));
 
@@ -58,5 +73,14 @@ const fine: [string, typeof feature][] = [
 	["echo git push", feature],
 	["git commit -m 'set core.hooksPath on import'", feature],
 	["git config user.name x", feature],
+	["gh pr create --head flow/x --title t --body b", prOk],
+	["gh pr merge 12 --merge --delete-branch", mergeOk],
+	["gh pr view feat --json number,state", feature],
+	["gh pr checks 12 --watch --fail-fast", feature],
+	["gh api repos/o/r/pulls/12/merge", feature],
+	["gh api repos/o/r/pulls", feature],
+	["gh pr review 12 --comment -b ok", feature],
+	["gh pr -R o/r view 1 --json state", feature],
+	["gh pr merge 12 --merge --delete-branch -R o/r", mergeOk],
 ];
 for (const [cmd, ctx] of fine) test(`allows: ${cmd}`, () => assert.equal(pushProblem(cmd, ctx), null));
