@@ -66,6 +66,11 @@ export function judgeCapReached(rounds: number, max: number): boolean {
 	return max > 0 && rounds >= max;
 }
 
+/** The phase to go back to when a flow ends: plan, from execute, when returnToPlan is on. */
+export function phaseAfterFlow(returnToPlan: boolean, phase: "off" | "plan" | "execute"): "plan" | undefined {
+	return returnToPlan && phase === "execute" ? "plan" : undefined;
+}
+
 /** The judge reports that the approved plan itself is flawed: a finding line tagged [plan-flaw]. */
 export function hasPlanFlaw(text: string): boolean {
 	return /^\S.*\s-\s*(blocker|major|minor)\s*-\s*\[plan-flaw\]/im.test(text);

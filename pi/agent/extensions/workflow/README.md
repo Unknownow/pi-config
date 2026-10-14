@@ -18,7 +18,7 @@ plan is read-only:   bash refuses commands that change files, git or GitHub
 | Role | Runs as | When |
 |---|---|---|
 | `plan` | main session model; edit/write off, bash read-only | new sessions start here (`startPhase`). Discuss, investigate, agree; after approval it writes the final execution plan (`finalizePlan`) |
-| `execute` | main session model | after you approve the plan |
+| `execute` | main session model | after you approve the plan; when the flow ends (delivered, passed without a commit, or stopped) it goes back to `plan` (`returnToPlan`) |
 | `explore` | `explore` tool, parallel sub-`pi` processes | plan and execute send open questions and multi-file searches to it; it decides how much to read and answers with `Answer:` plus `Evidence:` (file:line). Known files are read directly. Judge and advisor do not use it |
 | `advisor` | `advisor` tool, sub-`pi` with the whole transcript | choosing an approach, after an error repeats (auto-nudged after `repeatedErrorThreshold` failures), before "done" |
 | `judge` | `judge` tool, sub-`pi` with the git diff | the diff is ready; when a run ends with an unreviewed diff it asks (`autoJudge`) |
@@ -77,6 +77,7 @@ after approval runs on its own:
   the code, and drops the finding only if the code shows the executor is right.
 - **Turning steps back to manual:** set `"autoJudge": "ask"`, `"delivery": { "default": "off" }`
   (nothing is committed unless you pick it at approval), and `"planPrompt": false` for a "say go" hint instead of the Approve menu.
+  `"returnToPlan": false` stays in execute after a flow ends.
 
 ## The plan, the judge and the arbiter
 
@@ -89,6 +90,7 @@ after approval runs on its own:
   and the judge checks the result against it. With `finalizePlan: false` the last `Plan:` reply is used.
 - **Execute** follows the plan in order and writes the code within its contracts.
   It stops and says so when a step cannot be done as written. It never commits or pushes.
+  When the flow ends it switches back to the plan phase (`returnToPlan`, default on).
 - **The judge** runs in its own session. It sees the approved plan and the diff, not the discussion,
   and assumes the change is wrong. What it trusts:
 

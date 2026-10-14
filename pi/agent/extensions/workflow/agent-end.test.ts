@@ -1,7 +1,7 @@
 // node --test agent-end.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { afterPass, fixableFindings, hasPlanFlaw, isPlanReady, judgeCapReached, minorFixOpen, parseArbiter, shouldResume, skipJudge } from "./agent-end.ts";
+import { afterPass, fixableFindings, hasPlanFlaw, isPlanReady, judgeCapReached, minorFixOpen, parseArbiter, phaseAfterFlow, shouldResume, skipJudge } from "./agent-end.ts";
 
 const empty = { role: "assistant", content: [] };
 
@@ -115,4 +115,11 @@ test("a pass with findings is fixed while rounds are left, then committed", () =
 	assert.equal(afterPass(1, 1, 2), "fix");
 	assert.equal(afterPass(1, 2, 2), "commit");
 	assert.equal(afterPass(3, 0, 0), "commit");
+});
+
+test("a finished flow returns to plan only from execute, when enabled", () => {
+	assert.equal(phaseAfterFlow(true, "execute"), "plan");
+	assert.equal(phaseAfterFlow(false, "execute"), undefined);
+	assert.equal(phaseAfterFlow(true, "plan"), undefined);
+	assert.equal(phaseAfterFlow(true, "off"), undefined);
 });

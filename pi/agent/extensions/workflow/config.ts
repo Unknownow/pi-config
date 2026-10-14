@@ -65,6 +65,8 @@ export interface WorkflowConfig {
 	maxJudgeRounds: number;
 	/** After approval the planner writes one more reply, the final execution plan, which is stored and given to the judge. */
 	finalizePlan: boolean;
+	/** When a flow ends (delivered, passed without a commit, or stopped), switch back to the plan phase. */
+	returnToPlan: boolean;
 	/** The judge says the approved plan itself is flawed: "ask" you, or let the "auto" arbiter decide. */
 	planFlaw: "ask" | "auto";
 	/** Amendments the arbiter may add to the plan in one flow before it asks you instead. */
@@ -130,6 +132,7 @@ export const DEFAULTS: WorkflowConfig = {
 	maxJudgeRounds: 5,
 	maxMinorRounds: 2,
 	finalizePlan: true,
+	returnToPlan: true,
 	planFlaw: "ask",
 	maxPlanRevisions: 2,
 	delivery: { ask: true, default: "commit", splitCommits: true, mergeMethod: "merge", deleteBranch: true, base: "", branchPrefix: "flow/" },

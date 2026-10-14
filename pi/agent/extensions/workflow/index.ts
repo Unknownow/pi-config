@@ -46,7 +46,7 @@ import {
 	type Thinking,
 	type WorkflowConfig,
 } from "./config.ts";
-import { afterPass, fixableFindings, hasPlanFlaw, isPlanReady, judgeCapReached, minorFixOpen, parseArbiter, shouldResume, skipJudge } from "./agent-end.ts";
+import { afterPass, fixableFindings, hasPlanFlaw, isPlanReady, judgeCapReached, minorFixOpen, parseArbiter, phaseAfterFlow, shouldResume, skipJudge } from "./agent-end.ts";
 import { countTokens, type Tok } from "./tokens.ts";
 import * as prompts from "./prompts.ts";
 import { branchName, type Delivery, DELIVERIES, DELIVERY_LABELS, deliveryChoices, deliveryInstruction, deliveryMenuLabel, deliveryOutcome, freshPr, isDelivery, planTitle, type PrState } from "./delivery.ts";
@@ -257,6 +257,13 @@ export default function workflow(pi: ExtensionAPI) {
 		pi.appendEntry(SUMMARY_ENTRY, view.endFlow(outcome, ok));
 		persist();
 		return true;
+	}
+
+	/** A flow has ended: back to the plan phase when returnToPlan says so. */
+	async function endFlow(ctx: ExtensionContext): Promise<void> {
+		if (phaseAfterFlow(cfg.returnToPlan, state.phase) !== "plan") return;
+		await setPhase(ctx, "plan");
+		ctx.ui.notify(`workflow: flow done, back to planning on ${describeRole(cfg.roles.plan)}`, "info");
 	}
 
 	function updateStatus(ctx: ExtensionContext): void {
@@ -1104,7 +1111,10 @@ export default function workflow(pi: ExtensionAPI) {
 				}
 			}
 		}
-		if (state.commitPending) await summarizeCommit(ctx);
+		if (state.commitPending) {
+			await summarizeCommit(ctx);
+			if (state.phase !== "execute") return; // the flow ended and went back to planning
+		}
 		await reviewDiff(ctx, false);
 	});
 
@@ -1131,6 +1141,7 @@ export default function workflow(pi: ExtensionAPI) {
 			shown = summarizeFlow(outcome.text, outcome.ok);
 		}
 		if (!shown) persist(); // commitPending was cleared
+		await endFlow(ctx);
 	}
 
 	/** The pull request for `branch` as gh sees it, or null when there is none or gh fails. */
@@ -1168,7 +1179,7 @@ export default function workflow(pi: ExtensionAPI) {
 				hash: diff.hash,
 			});
 			if (open && fixMinorFindings(prior, diff.hash)) return;
-			if (!(await finishPassed(ctx, diff.hash, prior ? `**Judge: PASS**\n\n${prior}` : undefined))) summarizePass(diff.hash);
+			if (!(await finishPassed(ctx, diff.hash, prior ? `**Judge: PASS**\n\n${prior}` : undefined))) await summarizePass(ctx, diff.hash);
 			return;
 		}
 		if (!manual && (cfg.autoJudge === "off" || seenDiffs.has(diff.hash))) return;
@@ -1208,7 +1219,7 @@ export default function workflow(pi: ExtensionAPI) {
 		if (fixMinorFindings(r.text, diff.hash, report)) return;
 		if (!(await finishPassed(ctx, diff.hash, report))) {
 			pi.sendMessage({ customType: "workflow-judge", content: report, display: true }, { triggerTurn: false });
-			summarizePass(diff.hash);
+			await summarizePass(ctx, diff.hash);
 		}
 	}
 
@@ -1226,6 +1237,7 @@ export default function workflow(pi: ExtensionAPI) {
 			}
 			ctx.ui.notify(`workflow: stopped after ${state.judgeRounds} failed judge rounds`, "warning");
 			summarizeFlow(`stopped: judge failed ${state.judgeRounds} rounds`, false);
+			await endFlow(ctx);
 			return;
 		}
 		pi.sendMessage(
@@ -1253,6 +1265,7 @@ export default function workflow(pi: ExtensionAPI) {
 			if (!ctx.hasUI) {
 				pi.sendMessage({ customType: "workflow-judge", content: report, display: true }, { triggerTurn: false });
 				summarizeFlow("stopped: judge questions the plan", false);
+				await endFlow(ctx);
 				return "stop";
 			}
 			const options = ["Back to planning", ...(canAsk ? ["Let the arbiter decide"] : []), "Ignore and continue", "Stop"];
@@ -1275,6 +1288,7 @@ export default function workflow(pi: ExtensionAPI) {
 			}
 			pi.sendMessage({ customType: "workflow-judge", content: report, display: true }, { triggerTurn: false });
 			summarizeFlow("stopped: judge questions the plan", false);
+			await endFlow(ctx);
 			return "stop";
 		}
 	}
@@ -1360,8 +1374,8 @@ export default function workflow(pi: ExtensionAPI) {
 		state.summarizedPasses = [...(state.summarizedPasses ?? []).filter((h) => h !== hash), hash].slice(-20);
 	}
 
-	/** The flow ends at a pass that won't be committed (delivery off, or Stop at the knowledge prompt). */
-	function summarizePass(hash: string): void {
+	/** The flow ends at a pass that won't be committed (delivery off, or Stop at the knowledge prompt), and may go back to planning. */
+	async function summarizePass(ctx: ExtensionContext, hash: string): Promise<void> {
 		state.minorRounds = 0;
 		state.minorSentFor = undefined;
 		state.delivery = undefined;
@@ -1369,6 +1383,7 @@ export default function workflow(pi: ExtensionAPI) {
 		markPassSummarized(hash);
 		view.stage = "execute";
 		if (!summarizeFlow("judge passed, not committed", true)) persist();
+		await endFlow(ctx);
 	}
 
 	/** Diffs already handed to the commit step, so a pass is committed once. */

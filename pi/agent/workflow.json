@@ -36,6 +36,7 @@
   "maxJudgeRounds": 5,
   "maxMinorRounds": 2,
   "finalizePlan": true,
+  "returnToPlan": true,
   "planFlaw": "ask",
   "maxPlanRevisions": 2,
   "delivery": {
