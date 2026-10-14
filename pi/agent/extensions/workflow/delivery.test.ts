@@ -105,6 +105,8 @@ test("final plan asks for commits only when splitting", () => {
 	assert.ok(!finalize(false).includes("9. Commits"));
 	for (const f of [finalize(true), finalize(false)]) {
 		assert.ok(f.includes("8. Risks, rollback"));
-		assert.ok(f.endsWith("leave nothing for the executor to decide."));
+		assert.ok(f.endsWith("How to write the code is the executor's job."));
+		assert.ok(f.includes("Give direction, not implementation."));
+		assert.ok(!f.includes("code for non-trivial logic"));
 	}
 });

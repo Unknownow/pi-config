@@ -11,7 +11,7 @@ const PLAN_BATCH = `- Batch tool calls. Each call re-sends the whole conversatio
 export function planPhase(finalize: boolean): string {
 	const ending = finalize
 		? "After the user approves, you write the final execution plan in one more reply, so keep the `Plan:` sections short until then."
-		: 'The user approves the plan (Approve in the menu, or a short "go" / "do it"); execution then continues on a different model, which only sees this transcript, so make every `Plan:` section complete enough to execute literally.';
+		: 'The user approves the plan (Approve in the menu, or a short "go" / "do it"); execution then continues on a different model, which only sees this transcript, so make every `Plan:` section clear enough to execute without guessing at behaviour or design.';
 	return `## Workflow: PLAN phase
 This workflow is for software: system design, architecture and code.
 You are the planner and the user's partner in discussion. Investigate, answer questions, weigh options and agree on a plan. Change nothing.
@@ -22,7 +22,7 @@ ${PLAN_BATCH}
 - For design or architecture questions, cover components and their responsibilities, interfaces and data contracts, data model and migrations, failure modes, expected scale (numbers, not adjectives), and the options you rejected and why.
 - Once the conversation is heading toward a change, end the reply with a short \`Plan:\` section (the plan so far) and any open questions. Pure questions and discussion don't need one.
 - ${ending}
-- A cheaper model executes the plan literally and an independent judge checks the result against it, so leave no decision open.`;
+- A cheaper model executes the plan and writes the code, and an independent judge checks the result against it. Leave no design decision open, but give direction, not implementation: say what to change, why and how it must behave, not the code.`;
 }
 
 /** Sent after approval when finalizePlan is on: the planner's last job. `commits`: the plan also says how the change splits into commits. */
@@ -30,23 +30,24 @@ export function finalize(commits: boolean): string {
 	const item = commits
 		? "\n9. Commits: how the change splits into commits by function, one line each: the commit message subject and its files. A change with one function is one commit; tests go with the code they test."
 		: "";
-	return `The user approved. Write the final execution plan now, for a less capable execute model that follows it literally and an independent judge that checks the result against it. Call tools only to confirm a detail.
+	return `The user approved. Write the final execution plan now, for a less capable execute model that follows it step by step and writes the code, and an independent judge that checks the result against it. Call tools only to confirm a detail.
 Use exactly this structure:
 ## Plan: <title>
 1. Goal and non-goals.
 2. User decisions: every explicit choice the user made in the discussion, one line each, labelled D1, D2, ...
 3. Facts the executor needs, with file:line.
 4. Design, only when the change adds or reshapes components, interfaces, data or concurrency: components and responsibilities; interfaces and contracts (signatures, message or file formats); data model and migration or compatibility; failure handling; scale assumptions with numbers, and the limit at which this design stops working; alternatives rejected and why.
-5. Steps in order: files and functions (file:line anchors), the exact change, code for non-trivial logic, and why.
+5. Steps in order. For each: the file and function (file:line anchor); what to change and why, in words; the behaviour it must have (inputs, outputs, edge cases, error handling); the existing code to model it on (file:line).
 6. Tests: each new or changed test (file, name, input, expected result), plus the commands to run and the expected output.
 7. Done when: acceptance criteria.
 8. Risks, rollback, and what not to touch.${item}
 Goal, Non-goals, User decisions and Done when are the target. The judge and the arbiter treat them as fixed. Everything else will be checked against the code.
-Include every decision from the discussion; leave nothing for the executor to decide.`;
+Give direction, not implementation. Don't write the code: the executor writes it. Code appears only where an exact contract must match (a signature, a type, a config key, a message or file format, a pattern the tests check), a few lines at most each.
+Include every decision from the discussion. Leave no design decision open: every behaviour, interface and edge case is settled. How to write the code is the executor's job.`;
 }
 
 export const EXECUTE_PHASE = `## Workflow: EXECUTE phase
-You are the execution loop. Carry out the approved plan exactly, steps in order. No redesign, no extra features, no refactors outside the plan. You may fill in mechanical details (imports, types), but nothing that changes behaviour or design.
+You are the execution loop. Carry out the approved plan, steps in order. The plan gives direction and contracts; you write the code. Choose the implementation within its contracts and the existing code it points to. No redesign, no extra features, no refactors outside the plan: changing behaviour, interfaces or design beyond the plan is not your call; stop and say why.
 If a step can't be done as written, or the plan is wrong, stop and explain. Don't improvise.
 ${BATCH}
 - Reading: read the files the plan names directly. Use the \`explore\` tool for open questions and multi-file lookups (it answers with file:line evidence on a cheap model); check its evidence before relying on it.
@@ -114,7 +115,7 @@ Rules:
 Output, nothing else:
 DECISION: REVISE | KEEP | ASK_USER
 Reason: 2-5 lines with file:line evidence.
-For REVISE, then a heading "## Plan amendment" with the changed or added steps in the plan's format: files, functions, exact change, tests.`;
+For REVISE, then a heading "## Plan amendment" with the changed or added steps in the plan's step format: file and function, what to change and why, the behaviour it must have, tests. Direction, not implementation code; code only for an exact contract (a signature, a type, a format).`;
 
 /** The judge's knowledge step, appended after JUDGE (and JUDGE_RECHECK on a re-review). `files`: the paths to check (no deleted files). */
 export function judgeKnowledge(server: string, recheck: boolean, files: string[]): string {

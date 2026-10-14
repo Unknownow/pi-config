@@ -84,10 +84,11 @@ after approval runs on its own:
   with a short `Plan:` section once the talk is heading toward a change. When you approve, the
   planner writes the **final plan** in one more reply (`finalizePlan`, default on): goal and
   non-goals, your decisions (D1, D2, ...), facts with file:line, a design section for changes that
-  add or reshape components, steps, tests, "done when", risks. The execute model follows it literally
+  add or reshape components, steps, tests, "done when", risks. The plan gives direction and
+  contracts, not code: what to change, why and how it must behave. The execute model writes the code
   and the judge checks the result against it. With `finalizePlan: false` the last `Plan:` reply is used.
-- **Execute** follows the plan exactly, in order. It stops and says so when a step cannot be done as
-  written. It never commits or pushes.
+- **Execute** follows the plan in order and writes the code within its contracts.
+  It stops and says so when a step cannot be done as written. It never commits or pushes.
 - **The judge** runs in its own session. It sees the approved plan and the diff, not the discussion,
   and assumes the change is wrong. What it trusts:
 
