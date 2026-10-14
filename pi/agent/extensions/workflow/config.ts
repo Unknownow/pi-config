@@ -53,6 +53,9 @@ export interface DeliveryConfig {
 	branchPrefix: string;
 }
 
+/** "auto": the planner proposes stages itself when the work warrants them; "onRequest": only when the user asks for delivery in parts. */
+export type StagedPlans = "auto" | "onRequest";
+
 export interface WorkflowConfig {
 	roles: Record<Role, RoleSpec>;
 	/** Phase a new session starts in. */
@@ -69,6 +72,8 @@ export interface WorkflowConfig {
 	returnToPlan: boolean;
 	/** The judge says the approved plan itself is flawed: "ask" you, or let the "auto" arbiter decide. */
 	planFlaw: "ask" | "auto";
+	/** When the planner splits a plan into stages, each executed, judged and delivered on its own. */
+	stagedPlans: StagedPlans;
 	/** Amendments the arbiter may add to the plan in one flow before it asks you instead. */
 	maxPlanRevisions: number;
 	/** Extra judge -> fix rounds spent on minor findings after a pass, before committing anyway. 0 commits at once. */
@@ -134,6 +139,7 @@ export const DEFAULTS: WorkflowConfig = {
 	finalizePlan: true,
 	returnToPlan: true,
 	planFlaw: "ask",
+	stagedPlans: "auto",
 	maxPlanRevisions: 2,
 	delivery: { ask: true, default: "commit", splitCommits: true, mergeMethod: "merge", deleteBranch: true, base: "", branchPrefix: "flow/" },
 	protectedBranches: ["main", "master"],
@@ -194,6 +200,7 @@ export function loadConfig(): { config: WorkflowConfig; error?: string } {
 		// A delivery that is not an object (the old autoCommit style, null) would crash the first approval.
 		if (!isObject(config.delivery)) config.delivery = DEFAULTS.delivery;
 		for (const k of ["base", "branchPrefix"] as const) if (typeof config.delivery[k] !== "string") config.delivery[k] = DEFAULTS.delivery[k];
+		if (config.stagedPlans !== "auto" && config.stagedPlans !== "onRequest") config.stagedPlans = DEFAULTS.stagedPlans;
 		return { config };
 	} catch (e) {
 		return { config: DEFAULTS, error: `${CONFIG_PATH}: ${(e as Error).message}` };

@@ -410,7 +410,7 @@ export default function workflow(pi: ExtensionAPI) {
 			planReady = false;
 			state.finalizing = true;
 			persist();
-			pi.sendMessage({ customType: "workflow-finalize", content: prompts.finalize(cfg.delivery.splitCommits, DELIVERY_LABELS[state.delivery]), display: true }, { triggerTurn: true, deliverAs: "followUp" });
+			pi.sendMessage({ customType: "workflow-finalize", content: prompts.finalize(cfg.delivery.splitCommits, DELIVERY_LABELS[state.delivery], cfg.stagedPlans), display: true }, { triggerTurn: true, deliverAs: "followUp" });
 			return;
 		}
 		await setPhase(ctx, "execute");
@@ -1067,7 +1067,7 @@ export default function workflow(pi: ExtensionAPI) {
 				}
 			}
 		}
-		if (state.phase === "plan") return { systemPrompt: `${event.systemPrompt}\n\n${prompts.planPhase(cfg.finalizePlan)}` };
+		if (state.phase === "plan") return { systemPrompt: `${event.systemPrompt}\n\n${prompts.planPhase(cfg.finalizePlan, cfg.stagedPlans)}` };
 		if (state.phase === "execute") {
 			const staged = currentStages();
 			return { systemPrompt: `${event.systemPrompt}\n\n${prompts.EXECUTE_PHASE}${staged ? `\n${stageLine(staged.stages, staged.current)}` : ""}` };
@@ -1281,7 +1281,7 @@ export default function workflow(pi: ExtensionAPI) {
 			state.finalizing = true;
 			persist();
 			ctx.ui.notify(`workflow: plan approved (then ${DELIVERY_LABELS[state.delivery]}), the planner writes the final plan`, "info");
-			return { action: "transform", text: `${event.text.trim()}\n\n${prompts.finalize(cfg.delivery.splitCommits, DELIVERY_LABELS[state.delivery])}` };
+			return { action: "transform", text: `${event.text.trim()}\n\n${prompts.finalize(cfg.delivery.splitCommits, DELIVERY_LABELS[state.delivery], cfg.stagedPlans)}` };
 		}
 		await setPhase(ctx, "execute");
 		const extra = startExecution(ctx, lastPlanText);

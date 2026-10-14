@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { branchName, combineOutcomes, repoDeliveryInstruction, deliveryChoices, freshPr, deliveryInstruction, deliveryMenuLabel, deliveryOutcome, isDelivery, planTitle, type DeliveryOptions } from "./delivery.ts";
-import { finalize } from "./prompts.ts";
+import { finalize, planPhase } from "./prompts.ts";
 
 const d = new Date(2026, 9, 14, 9, 5);
 const base: DeliveryOptions = { mode: "commit", branch: "feat", base: "", split: true, mergeMethod: "merge", deleteBranch: true, deviations: "" };
@@ -111,6 +111,29 @@ test("final plan asks for commits only when splitting", () => {
 		assert.ok(f.includes("Give direction, not implementation."));
 		assert.ok(!f.includes("code for non-trivial logic"));
 	}
+});
+
+test("final plan stages on its own unless onRequest", () => {
+	const auto = finalize(true);
+	assert.ok(auto.includes("builds on an earlier one"));
+	assert.ok(auto.includes("### Stage 1:"));
+	assert.ok(auto.includes("its own tests"));
+	assert.ok(!auto.includes("in one go, group"));
+	const manual = finalize(true, undefined, "onRequest");
+	assert.ok(manual.includes("Only when the user asked for the work to be delivered in parts"));
+	assert.ok(manual.includes("### Stage 1:"));
+	assert.ok(!manual.includes("builds on an earlier one"));
+	for (const f of [auto, manual]) assert.ok(f.endsWith("How to write the code is the executor's job."));
+});
+
+test("planner proposes stages unless onRequest", () => {
+	const auto = planPhase(true);
+	assert.ok(auto.includes("Staged delivery") && auto.includes("Propose stages yourself"));
+	assert.ok(!auto.includes("### Stage 1:"));
+	const manual = planPhase(true, "onRequest");
+	assert.ok(manual.includes("Staged delivery") && !manual.includes("Propose stages yourself"));
+	assert.ok(planPhase(false).includes("### Stage 1:"));
+	assert.ok(planPhase(false, "onRequest").includes("### Stage 1:"));
 });
 
 test("repoDeliveryInstruction lists each repo", () => {

@@ -1,5 +1,6 @@
 /** System-prompt text for each role. Main-session phases are appended; subagents get theirs via --append-system-prompt. */
 
+import type { StagedPlans } from "./config.ts";
 import { toolPrefix } from "./knowledge.ts";
 
 /** Every tool call re-sends the whole conversation, so the number of calls drives the cost. */
@@ -7,8 +8,18 @@ const BATCH = `- Batch tool calls. Each call re-sends the whole conversation, so
 /** Plan phase keeps ctx_batch_execute out of this line: its commands are checked, but PowerShell is refused often. */
 const PLAN_BATCH = `- Batch tool calls. Each call re-sends the whole conversation, so ten small calls at 150k context re-send 1.5M tokens. Put independent reads and commands in one call (a codemode script, ctx_execute for read-only analysis, or one bash command joined with && or ;) and print only what you need. Don't spend a call on something you could have added to the previous one.`;
 
-/** The planner prompt. `finalize`: after approval the planner writes the final execution plan in one more reply. */
-export function planPhase(finalize: boolean): string {
+/** When the planner splits a plan into stages on its own. Shared by planPhase and finalize so the two can't drift apart. */
+const STAGE_WHEN = "the work splits into parts that each leave the code working and tested, and at least one of these holds: a later part builds on an earlier one (a refactor or migration before the feature that needs it, a shared module or API before its callers); the change is large (roughly more than 8 files or 500 changed lines, too much for one review); or it bundles separate features or fixes";
+const STAGE_LIMITS = "Use 2-5 stages, one per part. Don't stage a small or tightly coupled change, or when the user asked for it in one go.";
+
+/** The planner prompt. `finalize`: after approval the planner writes the final execution plan in one more reply. `staging`: whether it proposes stages on its own. */
+export function planPhase(finalize: boolean, staging: StagedPlans = "auto"): string {
+	const listing = ` List the stages in the \`Plan:\` section ("Stages: 1. <title>: <scope>; 2. ...") so the user can change them before approving.`;
+	const headings = finalize ? "" : " Write the steps of that `Plan:` section under headings `### Stage 1: <title>`, `### Stage 2: <title>`, ...: the workflow runs the stages from them.";
+	const stages =
+		staging === "auto"
+			? `\n- Staged delivery: the workflow can execute, judge and deliver a plan one stage at a time (commit, push, pull request or merge after each stage). Propose stages yourself, without being asked, when ${STAGE_WHEN}. ${STAGE_LIMITS} Also use them when the user asks for delivery in parts.${listing}${headings}`
+			: `\n- Staged delivery: the workflow can execute, judge and deliver a plan one stage at a time. Use stages only when the user asks for delivery in parts.${listing}${headings}`;
 	const ending = finalize
 		? "After the user approves, you write the final execution plan in one more reply, so keep the `Plan:` sections short until then."
 		: 'The user approves the plan (Approve in the menu, or a short "go" / "do it"); execution then continues on a different model, which only sees this transcript, so make every `Plan:` section clear enough to execute without guessing at behaviour or design.';
@@ -22,15 +33,19 @@ ${PLAN_BATCH}
 - For design or architecture questions, cover components and their responsibilities, interfaces and data contracts, data model and migrations, failure modes, expected scale (numbers, not adjectives), and the options you rejected and why.
 - Once the conversation is heading toward a change, end the reply with a short \`Plan:\` section (the plan so far) and any open questions. Pure questions and discussion don't need one.
 - ${ending}
-- A cheaper model executes the plan and writes the code, and an independent judge checks the result against it. Leave no design decision open, but give direction, not implementation: say what to change, why and how it must behave, not the code.`;
+- A cheaper model executes the plan and writes the code, and an independent judge checks the result against it. Leave no design decision open, but give direction, not implementation: say what to change, why and how it must behave, not the code.${stages}`;
 }
 
 /** Sent after approval when finalizePlan is on: the planner's last job. `commits`: the plan also says how the change splits into commits. */
-export function finalize(commits: boolean, delivery?: string): string {
+export function finalize(commits: boolean, delivery?: string, staging: StagedPlans = "auto"): string {
 	const item = commits
 		? "\n9. Commits: how the change splits into commits by function, one line each: the commit message subject and its files. A change with one function is one commit; tests go with the code they test."
 		: "";
-	const stages = ` Only when the user asked for the work to be delivered in parts (commit, push, pull request or merge between parts), group the steps under headings \`### Stage 1: <title>\`, \`### Stage 2: <title>\`, ...: each stage is executed, judged and delivered on its own, in order. A stage is delivered with the flow's delivery${delivery ? ` (this flow: ${delivery})` : ""}; add \` (delivery: commit|push|pr|merge)\` to a heading only when the user asked for a different delivery for that stage. Otherwise write no stage headings.`;
+	const when =
+		staging === "auto"
+			? `When the discussion agreed on stages, when the user asked for delivery in parts, or when ${STAGE_WHEN}`
+			: "Only when the user asked for the work to be delivered in parts (commit, push, pull request or merge between parts)";
+	const stages = ` ${when}, group the steps under headings \`### Stage 1: <title>\`, \`### Stage 2: <title>\`, ...: each stage is executed, judged and delivered on its own, in order. A stage is delivered with the flow's delivery${delivery ? ` (this flow: ${delivery})` : ""}; add \` (delivery: commit|push|pr|merge)\` to a heading only when the user asked for a different delivery for that stage. Otherwise write no stage headings.${staging === "auto" ? ` ${STAGE_LIMITS}` : ""} Each stage must leave the code working, with its own tests.`;
 	return `The user approved. Write the final execution plan now, for a less capable execute model that follows it step by step and writes the code, and an independent judge that checks the result against it. Call tools only to confirm a detail.
 Use exactly this structure:
 ## Plan: <title>

@@ -42,7 +42,9 @@ after approval runs on its own:
                                                               -> PASS: commit, split by function [-> push -> pull request -> merge, as chosen at approval]
 ```
 
-- **Staged plans:** when you ask for delivery between parts, the final plan groups its steps under
+- **Staged plans:** when the planner proposes them (`stagedPlans: "auto"`, default: parts that build on each other,
+  a large change, separate features) or you ask for delivery between parts, the planner lists the stages in its
+  `Plan:` section before you approve, and the final plan groups its steps under
   `### Stage N: <title>` headings (numbers 1, 2, 3, ... in order, at least two). The flow then loops: execute
   stage 1, judge, deliver it (commit, push, pull request, merge), then the executor gets stage 2, and so on. The
   flow ends after the last stage. A heading may end in `(delivery: commit|push|pr|merge)` to deliver that stage
@@ -86,7 +88,7 @@ after approval runs on its own:
   the code, and drops the finding only if the code shows the executor is right.
 - **Turning steps back to manual:** set `"autoJudge": "ask"`, `"delivery": { "default": "off" }`
   (nothing is committed unless you pick it at approval), and `"planPrompt": false` for a "say go" hint instead of the Approve menu.
-  `"returnToPlan": false` stays in execute after a flow ends.
+  `"returnToPlan": false` stays in execute after a flow ends. `"stagedPlans": "onRequest"` makes the planner use stages only when you ask for delivery in parts.
 
 ## The plan, the judge and the arbiter
 
