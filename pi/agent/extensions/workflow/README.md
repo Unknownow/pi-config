@@ -252,10 +252,10 @@ next run starts.
 | `/flow escalate` (`fable`) / `/flow back` (`opusplan`) | manual escalation and return |
 | `/flow judge` | review the current diff now |
 | `/flow tokens` | token breakdown of the current flow so far |
-| `/flow model <role> <provider/id[:thinking]>` | set a role's model and save it to workflow.json |
+| `/flow model [role] [provider/id[:thinking]]` | set a role's model and save it to workflow.json; left out, it lists the roles, the models with auth and the thinking levels (Tab completes model IDs) |
 | `/flow reload` | re-read workflow.json |
 | `pi --flow execute` | start a session in a given phase |
-| `/folders add <path>` / `remove <path\|n>` / `list` | folders that are part of this session (reloads Pi) |
+| `/folders add <path>` / `remove <path\|n>` / `list` | folders that are part of this session (reloads Pi); Tab completes folder paths after `add` and folder numbers after `remove` |
 | `pi --add-dir <path>` | start a session with extra folders (`;` separates several on Windows, `:` elsewhere) |
 
 ## Several repos

@@ -43,6 +43,7 @@ import {
 	loadConfig,
 	parseRoleSpec,
 	ROLES,
+	THINKING_LEVELS,
 	type Role,
 	saveRole,
 	type Thinking,
@@ -52,6 +53,7 @@ import { handoverAction, afterPass, noChangeStage, arbiterFirst, fixableFindings
 import { countTokens, type Tok } from "./tokens.ts";
 import * as prompts from "./prompts.ts";
 import { branchName, combineOutcomes, type Delivery, type DeliveryOptions, DELIVERIES, DELIVERY_LABELS, deliveryChoices, deliveryInstruction, deliveryMenuLabel, deliveryOutcome, freshPr, isDelivery, planTitle, type PrState, repoDeliveryInstruction } from "./delivery.ts";
+import { modelChoices, pathCompletions } from "./pickers.ts";
 import { ghCandidates, withPathDir } from "./gh-path.ts";
 import { combineRepoTexts, parseAddDir, repoKey } from "./repos.ts";
 import { shellProblem } from "./push-guard.ts";
@@ -2596,7 +2598,7 @@ ${instruction}` : instruction);
 		{ value: "back", label: "back - return to the phase's own model" },
 		{ value: "judge", label: "judge - review the current diff now" },
 		{ value: "tokens", label: "tokens - token breakdown of the current flow so far" },
-		{ value: "model", label: "model <role> <provider/id[:thinking]> - set a role's model" },
+		{ value: "model", label: "model [role] [provider/id[:thinking]] - set a role's model (lists when left out)" },
 		{ value: "reload", label: "reload - re-read workflow.json" },
 		{ value: "resume", label: "resume [flowId] - pick up an unfinished flow from its plan ref (e.g. on another device)" },
 	];
@@ -2621,6 +2623,27 @@ ${instruction}` : instruction);
 	pi.registerCommand("folders", {
 		description: "Folders that are part of this session: add PATH, remove PATH or N, list",
 		getArgumentCompletions: (prefix) => {
+			const addM = prefix.match(/^add\s+(.*)$/i);
+			if (addM) {
+				const readDirs = (dir: string): string[] | null => {
+					try {
+						return fs.readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name);
+					} catch {
+						return null;
+					}
+				};
+				const items = pathCompletions(addM[1], lastCtx?.cwd ?? process.cwd(), os.homedir(), readDirs).map((p) => ({ value: `add ${p.includes(" ") ? `"${p}"` : p}`, label: p }));
+				return items.length > 0 ? items : null;
+			}
+			const remM = prefix.match(/^remove\s+(.*)$/i);
+			if (remM) {
+				const typed = remM[1].trim().toLowerCase();
+				const items = (state.folders ?? [])
+					.map((f, i) => ({ value: `remove ${i + 1}`, label: `${i + 1}. ${f}`, f, n: String(i + 1) }))
+					.filter((x) => x.n.startsWith(typed) || x.f.toLowerCase().startsWith(typed))
+					.map(({ value, label }) => ({ value, label }));
+				return items.length > 0 ? items : null;
+			}
 			const matches = ["add", "remove", "list"].filter((c) => c.startsWith(prefix.trim())).map((c) => ({ value: c, label: c }));
 			return matches.length > 0 ? matches : null;
 		},
@@ -2697,6 +2720,17 @@ ${instruction}` : instruction);
 			if (parts[0] === "model" && parts.length === 2) {
 				return ROLES.filter((r) => r.startsWith(parts[1])).map((r) => ({ value: `model ${r} `, label: `${r} (${describeRole(cfg.roles[r])})` }));
 			}
+			if (parts[0] === "model" && parts.length === 3 && ROLES.includes(parts[1] as Role)) {
+				try {
+					const items = modelChoices(lastCtx?.modelRegistry.getAvailable() ?? [], cfg.roles[parts[1] as Role]?.model)
+						.filter((c) => c.value.toLowerCase().startsWith(parts[2].toLowerCase()))
+						.slice(0, 50)
+						.map((c) => ({ value: `model ${parts[1]} ${c.value}`, label: c.label }));
+					return items.length > 0 ? items : null;
+				} catch {
+					return null;
+				}
+			}
 			if (parts[0] === "delivery" && parts.length === 2) {
 				return DELIVERIES.filter((d) => d.startsWith(parts[1])).map((d) => ({ value: `delivery ${d}`, label: `${d} - ${DELIVERY_LABELS[d]}` }));
 			}
@@ -2763,14 +2797,45 @@ ${instruction}` : instruction);
 					return;
 				}
 				case "model": {
-					const [role, spec] = rest;
+					let [role, spec] = rest;
+					const usage = () => ctx.ui.notify(`Usage: /flow model <${ROLES.join("|")}> <provider/id[:thinking]>`, "warning");
+					if (!role && ctx.hasUI) {
+						const pick = await ctx.ui.select("Role", ROLES.map((r) => `${r} (${describeRole(cfg.roles[r])})`));
+						if (!pick) return;
+						role = pick.split(" ")[0];
+					}
 					if (!role || !ROLES.includes(role as Role)) {
-						ctx.ui.notify(`Usage: /flow model <${ROLES.join("|")}> <provider/id[:thinking]>`, "warning");
+						usage();
 						return;
 					}
-					const input = spec ?? (await ctx.ui.input(`Model for ${role}`, describeRole(cfg.roles[role as Role])));
-					if (!input) return;
-					const parsed = parseRoleSpec(input);
+					if (!spec && !ctx.hasUI) {
+						usage();
+						return;
+					}
+					let parsed: ReturnType<typeof parseRoleSpec> | undefined;
+					if (spec) {
+						parsed = parseRoleSpec(spec);
+					} else {
+						const current = cfg.roles[role as Role];
+						let choices: ReturnType<typeof modelChoices> = [];
+						try {
+							choices = modelChoices(ctx.modelRegistry.getAvailable(), current?.model);
+						} catch {}
+						const typeOwn = "Type a model ID…";
+						const pick = choices.length > 0 ? await ctx.ui.select(`Model for ${role}`, [...choices.map((c) => c.label), typeOwn]) : typeOwn;
+						if (!pick) return;
+						if (pick === typeOwn) {
+							const input = await ctx.ui.input(`Model for ${role}`, describeRole(current));
+							if (!input) return;
+							parsed = parseRoleSpec(input);
+						} else {
+							const model = choices.find((c) => c.label === pick)!.value;
+							const keep = `keep (${current?.thinking ?? "default"})`;
+							const level = await ctx.ui.select(`Thinking for ${model}`, [keep, ...THINKING_LEVELS]);
+							if (!level) return;
+							parsed = level === keep ? (current?.thinking ? { model, thinking: current.thinking } : { model }) : { model, thinking: level as Thinking };
+						}
+					}
 					if (typeof parsed === "string") {
 						ctx.ui.notify(`workflow: ${parsed}`, "error");
 						return;
