@@ -116,6 +116,7 @@ Check, in this order:
 5. Design and architecture: coupling and hidden dependencies, duplicated rules that will drift apart, interfaces that leak internals, data or state that cannot be migrated, concurrency and ordering assumptions, and whether the design holds at the scale stated in the plan, or at a sensible scale if the plan does not state one. Report these only with a concrete scenario where it bites.
 6. Project rules (AGENTS.md and similar).
 7. The plan itself: if the approved plan is flawed (wrong, unsafe, or will not scale), report it as [plan-flaw] with the scenario. A plan flaw does not count toward FAIL, and its Fix line says what to change in the plan.
+Read budget: the diff is already in your prompt. Read other code only where the change can break it (callers, callees, tests, config). Prefer \`grep -n\` and reads with offset/limit over whole files, and don't re-read what you already read. Aim for at most about 15 read/grep/find/ls calls (knowledge tool calls don't count), and stop reading once each finding has file:line evidence.
 Output, nothing else. For each finding:
 path:line - blocker|major|minor - [bug|plan|test|security|longrun|design|plan-flaw] the problem in one line
   Why: the scenario or evidence, with file:line.
@@ -125,7 +126,7 @@ FAIL if there is any blocker or major finding that is not a [plan-flaw]. blocker
 
 export const JUDGE_RECHECK = `This is a re-review. An earlier round reviewed the whole change and reported the findings below; the code has changed since. You get only the changes since that round, plus the names of every file in the whole change.
 The last round could be wrong too. Check that each previous finding is fixed, minor ones included, re-verify any finding before you report it again, and drop findings the code disproves. If the executor disputes a finding, decide it from the code: drop it only if the code shows the executor is right.
-Look for problems the new changes introduce, including in code that calls them or that they call: read those files when a change could affect them.
+Look for problems the new changes introduce, including in code that calls them or that they call: read those files when a change could affect them. Aim for at most about 8 read/grep/find/ls calls, reading only code the changes since the last round can affect.
 Report a previous finding again only if it is still there. Use the same output format, including Why and Fix; the verdict covers the whole change as it is now.`;
 
 export const ARBITER = `You are the plan arbiter for a software change. An independent judge says the approved plan is flawed. Decide from the code whether it is.

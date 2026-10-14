@@ -83,6 +83,7 @@ after approval runs on its own:
   over `judge.recheckMaxShare` (half) of the whole diff. A change over
   `judge.finalFullReviewOverChars` (80,000 characters) that passes a re-review gets one final full
   review; the judge tool's `full: true` forces one. `"judge": { "recheck": false }` turns it off.
+- **Judge read budget:** the judge prompts ask for about 15 read/grep/find/ls calls on a full review and about 8 on a re-review (knowledge calls excluded). A soft aim, not a limit.
 - **Disputes:** if the executor thinks a finding is wrong it passes the finding and its file:line
 - **Knowledge on re-reviews:** when the last round's knowledge check passed, a re-review runs `get_rule_pack` only for the files changed since that round and carries over the other files' deviation notes. Otherwise it checks the whole change. Full reviews always check everything.
   evidence in the judge tool's `disputes` parameter. The judge treats that as a claim, decides it from
@@ -103,7 +104,7 @@ after approval runs on its own:
   It stops and says so when a step cannot be done as written. It never commits or pushes: at a delivery point it ends its turn after the judge passes.
   When the flow ends it switches back to the plan phase (`returnToPlan`, default on).
 - **The judge** runs in its own session. It sees the approved plan and the diff, not the discussion,
-  and assumes the change is wrong. What it trusts:
+  and assumes the change is wrong. It is asked to stay within about 15 read/grep/find/ls calls on a full review and about 8 on a re-review (knowledge calls excluded), a soft aim, not a limit. What it trusts:
 
   | Input | Trust |
   |---|---|
