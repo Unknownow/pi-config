@@ -7,6 +7,7 @@
  * / `--auto` and `gh pr review --approve` always.
  */
 import { gitSubcommand, KEYWORDS, parseCommands, WRAPPERS } from "./readonly-bash.ts";
+import { fallbackTexts, repoTexts } from "./repos.ts";
 
 export interface PushContext {
 	/** The current branch; "HEAD" or "" on a detached HEAD. */
@@ -35,6 +36,35 @@ export function pushProblem(command: string, o: PushContext): string | null {
 	if (/GIT_CONFIG/i.test(command) && /\bgit\b/i.test(command)) return "sets GIT_CONFIG_*, which can switch hooks off";
 	for (const cmd of parseCommands(command)) {
 		const problem = wordsProblem(cmd.words, o);
+		if (problem) return problem;
+	}
+	return null;
+}
+
+export interface ShellGuard {
+	/** The flow's repos; undefined means a single repo. */
+	roots?: string[];
+	cwd: string;
+	protectedBranches: string[];
+	branchOf(dir: string): Promise<string>;
+	/** The delivery mode in force for a repo (undefined root: the working folder). */
+	modeOf(root: string | undefined): string | undefined;
+}
+
+/** Why this shell text may not run, checking each command against the repo it runs in, or null. */
+export async function shellProblem(text: string, powershell: boolean, g: ShellGuard): Promise<string | null> {
+	// The config-env rule spans commands, so such a text is checked whole; otherwise each command against the repo it runs in.
+	const groups = g.roots && !/GIT_CONFIG/i.test(text) ? repoTexts(text, g.roots, g.cwd, process.platform, { powershell }) : fallbackTexts(text, powershell).map((t) => ({ root: undefined, text: t }));
+	for (const group of groups) {
+		const branch = await g.branchOf(group.root ?? g.cwd);
+		const mode = g.modeOf(group.root);
+		const problem = pushProblem(group.text, {
+			branch,
+			protectedBranches: g.protectedBranches,
+			pushAllowed: mode === "push" || mode === "pr" || mode === "merge",
+			prAllowed: mode === "pr" || mode === "merge",
+			mergeAllowed: mode === "merge",
+		});
 		if (problem) return problem;
 	}
 	return null;

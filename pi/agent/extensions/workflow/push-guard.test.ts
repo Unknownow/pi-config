@@ -1,7 +1,9 @@
 // node --test push-guard.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { pushProblem } from "./push-guard.ts";
+import * as path from "node:path";
+import { pushProblem, shellProblem } from "./push-guard.ts";
+import { repoKey } from "./repos.ts";
 
 const feature = { branch: "feat", protectedBranches: ["main", "master"], pushAllowed: false, prAllowed: false, mergeAllowed: false };
 const allowed = { ...feature, pushAllowed: true };
@@ -84,3 +86,25 @@ const fine: [string, typeof feature][] = [
 	["gh pr merge 12 --merge --delete-branch -R o/r", mergeOk],
 ];
 for (const [cmd, ctx] of fine) test(`allows: ${cmd}`, () => assert.equal(pushProblem(cmd, ctx), null));
+
+const branchOf = async () => "feat";
+const single = (mode?: string) => ({ cwd: path.resolve("ra"), protectedBranches: ["main"], branchOf, modeOf: () => mode });
+
+test("shellProblem: single repo push needs a delivery mode", async () => {
+	assert.match((await shellProblem("git push", false, single())) ?? "", /workflow's job/);
+	assert.equal(await shellProblem("git push", false, single("push")), null);
+	assert.notEqual(await shellProblem("git push --force", false, single("push")), null);
+});
+
+test("shellProblem: several repos use each repo's own mode", async () => {
+	const A = path.resolve("ra").replace(/\\/g, "/");
+	const B = path.resolve("rb").replace(/\\/g, "/");
+	const g = { roots: [A, B], cwd: A, protectedBranches: ["main"], branchOf, modeOf: (root?: string) => (root && repoKey(root) === repoKey(B) ? "push" : "commit") };
+	assert.equal(await shellProblem(`git -C ${B} push`, false, g), null);
+	assert.notEqual(await shellProblem(`git -C ${A} push`, false, g), null);
+	assert.notEqual(await shellProblem("git push", false, g), null);
+});
+
+test("shellProblem: config env is refused", async () => {
+	assert.notEqual(await shellProblem("GIT_CONFIG_COUNT=1 git commit", false, single("push")), null);
+});
