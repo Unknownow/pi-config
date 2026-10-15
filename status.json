@@ -1,0 +1,16 @@
+{
+  "v": 1,
+  "flowId": "20261015-1808-let-a-passed-review-with-plan-flaws-cont-1430",
+  "rev": 1,
+  "updated": "2026-10-15T11:08:39.301Z",
+  "title": "Let a passed review with plan flaws continue to commit; major plan flaws go to the arbiter",
+  "delivery": "push",
+  "done": [],
+  "repos": [
+    {
+      "branch": "master",
+      "remote": "github-personal/Unknownow/pi-config",
+      "primary": true
+    }
+  ]
+}
