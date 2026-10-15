@@ -1,12 +1,20 @@
 {
   "v": 1,
   "flowId": "20261015-1035-worktree-pi-extension-parallel-pi-sessio-3516",
-  "rev": 1,
-  "updated": "2026-10-15T03:35:30.932Z",
+  "rev": 2,
+  "updated": "2026-10-15T03:46:17.164Z",
   "title": "`worktree` pi extension, parallel pi sessions on git worktrees (`/wt new|list|remove` + Unity guard)",
-  "stage": 1,
+  "stage": 2,
   "delivery": "push",
-  "done": [],
+  "done": [
+    "S1",
+    "S2",
+    "S3",
+    "S4",
+    "S5",
+    "S6",
+    "S7"
+  ],
   "repos": [
     {
       "branch": "main",
@@ -14,7 +22,27 @@
       "primary": true
     },
     {
-      "branch": "master",
+      "branch": "feat/worktree-extension",
+      "remote": "github-personal/Unknownow/pi-config",
+      "primary": false
+    },
+    {
+      "branch": "main",
+      "remote": "github.com/iecgames/knowledge",
+      "primary": false
+    },
+    {
+      "branch": "main",
+      "remote": "github.com/iecgames/unity-packages",
+      "primary": false
+    },
+    {
+      "branch": "main",
+      "remote": "github.com/iecgames/game-template",
+      "primary": false
+    },
+    {
+      "branch": "feat/worktree-extension",
       "remote": "github-personal/Unknownow/pi-config",
       "primary": false
     },

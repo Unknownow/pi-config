@@ -349,13 +349,13 @@ All in `D:/projects/pi-config`.
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 Create `pi/agent/extensions/worktree/config.ts` with:
-- [ ] S2 Create `layout.ts` (pure):
-- [ ] S3 Create `files.ts`:
-- [ ] S4 Create `git-ops.ts` with the `Git` type (§4) and:
-- [ ] S5 Create `index.ts`:
-- [ ] S6 Create `README.md` (sections: what it does, commands, config keys and defaults, the links and copies, Windows Terminal d
-- [ ] S7 Manual check, then clean up:
+- [x] S1 Create `pi/agent/extensions/worktree/config.ts` with:
+- [x] S2 Create `layout.ts` (pure):
+- [x] S3 Create `files.ts`:
+- [x] S4 Create `git-ops.ts` with the `Git` type (§4) and:
+- [x] S5 Create `index.ts`:
+- [x] S6 Create `README.md` (sections: what it does, commands, config keys and defaults, the links and copies, Windows Terminal d
+- [x] S7 Manual check, then clean up:
 - [ ] S8 In `git-ops.ts` add:
 - [ ] S9 In `index.ts`, implement `list` as described in §4. The Unity status comes from one `pi.exec("unity", ["status", "--form
 - [ ] S10 Implement `remove` exactly as §4 `/wt remove` steps 1–6, using `files.unlinkLink` only on paths where `isLink` is true. 
