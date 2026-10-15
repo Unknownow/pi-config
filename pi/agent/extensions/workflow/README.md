@@ -239,6 +239,11 @@ from zero:
 The outcome says whether the commit really landed (HEAD moved), how many commits, whether it was pushed (nothing
 ahead of upstream), and the pull request's state (`gh pr view`). `/flow tokens` shows the same card for the flow in progress.
 
+Every flow, finished or stopped, ends with this card, followed by the plan steps (done or open) and all
+findings of the flow (open, fixed or noted). Both are built from the workflow state, so they cost no
+model tokens. If a compaction hides the card, it is shown again once. When the judge fails to run or the
+executor's reply ends in an error, a menu offers Retry, Back to planning and Stop (Escape stops).
+
 When escalated, the phase's node turns yellow and shows `fable-5-1·high ↑`. The explore, advisor and
 judge rows in the transcript stream the same rows while they run. Then they collapse to the result:
 explore shows only its rows, advisor shows an 8-line preview, and judge shows its findings colored by

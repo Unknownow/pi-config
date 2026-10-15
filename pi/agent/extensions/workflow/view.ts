@@ -22,6 +22,7 @@ import { type Component, type TUI, truncateToWidth } from "@earendil-works/pi-tu
 import { DEFAULTS, describeRole, type Role, type RoleSpec } from "./config.ts";
 import { countTokens, type Tok, type TokenWeights } from "./tokens.ts";
 import type { SubagentEvent } from "./subagent.ts";
+import { reportLines, type ReportFinding, type ReportStep } from "./flow-report.ts";
 
 export type Stage = "plan" | "execute" | "judge" | "commit";
 export type SubRole = "explore" | "advisor" | "judge" | "arbiter" | "commit";
@@ -90,6 +91,12 @@ export interface FlowSummary {
 	stages: FlowUsage;
 	/** Saved before both totals were kept: the counts are cost-weighted only. */
 	weighted?: boolean;
+	/** Plan steps with their done marks. */
+	steps?: ReportStep[];
+	/** Every finding raised in the flow. */
+	findings?: ReportFinding[];
+	/** The card was posted again after a compaction hid it. */
+	reposted?: boolean;
 }
 
 /** Exact count with thousands separators, e.g. 1,204,331. */
@@ -212,6 +219,8 @@ export function summaryLines(s: FlowSummary, theme: Theme): string[] {
 			`  ${theme.fg(color, stage.padEnd(8))} ${bar} ${theme.fg(color, fmtTok(t).padStart(labelWidth))} ${theme.fg("muted", `${Math.round(share * 100)}%`.padStart(4))}  ${theme.fg("dim", parts.join(" · "))}`,
 		);
 	}
+	const tone = { head: "text", done: "success", open: "warning", fixed: "dim", noted: "muted" } as const;
+	for (const l of reportLines(s.steps, s.findings)) lines.push(l.tone === "head" ? theme.bold(l.text) : theme.fg(tone[l.tone], l.text));
 	return lines;
 }
 

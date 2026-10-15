@@ -60,6 +60,7 @@ import { shellProblem } from "./push-guard.ts";
 import { COMMIT_GUARD_ENV, type CommitGuardSpec } from "./commit-guard.ts";
 import { commitPlan, type Finished, mergeChecklist, newFlowId, parseChecklist, type PlanStatus, planCard, pruneIds, renderPlanFile, splitPlanFile, type ChecklistItem } from "./plan-doc.ts";
 import { adoptHigher, commitRef, deleteLocal, deleteRef, fetchMirror, type Git, listRefs, plansDir, pushRef, readLocalStatuses, readPlanMd, refRev, remoteOf, repoInfo, type RefEntry, writeLocal } from "./plan-store.ts";
+import { type FlowFinding, recordFindings, reportFindings, type ReportStep } from "./flow-report.ts";
 import { nextStage, parseStages, stageDelivery, stageLine, stageNote, stageStart, stagesOutcome } from "./stages.ts";
 import { planToolProblem, planToolRefused } from "./readonly-tools.ts";
 import { addUsage, emptyUsage, mapLimit, type RunResult, runSubagent } from "./subagent.ts";
@@ -127,6 +128,10 @@ interface FlowState {
 	approvedPlan?: string;
 	/** The plan's steps (S1, S2, ...) with the executor's ticks; claims, not proof. */
 	checklist?: ChecklistItem[];
+	/** Every finding the judge raised in this flow, for the end-of-flow card. */
+	flowFindings?: FlowFinding[];
+	/** The end-of-flow card of this flow has been written. */
+	flowSummarized?: boolean;
 	/** The plan's file in the repo's git folder: its flow ID, how many milestones wrote it, the repos it covers, and how the flow ended. */
 	planDoc?: { flowId: string; rev: number; roots: string[]; finished?: Finished };
 	/** The planner is writing the final execution plan; its reply becomes approvedPlan. */
@@ -319,15 +324,19 @@ export default function workflow(pi: ExtensionAPI) {
 	function summarizeFlow(outcome: string, ok: boolean): boolean {
 		if ((state.unresolvedPlanFlaws ?? 0) > 0) outcome += ` · ${state.unresolvedPlanFlaws} plan flaw(s) not settled (see the plan)`;
 		state.unresolvedPlanFlaws = undefined;
-		const hadTouched = (state.touchedRepos?.length ?? 0) > 0;
+		const steps: ReportStep[] | undefined = state.checklist?.length ? state.checklist.map((c) => ({ id: c.id, text: c.text, done: c.done })) : undefined;
+		const found = reportFindings(state.flowFindings, state.approvedPlan);
+		const findings = found.length ? found : undefined;
+		state.flowSummarized = true;
+		state.flowFindings = undefined;
 		if (state.planDoc && !state.planDoc.finished) planMilestone(undefined, { at: new Date().toISOString(), ok, text: outcome });
 		state.touchedRepos = undefined;
 		view.settleMain();
-		if (!view.hasFlowUsage()) {
-			if (hadTouched) persist();
+		if (!view.hasFlowUsage() && !steps && !findings) {
+			persist();
 			return false;
 		}
-		pi.appendEntry(SUMMARY_ENTRY, view.endFlow(outcome, ok));
+		pi.appendEntry(SUMMARY_ENTRY, { ...view.endFlow(outcome, ok), steps, findings });
 		persist();
 		return true;
 	}
@@ -386,6 +395,9 @@ export default function workflow(pi: ExtensionAPI) {
 	}
 
 	async function setPhase(ctx: ExtensionContext, phase: Phase): Promise<void> {
+		if (state.phase === "execute" && phase !== "execute" && state.approvedPlan && !state.flowSummarized) {
+			summarizeFlow(stoppedSummary(phase === "plan" ? "back to planning" : "abandoned"), false);
+		}
 		planReady = false;
 		planProposed = false;
 		if (state.phase === "plan" && phase !== "plan") restorePlanTools();
@@ -429,6 +441,8 @@ export default function workflow(pi: ExtensionAPI) {
 		state.approvedPlan = plan || undefined;
 		state.checklist = undefined;
 		state.planDoc = undefined;
+		state.flowFindings = undefined;
+		state.flowSummarized = undefined;
 		refreshChecklist();
 		updateStatus(ctx);
 		state.stageOutcomes = undefined;
@@ -1355,6 +1369,7 @@ export default function workflow(pi: ExtensionAPI) {
 		// Back to the phase's stage either way; finishPassed moves to commit once the commit is actually handed over.
 		view.stage = state.phase === "plan" ? "plan" : "execute";
 		state.lastJudge = plan.snaps ? { hash: diff.hash, repos: plan.snaps, base: diff.base, verdict, text } : undefined;
+		if (state.phase === "execute") state.flowFindings = recordFindings(state.flowFindings, state.stage, text);
 		state.lastKnowledge = knowledge;
 		persist();
 		return { verdict, text, hash: diff.hash, usage, run };
@@ -1823,8 +1838,23 @@ export default function workflow(pi: ExtensionAPI) {
 		return { action: "transform", text: `${event.text.trim()}\n\n${APPROVED}${extra}` };
 	});
 
-	pi.on("session_compact", async (event) => {
+	pi.on("session_compact", async (event, ctx) => {
 		if (event.reason === "overflow" && event.willRetry) overflowRetry = true;
+		try {
+			const entries = ctx.sessionManager.getEntries();
+			const c = entries.findIndex((e) => e.id === event.compactionEntry.id);
+			const k = entries.findIndex((e) => e.id === event.compactionEntry.firstKeptEntryId);
+			let p = -1;
+			let s = -1;
+			for (let i = 0; i < c; i++) {
+				const e = entries[i] as { type: string; customType?: string; data?: { title?: string; reposted?: boolean } };
+				if (e.type === "compaction") p = i;
+				if (e.type === "custom" && e.customType === SUMMARY_ENTRY && e.data && e.data.title === undefined && !e.data.reposted) s = i;
+			}
+			if (s > p && (k === -1 || s < k)) pi.appendEntry(SUMMARY_ENTRY, { ...(entries[s] as { data: object }).data, reposted: true });
+		} catch {
+			// the card is a convenience; never break compaction
+		}
 	});
 
 	/** Sends a workflow message that starts the next executor turn. From agent_end it waits for the run to settle, so the session can be compacted first. */
@@ -1924,7 +1954,22 @@ export default function workflow(pi: ExtensionAPI) {
 		}
 
 		if (state.phase !== "execute") return;
-		if (skipJudge(last)) return;
+		if (skipJudge(last)) {
+			const choice = await ctx.ui.select("The executor's last reply ended in an error", ["Retry", "Back to planning", "Stop"]);
+			if (choice === "Retry") {
+				pi.sendMessage(
+					{ customType: "workflow-retry", content: "Your last reply ended in an error. Continue with the open steps of the approved plan.", display: true },
+					{ triggerTurn: true, deliverAs: "followUp" },
+				);
+			} else if (choice === "Back to planning") {
+				await setPhase(ctx, "plan");
+			} else {
+				ctx.ui.notify("workflow: stopped: the executor's reply failed", "warning");
+				summarizeFlow(stoppedSummary("stopped: the executor's reply failed"), false);
+				await endFlow(ctx);
+			}
+			return;
+		}
 		let rejudge = false;
 		if (state.pendingPlanFlaw) {
 			// The executor's own judge call questioned the plan; it was told to stop, so the workflow decides.
@@ -2165,6 +2210,17 @@ export default function workflow(pi: ExtensionAPI) {
 		}
 		if (r.verdict === "ERROR") {
 			ctx.ui.notify(r.text, "error");
+			if (!ctx.hasUI || state.phase !== "execute") return;
+			const choice = await ctx.ui.select("The judge failed to run", ["Retry the judge", "Back to planning", "Stop"]);
+			if (choice === "Retry the judge") {
+				await reviewDiff(ctx, true);
+			} else if (choice === "Back to planning") {
+				await setPhase(ctx, "plan");
+			} else {
+				ctx.ui.notify("workflow: stopped: the judge failed to run", "warning");
+				summarizeFlow(stoppedSummary("stopped: the judge failed to run"), false);
+				await endFlow(ctx);
+			}
 			return;
 		}
 		// The verdict travels with the next instruction, so they reach the transcript in order.
