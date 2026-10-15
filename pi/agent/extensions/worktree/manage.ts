@@ -2,12 +2,13 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { DEFAULT_LINK, type WtConfig } from "./config.ts";
+import { DEFAULT_LINK, loadConfig, type WtConfig } from "./config.ts";
 import { isLink, unlinkLink } from "./files.ts";
 import { baseRefOf, mainRepoOf, removeChecks, repoStatus, type Git } from "./git-ops.ts";
 import { branchOf, checkName, setRootOf } from "./layout.ts";
 
-const norm = (p: string) => p.split(String.fromCharCode(92)).join("/").replace(/\/+$/, "").toLowerCase();
+const caseFold = (s: string) => (process.platform === "win32" ? s.toLowerCase() : s);
+const norm = (p: string) => caseFold(p.split(String.fromCharCode(92)).join("/").replace(/\/+$/, ""));
 const inside = (p: string, dir: string) => norm(p) === norm(dir) || norm(p).startsWith(`${norm(dir)}/`);
 
 function dirs(p: string): string[] {
@@ -103,4 +104,63 @@ async function removeAll(env: RemoveEnv, name: string, set: string, wts: string[
 		// leave a folder we could not remove
 	}
 	return { text: `Removed set "${name}":\n${done.join("\n")}`, error: false };
+}
+
+export interface WtSession {
+	setRoot: string;
+	branch: string;
+	unityProject: string | null;
+}
+
+function plainFolderSession(cfg: WtConfig, cwd: string, root: string): WtSession | null {
+	const here = norm(cwd);
+	if (!here.startsWith(`${root}/`)) return null;
+	const first = here.slice(root.length + 1).split("/")[0];
+	return { setRoot: `${cfg.root.split(String.fromCharCode(92)).join("/").replace(/\/+$/, "")}/${first}`, branch: "", unityProject: null };
+}
+
+/** The worktree set this session runs in, or null when it runs in an original folder. */
+export async function detectSession(git: Git, cfg: WtConfig, cwd: string): Promise<WtSession | null> {
+	const top = await git(cwd, ["rev-parse", "--show-toplevel"]);
+	const root = norm(cfg.root);
+	if (top.code !== 0) return plainFolderSession(cfg, cwd, root);
+	const here = norm(top.stdout.trim());
+	if (!here.startsWith(`${root}/`)) return null;
+	const dirs = await git(cwd, ["rev-parse", "--path-format=absolute", "--absolute-git-dir", "--git-common-dir"]);
+	const [gitDir, common] = dirs.stdout.split(String.fromCharCode(10)).map((l) => l.trim());
+	if (dirs.code !== 0 || !gitDir || !common) return null;
+	const commonAbs = norm(common);
+	if (norm(gitDir) === commonAbs) return null;
+	const first = here.slice(root.length + 1).split("/")[0];
+	const setRoot = `${cfg.root.split(String.fromCharCode(92)).join("/").replace(/\/+$/, "")}/${first}`;
+	const br = await git(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]);
+	const proj = `${top.stdout.trim().split(String.fromCharCode(92)).join("/")}/unity`;
+	return {
+		setRoot,
+		branch: br.stdout.trim(),
+		unityProject: fs.existsSync(`${proj}/ProjectSettings`) ? proj : null,
+	};
+}
+
+export function worktreePrompt(s: WtSession): string {
+	const unity = s.unityProject ? ` This set's Unity project: \`${s.unityProject}\`.` : "";
+	return `This session runs in the git worktree set \`${s.setRoot}\` (branch \`${s.branch}\`). The open Unity Editor belongs to another session: do not drive it. Unity commands that drive an Editor or run a project are refused unless \`--project-path\` is an absolute path inside \`${s.setRoot}\`. For Unity checks, commit and ask the user to run them in the Editor session.${unity}`;
+}
+
+/** Parent folder of the main repo (not of a worktree), so the default root is the same everywhere. */
+export async function mainParent(git: Git, cwd: string): Promise<string> {
+	const r = await git(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+	const common = r.stdout.trim().split(String.fromCharCode(92)).join("/").replace(/\/+$/, "");
+	if (r.code !== 0 || !common.endsWith("/.git")) {
+		const top = await git(cwd, ["rev-parse", "--show-toplevel"]);
+		const base = top.code === 0 ? top.stdout.trim() : cwd;
+		return path.posix.dirname(base.split(String.fromCharCode(92)).join("/"));
+	}
+	return path.posix.dirname(path.posix.dirname(common));
+}
+
+/** The config every command and the session check use: the default root is next to the main repo. */
+export async function sessionConfig(git: Git, agentDir: string, cwd: string): Promise<{ cfg: WtConfig; warning?: string; parent: string }> {
+	const parent = await mainParent(git, cwd);
+	return { ...loadConfig(agentDir, parent), parent };
 }

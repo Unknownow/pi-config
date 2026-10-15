@@ -41,13 +41,25 @@ Unity's `Library/` is never touched: a worktree session does not get one.
 | `piCommand` | `` | Empty: `~/.pi/agent/bin/pi.cmd` on Windows if it exists, otherwise `pi`. |
 | `link` | see above | Paths (relative to each repo) to junction-link. |
 | `copy` | see above | Paths (relative to each repo) to copy. |
-| `unityGuard` | `true` | Reserved for the Unity guard in worktree sessions. |
+| `unityGuard` | `true` | Turns the Unity guard on or off in worktree sessions. |
 
 ## Launching
 
 Windows: `wt.exe -w new new-tab -d <cwd> --title "pi NAME" <pi> --add-dir "A\;B"`. Windows Terminal
 reads `;` as its own separator, so the extension escapes it. If `wt.exe` is not found, it falls
 back to `cmd /c start`. On macOS and Linux nothing is started; the command is printed.
+
+## Unity
+
+Only the session in the original folder drives the open Unity Editor. A session that runs inside a
+worktree set gets a system prompt section saying so, and the guard refuses `bash`, `ctx_execute`
+and `ctx_batch_execute` calls with a `unity` command that drives an Editor or runs a project
+(`command`, `cmd`, `recompile`, `list`, `job`, `mcp`, `run`, `test`, `build`, `pipeline`) unless
+`--project-path` is inside the set. Any `UNITY_PROJECT_PATH=` assignment is refused. `unity status`,
+`install` and similar pass. Sessions outside `<root>` are not restricted.
+
+The guard reads command text only; it is not a sandbox. `cd` in the text is ignored when resolving
+a relative `--project-path`, and commands built at runtime or started from a script file are not seen.
 
 ## Limits
 
@@ -62,5 +74,5 @@ back to `cmd /c start`. On macOS and Linux nothing is started; the command is pr
 ## Tests
 
 ```
-node --experimental-strip-types --test config.test.ts layout.test.ts files.test.ts git-ops.test.ts
+node --experimental-strip-types --test config.test.ts layout.test.ts files.test.ts git-ops.test.ts manage.test.ts unity-guard.test.ts
 ```
