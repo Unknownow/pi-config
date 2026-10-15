@@ -209,11 +209,13 @@ The wiring in S3-S7 lives inside `index.ts` closures and gets no new unit tests.
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 `agent-end.ts`, after `hasPlanFlaw` (`:89-92`): `PLAN_FLAW_LINE`, `planFlawLines` and `planFlawOnPass` exactly as in §4.
-- [ ] S2 `index.ts`:
-- [ ] S3 `index.ts` `notePlanFlaws` (`:2261`), as in §4, including the duplicate filter and the early return of 0.
-- [ ] S4 
-- [ ] S5 `index.ts` `reviewDiff` (`:2172-2177`), when `hasPlanFlaw(r.text)`:
-- [ ] S6 `index.ts` agent_end pending path (`:1928-1957`):
-- [ ] S7 `index.ts` `summarizeFlow` (`:319`): apply the flag at the top, before `planMilestone` uses `outcome`, then clear the fi
-- [ ] S8 `README.md`:
+- [x] S1 `agent-end.ts`, after `hasPlanFlaw` (`:89-92`): `PLAN_FLAW_LINE`, `planFlawLines` and `planFlawOnPass` exactly as in §4.
+- [x] S2 `index.ts`:
+- [x] S3 `index.ts` `notePlanFlaws` (`:2261`), as in §4, including the duplicate filter and the early return of 0.
+- [x] S4 
+- [x] S5 `index.ts` `reviewDiff` (`:2172-2177`), when `hasPlanFlaw(r.text)`:
+- [x] S6 `index.ts` agent_end pending path (`:1928-1957`):
+- [x] S7 `index.ts` `summarizeFlow` (`:319`): apply the flag at the top, before `planMilestone` uses `outcome`, then clear the fi
+- [x] S8 `README.md`:
+## Outcome
+2026-10-15T11:10:26.245Z — ok: committed (1 commit)
