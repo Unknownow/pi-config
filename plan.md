@@ -218,8 +218,8 @@ Expected: `# fail 0`, and `# pass` equal to the total number of tests.
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 Run `git checkout 76a42c0 -- pi/agent/extensions/worktree/index.ts pi/agent/extensions/worktree/manage.ts pi/agent/exten
-- [ ] S2 Run the test command from §3 (from the worktree folder). All tests must pass, including `manage.test.ts:96-141`.
+- [x] S1 Run `git checkout 76a42c0 -- pi/agent/extensions/worktree/index.ts pi/agent/extensions/worktree/manage.ts pi/agent/exten
+- [x] S2 Run the test command from §3 (from the worktree folder). All tests must pass, including `manage.test.ts:96-141`.
 - [ ] S3 In `manage.ts:84` (`removeAll`): add the ordered-`wts` contract, the "unregistered + only empty folders" handling, `left
 - [ ] S4 In `manage.ts`, after `removeAll`, add `DoneEnv`, `DoneResult` and `finishSet` exactly as in §4. Reuse `removeChecks`, `
 - [ ] S5 In `manage.ts`, add `export const SWEEP_SCRIPT` as in §4. It's one template string of plain CommonJS. Keep it short, and
