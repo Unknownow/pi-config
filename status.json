@@ -1,16 +1,30 @@
 {
   "v": 1,
   "flowId": "20261015-1755-let-a-passed-review-with-plan-flaws-go-o-46b5",
-  "rev": 1,
-  "updated": "2026-10-15T10:55:33.347Z",
+  "rev": 2,
+  "updated": "2026-10-15T11:00:59.154Z",
   "title": "Let a passed review with plan flaws go on to commit, and send major plan flaws to the arbiter",
   "delivery": "push",
-  "done": [],
+  "done": [
+    "S1",
+    "S2",
+    "S3",
+    "S4",
+    "S5",
+    "S6",
+    "S7",
+    "S8"
+  ],
   "repos": [
     {
       "branch": "master",
       "remote": "github-personal/Unknownow/pi-config",
       "primary": true
+    },
+    {
+      "branch": "master",
+      "remote": "github-personal/Unknownow/pi-config",
+      "primary": false
     }
   ]
 }

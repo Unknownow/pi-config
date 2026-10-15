@@ -160,13 +160,25 @@ Confirm that `state.lastJudge.verdict`'s type is `"PASS" | "FAIL"`. If its type 
 ### 9. Commits
 - `feat(workflow): let a passed review with plan flaws go on, arbiter for major ones` (`agent-end.ts`, `agent-end.test.ts`, `index.ts`, `plan-doc.test.ts`, `README.md`)
 
+## Amendment 1 (arbiter)
+**S6 (amended), `index.ts` agent_end pending path, "Diff changed since that review (D6)" branch:**
+- Keep the current behaviour: don't call `resolvePlanFlaw`, and call `seenDiffs.delete(flawed.hash)`.
+- Also set a local flag (e.g. `rejudge = true`).
+- At the end of the handler, call `await reviewDiff(ctx, rejudge)` instead of `reviewDiff(ctx, false)`. `rejudge` defaults to `false`, so every other path is unchanged.
+- Leave the commit-handover and `commitPending` checks between them as they are.
+- Why: the executor itself asked for this review. D6 says the current diff is judged again, so the `autoJudge` "off"/"ask" gates must not drop it silently. With `manual = true`, `reviewDiff` judges the current diff, and S5 then routes any plan flaw (stop, arbiter or note).
+- Required behaviour: with `autoJudge` set to `"off"` or `"ask"`, a pending plan-flaw report whose diff has since changed always leads to a fresh judge run on the current diff, with no confirm prompt and no menu for the old report.
+- Tests: none new, because this is wiring inside the agent_end handler with no pure helper. Existing `node --test *.test.ts` must stay at `ℹ fail 0`.
+
+**S8 addendum, `README.md`:** none needed.
+
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 `agent-end.ts`, after `hasPlanFlaw` (`:89-92`):
-- [ ] S2 `index.ts` `FlowState` (about `:137`): add `unresolvedPlanFlaws?: number` with a one-line doc comment, and add `state.un
-- [ ] S3 `index.ts`:
-- [ ] S4 `index.ts`: add `settlePlanFlawOnPass` (§4) after `runArbiter`. Import `planFlawLines` and `planFlawOnPass` in the `./ag
-- [ ] S5 `index.ts` `reviewDiff` (`:2164-2168`): replace the plan-flaw block with this:
-- [ ] S6 `index.ts` agent_end pending path (`:1923-1945`): after taking `report` and `flawed`:
-- [ ] S7 `index.ts` `summarizeFlow` (`:317`): apply the summary flag from §4 at the top of the function, before `planMilestone` u
-- [ ] S8 `README.md`:
+- [x] S1 `agent-end.ts`, after `hasPlanFlaw` (`:89-92`):
+- [x] S2 `index.ts` `FlowState` (about `:137`): add `unresolvedPlanFlaws?: number` with a one-line doc comment, and add `state.un
+- [x] S3 `index.ts`:
+- [x] S4 `index.ts`: add `settlePlanFlawOnPass` (§4) after `runArbiter`. Import `planFlawLines` and `planFlawOnPass` in the `./ag
+- [x] S5 `index.ts` `reviewDiff` (`:2164-2168`): replace the plan-flaw block with this:
+- [x] S6 `index.ts` agent_end pending path (`:1923-1945`): after taking `report` and `flawed`:
+- [x] S7 `index.ts` `summarizeFlow` (`:317`): apply the summary flag from §4 at the top of the function, before `planMilestone` u
+- [x] S8 `README.md`:
