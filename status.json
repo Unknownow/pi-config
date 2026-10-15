@@ -1,0 +1,17 @@
+{
+  "v": 1,
+  "flowId": "20261016-0048-wt-done-remove-this-session-s-worktree-s-7b90",
+  "rev": 1,
+  "updated": "2026-10-15T17:48:37.322Z",
+  "title": "`/wt done`: remove this session's worktree set, report, close pi",
+  "stage": 1,
+  "delivery": "push",
+  "done": [],
+  "repos": [
+    {
+      "branch": "master",
+      "remote": "github-personal/Unknownow/pi-config",
+      "primary": true
+    }
+  ]
+}
