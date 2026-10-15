@@ -1,7 +1,7 @@
 /**
  * /wt: run several pi sessions on the same repos without copying them. `/wt new <name>` makes a git
  * worktree for the working repo and every added folder, links or copies the gitignored files, and opens
- * a new terminal window running pi there. See README.md.
+ * a new terminal window running pi there. `/wt done` removes the set a session runs in. See README.md.
  */
 
 import { spawn } from "node:child_process";
@@ -11,12 +11,12 @@ import { getAgentDir, type ExtensionAPI, type ExtensionCommandContext } from "@e
 import { loadConfig, type WtConfig } from "./config.ts";
 import { setupFiles } from "./files.ts";
 import { createAll, excludeLinks, preflight, rollback, type Git, type Planned } from "./git-ops.ts";
-import { detectSession, listSets, listText, parseEditors, removeSet, sessionConfig, worktreePrompt, type WtSession } from "./manage.ts";
+import { SWEEP_SCRIPT, detectSession, finishSet, listSets, listText, parseEditors, removeSet, sessionConfig, worktreePrompt, type WtSession } from "./manage.ts";
 import { guardProblem } from "./unity-guard.ts";
 import { branchOf, checkName, launchSpec, rootProblem, setRootOf } from "./layout.ts";
 
 const STATE_ENTRY = "workflow-state";
-const SUBCOMMANDS = ["new", "list", "remove"];
+const SUBCOMMANDS = ["new", "list", "remove", "done"];
 
 const slash = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "");
 
@@ -179,16 +179,18 @@ function completionConfig(): WtConfig {
 	return loadConfig(getAgentDir(), cachedParent ?? path.dirname(slash(process.cwd()))).cfg;
 }
 
-async function listCmd(pi: ExtensionAPI, ctx: ExtensionCommandContext): Promise<void> {
-	const cfg = await configFor(pi, ctx);
-	let editors: string[] | null = null;
+async function unityEditors(pi: ExtensionAPI): Promise<string[] | null> {
 	try {
 		const r = await pi.exec("unity", ["status", "--format", "json"], { timeout: 10000 });
-		editors = r.code === 0 ? parseEditors(r.stdout) : null;
+		return r.code === 0 ? parseEditors(r.stdout) : null;
 	} catch {
-		editors = null;
+		return null;
 	}
-	ctx.ui.notify(await listText(makeGit(pi), cfg, editors), "info");
+}
+
+async function listCmd(pi: ExtensionAPI, ctx: ExtensionCommandContext): Promise<void> {
+	const cfg = await configFor(pi, ctx);
+	ctx.ui.notify(await listText(makeGit(pi), cfg, await unityEditors(pi)), "info");
 }
 
 async function removeCmd(pi: ExtensionAPI, ctx: ExtensionCommandContext, name: string): Promise<void> {
@@ -203,6 +205,47 @@ async function removeCmd(pi: ExtensionAPI, ctx: ExtensionCommandContext, name: s
 	};
 	const r = await removeSet(env, name);
 	ctx.ui.notify(r.text, r.error ? "error" : "info");
+}
+
+async function doneCmd(pi: ExtensionAPI, ctx: ExtensionCommandContext): Promise<void> {
+	await ctx.waitForIdle();
+	const cfg = await configFor(pi, ctx);
+	const git = makeGit(pi);
+	const env = {
+		git,
+		cfg,
+		cwd: ctx.cwd,
+		added: addedFolders(ctx),
+		hasUI: ctx.hasUI,
+		confirm: (t: string, m: string) => ctx.ui.confirm(t, m),
+		session: await detectSession(git, cfg, ctx.cwd),
+		editors: await unityEditors(pi),
+		leave: (to: string) => process.chdir(to),
+	};
+	const r = await finishSet(env);
+	const text = r.text;
+	const sweep = () => {
+		try {
+			const p = spawn(process.execPath, ["-e", SWEEP_SCRIPT, "120", "1000", ...r.leftovers], { detached: true, stdio: "ignore", cwd: cfg.root, windowsHide: true });
+			p.on("error", () => {});
+			p.unref();
+		} catch (e) {
+			ctx.ui.notify(`Could not start the cleanup of leftover folders: ${(e as Error).message}`, "warning");
+		}
+	};
+	if (!r.removed) {
+		if (r.leftovers.length) sweep();
+		ctx.ui.notify(text, r.error ? "error" : "info");
+		return;
+	}
+	ctx.ui.notify(text, "info");
+	const name = path.basename(slash(env.session?.setRoot ?? ""));
+	const close = await ctx.ui.confirm(`Worktree set "${name}" removed`, `${text}
+
+Close this pi session?`);
+	if (r.leftovers.length) sweep();
+	if (close) ctx.shutdown();
+	else ctx.ui.notify("The set is removed; exit pi when you are done.", "info");
 }
 
 export default function worktree(pi: ExtensionAPI) {
@@ -230,7 +273,7 @@ export default function worktree(pi: ExtensionAPI) {
 		if (why) return { block: true, reason: why };
 	});
 	pi.registerCommand("wt", {
-		description: "Parallel pi sessions on git worktrees: new NAME, list, remove NAME",
+		description: "Parallel pi sessions on git worktrees: new NAME, list, remove NAME, done",
 		getArgumentCompletions: async (prefix) => {
 			const m = /^remove\s+(\S*)$/i.exec(prefix.trimStart());
 			if (m) {
@@ -247,7 +290,8 @@ export default function worktree(pi: ExtensionAPI) {
 				if (sub === "new") return await newSet(pi, ctx, rest[0] ?? "");
 				if (sub === "list") return await listCmd(pi, ctx);
 				if (sub === "remove") return await removeCmd(pi, ctx, rest[0] ?? "");
-				ctx.ui.notify("Usage: /wt new NAME | /wt list | /wt remove NAME", "info");
+				if (sub === "done") return await doneCmd(pi, ctx);
+				ctx.ui.notify("Usage: /wt new NAME | /wt list | /wt remove NAME | /wt done", "info");
 			} catch (e) {
 				ctx.ui.notify(`/wt ${sub ?? ""} failed: ${(e as Error).message}`, "error");
 			}

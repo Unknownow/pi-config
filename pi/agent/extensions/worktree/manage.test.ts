@@ -8,7 +8,7 @@ import { test } from "node:test";
 import { defaults } from "./config.ts";
 import { setupFiles } from "./files.ts";
 import type { Git } from "./git-ops.ts";
-import { listText, parseEditors, removeSet, type RemoveEnv } from "./manage.ts";
+import { SWEEP_SCRIPT, detectSession, finishSet, listText, parseEditors, removeSet, type DoneEnv, type RemoveEnv } from "./manage.ts";
 
 const git: Git = async (cwd, args) => {
 	const r = spawnSync("git", args, { cwd, encoding: "utf8" });
@@ -138,4 +138,163 @@ test("detectSession covers a non-git folder inside a set", async () => {
 	const s = await detectSession(git, f.cfg, `${f.cfg.root}/s9`);
 	assert.equal(s?.setRoot.toLowerCase(), `${f.cfg.root}/s9`.toLowerCase());
 	assert.equal(s?.branch, "");
+});
+
+const fold = (p: string) => p.split(String.fromCharCode(92)).join("/").replace(/\/+$/, "").toLowerCase();
+
+async function doneEnv(f: ReturnType<typeof fixture>, over: Partial<DoneEnv> = {}, left: { to?: string } = {}): Promise<DoneEnv> {
+	return { ...f.env, cwd: f.wt, session: await detectSession(git, f.cfg, f.wt), editors: [], leave: (to) => { left.to = to; }, ...over };
+}
+
+test("finishSet removes the set it runs in, keeps link targets, leaves for the main repo", async () => {
+	const f = fixture();
+	const left: { to?: string } = {};
+	const r = await finishSet(await doneEnv(f, {}, left));
+	assert.equal(r.error, false, r.text);
+	assert.equal(r.removed, true);
+	assert.deepEqual(r.leftovers, []);
+	assert.ok(!fs.existsSync(f.wt));
+	assert.ok(!fs.existsSync(`${f.cfg.root}/s1`));
+	assert.equal(fs.readFileSync(`${f.d}/repo/.pi/git/keep.txt`, "utf8"), "keep");
+	assert.equal(run(`${f.d}/repo`, ["branch", "--list", "wt/s1"]).trim(), "");
+	assert.equal(fold(left.to ?? ""), fold(`${f.d}/repo`));
+});
+
+test("finishSet refuses outside a session, without UI, with an open Editor, and with dirty or unpushed work", async () => {
+	const f = fixture();
+	const left: { to?: string } = {};
+	const expectRefused = (r: Awaited<ReturnType<typeof finishSet>>, re: RegExp) => {
+		assert.equal(r.error, true);
+		assert.equal(r.removed, false);
+		assert.match(r.text, re);
+		assert.ok(fs.existsSync(f.wt));
+		assert.equal(left.to, undefined);
+	};
+	expectRefused(await finishSet(await doneEnv(f, { session: null }, left)), /\/wt remove/);
+	expectRefused(await finishSet(await doneEnv(f, { hasUI: false }, left)), /needs a UI/);
+	expectRefused(await finishSet(await doneEnv(f, { editors: [`${f.wt}/unity`] }, left)), /Unity Editor open/);
+	fs.writeFileSync(`${f.wt}/x.txt`, "x");
+	expectRefused(await finishSet(await doneEnv(f, {}, left)), /Nothing removed/);
+	run(f.wt, ["add", "x.txt"]);
+	run(f.wt, [...f.id, "commit", "-m", "x"]);
+	expectRefused(await finishSet(await doneEnv(f, {}, left)), /not pushed/);
+});
+
+test("finishSet: cancel keeps everything", async () => {
+	const f = fixture();
+	const left: { to?: string } = {};
+	const r = await finishSet(await doneEnv(f, { confirm: async () => false }, left));
+	assert.equal(r.error, false);
+	assert.equal(r.removed, false);
+	assert.equal(r.text, "Cancelled.");
+	assert.ok(fs.existsSync(f.wt));
+	assert.equal(left.to, undefined);
+});
+
+test("finishSet removes the working repo last", async () => {
+	const f = fixture();
+	run(f.d, ["init", "--bare", "-b", "main", "origin2.git"]);
+	run(f.d, ["clone", "origin2.git", "zzz"]);
+	fs.writeFileSync(`${f.d}/zzz/a.txt`, "a");
+	run(`${f.d}/zzz`, ["add", "a.txt"]);
+	run(`${f.d}/zzz`, [...f.id, "commit", "-m", "i"]);
+	run(`${f.d}/zzz`, ["push", "origin", "HEAD:main"]);
+	run(`${f.d}/zzz`, ["fetch", "origin"]);
+	run(`${f.d}/zzz`, ["remote", "set-head", "origin", "main"]);
+	run(`${f.d}/zzz`, ["worktree", "add", "--no-track", "-b", "wt/s1", `${f.cfg.root}/s1/zzz`, "origin/main"]);
+	const order: string[] = [];
+	const spy: Git = async (cwd, args) => {
+		if (args[0] === "worktree" && args[1] === "remove") order.push(fold(args[2]));
+		return git(cwd, args);
+	};
+	const r = await finishSet(await doneEnv(f, { git: spy }));
+	assert.equal(r.error, false, r.text);
+	assert.deepEqual(order, [fold(`${f.cfg.root}/s1/zzz`), fold(f.wt)]);
+});
+
+test("finishSet treats an in-use folder as removed and leaves it to the sweeper", async () => {
+	const f = fixture();
+	const flaky: Git = async (cwd, args) => {
+		const r = await git(cwd, args);
+		if (args[0] === "worktree" && args[1] === "remove") {
+			fs.mkdirSync(`${args[2]}/sub`, { recursive: true });
+			return { code: 1, stdout: "", stderr: "error: failed to delete" };
+		}
+		return r;
+	};
+	const r = await finishSet(await doneEnv(f, { git: flaky }));
+	assert.equal(r.error, false, r.text);
+	assert.equal(r.removed, true);
+	assert.deepEqual(r.leftovers, [f.wt, `${f.cfg.root}/s1`]);
+	assert.match(r.text, /deleted after pi exits/);
+	assert.equal(run(`${f.d}/repo`, ["branch", "--list", "wt/s1"]).trim(), "");
+	spawnSync(process.execPath, ["-e", SWEEP_SCRIPT, "1", "0", ...r.leftovers]);
+	assert.ok(!fs.existsSync(f.wt));
+	assert.ok(!fs.existsSync(`${f.cfg.root}/s1`));
+});
+
+test("finishSet stops when the worktree stays registered", async () => {
+	const f = fixture();
+	const stuck: Git = async (cwd, args) => (args[0] === "worktree" && args[1] === "remove" ? { code: 1, stdout: "", stderr: "nope" } : git(cwd, args));
+	const r = await finishSet(await doneEnv(f, { git: stuck }));
+	assert.equal(r.error, true);
+	assert.equal(r.removed, false);
+	assert.match(r.text, /Stopped at/);
+	assert.ok(fs.existsSync(f.wt));
+	assert.match(run(`${f.d}/repo`, ["branch", "--list", "wt/s1"]), /wt\/s1/);
+});
+
+test("SWEEP_SCRIPT deletes only empty folders", () => {
+	const d = fs.mkdtempSync(path.join(os.tmpdir(), "wtsweep-"));
+	fs.mkdirSync(`${d}/a/b/c`, { recursive: true });
+	fs.mkdirSync(`${d}/x/y`, { recursive: true });
+	fs.writeFileSync(`${d}/x/y/file.txt`, "f");
+	spawnSync(process.execPath, ["-e", SWEEP_SCRIPT, "1", "0", `${d}/a`, `${d}/x`]);
+	assert.ok(!fs.existsSync(`${d}/a`));
+	assert.ok(fs.existsSync(`${d}/x/y/file.txt`));
+});
+
+const inUse: Git = async (cwd, args) => {
+	const r = await git(cwd, args);
+	if (args[0] === "worktree" && args[1] === "remove") {
+		fs.mkdirSync(`${args[2]}/sub`, { recursive: true });
+		return { code: 1, stdout: "", stderr: "error: failed to delete" };
+	}
+	return r;
+};
+
+test("removeSet still stops when a folder is in use", async () => {
+	const f = fixture();
+	const r = await removeSet({ ...f.env, git: inUse }, "s1");
+	assert.equal(r.error, true);
+	assert.match(r.text, /Stopped at/);
+	assert.doesNotMatch(r.text, /deleted after pi exits/);
+});
+
+test("finishSet stops when worktree list fails", async () => {
+	const f = fixture();
+	const broken: Git = async (cwd, args) => (args[0] === "worktree" && args[1] === "list" ? { code: 1, stdout: "", stderr: "x" } : inUse(cwd, args));
+	const r = await finishSet(await doneEnv(f, { git: broken }));
+	assert.equal(r.error, true);
+	assert.match(r.text, /Stopped at/);
+	assert.match(run(`${f.d}/repo`, ["branch", "--list", "wt/s1"]), /wt\/s1/);
+});
+
+test("finishSet sweeps the set folder when pi runs in a plain folder of the set", async () => {
+	const f = fixture();
+	fs.mkdirSync(`${f.cfg.root}/s1/plain`);
+	const r = await finishSet(await doneEnv(f, { cwd: `${f.cfg.root}/s1/plain` }));
+	assert.equal(r.error, false, r.text);
+	assert.ok(r.leftovers.includes(`${f.cfg.root}/s1`));
+});
+
+test("finishSet reports an exception instead of throwing", async () => {
+	const f = fixture();
+	const boom: Git = async (cwd, args) => {
+		if (args[0] === "worktree" && args[1] === "remove") throw new Error("boom");
+		return git(cwd, args);
+	};
+	const r = await finishSet(await doneEnv(f, { git: boom }));
+	assert.equal(r.error, true);
+	assert.match(r.text, /Stopped at .*boom/);
 });

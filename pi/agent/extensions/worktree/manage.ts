@@ -5,7 +5,7 @@ import * as path from "node:path";
 import { DEFAULT_LINK, loadConfig, type WtConfig } from "./config.ts";
 import { isLink, unlinkLink } from "./files.ts";
 import { baseRefOf, mainRepoOf, removeChecks, repoStatus, type Git } from "./git-ops.ts";
-import { branchOf, checkName, setRootOf } from "./layout.ts";
+import { baseName, branchOf, checkName, setRootOf } from "./layout.ts";
 
 const caseFold = (s: string) => (process.platform === "win32" ? s.toLowerCase() : s);
 const norm = (p: string) => caseFold(p.split(String.fromCharCode(92)).join("/").replace(/\/+$/, ""));
@@ -63,6 +63,8 @@ export interface RemoveEnv {
 	confirm: (title: string, message: string) => Promise<boolean>;
 }
 
+const libraryLines = (wts: string[]) => wts.map((w) => `${w}${fs.existsSync(`${w}/unity/Library`) ? " (its Library/ will be deleted)" : ""}`);
+
 /** Returns the report text; `error` marks a refusal or failure. */
 export async function removeSet(env: RemoveEnv, name: string): Promise<{ text: string; error: boolean }> {
 	const { git, cfg } = env;
@@ -75,36 +77,131 @@ export async function removeSet(env: RemoveEnv, name: string): Promise<{ text: s
 	const wts = reposOf(cfg, name);
 	const checks = await removeChecks(git, wts);
 	if (checks.problems.length) return { text: `Nothing removed:\n${checks.problems.join("\n")}`, error: true };
-	const lines = wts.map((w) => `${w}${fs.existsSync(`${w}/unity/Library`) ? " (its Library/ will be deleted)" : ""}`);
-	const ok = await env.confirm(`Remove worktree set "${name}"?`, [...checks.warnings, ...lines].join("\n"));
+	const ok = await env.confirm(`Remove worktree set "${name}"?`, [...checks.warnings, ...libraryLines(wts)].join("\n"));
 	if (!ok) return { text: "Cancelled.", error: false };
-	return removeAll(env, name, set, wts);
+	const r = await removeAll(env, name, set, wts, false);
+	return { text: r.text, error: r.error };
 }
 
-async function removeAll(env: RemoveEnv, name: string, set: string, wts: string[]): Promise<{ text: string; error: boolean }> {
+/** True when `p` is missing or holds only real directories, recursively (no files, no links). */
+function onlyEmptyDirs(p: string): boolean {
+	let st: fs.Stats;
+	try {
+		st = fs.lstatSync(p);
+	} catch {
+		return true;
+	}
+	if (!st.isDirectory()) return false;
+	return fs.readdirSync(p).every((e) => onlyEmptyDirs(path.join(p, e)));
+}
+
+async function isRegistered(git: Git, main: string, wt: string): Promise<boolean> {
+	const r = await git(main, ["worktree", "list", "--porcelain"]);
+	if (r.code !== 0) return true;
+	return r.stdout.split("\n").some((l) => l.startsWith("worktree ") && norm(l.slice(9).trim()) === norm(wt));
+}
+
+/** Removes the worktrees in the given order. Folders git could not delete (in use) go to `leftovers`. */
+async function removeAll(env: RemoveEnv, name: string, set: string, wts: string[], allowInUse: boolean): Promise<{ text: string; error: boolean; leftovers: string[] }> {
 	const { git, cfg } = env;
 	const done: string[] = [];
+	const leftovers: string[] = [];
 	for (const wt of wts) {
-		const main = await mainRepoOf(git, wt);
-		const branch = branchOf(cfg, name);
-		const current = (await repoStatus(git, wt, null)).branch;
-		if (!main) return { text: `Stopped at ${wt}: cannot find its main repo. Removed: ${done.join(", ") || "nothing"}`, error: true };
-		for (const rel of new Set([...cfg.link, ...DEFAULT_LINK])) {
-			const at = path.join(wt, rel);
-			if (isLink(at)) unlinkLink(at);
+		try {
+			const main = await mainRepoOf(git, wt);
+			const branch = branchOf(cfg, name);
+			const current = (await repoStatus(git, wt, null)).branch;
+			if (!main) return { text: `Stopped at ${wt}: cannot find its main repo. Removed: ${done.join(", ") || "nothing"}`, error: true, leftovers };
+			for (const rel of new Set([...cfg.link, ...DEFAULT_LINK])) {
+				const at = path.join(wt, rel);
+				if (isLink(at)) unlinkLink(at);
+			}
+			const rm = await git(main, ["worktree", "remove", wt]);
+			let inUse = false;
+			if (rm.code !== 0) {
+				if (allowInUse && !(await isRegistered(git, main, wt)) && onlyEmptyDirs(wt)) {
+					inUse = true;
+					leftovers.push(wt);
+				} else {
+					return { text: `Stopped at ${wt}: ${(rm.stderr || rm.stdout).trim()}\nRemoved: ${done.join(", ") || "nothing"}`, error: true, leftovers };
+				}
+			}
+			const br = current === branch ? await git(main, ["branch", "-d", branch]) : { code: 1, stdout: "", stderr: `worktree was on ${current}` };
+			const kept = br.code === 0 ? "" : ` (branch ${branch} kept: ${(br.stderr || br.stdout).trim().split("\n")[0]})`;
+			done.push(inUse ? `${wt} (folder in use: deleted after pi exits)${kept}` : br.code === 0 ? wt : `${wt}${kept}`);
+		} catch (e) {
+			return { text: `Stopped at ${wt}: ${(e as Error).message}
+Removed: ${done.join(", ") || "nothing"}`, error: true, leftovers };
 		}
-		const rm = await git(main, ["worktree", "remove", wt]);
-		if (rm.code !== 0) return { text: `Stopped at ${wt}: ${(rm.stderr || rm.stdout).trim()}\nRemoved: ${done.join(", ") || "nothing"}`, error: true };
-		const br = current === branch ? await git(main, ["branch", "-d", branch]) : { code: 1, stdout: "", stderr: `worktree was on ${current}` };
-		done.push(br.code === 0 ? wt : `${wt} (branch ${branch} kept: ${(br.stderr || br.stdout).trim().split("\n")[0]})`);
 	}
 	try {
 		if (fs.readdirSync(set).length === 0) fs.rmdirSync(set);
 	} catch {
 		// leave a folder we could not remove
 	}
-	return { text: `Removed set "${name}":\n${done.join("\n")}`, error: false };
+	if (allowInUse && fs.existsSync(set) && onlyEmptyDirs(set)) {
+		leftovers.push(set);
+		done.push(`${set} (deleted after pi exits)`);
+	}
+	return { text: `Removed set "${name}":\n${done.join("\n")}`, error: false, leftovers };
 }
+
+export interface DoneEnv extends RemoveEnv {
+	session: WtSession | null;
+	editors: string[] | null;
+	leave: (to: string) => void;
+}
+export interface DoneResult {
+	text: string;
+	error: boolean;
+	removed: boolean;
+	leftovers: string[];
+}
+
+/** /wt done: removes the set this session runs in; the working repo goes last. */
+export async function finishSet(env: DoneEnv): Promise<DoneResult> {
+	const { git, cfg, session } = env;
+	const refuse = (text: string): DoneResult => ({ text, error: true, removed: false, leftovers: [] });
+	if (!session) return refuse("/wt done runs inside a worktree session; use /wt remove NAME from another session.");
+	const set = session.setRoot;
+	const name = baseName(set);
+	const bad = checkName(name);
+	if (bad) return refuse(bad);
+	if (!fs.existsSync(set)) return refuse(`No worktree set "${name}" in ${cfg.root}`);
+	if (!env.hasUI) return refuse("/wt done needs a UI to confirm.");
+	let wts = reposOf(cfg, name);
+	if (!wts.length) return refuse(`No worktrees in ${set}`);
+	const open = env.editors?.find((e) => inside(e, set));
+	if (open) return refuse(`Nothing removed:\nUnity Editor open for ${open}; close it first`);
+	const checks = await removeChecks(git, wts);
+	if (checks.problems.length) return refuse(`Nothing removed:\n${checks.problems.join("\n")}`);
+	const warnings = [...checks.warnings, ...(env.editors ? [] : ["Unity Editor state unknown (unity status failed)"])];
+	const ok = await env.confirm(`Finish worktree set "${name}"?`, [...warnings, ...libraryLines(wts)].join("\n"));
+	if (!ok) return { text: "Cancelled.", error: false, removed: false, leftovers: [] };
+	wts = [...wts.filter((w) => !inside(env.cwd, w)), ...wts.filter((w) => inside(env.cwd, w))];
+	const main = (await mainRepoOf(git, wts[wts.length - 1])) ?? path.posix.dirname(norm(cfg.root));
+	env.leave(main);
+	const r = await removeAll(env, name, set, wts, true);
+	return { text: r.text, error: r.error, removed: !r.error, leftovers: r.leftovers };
+}
+
+/** Run as `node -e SWEEP_SCRIPT <tries> <intervalMs> <dir>...`. Only rmdirs empty folders; never deletes a file. */
+export const SWEEP_SCRIPT = `
+const fs = require("fs"), path = require("path");
+const [tries, wait, ...dirs] = process.argv.slice(1);
+const sweep = (p) => {
+	let st;
+	try { st = fs.lstatSync(p); } catch { return; }
+	if (!st.isDirectory()) return;
+	for (const e of fs.readdirSync(p)) sweep(path.join(p, e));
+	try { fs.rmdirSync(p); } catch {}
+};
+for (let i = 0; i < Number(tries); i++) {
+	for (const d of dirs) { try { sweep(d); } catch {} }
+	if (!dirs.some((d) => fs.existsSync(d))) break;
+	if (i + 1 < Number(tries)) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Number(wait));
+}
+`;
 
 export interface WtSession {
 	setRoot: string;

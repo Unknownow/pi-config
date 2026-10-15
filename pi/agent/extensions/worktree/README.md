@@ -10,6 +10,7 @@ store, so a set of checkouts costs a few MB (plus whatever you build in them).
 | `/wt new NAME` | Creates one worktree per git repo of this session (the working folder and every added folder) under `<root>/NAME/<repo>` on branch `wt/NAME`, starting from `origin/<default branch>` with no upstream. Links or copies the gitignored files, then opens a new Windows Terminal window running pi in the working repo's worktree with `--add-dir` set to the other worktrees. Folders that are not git repos are passed through unchanged. The current session is not changed. |
 | `/wt list` | Lists every set under `<root>` with, per repo: branch, changed files, ahead/behind (or "not pushed: N commits" against the base branch when there is no upstream), whether `unity/Library` exists, and whether a Unity Editor is open for it (from one `unity status` call; `unknown` if it fails). |
 | `/wt remove NAME` | Deletes a set. Refuses if this session uses it, if there is no UI, or if any repo has uncommitted changes or commits not pushed (a squash-merged branch counts as unpushed: delete those by hand). Otherwise asks for confirmation, removes the links first (never their targets), runs `git worktree remove` without `--force`, then `git branch -d` (the branch is kept if git refuses). Deletes the worktree's `Library/` with it. |
+| `/wt done` | Runs inside a worktree session and removes the set it runs in. Same checks as `/wt remove`, plus it refuses while a Unity Editor is open in the set (a failing `unity status` only adds a warning). Asks for confirmation, moves pi out of the set, removes the working repo's worktree last (links first, never their targets, no `--force`, then `git branch -d`), shows the report, then asks "Close this pi session?". On refusal or failure the session stays open. |
 
 `NAME`: lowercase letters, digits, `.`, `_`, `-` (max 40, starts with a letter or digit).
 
@@ -70,6 +71,7 @@ a relative `--project-path`, and commands built at runtime or started from a scr
 - `node_modules` is shared with the original; a worktree that changes `package.json` should install its own.
 - An added folder that is a subfolder of a repo is replaced by that repo's worktree root.
 - Pushes to `main` stay blocked by each repo's own hook.
+- On Windows the folder pi was started in stays locked by its parent processes until pi exits. `/wt done` treats that as removed and starts a detached cleanup that deletes the leftover empty folders (only empty folders, never files) for up to 2 minutes. If it cannot, delete them by hand.
 
 ## Tests
 
