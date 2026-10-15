@@ -367,3 +367,5 @@ The code does what the plan says. `unity-guard.ts:130` uses the two regexes from
 - [x] S10 Implement `remove` exactly as §4 `/wt remove` steps 1–6, using `files.unlinkLink` only on paths where `isLink` is true. 
 - [ ] S11 Create `unity-guard.ts`:
 - [ ] S12 In `index.ts`:
+## Outcome
+2026-10-15T04:13:41.561Z — ok: stage 1: pi-config: committed (1 commit), pushed; stage 2: pi-config: committed (1 commit), pushed; stage 3: pi-config: committed (1 commit), pushed
