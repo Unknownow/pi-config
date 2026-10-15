@@ -1,7 +1,7 @@
 // node --test agent-end.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { handoverAction, afterPass, noChangeStage, arbiterFirst, fixableFindings, hasPlanFlaw, canApprove, hasPlanLine, isPlanReady, judgeCapReached, minorFixOpen, parseArbiter, phaseAfterFlow, shouldResume, skipJudge } from "./agent-end.ts";
+import { handoverAction, afterPass, noChangeStage, arbiterFirst, fixableFindings, hasPlanFlaw, planFlawLines, planFlawOnPass, canApprove, hasPlanLine, isPlanReady, judgeCapReached, minorFixOpen, parseArbiter, phaseAfterFlow, shouldResume, skipJudge } from "./agent-end.ts";
 
 const empty = { role: "assistant", content: [] };
 
@@ -85,6 +85,20 @@ test("arbiterFirst: this flow's choice, else the config", () => {
 	assert.equal(arbiterFirst(undefined, "ask"), false);
 	assert.equal(arbiterFirst(undefined, "auto"), true);
 	assert.equal(arbiterFirst("auto", "auto"), true);
+});
+
+test("planFlawOnPass routes plan flaws on a pass", () => {
+	assert.equal(planFlawOnPass("a.ts:3 - minor - [plan-flaw] x\nVERDICT: PASS", "PASS"), "note");
+	assert.equal(planFlawOnPass("a.ts:3 - major - [plan-flaw] x", "PASS"), "arbiter");
+	assert.equal(planFlawOnPass("a.ts:3 - major - [plan-flaw] x\nb.ts:1 - minor - [plan-flaw] y", "PASS"), "arbiter");
+	assert.equal(planFlawOnPass("a.ts:3 - blocker - [plan-flaw] x", "PASS"), "stop");
+	assert.equal(planFlawOnPass("a.ts:3 - minor - [plan-flaw] x", "FAIL"), "stop");
+	assert.equal(planFlawOnPass("a.ts:3 - Major - [plan-flaw] x", "PASS"), "arbiter");
+	assert.equal(planFlawOnPass("a.ts:3 - blocker - [bug] y\na.ts:4 - minor - [plan-flaw] x", "PASS"), "note");
+});
+
+test("planFlawLines keeps plan-flaw finding lines only", () => {
+	assert.deepEqual(planFlawLines("a.ts:3 - major - [plan-flaw] x\n  Why: [plan-flaw] mention\nb.ts:1 - minor - [bug] y"), ["a.ts:3 - major - [plan-flaw] x"]);
 });
 
 test("hasPlanFlaw sees a tagged finding line only", () => {

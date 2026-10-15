@@ -91,6 +91,21 @@ export function hasPlanFlaw(text: string): boolean {
 	return /^\S.*\s-\s*(blocker|major|minor)\s*-\s*\[plan-flaw\]/im.test(text);
 }
 
+const PLAN_FLAW_LINE = /^\S.*\s-\s*(blocker|major|minor)\s*-\s*\[plan-flaw\]/i;
+
+/** The finding lines of a judge report tagged [plan-flaw]. */
+export function planFlawLines(text: string): string[] {
+	return text.split(/\r?\n/).filter((l) => PLAN_FLAW_LINE.test(l));
+}
+
+/** What a judge report with plan flaws does: "stop" (FAIL or a blocker flaw: the user or arbiter resolves it), "arbiter" (worst flaw is major, on a pass), "note" (all minor, on a pass). */
+export function planFlawOnPass(text: string, verdict: "PASS" | "FAIL"): "stop" | "arbiter" | "note" {
+	if (verdict !== "PASS") return "stop";
+	const sev = planFlawLines(text).map((l) => PLAN_FLAW_LINE.exec(l)![1].toLowerCase());
+	if (sev.includes("blocker")) return "stop";
+	return sev.includes("major") ? "arbiter" : "note";
+}
+
 /** Plan flaws go to the arbiter before the user: this flow's choice at approval, else the config. */
 export function arbiterFirst(flow: "auto" | undefined, config: "ask" | "auto"): boolean {
 	return (flow ?? config) === "auto";

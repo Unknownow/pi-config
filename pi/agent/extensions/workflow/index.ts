@@ -49,7 +49,7 @@ import {
 	type Thinking,
 	type WorkflowConfig,
 } from "./config.ts";
-import { handoverAction, afterPass, noChangeStage, arbiterFirst, fixableFindings, canApprove, hasPlanFlaw, hasPlanLine, isPlanReady, judgeCapReached, minorFixOpen, parseArbiter, phaseAfterFlow, shouldResume, skipJudge } from "./agent-end.ts";
+import { handoverAction, afterPass, noChangeStage, arbiterFirst, fixableFindings, canApprove, hasPlanFlaw, planFlawLines, planFlawOnPass, hasPlanLine, isPlanReady, judgeCapReached, minorFixOpen, parseArbiter, phaseAfterFlow, shouldResume, skipJudge } from "./agent-end.ts";
 import { countTokens, type Tok } from "./tokens.ts";
 import * as prompts from "./prompts.ts";
 import { branchName, combineOutcomes, type Delivery, type DeliveryOptions, DELIVERIES, DELIVERY_LABELS, deliveryChoices, deliveryInstruction, deliveryMenuLabel, deliveryOutcome, freshPr, isDelivery, planTitle, type PrState, repoDeliveryInstruction } from "./delivery.ts";
@@ -135,6 +135,8 @@ interface FlowState {
 	planRevisions?: number;
 	/** A judge report that questions the plan, waiting for the end of the executor's turn. */
 	pendingPlanFlaw?: string;
+	/** Plan flaws the arbiter could not settle at a pass in this flow; the flow summary flags them. */
+	unresolvedPlanFlaws?: number;
 	/** The knowledge check of the last judge round (only when knowledge is active). */
 	lastKnowledge?: LastKnowledge;
 	/** The current stage (1-based) of a staged plan; unset when the plan is not staged. */
@@ -315,6 +317,8 @@ export default function workflow(pi: ExtensionAPI) {
 
 	/** Ends the current flow: shows its token breakdown and starts counting the next one. False if it had none. */
 	function summarizeFlow(outcome: string, ok: boolean): boolean {
+		if ((state.unresolvedPlanFlaws ?? 0) > 0) outcome += ` · ${state.unresolvedPlanFlaws} plan flaw(s) not settled (see the plan)`;
+		state.unresolvedPlanFlaws = undefined;
 		const hadTouched = (state.touchedRepos?.length ?? 0) > 0;
 		if (state.planDoc && !state.planDoc.finished) planMilestone(undefined, { at: new Date().toISOString(), ok, text: outcome });
 		state.touchedRepos = undefined;
@@ -396,6 +400,7 @@ export default function workflow(pi: ExtensionAPI) {
 		state.finalizing = undefined;
 		state.planRevisions = undefined;
 		state.pendingPlanFlaw = undefined;
+		state.unresolvedPlanFlaws = undefined;
 		state.touchedRepos = undefined;
 		state.stage = undefined;
 		state.stageJudged = undefined;
@@ -1920,6 +1925,7 @@ export default function workflow(pi: ExtensionAPI) {
 
 		if (state.phase !== "execute") return;
 		if (skipJudge(last)) return;
+		let rejudge = false;
 		if (state.pendingPlanFlaw) {
 			// The executor's own judge call questioned the plan; it was told to stop, so the workflow decides.
 			const report = state.pendingPlanFlaw;
@@ -1927,17 +1933,19 @@ export default function workflow(pi: ExtensionAPI) {
 			persist();
 			const flawed = await collectFlowDiff(ctx);
 			if (flawed) {
-				const outcome = await resolvePlanFlaw(ctx, report, flawed);
-				if (outcome !== "continue") return;
 				if (state.lastJudge?.hash === flawed.hash) {
+					const route = planFlawOnPass(report, state.lastJudge.verdict === "PASS" ? "PASS" : "FAIL");
+					const outcome = route === "stop" ? await resolvePlanFlaw(ctx, report, flawed) : await settlePlanFlawOnPass(ctx, report, flawed, route);
+					if (outcome !== "continue") return;
 					if (state.lastJudge.verdict === "PASS") markPassed(flawed.hash);
 					else {
 						await fixOrAsk(ctx, undefined);
 						return;
 					}
 				} else {
-					// No record of that review: let reviewDiff judge this diff again.
+					// The diff changed since that review: drop the stale report and let reviewDiff judge this diff again.
 					seenDiffs.delete(flawed.hash);
+					rejudge = true;
 				}
 			}
 		}
@@ -1946,7 +1954,7 @@ export default function workflow(pi: ExtensionAPI) {
 			const advanced = await summarizeCommit(ctx);
 			if (advanced === "advanced" || state.phase !== "execute") return; // the next stage started, or the flow ended and went back to planning
 		}
-		await reviewDiff(ctx, false);
+		await reviewDiff(ctx, rejudge);
 	}
 
 	/** Staged plan: moves on to the next stage and sends its start message. */
@@ -2162,7 +2170,8 @@ export default function workflow(pi: ExtensionAPI) {
 		// The verdict travels with the next instruction, so they reach the transcript in order.
 		const report = `**Judge: ${r.verdict}**\n\n${r.text}`;
 		if (hasPlanFlaw(r.text)) {
-			const outcome = await resolvePlanFlaw(ctx, report, diff);
+			const route = planFlawOnPass(r.text, r.verdict);
+			const outcome = route === "stop" ? await resolvePlanFlaw(ctx, report, diff) : await settlePlanFlawOnPass(ctx, report, diff, route);
 			if (outcome !== "continue") return;
 			if (r.verdict === "PASS") markPassed(diff.hash);
 		}
@@ -2238,11 +2247,7 @@ export default function workflow(pi: ExtensionAPI) {
 			}
 			if (choice === "Ignore and continue") {
 				// Recorded, so the next review does not raise the same flaw and ask again.
-				const flaws = report.split("\n").filter((l) => /\[plan-flaw\]/.test(l));
-				state.approvedPlan = `${state.approvedPlan ?? ""}\n\n## Plan choices upheld by the user\n${flaws.join("\n")}`;
-				refreshChecklist();
-				planMilestone(ctx);
-				persist();
+				notePlanFlaws(ctx, report, "Plan choices upheld by the user");
 				return "continue";
 			}
 			pi.sendMessage({ customType: "workflow-judge", content: report, display: true }, { triggerTurn: false });
@@ -2252,8 +2257,36 @@ export default function workflow(pi: ExtensionAPI) {
 		}
 	}
 
+	/** Appends the report's plan-flaw lines to the approved plan under the heading; returns how many. */
+	function notePlanFlaws(ctx: ExtensionContext, report: string, heading: string): number {
+		const lines = planFlawLines(report).filter((l) => !(state.approvedPlan ?? "").includes(l));
+		if (!lines.length) return 0;
+		state.approvedPlan = `${state.approvedPlan ?? ""}\n\n## ${heading}\n${lines.join("\n")}`;
+		refreshChecklist();
+		planMilestone(ctx);
+		persist();
+		return lines.length;
+	}
+
+	/** A pass that questions the plan, without a blocker: minor flaws are noted, major ones go to the arbiter. Never asks the user. */
+	async function settlePlanFlawOnPass(ctx: ExtensionContext, report: string, diff: Diff, route: "arbiter" | "note"): Promise<"continue" | "amended"> {
+		const heading = "Plan choices upheld at a pass";
+		if (route === "arbiter") {
+			const outcome = await runArbiter(ctx, report, diff, false);
+			if (outcome !== "ask") return outcome;
+			const n = notePlanFlaws(ctx, report, heading);
+			state.unresolvedPlanFlaws = (state.unresolvedPlanFlaws ?? 0) + n;
+			persist();
+			if (n > 0) ctx.ui.notify(`workflow: the arbiter did not settle ${n} plan flaw(s); noted in the plan, continuing`, "warning");
+			return "continue";
+		}
+		const n = notePlanFlaws(ctx, report, heading);
+		if (n > 0) ctx.ui.notify(`workflow: the judge passed but questions the plan (${n} plan flaw(s)); noted in the plan, continuing`, "info");
+		return "continue";
+	}
+
 	/** Runs the arbiter on the judge's plan-flaw report. "ask" means it could not or may not decide. */
-	async function runArbiter(ctx: ExtensionContext, report: string, diff: Diff): Promise<"continue" | "amended" | "ask"> {
+	async function runArbiter(ctx: ExtensionContext, report: string, diff: Diff, canAsk = true): Promise<"continue" | "amended" | "ask"> {
 		ctx.ui.setWorkingMessage("arbiter checking the plan…");
 		let text: string;
 		try {
@@ -2289,7 +2322,7 @@ export default function workflow(pi: ExtensionAPI) {
 		if (d.decision === "REVISE") {
 			const done = state.planRevisions ?? 0;
 			if (done >= cfg.maxPlanRevisions) {
-				ctx.ui.notify(`workflow: the plan was already amended ${done} time(s); asking you instead`, "warning");
+				ctx.ui.notify(`workflow: the plan was already amended ${done} time(s); ${canAsk ? "asking you" : "noting the flaws"} instead`, "warning");
 				return "ask";
 			}
 			state.planRevisions = done + 1;

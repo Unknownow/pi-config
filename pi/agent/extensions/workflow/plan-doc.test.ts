@@ -137,3 +137,8 @@ test("pruneIds", () => {
 	assert.deepEqual(pruneIds([e("old", 90, true)], { keepDays: 0, keepCount: 50, now }), []);
 	assert.deepEqual(pruneIds([...three, e("act", 0, false)], { keepDays: 0, keepCount: 0, now, activeId: "act" }).sort(), ["a", "b", "c"]);
 });
+
+test("planCard lists a pass-upheld plan flaw as an amendment", () => {
+	const card = planCard(`${PLAN}\n\n## Plan choices upheld at a pass\na.ts:3 - minor - [plan-flaw] x`, [], undefined, undefined, "/p");
+	assert.ok(card.includes("### Amendments"));
+});

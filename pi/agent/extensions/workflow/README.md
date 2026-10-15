@@ -23,7 +23,7 @@ plan is read-only:   bash refuses commands that change files, git or GitHub
 | `explore` | `explore` tool, parallel sub-`pi` processes | plan and execute send open questions and multi-file searches to it; it decides how much to read and answers with `Answer:` plus `Evidence:` (file:line). Known files are read directly. Judge and advisor do not use it |
 | `advisor` | `advisor` tool, sub-`pi` with the whole transcript | choosing an approach, after an error repeats (auto-nudged after `repeatedErrorThreshold` failures), before "done" |
 | `judge` | `judge` tool, sub-`pi` with the git diff | the diff is ready; when a run ends with an unreviewed diff it asks (`autoJudge`) |
-| `arbiter` | sub-`pi` with the plan, the judge's report and the diff | the judge questions the plan and `planFlaw` is `auto` (or you pick "Let the arbiter decide", or you picked *Approve, arbiter solves plan flaws* for this flow) |
+| `arbiter` | sub-`pi` with the plan, the judge's report and the diff | the judge questions the plan and `planFlaw` is `auto`, or a passed review has a major plan flaw (whatever `planFlaw` is) (or you pick "Let the arbiter decide", or you picked *Approve, arbiter solves plan flaws* for this flow) |
 | `commit` | sub-`pi` with bash only, the plan's goal and Commits section and the delivery instruction, and its own push guard (`commit-guard.ts`) | after the judge passes; `delivery.runner: "main"` runs it in the main session instead (compacted first at the handover) |
 | `escalate` | main session model | `/flow escalate` |
 
@@ -133,7 +133,11 @@ after approval runs on its own:
   different model from the planner) decide from the code: `REVISE` appends a numbered amendment to the
   plan (at most `maxPlanRevisions`, 2), `KEEP` records why the plan stands, `ASK_USER` shows the menu.
   Picking *Approve, arbiter solves plan flaws* in the plan menu gives `auto` for that flow only.
-  The arbiter cannot change your decisions or the goal. A plan flaw blocks the commit until resolved.
+  The arbiter cannot change your decisions or the goal. On a **pass**, minor plan flaws are noted in the
+  plan under "Plan choices upheld at a pass" and the commit goes ahead. Major ones go to the arbiter first,
+  whatever `planFlaw` is: `KEEP` commits, `REVISE` reworks before the commit. If the arbiter cannot decide,
+  the flaws are noted, the commit goes ahead and the flow summary says "N plan flaw(s) not settled". A
+  blocker plan flaw, or one in a FAIL, blocks the commit until resolved.
 
 ## Plan phase is read-only
 
