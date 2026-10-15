@@ -15,7 +15,7 @@
     },
     "advisor": {
       "model": "claude-bridge/claude-opus-5-5",
-      "thinking": "high"
+      "thinking": "medium"
     },
     "judge": {
       "model": "claude-bridge/claude-opus-5-5",
