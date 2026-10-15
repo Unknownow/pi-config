@@ -19,7 +19,7 @@
     },
     "judge": {
       "model": "claude-bridge/claude-opus-5-5",
-      "thinking": "high"
+      "thinking": "medium"
     },
     "commit": {
       "model": "claude-bridge/claude-sonnet-5-5",
