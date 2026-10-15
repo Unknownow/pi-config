@@ -182,3 +182,5 @@ Confirm that `state.lastJudge.verdict`'s type is `"PASS" | "FAIL"`. If its type 
 - [x] S6 `index.ts` agent_end pending path (`:1923-1945`): after taking `report` and `flawed`:
 - [x] S7 `index.ts` `summarizeFlow` (`:317`): apply the summary flag from §4 at the top of the function, before `planMilestone` u
 - [x] S8 `README.md`:
+## Outcome
+2026-10-15T11:03:09.519Z — failed: abandoned
