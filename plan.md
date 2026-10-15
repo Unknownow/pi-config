@@ -350,6 +350,9 @@ All in `D:/projects/pi-config`.
 ## Plan choices upheld by the user
 pi/agent/extensions/worktree/unity-guard.ts:116 - minor - [plan-flaw] The check for non-shell code produces false refusals in Unity repos.
 
+## Plan choices upheld by the arbiter
+The code does what the plan says. `unity-guard.ts:130` uses the two regexes from plan §4 ("Non-shell `ctx_execute` code: refuse when it matches `/\bunity(\.exe)?\b/` and `/\b(command|cmd|…)\b/`"). The user has already upheld this choice ("Plan choices upheld by the user": `unity-guard.ts:116`), so narrowing the regex would overturn their decision. The judge's scenario also doesn't break any "Done when" item. False refusals only hit non-shell code in worktree sessions (`guardProblem` returns early at `unity-guard.ts:146`, and only when `session` is set, `index.ts:228`). So Editor-driving commands are still refused, and sessions outside `<root>` are not affected. The guard stops more than it needs to, which is the safe direction for D7. It does not let anything through.
+
 <!-- pi-workflow:status -->
 ## Checklist
 - [x] S1 Create `pi/agent/extensions/worktree/config.ts` with:
