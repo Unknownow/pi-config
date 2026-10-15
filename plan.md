@@ -216,13 +216,35 @@ Expected: `# fail 0`, and `# pass` equal to the total number of tests.
 1. Stage 1: `fix(worktree): restore worktree-session detection and Unity guard reverted by sync`: `pi/agent/extensions/worktree/{index.ts,manage.ts,README.md}`.
 2. Stage 2: `feat(worktree): /wt done removes this session's set, reports, and closes pi`: `pi/agent/extensions/worktree/{manage.ts,index.ts,README.md,manage.test.ts}`.
 
+## Amendment 1 (arbiter)
+**S3 (replaces the in-use part).** In `manage.ts`, change the signature to `removeAll(env: RemoveEnv, name: string, set: string, wts: string[], allowInUse: boolean)`.
+- Only when `allowInUse` is true: a failed `git worktree remove` on an unregistered worktree whose folder holds only empty folders counts as removed, the path goes to `leftovers`, and the set folder is appended to `leftovers` at the end.
+- When `allowInUse` is false: keep the old early return, `Stopped at ${wt}: …\nRemoved: …` with `error: true`.
+- `removeSet` passes `false`, so its output is the same as before this plan in every case.
+- `finishSet` passes `true`.
+- `isRegistered` must return `true` when `git worktree list --porcelain` exits non-zero. An unknown state must stop the removal, not delete the branch.
+
+**S4 addendum.** `finishSet` step 10 calls `removeAll(..., true)`.
+
+**S6 (changes doneCmd step 4).**
+- When `r.removed` is false and `leftovers` is non-empty (the D8 path), start the sweeper straight away, before the notify.
+- When `r.removed` is true, start the sweeper only after the final "Close this pi session?" confirm returns, for either answer:
+  - Yes: start it right before `ctx.shutdown()`.
+  - No: start it, then show the "exit pi when you are done" notify.
+- If the sweeper can't be started, show the spawn-error warning in a separate notify.
+
+**S8 addendum (tests in `manage.test.ts`).**
+- **`removeSet still stops when a folder is in use`**: use the `flaky` git wrapper from test 5 with `removeSet(f.env, "s1")`. Expect `error` true and text matching `/Stopped at/`. The text must not match `/deleted after pi exits/`.
+- **`finishSet stops when worktree list fails`**: use a wrapper where `worktree remove` behaves as in `flaky` and `worktree list` returns `{ code: 1, stdout: "", stderr: "x" }`. Expect `error` true, text matching `/Stopped at/`, and branch `wt/s1` still exists.
+- All existing tests and the §6 tests must still pass with `# fail 0`.
+
 <!-- pi-workflow:status -->
 ## Checklist
 - [x] S1 Run `git checkout 76a42c0 -- pi/agent/extensions/worktree/index.ts pi/agent/extensions/worktree/manage.ts pi/agent/exten
 - [x] S2 Run the test command from §3 (from the worktree folder). All tests must pass, including `manage.test.ts:96-141`.
-- [ ] S3 In `manage.ts:84` (`removeAll`): add the ordered-`wts` contract, the "unregistered + only empty folders" handling, `left
-- [ ] S4 In `manage.ts`, after `removeAll`, add `DoneEnv`, `DoneResult` and `finishSet` exactly as in §4. Reuse `removeChecks`, `
-- [ ] S5 In `manage.ts`, add `export const SWEEP_SCRIPT` as in §4. It's one template string of plain CommonJS. Keep it short, and
-- [ ] S6 In `index.ts`:
-- [ ] S7 In `README.md`:
-- [ ] S8 Add the tests from §6 to `manage.test.ts`, then run the test command.
+- [x] S3 In `manage.ts:84` (`removeAll`): add the ordered-`wts` contract, the "unregistered + only empty folders" handling, `left
+- [x] S4 In `manage.ts`, after `removeAll`, add `DoneEnv`, `DoneResult` and `finishSet` exactly as in §4. Reuse `removeChecks`, `
+- [x] S5 In `manage.ts`, add `export const SWEEP_SCRIPT` as in §4. It's one template string of plain CommonJS. Keep it short, and
+- [x] S6 In `index.ts`:
+- [x] S7 In `README.md`:
+- [x] S8 Add the tests from §6 to `manage.test.ts`, then run the test command.
