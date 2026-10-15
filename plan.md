@@ -279,13 +279,15 @@ Commands, in `pi/agent/extensions/workflow`:
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 Create `flow-report.ts` exactly as in §4 (`recordFindings`, `reportFindings`, `reportLines`, and the types).
-- [ ] S2 `view.ts`: extend `FlowSummary` (`:83`) and `summaryLines` (`:186`) as in §4. Import the types and `reportLines` from `.
-- [ ] S3 `index.ts` `FlowState` (`:96`): add `flowFindings?: FlowFinding[]` and `flowSummarized?: boolean`, each with a one-line 
-- [ ] S4 `index.ts` `judge()`, right after `verdict` is computed (`:1350`):
-- [ ] S5 `index.ts` `summarizeFlow` (`:319`):
-- [ ] S6 `index.ts` `setPhase` (`:388`), first statement:
-- [ ] S7 `index.ts` `reviewDiff` judge-ERROR branch (`:2166-2169`). Keep the error notify, then show the menu `ctx.ui.select("The
-- [ ] S8 `index.ts` `onAgentEnd`, replacing `if (skipJudge(last)) return;` (`:1927`): when `skipJudge(last)`, show `ctx.ui.select
-- [ ] S9 `index.ts` `session_compact` handler (`:1826`):
-- [ ] S10 `README.md`: in the section that describes the end-of-flow summary or token breakdown (find it with `grep -n "flow done\
+- [x] S1 Create `flow-report.ts` exactly as in §4 (`recordFindings`, `reportFindings`, `reportLines`, and the types).
+- [x] S2 `view.ts`: extend `FlowSummary` (`:83`) and `summaryLines` (`:186`) as in §4. Import the types and `reportLines` from `.
+- [x] S3 `index.ts` `FlowState` (`:96`): add `flowFindings?: FlowFinding[]` and `flowSummarized?: boolean`, each with a one-line 
+- [x] S4 `index.ts` `judge()`, right after `verdict` is computed (`:1350`):
+- [x] S5 `index.ts` `summarizeFlow` (`:319`):
+- [x] S6 `index.ts` `setPhase` (`:388`), first statement:
+- [x] S7 `index.ts` `reviewDiff` judge-ERROR branch (`:2166-2169`). Keep the error notify, then show the menu `ctx.ui.select("The
+- [x] S8 `index.ts` `onAgentEnd`, replacing `if (skipJudge(last)) return;` (`:1927`): when `skipJudge(last)`, show `ctx.ui.select
+- [x] S9 `index.ts` `session_compact` handler (`:1826`):
+- [x] S10 `README.md`: in the section that describes the end-of-flow summary or token breakdown (find it with `grep -n "flow done\
+## Outcome
+2026-10-15T16:13:13.906Z — ok: committed (1 commit)
