@@ -92,3 +92,50 @@ test("removeSet rejects names that leave the root", async () => {
 	assert.ok(r.error);
 	assert.ok(fs.existsSync(`${f.d}/repo/.pi/git/keep.txt`));
 });
+
+test("detectSession finds a worktree session and ignores the original", async () => {
+	const f = fixture();
+	const { detectSession, worktreePrompt } = await import("./manage.ts");
+	const s = await detectSession(git, f.cfg, `${f.wt}`);
+	assert.equal(s?.setRoot, `${f.cfg.root}/s1`);
+	assert.equal(s?.branch, "wt/s1");
+	assert.match(worktreePrompt(s!), /belongs to another session/);
+	assert.equal(await detectSession(git, f.cfg, `${f.d}/repo`), null);
+	assert.equal(await detectSession(git, f.cfg, f.d), null);
+});
+
+test("default root works from a worktree session (parent taken from the main repo)", async () => {
+	const f = fixture();
+	const { detectSession, mainParent } = await import("./manage.ts");
+	const cfg = defaults(f.d);
+	run(`${f.d}/repo`, ["worktree", "add", "--no-track", "-b", "wt/s2", `${f.d}/wt/s2/repo`, "origin/main"]);
+	const wt = `${f.d}/wt/s2/repo`;
+	assert.equal((await mainParent(git, wt)).toLowerCase(), f.d.toLowerCase());
+	assert.equal((await mainParent(git, `${f.d}/repo`)).toLowerCase(), f.d.toLowerCase());
+	const s = await detectSession(git, cfg, wt);
+	assert.equal(s?.setRoot.toLowerCase(), `${f.d}/wt/s2`.toLowerCase());
+	assert.equal(await detectSession(git, defaults(`${f.d}/wt/s2`), wt), null);
+	fs.mkdirSync(`${f.d}/repo/sub`);
+	assert.equal(await detectSession(git, cfg, `${f.d}/repo/sub`), null);
+});
+
+test("sessionConfig gives the same default root in the original and in a worktree", async () => {
+	const f = fixture();
+	const { detectSession, sessionConfig } = await import("./manage.ts");
+	run(`${f.d}/repo`, ["worktree", "add", "--no-track", "-b", "wt/s3", `${f.d}/wt/s3/repo`, "origin/main"]);
+	const wt = `${f.d}/wt/s3/repo`;
+	const inWt = await sessionConfig(git, `${f.d}/noagent`, wt);
+	const inMain = await sessionConfig(git, `${f.d}/noagent`, `${f.d}/repo`);
+	assert.equal(inWt.cfg.root, inMain.cfg.root);
+	assert.ok(await detectSession(git, inWt.cfg, wt));
+	assert.equal(await detectSession(git, inMain.cfg, `${f.d}/repo`), null);
+});
+
+test("detectSession covers a non-git folder inside a set", async () => {
+	const f = fixture();
+	const { detectSession } = await import("./manage.ts");
+	fs.mkdirSync(`${f.cfg.root}/s9`, { recursive: true });
+	const s = await detectSession(git, f.cfg, `${f.cfg.root}/s9`);
+	assert.equal(s?.setRoot.toLowerCase(), `${f.cfg.root}/s9`.toLowerCase());
+	assert.equal(s?.branch, "");
+});

@@ -11,7 +11,8 @@ import { getAgentDir, type ExtensionAPI, type ExtensionCommandContext } from "@e
 import { loadConfig, type WtConfig } from "./config.ts";
 import { setupFiles } from "./files.ts";
 import { createAll, excludeLinks, preflight, rollback, type Git, type Planned } from "./git-ops.ts";
-import { listSets, listText, parseEditors, removeSet } from "./manage.ts";
+import { detectSession, listSets, listText, parseEditors, removeSet, sessionConfig, worktreePrompt, type WtSession } from "./manage.ts";
+import { guardProblem } from "./unity-guard.ts";
 import { branchOf, checkName, launchSpec, rootProblem, setRootOf } from "./layout.ts";
 
 const STATE_ENTRY = "workflow-state";
@@ -138,7 +139,7 @@ async function newSet(pi: ExtensionAPI, ctx: ExtensionCommandContext, name: stri
 	const git = makeGit(pi);
 	const found = await collect(git, ctx);
 	if (typeof found === "string") return ctx.ui.notify(found, "error");
-	const loaded = loadConfig(getAgentDir(), path.dirname(found.workingTop));
+	const loaded = await sessionConfig(git, getAgentDir(), found.workingTop);
 	const cfg = loaded.cfg;
 	if (loaded.warning) ctx.ui.notify(loaded.warning, "warning");
 	const rootBad = rootProblem(cfg.root);
@@ -165,10 +166,8 @@ async function newSet(pi: ExtensionAPI, ctx: ExtensionCommandContext, name: stri
 
 /** The config as /wt new sees it: the default root sits next to the working repo. */
 async function configFor(pi: ExtensionAPI, ctx: ExtensionCommandContext): Promise<WtConfig> {
-	const top = await makeGit(pi)(ctx.cwd, ["rev-parse", "--show-toplevel"]);
-	const parent = top.code === 0 ? path.dirname(slash(top.stdout.trim())) : path.dirname(slash(ctx.cwd));
+	const { cfg, warning, parent } = await sessionConfig(makeGit(pi), getAgentDir(), ctx.cwd);
 	cachedParent = parent;
-	const { cfg, warning } = loadConfig(getAgentDir(), parent);
 	if (warning) ctx.ui.notify(warning, "warning");
 	return cfg;
 }
@@ -207,13 +206,28 @@ async function removeCmd(pi: ExtensionAPI, ctx: ExtensionCommandContext, name: s
 }
 
 export default function worktree(pi: ExtensionAPI) {
+	let session: WtSession | null = null;
+	let guardOn = true;
 	pi.on("session_start", async (_e, ctx) => {
 		try {
-			const top = await makeGit(pi)(ctx.cwd, ["rev-parse", "--show-toplevel"]);
-			cachedParent = path.dirname(slash(top.code === 0 ? top.stdout.trim() : ctx.cwd));
+			const git = makeGit(pi);
+			const sc = await sessionConfig(git, getAgentDir(), ctx.cwd);
+			cachedParent = sc.parent;
+			const cfg = sc.cfg;
+			guardOn = cfg.unityGuard;
+			session = await detectSession(git, cfg, ctx.cwd);
 		} catch {
 			cachedParent = path.dirname(slash(ctx.cwd));
+			session = null;
 		}
+	});
+	pi.on("before_agent_start", async (event) => {
+		if (session) event.systemPromptOptions.sections.worktree = worktreePrompt(session);
+	});
+	pi.on("tool_call", async (event, ctx) => {
+		if (!session || !guardOn) return;
+		const why = guardProblem(event.toolName, (event.input ?? {}) as Record<string, unknown>, { cwd: ctx.cwd, setRoot: session.setRoot });
+		if (why) return { block: true, reason: why };
 	});
 	pi.registerCommand("wt", {
 		description: "Parallel pi sessions on git worktrees: new NAME, list, remove NAME",
