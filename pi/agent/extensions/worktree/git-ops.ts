@@ -152,3 +152,69 @@ export async function rollback(git: Git, created: Planned[], cfg: WtConfig, name
 	}
 	return problems;
 }
+
+export interface RepoStatus {
+	branch: string;
+	dirty: number;
+	upstream: string | null;
+	ahead: number;
+	behind: number;
+	/** Commits not pushed: ahead of the upstream, or of the base ref when there is no upstream. */
+	unpushed: number;
+	/** Set when a git call failed, so the counts cannot be trusted. */
+	error?: string;
+}
+
+const count = (r: GitResult) => (r.code === 0 ? Number.parseInt(r.stdout.trim(), 10) || 0 : 0);
+
+/** The base ref of an existing worktree (no fetch); null when the repo has no usable remote branch. */
+export async function baseRefOf(git: Git, wt: string): Promise<string | null> {
+	const remotes = (await git(wt, ["remote"])).stdout.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+	const remote = remotes.includes("origin") ? "origin" : remotes[0];
+	return remote ? findBase(git, wt, remote) : null;
+}
+
+export async function repoStatus(git: Git, wt: string, baseRef: string | null): Promise<RepoStatus> {
+	const branch = (await git(wt, ["rev-parse", "--abbrev-ref", "HEAD"])).stdout.trim() || "?";
+	const stat = await git(wt, ["status", "--porcelain"]);
+	const dirty = stat.stdout.split(/\r?\n/).filter((l) => l.trim()).length;
+	const error = stat.code === 0 ? undefined : `git status failed: ${firstLine(stat)}`;
+	const up = await git(wt, ["rev-parse", "--abbrev-ref", "@{u}"]);
+	const upstream = up.code === 0 && up.stdout.trim() ? up.stdout.trim() : null;
+	if (upstream) {
+		const lr = await git(wt, ["rev-list", "--left-right", "--count", "@{u}...HEAD"]);
+		const [behind = 0, ahead = 0] = lr.code === 0 ? lr.stdout.trim().split(/\s+/).map((n) => Number.parseInt(n, 10) || 0) : [];
+		return { branch, dirty, upstream, ahead, behind, unpushed: ahead, error: error ?? (lr.code === 0 ? undefined : `rev-list failed: ${firstLine(lr)}`) };
+	}
+	const cnt = baseRef ? await git(wt, ["rev-list", "--count", `${baseRef}..HEAD`]) : null;
+	const noBase = !cnt || cnt.code !== 0 ? "cannot tell whether commits are pushed" : undefined;
+	return { branch, dirty, upstream: null, ahead: 0, behind: 0, unpushed: cnt ? count(cnt) : 0, error: error ?? noBase };
+}
+
+export interface RemoveChecks {
+	problems: string[];
+	warnings: string[];
+}
+
+/** Every reason /wt remove must refuse, for all worktrees; fetches first so "unpushed" is current. */
+export async function removeChecks(git: Git, wts: string[]): Promise<RemoveChecks> {
+	const out: RemoveChecks = { problems: [], warnings: [] };
+	for (const wt of wts) {
+		const fetch = await git(wt, ["fetch", "--quiet"]);
+		if (fetch.code !== 0) out.warnings.push(`${wt}: fetch failed (${firstLine(fetch)})`);
+		const st = await repoStatus(git, wt, await baseRefOf(git, wt));
+		if (st.error) out.problems.push(`${wt}: ${st.error}`);
+		if (st.dirty) out.problems.push(`${wt}: ${st.dirty} uncommitted change(s)`);
+		if (st.unpushed) {
+			const where = st.upstream ? `upstream ${st.upstream}` : "the base branch (no upstream)";
+			out.problems.push(`${wt}: ${st.unpushed} commit(s) not pushed to ${where}`);
+		}
+	}
+	return out;
+}
+
+/** The repo a worktree belongs to: the parent of its absolute git common dir. */
+export async function mainRepoOf(git: Git, wt: string): Promise<string | null> {
+	const r = await git(wt, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+	return r.code === 0 ? slash(path.dirname(r.stdout.trim())) : null;
+}

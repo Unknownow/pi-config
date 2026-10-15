@@ -5,7 +5,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { test } from "node:test";
 import { defaults } from "./config.ts";
-import { createAll, excludeLinks, preflight, repoInfo, rollback, type Git, type Planned } from "./git-ops.ts";
+import { createAll, excludeLinks, preflight, removeChecks, repoInfo, repoStatus, rollback, type Git, type Planned } from "./git-ops.ts";
 
 interface Call {
 	cwd: string;
@@ -122,4 +122,58 @@ test("excludeLinks leaves already ignored links alone", async () => {
 	const { git, calls } = fake({ "check-ignore": { code: 0 } });
 	assert.deepEqual(await excludeLinks(git, "D:/wt/x/a", [".pi/git"]), []);
 	assert.equal(calls.length, 1);
+});
+
+test("removeChecks dirty", async () => {
+	const { git } = fake({ "status --porcelain": { stdout: " M a\n?? b\n" }, "rev-parse --abbrev-ref @{u}": { code: 128 } });
+	const r = await removeChecks(git, ["D:/wt/x/a"]);
+	assert.match(r.problems.join("\n"), /2 uncommitted/);
+});
+
+test("removeChecks ahead of upstream", async () => {
+	const { git } = fake({ "rev-parse --abbrev-ref @{u}": { stdout: "origin/wt/x\n" }, "rev-list --left-right": { stdout: "0\t3\n" } });
+	const r = await removeChecks(git, ["D:/wt/x/a"]);
+	assert.match(r.problems.join("\n"), /3 commit\(s\) not pushed to upstream origin\/wt\/x/);
+});
+
+test("removeChecks no upstream with commits", async () => {
+	const { git } = fake({
+		remote: { stdout: "origin\n" },
+		"rev-parse --abbrev-ref origin/HEAD": { stdout: "origin/main\n" },
+		"rev-parse --abbrev-ref @{u}": { code: 128 },
+		"rev-list --count origin/main..HEAD": { stdout: "2\n" },
+	});
+	const r = await removeChecks(git, ["D:/wt/x/a"]);
+	assert.match(r.problems.join("\n"), /2 commit\(s\) not pushed to the base branch/);
+});
+
+test("removeChecks upstream gone falls back to the base check", async () => {
+	const { git, calls } = fake({
+		remote: { stdout: "origin\n" },
+		"rev-parse --abbrev-ref origin/HEAD": { stdout: "origin/main\n" },
+		"rev-parse --abbrev-ref @{u}": { code: 128 },
+		"rev-list --count origin/main..HEAD": { stdout: "0\n" },
+	});
+	const r = await removeChecks(git, ["D:/wt/x/a"]);
+	assert.deepEqual(r.problems, []);
+	assert.ok(calls.some((c) => c.args.join(" ") === "rev-list --count origin/main..HEAD"));
+});
+
+test("removeChecks clean passes and a failed fetch only warns", async () => {
+	const { git } = fake({ fetch: { code: 1 }, "rev-parse --abbrev-ref @{u}": { stdout: "origin/wt/x\n" }, "rev-list --left-right": { stdout: "1\t0\n" } });
+	const r = await removeChecks(git, ["D:/wt/x/a"]);
+	assert.deepEqual(r.problems, []);
+	assert.equal(r.warnings.length, 1);
+});
+
+test("repoStatus reports behind and ahead", async () => {
+	const { git } = fake({ "rev-parse --abbrev-ref HEAD": { stdout: "wt/x\n" }, "rev-parse --abbrev-ref @{u}": { stdout: "origin/wt/x\n" }, "rev-list --left-right": { stdout: "4\t2\n" } });
+	const s = await repoStatus(git, "D:/wt/x/a", null);
+	assert.deepEqual([s.branch, s.behind, s.ahead, s.unpushed], ["wt/x", 4, 2, 2]);
+});
+
+test("removeChecks refuses when git cannot tell", async () => {
+	const { git } = fake({ "rev-parse --abbrev-ref @{u}": { stdout: "origin/wt/x\n" }, "rev-list --left-right": { code: 128 } });
+	const r = await removeChecks(git, ["D:/wt/x/a"]);
+	assert.match(r.problems.join("\n"), /rev-list failed/);
 });

@@ -11,6 +11,7 @@ import { getAgentDir, type ExtensionAPI, type ExtensionCommandContext } from "@e
 import { loadConfig, type WtConfig } from "./config.ts";
 import { setupFiles } from "./files.ts";
 import { createAll, excludeLinks, preflight, rollback, type Git, type Planned } from "./git-ops.ts";
+import { listSets, listText, parseEditors, removeSet } from "./manage.ts";
 import { branchOf, checkName, launchSpec, rootProblem, setRootOf } from "./layout.ts";
 
 const STATE_ENTRY = "workflow-state";
@@ -162,10 +163,66 @@ async function newSet(pi: ExtensionAPI, ctx: ExtensionCommandContext, name: stri
 	ctx.ui.notify([head, ...lines, l.error ?? l.text].join("\n"), l.error ? "warning" : "info");
 }
 
+/** The config as /wt new sees it: the default root sits next to the working repo. */
+async function configFor(pi: ExtensionAPI, ctx: ExtensionCommandContext): Promise<WtConfig> {
+	const top = await makeGit(pi)(ctx.cwd, ["rev-parse", "--show-toplevel"]);
+	const parent = top.code === 0 ? path.dirname(slash(top.stdout.trim())) : path.dirname(slash(ctx.cwd));
+	cachedParent = parent;
+	const { cfg, warning } = loadConfig(getAgentDir(), parent);
+	if (warning) ctx.ui.notify(warning, "warning");
+	return cfg;
+}
+
+let cachedParent: string | null = null;
+
+/** Config for tab completion: no git call, uses the parent folder cached from the session. */
+function completionConfig(): WtConfig {
+	return loadConfig(getAgentDir(), cachedParent ?? path.dirname(slash(process.cwd()))).cfg;
+}
+
+async function listCmd(pi: ExtensionAPI, ctx: ExtensionCommandContext): Promise<void> {
+	const cfg = await configFor(pi, ctx);
+	let editors: string[] | null = null;
+	try {
+		const r = await pi.exec("unity", ["status", "--format", "json"], { timeout: 10000 });
+		editors = r.code === 0 ? parseEditors(r.stdout) : null;
+	} catch {
+		editors = null;
+	}
+	ctx.ui.notify(await listText(makeGit(pi), cfg, editors), "info");
+}
+
+async function removeCmd(pi: ExtensionAPI, ctx: ExtensionCommandContext, name: string): Promise<void> {
+	const cfg = await configFor(pi, ctx);
+	const env = {
+		git: makeGit(pi),
+		cfg,
+		cwd: ctx.cwd,
+		added: addedFolders(ctx),
+		hasUI: ctx.hasUI,
+		confirm: (t: string, m: string) => ctx.ui.confirm(t, m),
+	};
+	const r = await removeSet(env, name);
+	ctx.ui.notify(r.text, r.error ? "error" : "info");
+}
+
 export default function worktree(pi: ExtensionAPI) {
+	pi.on("session_start", async (_e, ctx) => {
+		try {
+			const top = await makeGit(pi)(ctx.cwd, ["rev-parse", "--show-toplevel"]);
+			cachedParent = path.dirname(slash(top.code === 0 ? top.stdout.trim() : ctx.cwd));
+		} catch {
+			cachedParent = path.dirname(slash(ctx.cwd));
+		}
+	});
 	pi.registerCommand("wt", {
 		description: "Parallel pi sessions on git worktrees: new NAME, list, remove NAME",
-		getArgumentCompletions: (prefix) => {
+		getArgumentCompletions: async (prefix) => {
+			const m = /^remove\s+(\S*)$/i.exec(prefix.trimStart());
+			if (m) {
+				const sets = listSets(completionConfig()).filter((n) => n.startsWith(m[1]));
+				return sets.length ? sets.map((n) => ({ value: `remove ${n}`, label: n })) : null;
+			}
 			if (/\s/.test(prefix.trim())) return null;
 			const items = SUBCOMMANDS.filter((s) => s.startsWith(prefix.trim().toLowerCase())).map((s) => ({ value: s, label: s }));
 			return items.length ? items : null;
@@ -174,7 +231,8 @@ export default function worktree(pi: ExtensionAPI) {
 			const [sub, ...rest] = args.trim().split(/\s+/);
 			try {
 				if (sub === "new") return await newSet(pi, ctx, rest[0] ?? "");
-				if (sub === "list" || sub === "remove") return ctx.ui.notify(`/wt ${sub} is not available yet`, "warning");
+				if (sub === "list") return await listCmd(pi, ctx);
+				if (sub === "remove") return await removeCmd(pi, ctx, rest[0] ?? "");
 				ctx.ui.notify("Usage: /wt new NAME | /wt list | /wt remove NAME", "info");
 			} catch (e) {
 				ctx.ui.notify(`/wt ${sub ?? ""} failed: ${(e as Error).message}`, "error");
