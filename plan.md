@@ -248,3 +248,5 @@ Expected: `# fail 0`, and `# pass` equal to the total number of tests.
 - [x] S6 In `index.ts`:
 - [x] S7 In `README.md`:
 - [x] S8 Add the tests from §6 to `manage.test.ts`, then run the test command.
+## Outcome
+2026-10-15T17:56:46.605Z — ok: stage 1: committed (1 commit); stage 2: committed (1 commit)
