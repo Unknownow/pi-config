@@ -347,6 +347,9 @@ All in `D:/projects/pi-config`.
 2. `feat(worktree): /wt list and /wt remove`: `git-ops.ts`, `git-ops.test.ts`, `index.ts`, `worktree/README.md`.
 3. `feat(worktree): guard Unity Editor commands in worktree sessions`: `unity-guard.ts`, `unity-guard.test.ts`, `index.ts`, `worktree/README.md`.
 
+## Plan choices upheld by the user
+pi/agent/extensions/worktree/unity-guard.ts:116 - minor - [plan-flaw] The check for non-shell code produces false refusals in Unity repos.
+
 <!-- pi-workflow:status -->
 ## Checklist
 - [x] S1 Create `pi/agent/extensions/worktree/config.ts` with:
