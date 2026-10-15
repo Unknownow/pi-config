@@ -22,8 +22,8 @@
       "thinking": "medium"
     },
     "commit": {
-      "model": "claude-bridge/claude-sonnet-5-5",
-      "thinking": "low"
+      "model": "claude-bridge/claude-haiku-5-5",
+      "thinking": "medium"
     },
     "arbiter": {
       "model": "claude-bridge/claude-opus-5-5",
