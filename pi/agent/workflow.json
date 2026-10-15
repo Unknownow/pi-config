@@ -3,7 +3,7 @@
   "roles": {
     "plan": {
       "model": "claude-bridge/claude-opus-5-5",
-      "thinking": "medium"
+      "thinking": "high"
     },
     "execute": {
       "model": "claude-bridge/claude-sonnet-5-5",
