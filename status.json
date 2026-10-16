@@ -1,11 +1,23 @@
 {
   "v": 1,
   "flowId": "20261017-0048-record-the-plan-check-reminder-and-push-e8d9",
-  "rev": 1,
-  "updated": "2026-10-16T17:48:31.336Z",
+  "rev": 2,
+  "updated": "2026-10-16T17:51:55.766Z",
   "title": "Record the plan_check reminder and push-downgrade finding in the workflow backlog, and add a rule to keep it current",
-  "delivery": "push",
-  "done": [],
+  "done": [
+    "S1",
+    "S2",
+    "S3",
+    "S4",
+    "S5",
+    "S6",
+    "S7"
+  ],
+  "finished": {
+    "at": "2026-10-16T17:51:55.679Z",
+    "ok": true,
+    "text": "committed (2 commits)"
+  },
   "repos": [
     {
       "branch": "master",

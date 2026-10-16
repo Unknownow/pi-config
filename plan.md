@@ -112,10 +112,12 @@ There are no code tests, because this change has no code. Run these from the rep
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 `docs/workflow-improvements.md:5`, Status line: replace `A3, A5, B7, B9, C2, C4, D2 and D3 are implemented` with `A3, A5
-- [ ] S2 `docs/workflow-improvements.md`: insert a new section between the Status line (line 5) and `## How to read the ratings` 
-- [ ] S3 Section D table: append a D4 row after the D3 row (after line 68), using the column order in F2.
-- [ ] S4 Section D table: append a D5 row after D4.
-- [ ] S5 Measurement table: after the D3 row (line 109), add two rows in the column order of line 80:
-- [ ] S6 New file `AGENTS.md` at the repo root (`D:\works\pi-config\AGENTS.md`). Use a heading `# Project instructions` and one s
-- [ ] S7 Run the checks in section 6.
+- [x] S1 `docs/workflow-improvements.md:5`, Status line: replace `A3, A5, B7, B9, C2, C4, D2 and D3 are implemented` with `A3, A5
+- [x] S2 `docs/workflow-improvements.md`: insert a new section between the Status line (line 5) and `## How to read the ratings` 
+- [x] S3 Section D table: append a D4 row after the D3 row (after line 68), using the column order in F2.
+- [x] S4 Section D table: append a D5 row after D4.
+- [x] S5 Measurement table: after the D3 row (line 109), add two rows in the column order of line 80:
+- [x] S6 New file `AGENTS.md` at the repo root (`D:\works\pi-config\AGENTS.md`). Use a heading `# Project instructions` and one s
+- [x] S7 Run the checks in section 6.
+## Outcome
+2026-10-16T17:51:55.679Z — ok: committed (2 commits)
