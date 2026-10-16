@@ -322,12 +322,12 @@ Expected: every file reports `# fail 0`.
 - [x] S3 A5 in `snapshotRepos` (`index.ts:765-775`): for each repo, start `snapshotTree(r.dir)` and `git(r.dir, "rev-parse", "HEA
 - [x] S4 A5 in `reviewPlan` (`index.ts:787-801`): one `Promise.all` over `diff.repos`. Each item runs the delta `diff --no-color 
 - [x] S5 Run every test file in the folder. All pass.
-- [ ] S6 B7: add `planCardReady()` (section 4) next to `planCardText` (`index.ts:856`).
-- [ ] S7 B9: create `prompts.test.ts` *before* editing `prompts.ts`. Copy today's exact `BATCH` and `PLAN_BATCH` strings from `pr
-- [ ] S8 C2 in `config.ts`: add the optional `file` parameter to `loadConfig` and `saveRole`, plus the cache from section 4. Vali
-- [ ] S9 C2 tests in a new `config.test.ts`, using a temp file path (never the real `CONFIG_PATH`). Cases are listed in section 6
-- [ ] S10 C4 in `index.ts`: add `plansDirCache` and `planDirFor` (section 4). Use `planDirFor` at `index.ts:901` and in `planHouse
-- [ ] S11 Run every test file. All pass.
+- [x] S6 B7: add `planCardReady()` (section 4) next to `planCardText` (`index.ts:856`).
+- [x] S7 B9: create `prompts.test.ts` *before* editing `prompts.ts`. Copy today's exact `BATCH` and `PLAN_BATCH` strings from `pr
+- [x] S8 C2 in `config.ts`: add the optional `file` parameter to `loadConfig` and `saveRole`, plus the cache from section 4. Vali
+- [x] S9 C2 tests in a new `config.test.ts`, using a temp file path (never the real `CONFIG_PATH`). Cases are listed in section 6
+- [x] S10 C4 in `index.ts`: add `plansDirCache` and `planDirFor` (section 4). Use `planDirFor` at `index.ts:901` and in `planHouse
+- [x] S11 Run every test file. All pass.
 - [ ] S12 `config.ts`:
 - [ ] S13 `subagent.ts`:
 - [ ] S14 Tests in `subagent.test.ts` for `idleWatch`, using `mock.timers` from `node:test` (`mock.timers.enable({ apis: ["setTime
