@@ -127,9 +127,11 @@
 - [x] S3 In `prompts.ts:83`, change "a push of your own is refused" to "a commit or push of your own is refused". Leave the rest 
 - [x] S4 In the workflow `README.md:75-77`, add that a plain `git commit` is also refused while executing, unless it is the workf
 - [x] S5 Tests for Stage 1 (§6 T1-T3).
-- [ ] S6 In `agent-end.ts`, add `selfCommitted` with the exact signature and semantics from §4, modelled on `minorFixOpen` (`:59`
-- [ ] S7 In `delivery.ts`, add `committed?: boolean` to `DeliveryOptions` (`:43-56`) with a doc comment, and implement the `commi
-- [ ] S8 In `index.ts`, extract the tail of `finishPassed` (`:2532-2541`) into one helper used by `finishPassed` and the new func
-- [ ] S9 In `index.ts`, add `deliverSelfCommit` next to `finishPassed`, as in §4.
-- [ ] S10 In `reviewDiff` (`index.ts:2173-2180`), in the no-diff, non-manual branch, call `deliverSelfCommit` first and return if 
-- [ ] S11 Tests for Stage 2 (§6 T4-T5).
+- [x] S6 In `agent-end.ts`, add `selfCommitted` with the exact signature and semantics from §4, modelled on `minorFixOpen` (`:59`
+- [x] S7 In `delivery.ts`, add `committed?: boolean` to `DeliveryOptions` (`:43-56`) with a doc comment, and implement the `commi
+- [x] S8 In `index.ts`, extract the tail of `finishPassed` (`:2532-2541`) into one helper used by `finishPassed` and the new func
+- [x] S9 In `index.ts`, add `deliverSelfCommit` next to `finishPassed`, as in §4.
+- [x] S10 In `reviewDiff` (`index.ts:2173-2180`), in the no-diff, non-manual branch, call `deliverSelfCommit` first and return if 
+- [x] S11 Tests for Stage 2 (§6 T4-T5).
+## Outcome
+2026-10-16T02:33:31.435Z — ok: stage 1: committed (1 commit); stage 2: committed (1 commit)
