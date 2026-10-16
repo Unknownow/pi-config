@@ -317,11 +317,11 @@ Expected: every file reports `# fail 0`.
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 Create `repo-diff.ts` with `RepoDiff`, `RunGit` and `collectRepoDiff(git, cwd, base = "HEAD")` as in section 4.
-- [ ] S2 Create `repo-diff.test.ts` with fixtures in `os.tmpdir()`, using a `RunGit` built on `execFile("git", ["-C", cwd, ...arg
-- [ ] S3 A5 in `snapshotRepos` (`index.ts:765-775`): for each repo, start `snapshotTree(r.dir)` and `git(r.dir, "rev-parse", "HEA
-- [ ] S4 A5 in `reviewPlan` (`index.ts:787-801`): one `Promise.all` over `diff.repos`. Each item runs the delta `diff --no-color 
-- [ ] S5 Run every test file in the folder. All pass.
+- [x] S1 Create `repo-diff.ts` with `RepoDiff`, `RunGit` and `collectRepoDiff(git, cwd, base = "HEAD")` as in section 4.
+- [x] S2 Create `repo-diff.test.ts` with fixtures in `os.tmpdir()`, using a `RunGit` built on `execFile("git", ["-C", cwd, ...arg
+- [x] S3 A5 in `snapshotRepos` (`index.ts:765-775`): for each repo, start `snapshotTree(r.dir)` and `git(r.dir, "rev-parse", "HEA
+- [x] S4 A5 in `reviewPlan` (`index.ts:787-801`): one `Promise.all` over `diff.repos`. Each item runs the delta `diff --no-color 
+- [x] S5 Run every test file in the folder. All pass.
 - [ ] S6 B7: add `planCardReady()` (section 4) next to `planCardText` (`index.ts:856`).
 - [ ] S7 B9: create `prompts.test.ts` *before* editing `prompts.ts`. Copy today's exact `BATCH` and `PLAN_BATCH` strings from `pr
 - [ ] S8 C2 in `config.ts`: add the optional `file` parameter to `loadConfig` and `saveRole`, plus the cache from section 4. Vali
