@@ -64,6 +64,7 @@ import { adoptHigher, commitRef, deleteLocal, deleteRef, fetchMirror, type Git, 
 import { type FlowFinding, recordFindings, reportFindings, type ReportStep } from "./flow-report.ts";
 import { nextStage, parseStages, stageDelivery, stageLine, stageNote, stageStart, stagesOutcome } from "./stages.ts";
 import { planToolProblem, planToolRefused } from "./readonly-tools.ts";
+import { MetricsQueue, type MetricEvent, subagentMetric } from "./metrics.ts";
 import { addUsage, emptyUsage, mapLimit, type RunResult, runSubagent } from "./subagent.ts";
 import {
 	type Deviation,
@@ -319,16 +320,23 @@ export default function workflow(pi: ExtensionAPI) {
 		const steps: ReportStep[] | undefined = state.checklist?.length ? state.checklist.map((c) => ({ id: c.id, text: c.text, done: c.done })) : undefined;
 		const found = reportFindings(state.flowFindings, state.approvedPlan);
 		const findings = found.length ? found : undefined;
+		const flowId = state.planDoc?.flowId;
 		state.flowSummarized = true;
 		state.flowFindings = undefined;
 		if (state.planDoc && !state.planDoc.finished) planMilestone(undefined, { at: new Date().toISOString(), ok, text: outcome });
 		state.touchedRepos = undefined;
 		view.settleMain();
 		if (!view.hasFlowUsage() && !steps && !findings) {
+			if (flowId) {
+				const empty = view.peekFlow(outcome, ok);
+				recordMetric({ kind: "flow", at: new Date().toISOString(), flowId, outcome, ok, started: empty.started, ended: empty.ended, stages: empty.stages });
+			}
 			persist();
 			return false;
 		}
-		pi.appendEntry(SUMMARY_ENTRY, { ...view.endFlow(outcome, ok), steps, findings });
+		const summary = view.endFlow(outcome, ok);
+		pi.appendEntry(SUMMARY_ENTRY, { ...summary, steps, findings });
+		if (flowId) recordMetric({ kind: "flow", at: new Date().toISOString(), flowId, outcome, ok, started: summary.started, ended: summary.ended, stages: summary.stages });
 		persist();
 		return true;
 	}
@@ -535,6 +543,7 @@ export default function workflow(pi: ExtensionAPI) {
 		onChange?.(run);
 		const { thinking, extensions, ...rest } = opts;
 		const k = knowledgeFor(role);
+		const started = Date.now();
 		const result = await runSubagent({
 			...rest,
 			tools: k ? [...rest.tools, ...k.tools] : rest.tools,
@@ -549,6 +558,7 @@ export default function workflow(pi: ExtensionAPI) {
 				onChange?.(run);
 			},
 		});
+		recordMetric(subagentMetric(role, label, run.stage, result.model ?? cfg.roles[role].model, started, Date.now(), result));
 		if (!result.ok) view.finish(run, false, result.error ?? "failed");
 		return { result, run };
 	}
@@ -851,6 +861,18 @@ export default function workflow(pi: ExtensionAPI) {
 	const planDirs = new Map<string, string>();
 	const planLast = new Map<string, { dir: string; status: PlanStatus }>();
 	const planWarned = new Set<string>();
+
+	/** Metrics wait here until the flow has a plan folder. */
+	const metrics = new MetricsQueue();
+	const metricsFolder = (id: string) => {
+		const d = planDirs.get(id);
+		return d ? path.join(d, id) : undefined;
+	};
+	const metricsFlushAll = () => metrics.flush(metricsFolder, state.planDoc && !state.planDoc.finished ? state.planDoc.flowId : undefined);
+	function recordMetric(e: MetricEvent): void {
+		metrics.record(e);
+		metricsFlushAll();
+	}
 	let planChain: Promise<void> = Promise.resolve();
 	/** Plan folder per repo root: `plansDir` runs git, and the answer does not change during a session. */
 	const plansDirCache = new Map<string, string>();
@@ -905,6 +927,7 @@ export default function workflow(pi: ExtensionAPI) {
 		writeLocal(dir, snap.flowId, planMd, status);
 		planDirs.set(snap.flowId, dir);
 		planLast.set(snap.flowId, { dir, status });
+		metricsFlushAll();
 		const live = state.planDoc?.flowId === snap.flowId ? state.planDoc : undefined;
 		if (live && roots.join("\n") !== live.roots.join("\n")) {
 			live.roots = roots;
@@ -1750,16 +1773,19 @@ export default function workflow(pi: ExtensionAPI) {
 			compactPending = false;
 			compacting = true;
 			commitHandoverInFlight = msg.customType === "workflow-commit";
+			const compactStart = Date.now();
 			ctx.ui.notify(`workflow: handing over at ${Math.round((held ?? 0) / 1000)}k tokens, compacting first`, "info");
 			ctx.compact({
 				customInstructions: prompts.HANDOVER_COMPACT,
 				onComplete: () => {
+					recordMetric({ kind: "compaction", at: new Date().toISOString(), reason: "handover", tokensBefore: held ?? null, ms: Date.now() - compactStart, ok: true });
 					compacting = false;
 					guardTokens = null;
 					if (msg.customType === "workflow-commit") send(`${msg.content}\n\n${commitExcerpt()}`);
 					else void planCardReady().then((card) => send(`${msg.content}\n\n${card}`));
 				},
 				onError: (e) => {
+					recordMetric({ kind: "compaction", at: new Date().toISOString(), reason: "handover", tokensBefore: held ?? null, ms: Date.now() - compactStart, ok: false, error: e.message });
 					compacting = false;
 					ctx.ui.notify(`workflow: compaction failed: ${e.message}`, "error");
 					send(msg.content);
@@ -1773,13 +1799,16 @@ export default function workflow(pi: ExtensionAPI) {
 		if (tokens === null || tokens <= cfg.contextGuardTokens) return;
 		compacting = true;
 		ctx.ui.notify(`workflow: context at ${Math.round(tokens / 1000)}k, compacting`, "info");
+		const compactStart = Date.now();
 		ctx.compact({
 			onComplete: () => {
+				recordMetric({ kind: "compaction", at: new Date().toISOString(), reason: "guard", tokensBefore: tokens, ms: Date.now() - compactStart, ok: true });
 				compacting = false;
 				guardTokens = null;
 				if (state.phase === "execute" && state.approvedPlan) void planCardReady().then((card) => state.phase === "execute" && state.approvedPlan && pi.sendMessage({ customType: "workflow-plan-card", content: card, display: true }, { triggerTurn: false }));
 			},
 			onError: (e) => {
+				recordMetric({ kind: "compaction", at: new Date().toISOString(), reason: "guard", tokensBefore: tokens, ms: Date.now() - compactStart, ok: false, error: e.message });
 				compacting = false;
 				ctx.ui.notify(`workflow: compaction failed: ${e.message}`, "error");
 			},
@@ -2688,6 +2717,7 @@ ${judged.text}`, instruction, chosen);
 	}
 
 	pi.on("session_start", async (event, ctx) => {
+		if (event.reason !== "reload") metrics.clear();
 		const loaded = loadConfig();
 		cfg = loaded.config;
 		configError = loaded.error;
