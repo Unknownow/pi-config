@@ -236,15 +236,17 @@ Expected: `# fail 0` in both, and the pass count goes up by the new tests.
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 `config.ts:6-31,37-58`: add `vscode: boolean` to `WtConfig`, `vscode: true` to `defaults()`, and the merge plus warning 
-- [ ] S2 `layout.ts` (after `launchSpec`, `layout.ts:43`): export `interface VscodeRequest` and `function vscodeTerminalSpec(o: L
-- [ ] S3 Create `pi/agent/extensions/worktree/vscode-bridge.ts`: a header doc comment, and `export function sendToVscode(pipe: st
-- [ ] S4 `index.ts:93-112` `launch()`: implement the selection order from §4. Build the `LaunchOpts` object once and pass it to b
-- [ ] S5 Create `vscode/request.js`: CommonJS, `module.exports = { parseRequest }`, per §4.
-- [ ] S6 Create `vscode/extension.js` per §4 (CommonJS: `require("vscode")`, `require("net")`, `require("os")`, `require("path")`
-- [ ] S7 Create `vscode/request.test.js` (node:test, CommonJS) with the cases in §6.
-- [ ] S8 Add tests to `layout.test.ts`, `config.test.ts`, and the new `vscode-bridge.test.ts` (see §6).
-- [ ] S9 Worktree `README.md`:
-- [ ] S10 Run the tests from §6. All must pass.
-- [ ] S11 Install on this machine, from the repo copy, in bash:
-- [ ] S12 `git status` must show no `.vsix` or other build output inside the repo.
+- [x] S1 `config.ts:6-31,37-58`: add `vscode: boolean` to `WtConfig`, `vscode: true` to `defaults()`, and the merge plus warning 
+- [x] S2 `layout.ts` (after `launchSpec`, `layout.ts:43`): export `interface VscodeRequest` and `function vscodeTerminalSpec(o: L
+- [x] S3 Create `pi/agent/extensions/worktree/vscode-bridge.ts`: a header doc comment, and `export function sendToVscode(pipe: st
+- [x] S4 `index.ts:93-112` `launch()`: implement the selection order from §4. Build the `LaunchOpts` object once and pass it to b
+- [x] S5 Create `vscode/request.js`: CommonJS, `module.exports = { parseRequest }`, per §4.
+- [x] S6 Create `vscode/extension.js` per §4 (CommonJS: `require("vscode")`, `require("net")`, `require("os")`, `require("path")`
+- [x] S7 Create `vscode/request.test.js` (node:test, CommonJS) with the cases in §6.
+- [x] S8 Add tests to `layout.test.ts`, `config.test.ts`, and the new `vscode-bridge.test.ts` (see §6).
+- [x] S9 Worktree `README.md`:
+- [x] S10 Run the tests from §6. All must pass.
+- [x] S11 Install on this machine, from the repo copy, in bash:
+- [x] S12 `git status` must show no `.vsix` or other build output inside the repo.
+## Outcome
+2026-10-16T03:23:06.960Z — ok: committed (2 commits)
