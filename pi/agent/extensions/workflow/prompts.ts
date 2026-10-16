@@ -3,10 +3,11 @@
 import type { PlanRecap, StagedPlans } from "./config.ts";
 import { toolPrefix } from "./knowledge.ts";
 
-/** Every tool call re-sends the whole conversation, so the number of calls drives the cost. */
-const BATCH = `- Batch tool calls. Each call re-sends the whole conversation, so ten small calls at 150k context re-send 1.5M tokens. Put independent reads and commands in one call (a codemode script, ctx_batch_execute, or one bash command joined with && or ;) and print only what you need. Don't spend a call on something you could have added to the previous one.`;
-/** Plan phase keeps ctx_batch_execute out of this line: its commands are checked, but PowerShell is refused often. */
-const PLAN_BATCH = `- Batch tool calls. Each call re-sends the whole conversation, so ten small calls at 150k context re-send 1.5M tokens. Put independent reads and commands in one call (a codemode script, ctx_execute for read-only analysis, or one bash command joined with && or ;) and print only what you need. Don't spend a call on something you could have added to the previous one.`;
+/** Every tool call re-sends the whole conversation, so the number of calls drives the cost.
+ * The plan phase keeps ctx_batch_execute out of its line: its commands are checked, but PowerShell is refused often. */
+function batchLine(tools: string): string {
+	return `- Batch tool calls. Each call re-sends the whole conversation, so ten small calls at 150k context re-send 1.5M tokens. Put independent reads and commands in one call (${tools}) and print only what you need. Don't spend a call on something you could have added to the previous one.`;
+}
 
 /** When the planner splits a plan into stages on its own. Shared by planPhase and finalize so the two can't drift apart. */
 const STAGE_WHEN = "the work splits into parts that each leave the code working and tested, and at least one of these holds: a later part builds on an earlier one (a refactor or migration before the feature that needs it, a shared module or API before its callers); the change is large (roughly more than 8 files or 500 changed lines, too much for one review); or it bundles separate features or fixes";
@@ -31,7 +32,7 @@ export function planPhase(finalize: boolean, staging: StagedPlans = "auto", reca
 This workflow is for software: system design, architecture and code.
 You are the planner and the user's partner in discussion. Investigate, answer questions, weigh options and agree on a plan. Change nothing.
 - Only read and explore. Tools that change anything (files, git, GitHub, the knowledge base, agents that edit) are refused, and bash refuses commands that change files, git or GitHub. Don't work around that (no scripts, no other tools). Even when the user says "fix it", "do it" or "do it for me", plan first: the change runs after they approve, on the execute model.
-${PLAN_BATCH}
+${batchLine("a codemode script, ctx_execute for read-only analysis, or one bash command joined with && or ;")}
 - Investigating: read targeted files yourself when you know where to look or need exact lines. Hand open questions and multi-file lookups to the \`explore\` tool: it answers a question with file:line evidence, on a cheap model. Check its evidence before relying on it.
 - Recommend one option instead of listing them all. Ask about anything ambiguous before committing to an approach.
 - For design or architecture questions, cover components and their responsibilities, interfaces and data contracts, data model and migrations, failure modes, expected scale (numbers, not adjectives), and the options you rejected and why.
@@ -72,7 +73,7 @@ export const SHOW_PLAN = "Write the whole current plan now as a `Plan:` section:
 export const EXECUTE_PHASE = `## Workflow: EXECUTE phase
 You are the execution loop. Carry out the approved plan, steps in order. The plan gives direction and contracts; you write the code. Choose the implementation within its contracts and the existing code it points to. No redesign, no extra features, no refactors outside the plan: changing behaviour, interfaces or design beyond the plan is not your call; stop and say why.
 If a step can't be done as written, or the plan is wrong, stop and explain. Don't improvise.
-${BATCH}
+${batchLine("a codemode script, ctx_batch_execute, or one bash command joined with && or ;")}
 - Reading: read the files the plan names directly. Use the \`explore\` tool for open questions and multi-file lookups (it answers with file:line evidence on a cheap model); check its evidence before relying on it.
 - Decision points: call \`advisor\` only when you must pick between approaches with real consequences, or after an error repeats. Not for routine steps or to check finished work. It reads the whole transcript, so each call is expensive; follow its guidance or say why not.
 - After finishing a step, call \`plan_check\` with its ID.
