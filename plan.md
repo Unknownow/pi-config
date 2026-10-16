@@ -328,10 +328,10 @@ Expected: every file reports `# fail 0`.
 - [x] S9 C2 tests in a new `config.test.ts`, using a temp file path (never the real `CONFIG_PATH`). Cases are listed in section 6
 - [x] S10 C4 in `index.ts`: add `plansDirCache` and `planDirFor` (section 4). Use `planDirFor` at `index.ts:901` and in `planHouse
 - [x] S11 Run every test file. All pass.
-- [ ] S12 `config.ts`:
-- [ ] S13 `subagent.ts`:
-- [ ] S14 Tests in `subagent.test.ts` for `idleWatch`, using `mock.timers` from `node:test` (`mock.timers.enable({ apis: ["setTime
-- [ ] S15 README: after the paragraph at `README.md:299-301`, add one paragraph on `subagent.timeoutMs` (hard limit, 15 minutes) a
+- [x] S12 `config.ts`:
+- [x] S13 `subagent.ts`:
+- [x] S14 Tests in `subagent.test.ts` for `idleWatch`, using `mock.timers` from `node:test` (`mock.timers.enable({ apis: ["setTime
+- [x] S15 README: after the paragraph at `README.md:299-301`, add one paragraph on `subagent.timeoutMs` (hard limit, 15 minutes) a
 - [ ] S16 Create `metrics.ts` exactly as in section 4 (types, `subagentMetric`, `appendMetrics`, `MetricsQueue`). Use a type-only 
 - [ ] S17 Wire it into `index.ts`:
 - [ ] S18 Create `metrics.test.ts`. Cases are listed in section 6.
