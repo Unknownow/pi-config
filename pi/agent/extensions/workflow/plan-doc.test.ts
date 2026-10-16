@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { commitPlan, isFlowId, mergeChecklist, newFlowId, normalizeRemote, parseChecklist, parseStatus, planCard, pruneIds, renderPlanFile, splitPlanFile } from "./plan-doc.ts";
+import { commitPlan, isFlowId, mergeChecklist, newFlowId, normalizeRemote, openStepsReminder, parseChecklist, parseStatus, planCard, pruneIds, renderPlanFile, splitPlanFile } from "./plan-doc.ts";
 
 const PLAN = `## Plan: Demo
 ### 1. Goal and non-goals
@@ -141,4 +141,25 @@ test("pruneIds", () => {
 test("planCard lists a pass-upheld plan flaw as an amendment", () => {
 	const card = planCard(`${PLAN}\n\n## Plan choices upheld at a pass\na.ts:3 - minor - [plan-flaw] x`, [], undefined, undefined, "/p");
 	assert.ok(card.includes("### Amendments"));
+});
+
+const item = (id: string, done: boolean, stage?: number) => ({ id, text: id, done, stage });
+const TAIL = "Tick the finished ones with `plan_check`.";
+
+test("openStepsReminder: none open", () => {
+	assert.equal(openStepsReminder([item("S1", true)]), undefined);
+	assert.equal(openStepsReminder(undefined), undefined);
+	assert.equal(openStepsReminder([]), undefined);
+});
+
+test("openStepsReminder: lists open steps in order", () => {
+	assert.equal(openStepsReminder([item("S1", true), item("S2", false), item("S3", false)]), `Open steps not ticked: S2, S3. ${TAIL}`);
+});
+
+test("openStepsReminder: singular", () => {
+	assert.equal(openStepsReminder([item("S1", true), item("S2", false)]), `Open step not ticked: S2. ${TAIL}`);
+});
+
+test("openStepsReminder: only the current stage", () => {
+	assert.equal(openStepsReminder([item("S1", false, 1), item("S2", false, 2), item("S3", false)], 2), `Open steps not ticked: S2, S3. ${TAIL}`);
 });

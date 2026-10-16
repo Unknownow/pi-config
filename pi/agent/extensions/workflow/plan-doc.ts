@@ -88,6 +88,13 @@ export function mergeChecklist(plan: string, old: ChecklistItem[] | undefined): 
 	return parseChecklist(plan).map((i) => ({ ...i, done: done.has(i.id) }));
 }
 
+/** The reminder line for the unticked steps of the current stage (or unstaged steps), or undefined when none are open. */
+export function openStepsReminder(checklist: ChecklistItem[] | undefined, stage?: number): string | undefined {
+	const open = (checklist ?? []).filter((i) => !i.done && (stage === undefined || i.stage === undefined || i.stage === stage));
+	if (!open.length) return undefined;
+	return `Open step${open.length === 1 ? "" : "s"} not ticked: ${open.map((i) => i.id).join(", ")}. Tick the finished ones with \`plan_check\`.`;
+}
+
 /**
  * The short version of the plan sent after a compaction: goal, decisions, done-when, amendments and the open steps.
  * `stage`/`stageCount`: the current stage of a staged plan (open steps are then that stage's).

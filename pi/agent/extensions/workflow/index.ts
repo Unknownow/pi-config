@@ -59,7 +59,7 @@ import { collectRepoDiff as collectRepoDiffImpl, type RepoDiff } from "./repo-di
 import { combineRepoTexts, parseAddDir, repoKey, uniqueRoots } from "./repos.ts";
 import { shellProblem } from "./push-guard.ts";
 import { COMMIT_GUARD_ENV, type CommitGuardSpec } from "./commit-guard.ts";
-import { commitPlan, type Finished, mergeChecklist, newFlowId, parseChecklist, type PlanStatus, planCard, pruneIds, renderPlanFile, splitPlanFile, type ChecklistItem } from "./plan-doc.ts";
+import { commitPlan, type Finished, mergeChecklist, newFlowId, openStepsReminder, parseChecklist, type PlanStatus, planCard, pruneIds, renderPlanFile, splitPlanFile, type ChecklistItem } from "./plan-doc.ts";
 import { adoptHigher, commitRef, deleteLocal, deleteRef, fetchMirror, type Git, listRefs, plansDir, pushRef, readLocalStatuses, readPlanMd, refRev, remoteOf, repoInfo, type RefEntry, writeLocal } from "./plan-store.ts";
 import { type FlowFinding, recordFindings, reportFindings, type ReportStep } from "./flow-report.ts";
 import { nextStage, parseStages, stageDelivery, stageLine, stageNote, stageStart, stagesOutcome } from "./stages.ts";
@@ -1558,6 +1558,8 @@ export default function workflow(pi: ExtensionAPI) {
 			if (r.verdict === "ERROR") throw new Error(r.text);
 			if (r.verdict === "FAIL") state.judgeRounds++;
 			let text = r.text;
+			const reminder = state.phase === "execute" ? openStepsReminder(state.checklist, currentStages()?.current) : undefined;
+			if (reminder) text += `\n\n${reminder}`;
 			// Every call replaces the pending report, so a stale one never outlives a clean review.
 			state.pendingPlanFlaw = hasPlanFlaw(r.text) ? r.text : undefined;
 			if (state.pendingPlanFlaw) {
