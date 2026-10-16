@@ -1,7 +1,7 @@
 /**
  * Execute phase: refuses git commands that publish or skip the hooks. Pushing is the
  * workflow's job, after the judge passes; the executor may not push, force-push, push
- * to a protected branch, or commit with --no-verify. Checked on the command text, so it
+ * to a protected branch, or commit (committing is the workflow's job too, and --no-verify never). Checked on the command text, so it
  * is a guardrail against a drifting executor, not a sandbox. It also refuses `gh` commands that
  * open or merge pull requests unless the flow's delivery allows them, and `gh pr merge --admin`
  * / `--auto` and `gh pr review --approve` always.
@@ -19,6 +19,8 @@ export interface PushContext {
 	prAllowed: boolean;
 	/** True only while the workflow's commit step runs with the merge delivery. */
 	mergeAllowed: boolean;
+	/** True only while the workflow's commit step runs. */
+	commitAllowed: boolean;
 }
 
 /** `a` is the long option `full` or an abbreviation of it, which git accepts. */
@@ -64,6 +66,7 @@ export async function shellProblem(text: string, powershell: boolean, g: ShellGu
 			pushAllowed: mode === "push" || mode === "pr" || mode === "merge",
 			prAllowed: mode === "pr" || mode === "merge",
 			mergeAllowed: mode === "merge",
+			commitAllowed: mode !== undefined,
 		});
 		if (problem) return problem;
 	}
@@ -107,11 +110,12 @@ function wordsProblem(input: string[], o: PushContext): string | null {
 	if (g.sub !== "push" && g.sub !== "commit") return null;
 	// Only the options before the subcommand: a commit message may mention hooksPath.
 	if (args.slice(0, args.length - g.rest.length - 1).some((a) => /hookspath/i.test(a))) return "changes where git looks for hooks";
-	return g.sub === "push" ? pushOnly(g.rest, o) : commitOnly(g.rest);
+	return g.sub === "push" ? pushOnly(g.rest, o) : commitOnly(g.rest, o);
 }
 
-function commitOnly(rest: string[]): string | null {
+function commitOnly(rest: string[], o: PushContext): string | null {
 	if (rest.some((a) => isLong(a, "--no-verify") || shortHas(a, "n"))) return "git commit skips the hooks (--no-verify)";
+	if (!o.commitAllowed) return "committing is the workflow's job; it commits after the judge passes";
 	return null;
 }
 

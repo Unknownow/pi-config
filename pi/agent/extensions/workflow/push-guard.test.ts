@@ -5,7 +5,8 @@ import * as path from "node:path";
 import { pushProblem, shellProblem } from "./push-guard.ts";
 import { repoKey } from "./repos.ts";
 
-const feature = { branch: "feat", protectedBranches: ["main", "master"], pushAllowed: false, prAllowed: false, mergeAllowed: false };
+const feature = { branch: "feat", protectedBranches: ["main", "master"], pushAllowed: false, prAllowed: false, mergeAllowed: false, commitAllowed: false };
+const committing = { ...feature, commitAllowed: true };
 const allowed = { ...feature, pushAllowed: true };
 const onMain = { ...allowed, branch: "main" };
 const prOk = { ...allowed, prAllowed: true };
@@ -31,6 +32,10 @@ const refused: [string, typeof feature][] = [
 	["env A=1 git push", feature],
 	["timeout 20 git push origin feat", feature],
 	["git commit -nm x", feature],
+	["git commit -nm x", committing],
+	["git commit -m x", feature],
+	["git commit -am 'fix: thing'", feature],
+	["git commit -m 'set core.hooksPath on import'", feature],
 	["git commit --no-verify -m x", feature],
 	["git -c core.hooksPath=/dev/null commit -m x", feature],
 	["git status && git push", feature],
@@ -68,12 +73,12 @@ for (const [cmd, ctx] of refused) test(`refuses: ${cmd}`, () => assert.notEqual(
 const fine: [string, typeof feature][] = [
 	["git push -u origin feat", allowed],
 	["git push", allowed],
-	["git commit -m x", feature],
-	["git commit -am 'fix: thing'", feature],
+	["git commit -m x", committing],
+	["git commit -am 'fix: thing'", committing],
 	["git status", feature],
 	["git log --oneline | head -3", feature],
 	["echo git push", feature],
-	["git commit -m 'set core.hooksPath on import'", feature],
+	["git commit -m 'set core.hooksPath on import'", committing],
 	["git config user.name x", feature],
 	["gh pr create --head flow/x --title t --body b", prOk],
 	["gh pr merge 12 --merge --delete-branch", mergeOk],
@@ -107,4 +112,10 @@ test("shellProblem: several repos use each repo's own mode", async () => {
 
 test("shellProblem: config env is refused", async () => {
 	assert.notEqual(await shellProblem("GIT_CONFIG_COUNT=1 git commit", false, single("push")), null);
+});
+
+test("shellProblem: commit needs the commit step", async () => {
+	assert.match((await shellProblem("git commit -m x", false, single())) ?? "", /workflow's job; it commits/);
+	assert.equal(await shellProblem("git commit -m x", false, single("commit")), null);
+	assert.equal(await shellProblem("git commit -m x", false, single("push")), null);
 });

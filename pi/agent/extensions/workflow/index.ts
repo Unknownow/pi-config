@@ -1631,7 +1631,7 @@ export default function workflow(pi: ExtensionAPI) {
 			const modeOf = (root: string | undefined) => (root ? state.commitPending?.repos?.find((r) => repoKey(r.root) === repoKey(root))?.mode : undefined) ?? state.commitPending?.mode;
 			for (const { text, powershell } of gitTexts) {
 				const problem = await shellProblem(text, powershell, { roots: multi ? roots : undefined, cwd: ctx.cwd, protectedBranches: cfg.protectedBranches, branchOf, modeOf });
-				if (problem) return { block: true, reason: `Refused: ${problem}. Do not push, open or merge pull requests, or skip hooks yourself: finish the code, get the judge's pass and end your turn; the workflow delivers it as this flow's delivery says.` };
+				if (problem) return { block: true, reason: `Refused: ${problem}. Do not commit, push, open or merge pull requests, or skip hooks yourself: finish the code, get the judge's pass and end your turn; the workflow commits and delivers it as this flow's delivery says.` };
 			}
 			return;
 		}

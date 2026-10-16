@@ -73,7 +73,7 @@ after approval runs on its own:
 - **Push guard:** it never pushes `protectedBranches` (`main`, `master`) or a detached HEAD. It
   commits there and tells you. It never force-pushes or uses `--no-verify`, and stops if a hook fails.
   This is enforced, not only asked for: while executing, a `git push` is refused unless it is the
-  workflow's own commit-and-push step, and force pushes, deletes, `+refspec`s, pushes to a protected
+  workflow's own commit-and-push step, a plain `git commit` is refused unless it is the workflow's commit step, and force pushes, deletes, `+refspec`s, pushes to a protected
   branch, `--no-verify` and changes to `core.hooksPath` / `GIT_CONFIG_*` are always refused (`push-guard.ts`).
   `gh pr create` and `gh pr merge` (and `gh api` calls that open or merge one) are refused unless the flow's
   delivery includes them and its commit step is running; `gh pr merge --admin` / `--auto` and `gh pr review --approve`
