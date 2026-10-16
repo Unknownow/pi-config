@@ -148,10 +148,12 @@
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 In `index.ts` `summarizeCommit` (`index.ts:2089-2091`), replace the `parts` array and the `for` loop with one `await Pro
-- [ ] S2 In `index.ts` `finishPassed` (`index.ts:2536-2537`), build `prepared` with `await Promise.all(changed.map(async (ref) =>
-- [ ] S3 In `index.ts` `deliverSelfCommit` (`index.ts:2574-2579`), read all repos at once:
-- [ ] S4 In `docs/workflow-improvements.md`:
-- [ ] S5 In `plan-store.ts`, add the module-level `statusCache` and change `statusAt` exactly as in Design C3:
-- [ ] S6 In `plan-store.test.ts`, add the test described in section 6. If the test needs a counting wrapper, write it inside the 
-- [ ] S7 In `docs/workflow-improvements.md`:
+- [x] S1 In `index.ts` `summarizeCommit` (`index.ts:2089-2091`), replace the `parts` array and the `for` loop with one `await Pro
+- [x] S2 In `index.ts` `finishPassed` (`index.ts:2536-2537`), build `prepared` with `await Promise.all(changed.map(async (ref) =>
+- [x] S3 In `index.ts` `deliverSelfCommit` (`index.ts:2574-2579`), read all repos at once:
+- [x] S4 In `docs/workflow-improvements.md`:
+- [x] S5 In `plan-store.ts`, add the module-level `statusCache` and change `statusAt` exactly as in Design C3:
+- [x] S6 In `plan-store.test.ts`, add the test described in section 6. If the test needs a counting wrapper, write it inside the 
+- [x] S7 In `docs/workflow-improvements.md`:
+## Outcome
+2026-10-16T18:20:47.092Z — ok: committed (2 commits)
