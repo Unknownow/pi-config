@@ -60,6 +60,20 @@ export function minorFixOpen(s: { committed: boolean; commitPending: boolean; su
 	return !s.committed && !s.commitPending && !s.summarized && s.sentFor !== s.hash;
 }
 
+/** The executor committed exactly the tree the judge passed: some judged repo's HEAD moved, and every judged repo still has the judged tree. */
+export function selfCommitted(
+	passed: string | undefined,
+	judged: { hash: string; verdict: "PASS" | "FAIL"; repos?: Record<string, { tree: string; head: string }> } | undefined,
+	now: Record<string, { head: string; tree: string }>,
+	handled: boolean,
+): boolean {
+	if (handled || !passed || !judged || judged.hash !== passed || judged.verdict !== "PASS" || !judged.repos) return false;
+	const keys = Object.keys(judged.repos);
+	if (!keys.length) return false;
+	if (!keys.every((k) => now[k] && now[k].tree === judged.repos![k].tree)) return false;
+	return keys.some((k) => now[k].head !== judged.repos![k].head);
+}
+
 /** After a pass: go back for a fix round while findings remain and rounds are left, else commit. */
 export function afterPass(findings: number, minorRounds: number, maxMinorRounds: number): "fix" | "commit" {
 	return findings > 0 && minorRounds < maxMinorRounds ? "fix" : "commit";

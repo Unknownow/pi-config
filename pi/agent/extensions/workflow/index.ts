@@ -49,7 +49,7 @@ import {
 	type Thinking,
 	type WorkflowConfig,
 } from "./config.ts";
-import { handoverAction, afterPass, noChangeStage, arbiterFirst, fixableFindings, canApprove, hasPlanFlaw, planFlawLines, planFlawOnPass, hasPlanLine, isPlanReady, judgeCapReached, minorFixOpen, parseArbiter, phaseAfterFlow, shouldResume, skipJudge } from "./agent-end.ts";
+import { handoverAction, afterPass, noChangeStage, arbiterFirst, fixableFindings, canApprove, hasPlanFlaw, planFlawLines, planFlawOnPass, hasPlanLine, isPlanReady, judgeCapReached, minorFixOpen, selfCommitted, parseArbiter, phaseAfterFlow, shouldResume, skipJudge } from "./agent-end.ts";
 import { countTokens, type Tok } from "./tokens.ts";
 import * as prompts from "./prompts.ts";
 import { branchName, combineOutcomes, type Delivery, type DeliveryOptions, DELIVERIES, DELIVERY_LABELS, deliveryChoices, deliveryInstruction, deliveryMenuLabel, deliveryOutcome, freshPr, isDelivery, planTitle, type PrState, repoDeliveryInstruction } from "./delivery.ts";
@@ -2173,6 +2173,7 @@ export default function workflow(pi: ExtensionAPI) {
 		if (!diff?.text) {
 			if (manual) ctx.ui.notify("workflow: no changes to review", "info");
 			else {
+				if (await deliverSelfCommit(ctx)) return;
 				const staged = currentStages();
 				if (staged) await noChangeTurn(ctx, staged);
 			}
@@ -2530,17 +2531,93 @@ export default function workflow(pi: ExtensionAPI) {
 			instruction = repoDeliveryInstruction(prepared.map(({ root, p }) => ({ root, options: options(p) })));
 		}
 
+		await sendCommitStep(ctx, hash, report, instruction, chosen);
+		return true;
+	}
+
+	/** Marks the commit stage and sends the commit step's instruction, in a subagent or the main session. */
+	async function sendCommitStep(ctx: ExtensionContext, hash: string, report: string | undefined, instruction: string, chosen: Delivery): Promise<void> {
 		view.stage = "commit";
 		view.changed();
 		markPassSummarized(hash); // the commit run's end summarizes this flow
 		persist();
 		if (cfg.delivery.runner === "subagent") {
 			await commitInSubagent(ctx, report, instruction, chosen);
-			return true;
+			return;
 		}
 		handover("workflow-commit", report ? `${report}
 
 ${instruction}` : instruction);
+	}
+
+	/** The executor committed the judged change itself: carry on with the flow's delivery from that commit. False when this is not that case. */
+	async function deliverSelfCommit(ctx: ExtensionContext): Promise<boolean> {
+		const judged = state.lastJudge;
+		const hash = state.passedDiff;
+		if (!hash || !judged || judged.hash !== hash || judged.verdict !== "PASS" || !judged.repos) return false;
+		const refs = await flowRepos(ctx);
+		const now: Record<string, { head: string; tree: string }> = {};
+		for (const ref of refs) {
+			const head = await git(ref.dir, "rev-parse", "HEAD");
+			const tree = await git(ref.dir, "rev-parse", "HEAD^{tree}");
+			if (head.code === 0 && tree.code === 0) now[repoKey(ref.root)] = { head: head.stdout.trim(), tree: tree.stdout.trim() };
+		}
+		const handled = committedDiffs.has(hash) || !!state.summarizedPasses?.includes(hash) || !!state.commitPending;
+		if (!selfCommitted(hash, judged, now, handled)) return false;
+
+		const staged = currentStages();
+		const chosen = stageDelivery(state.delivery ?? defaultDelivery(), staged?.stages[staged.current - 1]);
+		if (chosen === "off") {
+			await summarizePass(ctx, hash);
+			return true;
+		}
+		committedDiffs.add(hash);
+		ctx.ui.notify("workflow: the executor committed the change itself; continuing with delivery", "info");
+
+		const multi = !(refs.length === 1 && refs[0].dir === ctx.cwd);
+		const moved: { root: string; mode: Exclude<Delivery, "off">; head: string; branch: string; prBefore?: number }[] = [];
+		for (const ref of refs) {
+			const key = repoKey(ref.root);
+			const before = judged.repos[key];
+			if (!before || now[key]?.head === before.head) continue;
+			const branch = (await git(ref.dir, "rev-parse", "--abbrev-ref", "HEAD")).stdout.trim();
+			const unsafe = !branch || branch === "HEAD" || cfg.protectedBranches.includes(branch);
+			let mode = chosen;
+			let prBefore: number | undefined;
+			if (unsafe) {
+				mode = "commit";
+				if (chosen !== "commit") ctx.ui.notify(`workflow${multi ? ` [${ref.root}]` : ""}: the executor committed on ${branch && branch !== "HEAD" ? branch : "a detached HEAD"} itself; push and open the pull request by hand`, "warning");
+			} else if (mode === "pr" || mode === "merge") {
+				const old = await prState(ref.dir, branch);
+				if (old && old.state !== "OPEN") prBefore = old.number;
+			}
+			moved.push({ root: ref.root, mode, head: before.head, branch, prBefore });
+		}
+		if (moved.length === 0) return false;
+		const first = moved[0];
+		state.commitPending = multi
+			? { mode: first.mode, head: first.head, branch: first.branch, prBefore: first.prBefore, repos: moved.map((m) => ({ root: m.root, mode: m.mode, head: m.head, branch: m.branch, prBefore: m.prBefore })) }
+			: { mode: first.mode, head: first.head, branch: first.branch, prBefore: first.prBefore };
+		if (moved.every((m) => m.mode === "commit")) {
+			markPassSummarized(hash);
+			persist();
+			await summarizeCommit(ctx);
+			return true;
+		}
+		const options = (m: (typeof moved)[number]): DeliveryOptions => ({
+			mode: m.mode,
+			branch: m.branch,
+			base: cfg.delivery.base,
+			split: false,
+			mergeMethod: cfg.delivery.mergeMethod,
+			deleteBranch: cfg.delivery.deleteBranch,
+			deviations: "",
+			committed: true,
+		});
+		const instruction = multi ? repoDeliveryInstruction(moved.map((m) => ({ root: m.root, options: options(m) }))) : deliveryInstruction(options(first));
+		await sendCommitStep(ctx, hash, `**Judge: PASS**
+
+${judged.text}`, instruction, chosen);
 		return true;
 	}
 

@@ -1,7 +1,7 @@
 // node --test agent-end.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { handoverAction, afterPass, noChangeStage, arbiterFirst, fixableFindings, hasPlanFlaw, planFlawLines, planFlawOnPass, canApprove, hasPlanLine, isPlanReady, judgeCapReached, minorFixOpen, parseArbiter, phaseAfterFlow, shouldResume, skipJudge } from "./agent-end.ts";
+import { handoverAction, afterPass, noChangeStage, arbiterFirst, fixableFindings, hasPlanFlaw, planFlawLines, planFlawOnPass, canApprove, hasPlanLine, isPlanReady, judgeCapReached, minorFixOpen, selfCommitted, parseArbiter, phaseAfterFlow, shouldResume, skipJudge } from "./agent-end.ts";
 
 const empty = { role: "assistant", content: [] };
 
@@ -180,4 +180,18 @@ test("handoverAction compacts only an idle, unaborted run over the threshold wit
 	assert.equal(handoverAction({ ...ok, aborted: true, hasPlan: false }), "hold");
 	assert.equal(handoverAction({ ...ok, aborted: true, commit: true }), "send");
 	assert.equal(handoverAction({ ...ok, aborted: true, commit: true, tokens: 1000 }), "send");
+});
+
+test("selfCommitted only when the passed tree was committed", () => {
+	const J = { hash: "h", verdict: "PASS" as const, repos: { a: { tree: "t1", head: "c1" } } };
+	assert.equal(selfCommitted("h", J, { a: { head: "c2", tree: "t1" } }, false), true);
+	assert.equal(selfCommitted("h", J, { a: { head: "c1", tree: "t1" } }, false), false);
+	assert.equal(selfCommitted("h", J, { a: { head: "c2", tree: "t2" } }, false), false);
+	assert.equal(selfCommitted("x", J, { a: { head: "c2", tree: "t1" } }, false), false);
+	assert.equal(selfCommitted("h", { ...J, verdict: "FAIL" }, { a: { head: "c2", tree: "t1" } }, false), false);
+	assert.equal(selfCommitted("h", { hash: "h", verdict: "PASS" }, { a: { head: "c2", tree: "t1" } }, false), false);
+	assert.equal(selfCommitted("h", J, { a: { head: "c2", tree: "t1" } }, true), false);
+	assert.equal(selfCommitted("h", J, {}, false), false);
+	const two = { ...J, repos: { a: { tree: "t1", head: "c1" }, b: { tree: "u1", head: "d1" } } };
+	assert.equal(selfCommitted("h", two, { a: { head: "c2", tree: "t1" }, b: { head: "d1", tree: "u1" } }, false), true);
 });

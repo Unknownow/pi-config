@@ -54,6 +54,8 @@ export interface DeliveryOptions {
 	deleteBranch: boolean;
 	/** Knowledge-deviations block for the commit message, or "". */
 	deviations: string;
+	/** The change is already committed on `branch` (by the executor): only push, PR and merge remain. */
+	committed?: boolean;
 }
 
 const SPLIT =
@@ -72,8 +74,9 @@ export function deliveryInstruction(o: DeliveryOptions): string {
 	const b = o.branch;
 	const method: MergeMethod = (["merge", "rebase", "squash"] as const).includes(o.mergeMethod) ? o.mergeMethod : "merge";
 	const parts = ["The judge passed."];
-	if (o.from) parts.push(`First create branch \`${b}\` with \`git switch -c ${b}\` (the working-tree changes come along). Commit there and leave \`${o.from}\` as it is.`);
-	parts.push(o.split ? SPLIT : SINGLE);
+	if (o.committed) parts.push(`The change is already committed on \`${b}\`: don't commit again, and don't amend or rewrite those commits.`);
+	else if (o.from) parts.push(`First create branch \`${b}\` with \`git switch -c ${b}\` (the working-tree changes come along). Commit there and leave \`${o.from}\` as it is.`);
+	if (!o.committed) parts.push(o.split ? SPLIT : SINGLE);
 	if (o.mode !== "commit") {
 		parts.push(
 			o.from
@@ -91,11 +94,11 @@ export function deliveryInstruction(o: DeliveryOptions): string {
 			`Then merge it: wait for its checks with \`gh pr checks <number> --watch --fail-fast\` (a pull request without checks is fine). If a check fails, stop and report it; don't merge. Then run \`gh pr merge <number> --${method}${o.deleteBranch ? " --delete-branch" : ""}\`. If GitHub refuses the merge (a required review, a conflict, a branch rule), stop and report why; don't approve it yourself.`,
 		);
 	}
-	parts.push(CHAIN);
+	if (!o.committed) parts.push(CHAIN);
 	if (o.mode !== "commit") parts.push(CHAIN_REMOTE);
 	parts.push(RULES);
 	let text = parts.join("\n\n");
-	if (o.deviations) {
+	if (o.deviations && !o.committed) {
 		const where = o.split ? "End the message body of the commit that holds the code these deviations are about (the last commit if unclear) with this block, unchanged:" : "End the commit message body with this block, unchanged:";
 		text += `\n\n${where}\n\n${o.deviations}`;
 	}

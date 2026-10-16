@@ -185,3 +185,16 @@ test("deliveryOutcome says the PR state is unknown when gh can't run", () => {
 	assert.deepEqual(deliveryOutcome("merge", 1, true, { number: 5, state: "MERGED" }, true), { text: "committed (1 commit), PR #5 merged", ok: true });
 	assert.deepEqual(deliveryOutcome("pr", 1, true, null), { text: "committed (1 commit), pushed, no open pull request", ok: false });
 });
+
+test("committed delivery pushes without committing again", () => {
+	const t = deliveryInstruction({ ...base, mode: "pr", committed: true, deviations: "x" });
+	assert.match(t, /already committed on/);
+	assert.match(t, /don't commit again/);
+	assert.match(t, /gh pr create/);
+	assert.match(t, /Never force-push/);
+	assert.doesNotMatch(t, /Commit exactly the reviewed changes/);
+	assert.doesNotMatch(t, /git add <paths> && git commit/);
+	assert.doesNotMatch(t, /End the commit message body/);
+	assert.doesNotMatch(deliveryInstruction({ ...base, mode: "commit", committed: true }), /Then push/);
+	assert.match(repoDeliveryInstruction([{ root: "r", options: { ...base, mode: "push", committed: true } }]), /already committed/);
+});
