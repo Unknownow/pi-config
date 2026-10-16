@@ -167,11 +167,17 @@ export interface RepoStatus {
 
 const count = (r: GitResult) => (r.code === 0 ? Number.parseInt(r.stdout.trim(), 10) || 0 : 0);
 
-/** The base ref of an existing worktree (no fetch); null when the repo has no usable remote branch. */
-export async function baseRefOf(git: Git, wt: string): Promise<string | null> {
+/** The remote and base ref of an existing worktree (no fetch); null when the repo has no usable remote branch. */
+export async function baseOf(git: Git, wt: string): Promise<{ remote: string; ref: string } | null> {
 	const remotes = (await git(wt, ["remote"])).stdout.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
 	const remote = remotes.includes("origin") ? "origin" : remotes[0];
-	return remote ? findBase(git, wt, remote) : null;
+	const ref = remote ? await findBase(git, wt, remote) : null;
+	return remote && ref ? { remote, ref } : null;
+}
+
+/** The base ref of an existing worktree (no fetch); null when the repo has no usable remote branch. */
+export async function baseRefOf(git: Git, wt: string): Promise<string | null> {
+	return (await baseOf(git, wt))?.ref ?? null;
 }
 
 export async function repoStatus(git: Git, wt: string, baseRef: string | null): Promise<RepoStatus> {

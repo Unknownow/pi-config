@@ -57,3 +57,14 @@ test("bad vscode warns", () => {
 	assert.equal(cfg.vscode, true);
 	assert.match(warning ?? "", /vscode/);
 });
+
+test("autoUpdate defaults to true, false is read, a bad value warns", () => {
+	assert.equal(loadConfig(tmp(), "D:/projects").cfg.autoUpdate, true);
+	const dir = tmp();
+	fs.writeFileSync(path.join(dir, "worktree.json"), JSON.stringify({ autoUpdate: false }));
+	assert.equal(loadConfig(dir, "D:/projects").cfg.autoUpdate, false);
+	fs.writeFileSync(path.join(dir, "worktree.json"), JSON.stringify({ autoUpdate: "no" }));
+	const bad = loadConfig(dir, "D:/projects");
+	assert.equal(bad.cfg.autoUpdate, true);
+	assert.match(bad.warning ?? "", /autoUpdate/);
+});

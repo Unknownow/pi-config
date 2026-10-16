@@ -1,7 +1,8 @@
 /**
  * /wt: run several pi sessions on the same repos without copying them. `/wt new <name>` makes a git
  * worktree for the working repo and every added folder, links or copies the gitignored files, and opens
- * a new terminal window (or VS Code terminal) running pi there. `/wt open <name>` reopens a set, `/wt done` removes the set a session runs in. See README.md.
+ * a new terminal window (or VS Code terminal) running pi there. `/wt open <name>` reopens a set, `/wt done` removes the set a session runs in.
+ * `/wt update` fast-forwards a set to its base branches; a session inside a set does that at startup. See README.md.
  */
 
 import { spawn } from "node:child_process";
@@ -14,16 +15,17 @@ import { sendToVscode } from "./vscode-bridge.ts";
 import { createAll, excludeLinks, preflight, rollback, type Git, type Planned } from "./git-ops.ts";
 import { SWEEP_SCRIPT, detectSession, finishSet, listSets, listText, openPlan, parseEditors, quitReminder, removeSet, repoDirsIn, sessionConfig, worktreePrompt, type WtSession } from "./manage.ts";
 import { guardProblem } from "./unity-guard.ts";
+import { updateSet, worthNotifying } from "./update.ts";
 import { branchOf, checkName, launchSpec, rootProblem, setRootOf, vscodeTerminalSpec } from "./layout.ts";
 
 const STATE_ENTRY = "workflow-state";
-const SUBCOMMANDS = ["new", "open", "list", "remove", "done"];
+const SUBCOMMANDS = ["new", "open", "list", "update", "remove", "done"];
 
 const slash = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "");
 
-function makeGit(pi: ExtensionAPI): Git {
+function makeGit(pi: ExtensionAPI, timeout = 60000): Git {
 	return async (cwd, args) => {
-		const r = await pi.exec("git", args, { cwd, timeout: 60000 });
+		const r = await pi.exec("git", args, { cwd, timeout });
 		return { code: r.code, stdout: r.stdout, stderr: r.stderr };
 	};
 }
@@ -268,6 +270,25 @@ async function openCmd(pi: ExtensionAPI, ctx: ExtensionCommandContext, name: str
 	ctx.ui.notify([`Reopening worktree set "${name}" in ${setRootOf(cfg, name)}`, l.error ?? l.text].join("\n"), l.error ? "warning" : "info");
 }
 
+/** `/wt update [NAME]`: without NAME, the set this session runs in (or pick one). Uncommitted changes are allowed; git refuses if they would be overwritten. */
+async function updateCmd(pi: ExtensionAPI, ctx: ExtensionCommandContext, name: string): Promise<void> {
+	const cfg = await configFor(pi, ctx);
+	const git = makeGit(pi);
+	if (!name) {
+		const cur = await detectSession(git, cfg, ctx.cwd);
+		const picked = cur ? path.basename(cur.setRoot) : await pickSet(ctx, cfg, "Update which worktree set?");
+		if (!picked) return;
+		name = picked;
+	}
+	const bad = checkName(name);
+	if (bad) return ctx.ui.notify(bad, "error");
+	const wts = repoDirsIn(setRootOf(cfg, name));
+	if (!wts.length) return ctx.ui.notify(`no worktree set "${name}" in ${cfg.root}`, "error");
+	const res = await updateSet(git, wts, true);
+	const failed = res.some((r) => r.state === "failed");
+	ctx.ui.notify([`Worktree set "${name}":`, ...res.map((r) => `  ${r.text}`)].join("\n"), failed ? "warning" : "info");
+}
+
 async function doneCmd(pi: ExtensionAPI, ctx: ExtensionCommandContext): Promise<void> {
 	await ctx.waitForIdle();
 	const cfg = await configFor(pi, ctx);
@@ -312,7 +333,8 @@ Close this pi session?`);
 export default function worktree(pi: ExtensionAPI) {
 	let session: WtSession | null = null;
 	let guardOn = true;
-	pi.on("session_start", async (_e, ctx) => {
+	let autoUpdate = true;
+	pi.on("session_start", async (event, ctx) => {
 		try {
 			const git = makeGit(pi);
 			const sc = await sessionConfig(git, getAgentDir(), ctx.cwd);
@@ -320,9 +342,24 @@ export default function worktree(pi: ExtensionAPI) {
 			const cfg = sc.cfg;
 			guardOn = cfg.unityGuard;
 			session = await detectSession(git, cfg, ctx.cwd);
+			autoUpdate = cfg.autoUpdate;
 		} catch {
 			cachedParent = path.dirname(slash(ctx.cwd));
 			session = null;
+		}
+		// Interactive sessions only: a headless pi (subagent, `pi -p`) in the set must not move files under its parent.
+		if (!session || !autoUpdate || !ctx.hasUI || (event.reason !== "startup" && event.reason !== "resume")) return;
+		try {
+			// Only the fetch gets a short timeout and no credential dialog, so an unreachable remote delays startup
+			// by seconds; the merge keeps the normal timeout so a long checkout is never killed halfway.
+			const short = makeGit(pi, 15000);
+			const fetchGit: Git = (cwd, args) => short(cwd, ["-c", "credential.interactive=never", ...args]);
+			const res = await updateSet(makeGit(pi), repoDirsIn(session.setRoot), false, fetchGit);
+			if (!worthNotifying(res)) return;
+			const text = [`Worktree update (${path.basename(session.setRoot)}):`, ...res.map((r) => `  ${r.text}`)].join("\n");
+			ctx.ui.notify(text, res.some((r) => r.state === "failed") ? "warning" : "info");
+		} catch (e) {
+			ctx.ui.notify(`Worktree update failed: ${(e as Error).message}`, "warning");
 		}
 	});
 	pi.on("session_shutdown", (event, ctx) => {
@@ -341,9 +378,9 @@ export default function worktree(pi: ExtensionAPI) {
 		if (why) return { block: true, reason: why };
 	});
 	pi.registerCommand("wt", {
-		description: "Parallel pi sessions on git worktrees: new NAME, open NAME, list, remove NAME, done",
+		description: "Parallel pi sessions on git worktrees: new NAME, open NAME, list, update [NAME], remove NAME, done",
 		getArgumentCompletions: async (prefix) => {
-			const m = /^(remove|open)\s+(\S*)$/i.exec(prefix.trimStart());
+			const m = /^(remove|open|update)\s+(\S*)$/i.exec(prefix.trimStart());
 			if (m) {
 				const sets = listSets(completionConfig()).filter((n) => n.startsWith(m[2]));
 				return sets.length ? sets.map((n) => ({ value: `${m[1].toLowerCase()} ${n}`, label: n })) : null;
@@ -358,9 +395,10 @@ export default function worktree(pi: ExtensionAPI) {
 				if (sub === "new") return await newSet(pi, ctx, rest[0] ?? "");
 				if (sub === "open") return await openCmd(pi, ctx, rest[0] ?? "");
 				if (sub === "list") return await listCmd(pi, ctx);
+				if (sub === "update") return await updateCmd(pi, ctx, rest[0] ?? "");
 				if (sub === "remove") return await removeCmd(pi, ctx, rest[0] ?? "");
 				if (sub === "done") return await doneCmd(pi, ctx);
-				ctx.ui.notify("Usage: /wt new NAME | /wt open NAME | /wt list | /wt remove NAME | /wt done", "info");
+				ctx.ui.notify("Usage: /wt new NAME | /wt open NAME | /wt list | /wt update [NAME] | /wt remove NAME | /wt done", "info");
 			} catch (e) {
 				ctx.ui.notify(`/wt ${sub ?? ""} failed: ${(e as Error).message}`, "error");
 			}

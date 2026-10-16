@@ -10,8 +10,19 @@ store, so a set of checkouts costs a few MB (plus whatever you build in them).
 | `/wt new NAME` | Creates one worktree per git repo of this session (the working folder and every added folder) under `<root>/NAME/<repo>` on branch `wt/NAME`, starting from `origin/<default branch>` with no upstream. Links or copies the gitignored files, then opens a new Windows Terminal window (or a new VS Code terminal when pi runs in one, see VS Code) running pi in the working repo's worktree with `--add-dir` set to the other worktrees. Folders that are not git repos are passed through unchanged. The current session is not changed. |
 | `/wt open [NAME]` | Reopens an existing set (without NAME, pick one from a list): starts pi with `--continue` in the set's working repo (the only repo, or the one named like this session's repo, otherwise you pick one), with `--add-dir` for the other repos, through the same launch path as `/wt new`. Refuses from a session inside that set. When you quit an interactive pi session inside a set that still exists, a reminder is printed to stderr with how to reopen or remove it; nothing is ever deleted on quit. |
 | `/wt list` | Lists every set under `<root>` with, per repo: branch, changed files, ahead/behind (or "not pushed: N commits" against the base branch when there is no upstream), whether `unity/Library` exists, and whether a Unity Editor is open for it (from one `unity status` call; `unknown` if it fails). |
+| `/wt update [NAME]` | Brings a set up to date (without NAME: the set this session runs in, otherwise pick one from a list). For every repo it fetches, then fast-forwards the branch to its base branch (`origin/HEAD`, `main` or `master`) when the branch has no commits of its own. It never merges, rebases or resets: a branch with its own commits or a detached HEAD is reported and left alone. Uncommitted changes are allowed; git refuses the fast-forward when it would overwrite one. |
 | `/wt remove [NAME]` | Deletes a set (without NAME, pick one from a list). Refuses if this session uses it, if there is no UI, or if any repo has uncommitted changes or commits not pushed (a squash-merged branch counts as unpushed: delete those by hand). Otherwise asks for confirmation, removes the links first (never their targets), runs `git worktree remove` without `--force`, then `git branch -d` (the branch is kept if git refuses). Deletes the worktree's `Library/` with it. |
 | `/wt done` | Runs inside a worktree session and removes the set it runs in. Same checks as `/wt remove`, plus it refuses while a Unity Editor is open in the set (a failing `unity status` only adds a warning). Asks for confirmation, moves pi out of the set, removes the working repo's worktree last (links first, never their targets, no `--force`, then `git branch -d`), shows the report, then asks "Close this pi session?". On refusal or failure the session stays open. |
+
+## Automatic update
+
+When an interactive pi session starts (or resumes) inside a set, the extension runs the same update as
+`/wt update` for every repo of the set, with one difference: a repo with uncommitted changes is skipped.
+So a clean set with no commits of its own follows `main` by itself, and a branch with your commits is
+never moved. Headless pi processes (subagents, `pi -p`) never update, so they cannot move files under a
+session that is working in the set. The fetches run before the session takes input (15 s timeout per
+fetch, no credential dialog), so startup takes a few seconds longer. Nothing is shown when every repo was already current;
+otherwise one line per repo. Turn it off with `"autoUpdate": false` in `worktree.json`.
 
 `NAME`: lowercase letters, digits, `.`, `_`, `-` (max 40, starts with a letter or digit).
 
@@ -45,6 +56,7 @@ Unity's `Library/` is never touched: a worktree session does not get one.
 | `copy` | see above | Paths (relative to each repo) to copy. |
 | `vscode` | `true` | Open the new session in a VS Code terminal when pi runs in a VS Code terminal with the bridge installed. `false` always uses Windows Terminal. |
 | `unityGuard` | `true` | Turns the Unity guard on or off in worktree sessions. |
+| `autoUpdate` | `true` | Fast-forward the set's repos when a session starts inside it (see Automatic update). |
 
 ## Launching
 
@@ -98,6 +110,6 @@ a relative `--project-path`, and commands built at runtime or started from a scr
 ## Tests
 
 ```
-node --experimental-strip-types --test config.test.ts layout.test.ts files.test.ts git-ops.test.ts manage.test.ts unity-guard.test.ts vscode-bridge.test.ts
+node --experimental-strip-types --test config.test.ts layout.test.ts files.test.ts git-ops.test.ts manage.test.ts unity-guard.test.ts vscode-bridge.test.ts update.test.ts
 node --test vscode/request.test.js
 ```
