@@ -100,7 +100,9 @@ assert.deepEqual(uniqueRoots(["D:/projects/x", "D:/projects/x", "d:/projects/x/"
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 `index.ts:58`: add `uniqueRoots` to the existing `./repos.ts` import, and keep `repoKey`.
-- [ ] S2 `writePlan` (`index.ts:899-905`): replace the `roots` / `seen` / loop block with one `const roots` computed as `uniqueRo
-- [ ] S3 `repos.test.ts`: after the existing `uniqueRoots keeps first` test (`:14-16`), add the test from §6.
-- [ ] S4 Run the tests in §6. Then grep `index.ts` for `map(repoKey)`, which must find nothing.
+- [x] S1 `index.ts:58`: add `uniqueRoots` to the existing `./repos.ts` import, and keep `repoKey`.
+- [x] S2 `writePlan` (`index.ts:899-905`): replace the `roots` / `seen` / loop block with one `const roots` computed as `uniqueRo
+- [x] S3 `repos.test.ts`: after the existing `uniqueRoots keeps first` test (`:14-16`), add the test from §6.
+- [x] S4 Run the tests in §6. Then grep `index.ts` for `map(repoKey)`, which must find nothing.
+## Outcome
+2026-10-16T04:03:03.169Z — ok: committed (1 commit)
