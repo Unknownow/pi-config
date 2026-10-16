@@ -95,8 +95,10 @@ Commands, from `pi/agent/extensions/workflow/`:
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 `plan-doc.ts`: add `openStepsReminder` after `mergeChecklist` (`plan-doc.ts:86`), with a one-line doc comment. Its behav
-- [ ] S2 `index.ts`, in the `judge` tool's `execute` (`index.ts:1567-1572`):
-- [ ] S3 `plan-doc.test.ts`: add the tests in section 6 and add `openStepsReminder` to the import on line 3.
-- [ ] S4 `README.md:51`, "Step checklist" bullet: add one sentence. When `judge` runs with steps of the current stage still untic
-- [ ] S5 Run every test file (section 6).
+- [x] S1 `plan-doc.ts`: add `openStepsReminder` after `mergeChecklist` (`plan-doc.ts:86`), with a one-line doc comment. Its behav
+- [x] S2 `index.ts`, in the `judge` tool's `execute` (`index.ts:1567-1572`):
+- [x] S3 `plan-doc.test.ts`: add the tests in section 6 and add `openStepsReminder` to the import on line 3.
+- [x] S4 `README.md:51`, "Step checklist" bullet: add one sentence. When `judge` runs with steps of the current stage still untic
+- [x] S5 Run every test file (section 6).
+## Outcome
+2026-10-16T17:21:37.229Z — ok: committed (1 commit)
