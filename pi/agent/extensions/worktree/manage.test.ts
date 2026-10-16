@@ -8,7 +8,7 @@ import { test } from "node:test";
 import { defaults } from "./config.ts";
 import { setupFiles } from "./files.ts";
 import type { Git } from "./git-ops.ts";
-import { SWEEP_SCRIPT, detectSession, finishSet, listText, parseEditors, removeSet, type DoneEnv, type RemoveEnv } from "./manage.ts";
+import { SWEEP_SCRIPT, detectSession, finishSet, listText, openPlan, parseEditors, quitReminder, removeSet, repoDirsIn, type DoneEnv, type RemoveEnv } from "./manage.ts";
 
 const git: Git = async (cwd, args) => {
 	const r = spawnSync("git", args, { cwd, encoding: "utf8" });
@@ -297,4 +297,38 @@ test("finishSet reports an exception instead of throwing", async () => {
 	const r = await finishSet(await doneEnv(f, { git: boom }));
 	assert.equal(r.error, true);
 	assert.match(r.text, /Stopped at .*boom/);
+});
+
+test("openPlan opens a one-repo set", () => {
+	const { cfg, wt } = fixture();
+	assert.deepEqual(openPlan(cfg, "s1", null), { cwd: wt, folders: [] });
+});
+
+test("openPlan errors", () => {
+	const { cfg } = fixture();
+	assert.deepEqual(openPlan(cfg, "", null), { error: "give a name: /wt open <name>" });
+	assert.match((openPlan(cfg, "Bad!", null) as { error: string }).error, /bad name/);
+	const e = (openPlan(cfg, "nope", null) as { error: string }).error;
+	assert.match(e, /no worktree set "nope"/);
+	assert.match(e, /sets: s1/);
+});
+
+test("openPlan with several repos", () => {
+	const { cfg, wt } = fixture();
+	fs.mkdirSync(`${cfg.root}/s1/other`, { recursive: true });
+	fs.writeFileSync(`${cfg.root}/s1/other/.git`, "gitdir: x");
+	const p = openPlan(cfg, "s1", "other") as { cwd: string; folders: string[] };
+	assert.ok(p.cwd.endsWith("/s1/other"));
+	assert.deepEqual(p.folders, [wt]);
+	assert.deepEqual(openPlan(cfg, "s1", null), { choose: ["other", "repo"] });
+});
+
+test("quitReminder text", () => {
+	assert.equal(quitReminder("D:/x/wt/s1"), 'Worktree set "s1" is still on disk: D:/x/wt/s1\n  reopen: /wt open s1   remove: /wt done (inside it) or /wt remove s1\n');
+});
+
+test("repoDirsIn", () => {
+	const { cfg, wt } = fixture();
+	assert.deepEqual(repoDirsIn(`${cfg.root}/s1`), [wt]);
+	assert.deepEqual(repoDirsIn(`${cfg.root}/missing`), []);
 });

@@ -1,7 +1,7 @@
 /**
  * /wt: run several pi sessions on the same repos without copying them. `/wt new <name>` makes a git
  * worktree for the working repo and every added folder, links or copies the gitignored files, and opens
- * a new terminal window (or VS Code terminal) running pi there. `/wt done` removes the set a session runs in. See README.md.
+ * a new terminal window (or VS Code terminal) running pi there. `/wt open <name>` reopens a set, `/wt done` removes the set a session runs in. See README.md.
  */
 
 import { spawn } from "node:child_process";
@@ -12,12 +12,12 @@ import { loadConfig, type WtConfig } from "./config.ts";
 import { setupFiles } from "./files.ts";
 import { sendToVscode } from "./vscode-bridge.ts";
 import { createAll, excludeLinks, preflight, rollback, type Git, type Planned } from "./git-ops.ts";
-import { SWEEP_SCRIPT, detectSession, finishSet, listSets, listText, parseEditors, removeSet, sessionConfig, worktreePrompt, type WtSession } from "./manage.ts";
+import { SWEEP_SCRIPT, detectSession, finishSet, listSets, listText, openPlan, parseEditors, quitReminder, removeSet, repoDirsIn, sessionConfig, worktreePrompt, type WtSession } from "./manage.ts";
 import { guardProblem } from "./unity-guard.ts";
 import { branchOf, checkName, launchSpec, rootProblem, setRootOf, vscodeTerminalSpec } from "./layout.ts";
 
 const STATE_ENTRY = "workflow-state";
-const SUBCOMMANDS = ["new", "list", "remove", "done"];
+const SUBCOMMANDS = ["new", "open", "list", "remove", "done"];
 
 const slash = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "");
 
@@ -91,7 +91,7 @@ async function collect(git: Git, ctx: ExtensionCommandContext): Promise<Collecte
 	return { repos, order, workingTop };
 }
 
-async function launch(cfg: WtConfig, name: string, cwd: string, folders: string[]): Promise<{ text: string; error?: string }> {
+async function launch(cfg: WtConfig, name: string, cwd: string, folders: string[], piArgs: string[] = []): Promise<{ text: string; error?: string }> {
 	const opts = {
 		platform: process.platform,
 		launch: cfg.launch,
@@ -100,6 +100,7 @@ async function launch(cfg: WtConfig, name: string, cwd: string, folders: string[
 		cwd,
 		name,
 		folders,
+		piArgs,
 	};
 	const bridgeAllowed = cfg.vscode && cfg.launch !== "none";
 	const pipe = process.env.PI_VSCODE_TERMINAL;
@@ -223,6 +224,27 @@ async function removeCmd(pi: ExtensionAPI, ctx: ExtensionCommandContext, name: s
 	ctx.ui.notify(r.text, r.error ? "error" : "info");
 }
 
+async function openCmd(pi: ExtensionAPI, ctx: ExtensionCommandContext, name: string): Promise<void> {
+	const cfg = await configFor(pi, ctx);
+	const git = makeGit(pi);
+	const t = await git(ctx.cwd, ["rev-parse", "--show-toplevel"]);
+	const preferred = t.code === 0 && t.stdout.trim() ? path.basename(slash(t.stdout.trim())) : null;
+	let p = openPlan(cfg, name, preferred);
+	if ("error" in p) return ctx.ui.notify(p.error, "error");
+	if ("choose" in p) {
+		if (!ctx.hasUI) return ctx.ui.notify(`set "${name}" has several repos (${p.choose.join(", ")}); run /wt open from one of them or with a UI`, "error");
+		const picked = await ctx.ui.select(`Working repo for "${name}"`, p.choose);
+		if (picked === undefined) return ctx.ui.notify("Cancelled.", "info");
+		p = openPlan(cfg, name, picked);
+		if (!("cwd" in p)) return ctx.ui.notify("error" in p ? p.error : "could not choose a repo", "error");
+	}
+	const fold = (s: string) => (process.platform === "win32" ? slash(s).toLowerCase() : slash(s));
+	const cur = await detectSession(git, cfg, ctx.cwd);
+	if (cur && fold(cur.setRoot) === fold(setRootOf(cfg, name))) return ctx.ui.notify(`this session already runs in worktree set "${name}"`, "error");
+	const l = await launch(cfg, name, p.cwd, p.folders, ["--continue"]);
+	ctx.ui.notify([`Reopening worktree set "${name}" in ${setRootOf(cfg, name)}`, l.error ?? l.text].join("\n"), l.error ? "warning" : "info");
+}
+
 async function doneCmd(pi: ExtensionAPI, ctx: ExtensionCommandContext): Promise<void> {
 	await ctx.waitForIdle();
 	const cfg = await configFor(pi, ctx);
@@ -280,6 +302,13 @@ export default function worktree(pi: ExtensionAPI) {
 			session = null;
 		}
 	});
+	pi.on("session_shutdown", (event, ctx) => {
+		try {
+			if (event.reason !== "quit" || !session || !ctx.hasUI || !process.stderr.isTTY) return;
+			if (!repoDirsIn(session.setRoot).length) return;
+			process.stderr.write(quitReminder(slash(session.setRoot)));
+		} catch {}
+	});
 	pi.on("before_agent_start", async (event) => {
 		if (session) event.systemPromptOptions.sections.worktree = worktreePrompt(session);
 	});
@@ -289,12 +318,12 @@ export default function worktree(pi: ExtensionAPI) {
 		if (why) return { block: true, reason: why };
 	});
 	pi.registerCommand("wt", {
-		description: "Parallel pi sessions on git worktrees: new NAME, list, remove NAME, done",
+		description: "Parallel pi sessions on git worktrees: new NAME, open NAME, list, remove NAME, done",
 		getArgumentCompletions: async (prefix) => {
-			const m = /^remove\s+(\S*)$/i.exec(prefix.trimStart());
+			const m = /^(remove|open)\s+(\S*)$/i.exec(prefix.trimStart());
 			if (m) {
-				const sets = listSets(completionConfig()).filter((n) => n.startsWith(m[1]));
-				return sets.length ? sets.map((n) => ({ value: `remove ${n}`, label: n })) : null;
+				const sets = listSets(completionConfig()).filter((n) => n.startsWith(m[2]));
+				return sets.length ? sets.map((n) => ({ value: `${m[1].toLowerCase()} ${n}`, label: n })) : null;
 			}
 			if (/\s/.test(prefix.trim())) return null;
 			const items = SUBCOMMANDS.filter((s) => s.startsWith(prefix.trim().toLowerCase())).map((s) => ({ value: s, label: s }));
@@ -304,10 +333,11 @@ export default function worktree(pi: ExtensionAPI) {
 			const [sub, ...rest] = args.trim().split(/\s+/);
 			try {
 				if (sub === "new") return await newSet(pi, ctx, rest[0] ?? "");
+				if (sub === "open") return await openCmd(pi, ctx, rest[0] ?? "");
 				if (sub === "list") return await listCmd(pi, ctx);
 				if (sub === "remove") return await removeCmd(pi, ctx, rest[0] ?? "");
 				if (sub === "done") return await doneCmd(pi, ctx);
-				ctx.ui.notify("Usage: /wt new NAME | /wt list | /wt remove NAME | /wt done", "info");
+				ctx.ui.notify("Usage: /wt new NAME | /wt open NAME | /wt list | /wt remove NAME | /wt done", "info");
 			} catch (e) {
 				ctx.ui.notify(`/wt ${sub ?? ""} failed: ${(e as Error).message}`, "error");
 			}

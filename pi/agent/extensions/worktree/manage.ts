@@ -22,9 +22,35 @@ function dirs(p: string): string[] {
 export const listSets = (cfg: WtConfig) => dirs(cfg.root);
 
 /** Repo worktrees of a set: subfolders that contain a `.git` entry. */
-export function reposOf(cfg: WtConfig, name: string): string[] {
-	const set = setRootOf(cfg, name);
+export function repoDirsIn(set: string): string[] {
 	return dirs(set).filter((d) => fs.existsSync(path.join(set, d, ".git"))).map((d) => `${set}/${d}`);
+}
+
+export const reposOf = (cfg: WtConfig, name: string): string[] => repoDirsIn(setRootOf(cfg, name));
+
+export type OpenPlan = { cwd: string; folders: string[] } | { choose: string[] } | { error: string };
+
+/** Where /wt open starts pi: the working repo of set NAME and the other repos as added folders. */
+export function openPlan(cfg: WtConfig, name: string, preferred: string | null): OpenPlan {
+	if (!name) return { error: "give a name: /wt open <name>" };
+	const bad = checkName(name);
+	if (bad) return { error: bad };
+	const repos = reposOf(cfg, name);
+	if (!repos.length) {
+		const sets = listSets(cfg);
+		return { error: `no worktree set "${name}" in ${cfg.root}${sets.length ? `; sets: ${sets.join(", ")}` : ""}` };
+	}
+	if (repos.length === 1) return { cwd: repos[0], folders: [] };
+	if (preferred !== null) {
+		const hit = repos.filter((r) => caseFold(baseName(r)) === caseFold(preferred));
+		if (hit.length === 1) return { cwd: hit[0], folders: repos.filter((r) => r !== hit[0]) };
+	}
+	return { choose: repos.map(baseName) };
+}
+
+export function quitReminder(setRoot: string): string {
+	const name = baseName(setRoot);
+	return `Worktree set "${name}" is still on disk: ${setRoot}\n  reopen: /wt open ${name}   remove: /wt done (inside it) or /wt remove ${name}\n`;
 }
 
 /** Open Editor projects from `unity status --format json`; null when unknown. */

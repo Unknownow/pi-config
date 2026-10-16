@@ -76,3 +76,23 @@ test("vscodeTerminalSpec linux", () => {
 	assert.equal(s.shellPath, "pi");
 	assert.deepEqual(s.shellArgs, ["--add-dir", "A:B"]);
 });
+
+test("launchSpec piArgs window", () => {
+	const s = launchSpec({ ...base, piArgs: ["--continue"] }) as { args: string[] };
+	assert.deepEqual(s.args.slice(-3), ["--continue", "--add-dir", "A\\;B"]);
+});
+
+test("launchSpec piArgs cmd fallback", () => {
+	const s = launchSpec({ ...base, wtPath: null, piArgs: ["--continue"] }) as { args: string[] };
+	assert.deepEqual(s.args.slice(-4), ["pi.cmd", "--continue", "--add-dir", "A;B"]);
+});
+
+test("launchSpec piArgs print", () => {
+	const s = launchSpec({ ...base, platform: "linux", piCommand: "", piArgs: ["--continue"] }) as { print: string };
+	assert.equal(s.print, "cd D:/c && pi --continue --add-dir 'A:B'");
+});
+
+test("vscodeTerminalSpec piArgs", () => {
+	assert.deepEqual(vscodeTerminalSpec({ ...base, piArgs: ["--continue"] }).shellArgs, ["/d", "/c", "pi.cmd", "--continue", "--add-dir", "A\;B"]);
+	assert.deepEqual(vscodeTerminalSpec({ ...base, platform: "linux", piCommand: "", piArgs: ["--continue"] }).shellArgs, ["--continue", "--add-dir", "A:B"]);
+});

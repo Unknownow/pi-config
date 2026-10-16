@@ -37,23 +37,25 @@ export interface LaunchOpts {
 	cwd: string;
 	name: string;
 	folders: string[];
+	piArgs?: string[];
 }
 
 export function launchSpec(o: LaunchOpts): LaunchSpec {
 	const flag = o.folders.length ? ["--add-dir", addDirValue(o.folders, o.platform)] : [];
+	const pa = o.piArgs ?? [];
 	if (o.platform !== "win32" || o.launch === "none") {
 		const dirs = flag.length ? ` --add-dir '${flag[1]}'` : "";
-		return { print: `cd ${o.cwd} && ${o.piCommand || "pi"}${dirs}` };
+		return { print: `cd ${o.cwd} && ${o.piCommand || "pi"}${pa.map((a) => ` ${a}`).join("")}${dirs}` };
 	}
 	if (o.wtPath) {
 		// Windows Terminal reads ";" as its own command separator, so a literal one is escaped.
 		const wtFlag = flag.length ? ["--add-dir", flag[1].replace(/;/g, "\\;")] : [];
 		return {
 			file: o.wtPath,
-			args: ["-w", o.launch === "tab" ? "0" : "new", "new-tab", "-d", o.cwd, "--title", `pi ${o.name}`, o.piCommand, ...wtFlag],
+			args: ["-w", o.launch === "tab" ? "0" : "new", "new-tab", "-d", o.cwd, "--title", `pi ${o.name}`, o.piCommand, ...pa, ...wtFlag],
 		};
 	}
-	return { file: "cmd.exe", args: ["/c", "start", `pi ${o.name}`, "/D", backslashes(o.cwd), backslashes(o.piCommand), ...flag] };
+	return { file: "cmd.exe", args: ["/c", "start", `pi ${o.name}`, "/D", backslashes(o.cwd), backslashes(o.piCommand), ...pa, ...flag] };
 }
 
 export interface VscodeRequest {
@@ -66,6 +68,7 @@ export interface VscodeRequest {
 export function vscodeTerminalSpec(o: LaunchOpts): VscodeRequest {
 	const flag = o.folders.length ? ["--add-dir", addDirValue(o.folders, o.platform)] : [];
 	const name = `pi ${o.name}`;
-	if (o.platform === "win32") return { name, cwd: o.cwd, shellPath: "cmd.exe", shellArgs: ["/d", "/c", backslashes(o.piCommand), ...flag] };
-	return { name, cwd: o.cwd, shellPath: o.piCommand || "pi", shellArgs: flag };
+	const pa = o.piArgs ?? [];
+	if (o.platform === "win32") return { name, cwd: o.cwd, shellPath: "cmd.exe", shellArgs: ["/d", "/c", backslashes(o.piCommand), ...pa, ...flag] };
+	return { name, cwd: o.cwd, shellPath: o.piCommand || "pi", shellArgs: [...pa, ...flag] };
 }
