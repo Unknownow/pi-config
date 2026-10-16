@@ -82,6 +82,8 @@ Expected output: `ℹ tests 81`, `ℹ pass 81`, `ℹ fail 0`, then `ℹ pass 6`,
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 Run `git status --short` in `D:\projects\pi-config` to check the tree.
-- [ ] S2 Re-run the tests from section 6 on the staged content.
+- [x] S1 Run `git status --short` in `D:\projects\pi-config` to check the tree.
+- [x] S2 Re-run the tests from section 6 on the staged content.
 - [ ] S3 Hand over to the workflow's delivery, which creates the commit with the subject from section 9 and pushes it. Do not run
+## Outcome
+2026-10-16T06:41:38.778Z — failed: abandoned
