@@ -150,9 +150,20 @@ export interface RefEntry {
 	date: number;
 }
 
+/** status.json text per plan commit; commits are immutable, so a SHA's text never changes. */
+const statusCache = new Map<string, string>();
+
 async function statusAt(git: Git, root: string, commit: string): Promise<PlanStatus | null> {
+	const cacheable = /^[0-9a-f]{40,64}$/.test(commit);
+	const hit = cacheable ? statusCache.get(commit) : undefined;
+	if (hit !== undefined) return parseStatus(hit);
 	const r = await git(root, ["show", `${commit}:status.json`]).catch(() => null);
-	return r && r.code === 0 ? parseStatus(r.stdout) : null;
+	if (!r || r.code !== 0) return null;
+	if (cacheable) {
+		if (statusCache.size >= 1000) statusCache.clear();
+		statusCache.set(commit, r.stdout);
+	}
+	return parseStatus(r.stdout);
 }
 
 /** The rev stored in the local plan ref, or null when there is no readable ref. */

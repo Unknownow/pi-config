@@ -2,7 +2,7 @@
 
 Reference list for `pi/agent/extensions/workflow/`. Goal: less time, fewer tokens, more parallelism.
 
-Status: A3, A5, B7, B9, C2, C4, D2, D3 and D4 are implemented; A1 is rejected; the rest are ideas only. Found by reading the code on 2026-10-16. Nothing was measured, so every benefit below is an estimate. Line numbers are from commit `3fdc69a` and will drift.
+Status: A2, A3, A5, B7, B9, C2, C3, C4, D2, D3 and D4 are implemented; A1 is rejected; the rest are ideas only. Found by reading the code on 2026-10-16. Nothing was measured, so every benefit below is an estimate. Line numbers are from commit `3fdc69a` and will drift.
 
 ## Keeping this file current
 
@@ -29,7 +29,7 @@ Plan (Opus) -> approve -> execute (Sonnet) -> judge (Opus, separate `pi` process
 | # | Finding | Benefit | Effort | Risk | Check first |
 |---|---------|---------|--------|------|-------------|
 | A1 | `knowledgePass` (`index.ts:1266`) is a second judge-model run that starts after `judgeOnce` (`index.ts:1294`). Start both at once. **Rejected:** the knowledge pass runs only when the judge skipped its knowledge step and takes the judge's findings (`index.ts:1340-1343`); running it in parallel would add an Opus run to every review. | High (T) | S | Low. The two runs are independent reads; only cost is two concurrent Opus processes. | Confirm the knowledge pass does not depend on the judge result. |
-| A2 | Per-repo reads in delivery run in sequential `for` loops (`index.ts:2516`, `2554-2576`, `2069`). Parallelize the read-only parts with `Promise.all`, as `snapshotRepos` already does (`index.ts:766`). | Medium (T), only for multi-repo flows | S | Low for reads. Keep commit and push sequential: a failed push mid-way is easier to reason about in order. | Count how many flows actually use more than one repo. |
+| A2 | Per-repo reads in delivery run in sequential `for` loops (`index.ts:2516`, `2554-2576`, `2069`). Parallelize the read-only parts with `Promise.all`, as `snapshotRepos` already does (`index.ts:766`). **Done:** the read-only per-repo calls in `summarizeCommit`, `finishPassed` (`prepareDelivery`) and `deliverSelfCommit` (HEAD and tree reads) run in parallel; commit and push stay sequential (`index.ts`). | Medium (T), only for multi-repo flows | S | Low for reads. Keep commit and push sequential: a failed push mid-way is easier to reason about in order. | Count how many flows actually use more than one repo. |
 | A3 | `collectRepoDiff` runs 4-5 git calls per repo (`index.ts:586-619`): `diff`, `diff --name-only`, `ls-files` twice. One `diff --name-status` and one `ls-files --full-name` would do. **Done:** `collectRepoDiff` moved to `repo-diff.ts`; its independent git calls run in parallel; output is byte-identical (tested against the old algorithm). | Medium (T) | S | Low. Same output, fewer calls. Cover with a test that compares old and new output on a fixture repo. | Time the diff collection on a large repo. |
 | A4 | The flow diff is rebuilt on every `reviewDiff` entry (`index.ts:2161`), in the `judge` tool (`index.ts:1537`) and in the pending plan-flaw path (`index.ts:1973`). The "same as last time" check only runs after the full diff is built and hashed (`index.ts:811-815`). Cache the result keyed by (HEAD, tree id) from `snapshotRepos`, which is cheaper than a full diff. | Medium (T) | M | Medium. A stale cache would make the judge review old code. The key must include every repo's HEAD, tree id and base. | Check how often the same state is reviewed twice. |
 | A5 | Start the judge while cheap guard checks (branch, HEAD moved) run, instead of before them. **Done**, as "run the independent git calls before the judge in parallel" (`snapshotRepos`, `reviewPlan`); no guard checks exist to overlap. | Low (T) | S | Low. | Not verified that these checks are on the critical path. |
@@ -60,7 +60,7 @@ Plan (Opus) -> approve -> execute (Sonnet) -> judge (Opus, separate `pi` process
 |---|---------|---------|--------|------|-------------|
 | C1 | `snapshotTree` runs `rev-parse --git-path` and `git add -A` over the whole tree per judge, per repo (`index.ts:742-762`). Reuse a persistent temp index so `add -A` only scans changes. | Medium (T) on big repos | M | Medium. A stale index gives a wrong snapshot. | Time the snapshot on the largest repo. |
 | C2 | `loadConfig` reads and parses `workflow.json` on every call (`config.ts:225-228`; callers at `index.ts:273`, `2701`, `2952`, `3004`). Cache by file mtime. **Done:** `loadConfig` caches by file mtime/ctime/size; `saveRole` invalidates. | Low (T) | S | Low. | None. |
-| C3 | `statusAt` runs one `git show` per plan ref (`plan-store.ts:153-178`). Plan refs are immutable commits, so memoize by commit SHA. | Low-Medium (T) | S | Low. | Count plan refs in a typical repo. |
+| C3 | `statusAt` runs one `git show` per plan ref (`plan-store.ts:153-178`). Plan refs are immutable commits, so memoize by commit SHA. **Done:** `statusAt` caches the raw `status.json` text by commit SHA (successful reads only, cleared at 1000 entries); test in `plan-store.test.ts`. | Low-Medium (T) | S | Low. | Count plan refs in a typical repo. |
 | C4 | `planHousekeeping` re-reads all local statuses and refs each time (`index.ts:1050-1056`, `plan-store.ts:33-49`). Cache between calls and invalidate on write. **Done**, cheap form: one `flowRepos` call per housekeeping and a `plansDir` cache; plan statuses are not cached. | Low (T) | S | Low-Medium. Stale status after an external change. | None. |
 | C5 | A stage start clears `lastJudge` (`index.ts:2008`), so the next stage always gets a full review even when the diff is small. Acceptable, since stages are committed in between. | Low | - | - | Leave as is. |
 | C6 | `MAX_RESUMES` is 2 and resets per prompt (`agent-end.ts:3`, `index.ts:1814`). Cheap. | None | - | - | Leave as is. |
@@ -88,7 +88,7 @@ Method for every item:
 | # | Metric | How to measure | Keep if |
 |---|--------|----------------|---------|
 | A1 | Wall time from end of execute to judge verdict | D3 timing of the judge phase, before and after | Phase time drops by about the knowledge-pass duration; findings unchanged |
-| A2 | Delivery step wall time on a multi-repo flow | D3 timing of delivery | Faster on 2+ repos; no change on 1 repo; push order unchanged |
+| A2 | Delivery step wall time on a multi-repo flow | D3 timing of delivery. Implemented, not measured yet. | Faster on 2+ repos; no change on 1 repo; push order unchanged |
 | A3 | Git calls and time in `collectRepoDiff` | Count `git` spawns (wrapper counter) and time per call; also diff output equal to old output | Fewer calls, identical diff text byte for byte |
 | A4 | Number of full diff builds per flow, and time spent in them | Counter and timer around `collectFlowDiff` | Fewer builds on repeat reviews; never a stale diff (test: edit a file, review must see it) |
 | A5 | Time from execute end to judge start | D3 timing | Start-up gap shrinks; no guard failure is missed |
@@ -109,7 +109,7 @@ Method for every item:
 | B11 | Commit tokens and failure rate | D3 and count of failed commits | Not recommended; only keep if failure rate does not rise |
 | C1 | `snapshotTree` time on the largest repo | Time the function | Time drops; snapshot tree id equals the old one |
 | C2 | Config loads per flow and time | Counter | Fewer disk reads; config edits still take effect on the next call |
-| C3 | `git show` calls per plan listing | Counter | Fewer calls; statuses identical |
+| C3 | `git show` calls per plan listing | Counter. Implemented, not measured yet. | Fewer calls; statuses identical |
 | C4 | Housekeeping time per call | Timer | Faster; status never stale after a write (test) |
 | C5, C6 | n/a | Leave as is | n/a |
 | D1 | Test coverage of the extracted modules; behavior parity | New unit tests; run all existing tests; run 2-3 real flows before and after | All tests pass; flows behave the same |

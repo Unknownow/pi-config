@@ -164,3 +164,32 @@ test("refRev reads the adopted rev, so an older snapshot can be recognised", asy
 		fs.rmSync(base, { recursive: true, force: true });
 	}
 });
+
+test("statusAt caches status.json by commit, so listRefs reads each plan commit once", async () => {
+	const { base, a } = setup();
+	try {
+		let shows = 0;
+		const counting: Git = (cwd, args, env) => {
+			if (args[0] === "show") shows++;
+			return git(cwd, args, env);
+		};
+		await commitRef(git, a, ID, "# cache\n", statusJson(1, { title: "Cache test unique" }));
+		const first = await listRefs(counting, a, "plans");
+		assert.equal(first.length, 1);
+		assert.equal(first[0].status?.rev, 1);
+		assert.equal(shows, 1);
+		shows = 0;
+		const second = await listRefs(counting, a, "plans");
+		assert.equal(second[0].status?.rev, 1);
+		assert.equal(shows, 0);
+		assert.notEqual(first[0].status, second[0].status);
+		await commitRef(git, a, ID, "# cache 2\n", statusJson(2, { title: "Cache test unique" }));
+		shows = 0;
+		assert.equal(await refRev(counting, a, ID), 2);
+		assert.equal(shows, 1);
+		assert.equal((await listRefs(counting, a, "plans"))[0].status?.rev, 2);
+		assert.equal(shows, 1);
+	} finally {
+		fs.rmSync(base, { recursive: true, force: true });
+	}
+});
