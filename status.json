@@ -1,17 +1,28 @@
 {
   "v": 1,
   "flowId": "20261016-0928-stop-the-executor-from-committing-and-de-9481",
-  "rev": 1,
-  "updated": "2026-10-16T02:28:11.898Z",
+  "rev": 2,
+  "updated": "2026-10-16T02:30:24.899Z",
   "title": "Stop the executor from committing, and deliver a commit it made anyway",
-  "stage": 1,
+  "stage": 2,
   "delivery": "push",
-  "done": [],
+  "done": [
+    "S1",
+    "S2",
+    "S3",
+    "S4",
+    "S5"
+  ],
   "repos": [
     {
       "branch": "master",
       "remote": "github-personal/Unknownow/pi-config",
       "primary": true
+    },
+    {
+      "branch": "master",
+      "remote": "github-personal/Unknownow/pi-config",
+      "primary": false
     }
   ]
 }

@@ -122,11 +122,11 @@
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 In `push-guard.ts`, add `commitAllowed` to `PushContext` (`:12-22`), set it in `shellProblem` (`:63-67`) as `mode !== un
-- [ ] S2 In `index.ts:1634`, change the refusal reason to: `Refused: ${problem}. Do not commit, push, open or merge pull requests
-- [ ] S3 In `prompts.ts:83`, change "a push of your own is refused" to "a commit or push of your own is refused". Leave the rest 
-- [ ] S4 In the workflow `README.md:75-77`, add that a plain `git commit` is also refused while executing, unless it is the workf
-- [ ] S5 Tests for Stage 1 (§6 T1-T3).
+- [x] S1 In `push-guard.ts`, add `commitAllowed` to `PushContext` (`:12-22`), set it in `shellProblem` (`:63-67`) as `mode !== un
+- [x] S2 In `index.ts:1634`, change the refusal reason to: `Refused: ${problem}. Do not commit, push, open or merge pull requests
+- [x] S3 In `prompts.ts:83`, change "a push of your own is refused" to "a commit or push of your own is refused". Leave the rest 
+- [x] S4 In the workflow `README.md:75-77`, add that a plain `git commit` is also refused while executing, unless it is the workf
+- [x] S5 Tests for Stage 1 (§6 T1-T3).
 - [ ] S6 In `agent-end.ts`, add `selfCommitted` with the exact signature and semantics from §4, modelled on `minorFixOpen` (`:59`
 - [ ] S7 In `delivery.ts`, add `committed?: boolean` to `DeliveryOptions` (`:43-56`) with a doc comment, and implement the `commi
 - [ ] S8 In `index.ts`, extract the tail of `finishPassed` (`:2532-2541`) into one helper used by `finishPassed` and the new func
