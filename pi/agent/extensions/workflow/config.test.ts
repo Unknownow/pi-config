@@ -54,3 +54,15 @@ test("bad JSON reports an error and uses defaults", () => {
 	assert.ok(r.error?.includes(f));
 	assert.ok(r.config);
 });
+
+test("idleTimeoutMs: bad value falls back to the default, 0 is kept", () => {
+	const idle = (v: string) => {
+		const f = tmp();
+		fs.writeFileSync(f, `{"subagent":{"idleTimeoutMs":${v}}}`);
+		return loadConfig(f).config.subagent.idleTimeoutMs;
+	};
+	assert.equal(idle("-1"), 300000);
+	assert.equal(idle('"x"'), 300000);
+	assert.equal(idle("0"), 0);
+	assert.equal(idle("1000"), 1000);
+});

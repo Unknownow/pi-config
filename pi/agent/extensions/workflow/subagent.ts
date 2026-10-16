@@ -25,6 +25,8 @@ export interface RunOptions {
 	cwd: string;
 	extensions: string[];
 	timeoutMs: number;
+	/** Ends the run after this long without output while no tool runs; 0 or unset turns it off. */
+	idleTimeoutMs?: number;
 	signal?: AbortSignal;
 	/** Live activity, for the workflow view. */
 	onEvent?: (event: SubagentEvent) => void;
@@ -62,6 +64,39 @@ export interface RunResult {
 	usage: Usage;
 	/** Every tool call, in order. */
 	toolCalls: ToolCall[];
+	/** Time from spawn to the first output. */
+	bootMs?: number;
+}
+
+/** Calls `onIdle` once `ms` pass without `activity()`. The timer pauses while a tool runs (calls nest). `ms` of 0 never fires. */
+export function idleWatch(ms: number, onIdle: () => void): { activity(): void; toolStart(): void; toolEnd(): void; stop(): void } {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	let running = 0;
+	let stopped = false;
+	const clear = () => {
+		if (timer) clearTimeout(timer);
+		timer = undefined;
+	};
+	const arm = () => {
+		clear();
+		if (ms > 0 && running === 0 && !stopped) timer = setTimeout(onIdle, Math.min(ms, 2_147_483_647));
+	};
+	arm();
+	return {
+		activity: arm,
+		toolStart() {
+			running++;
+			clear();
+		},
+		toolEnd() {
+			running = Math.max(0, running - 1);
+			arm();
+		},
+		stop() {
+			stopped = true;
+			clear();
+		},
+	};
 }
 
 export function emptyUsage(): Usage {
@@ -166,6 +201,7 @@ export async function runSubagent(opts: RunOptions): Promise<RunResult> {
 		const stderr: string[] = [];
 		let timedOut = false;
 		let aborted = false;
+		let stalled = false;
 
 		const code = await new Promise<number>((resolve) => {
 			const inv = piInvocation(args);
@@ -175,6 +211,7 @@ export async function runSubagent(opts: RunOptions): Promise<RunResult> {
 				stdio: ["ignore", "pipe", "pipe"],
 				env: { ...process.env, ...opts.env, ...(opts.mcp ? { [FORWARD_ENV]: JSON.stringify(opts.mcp.servers) } : {}) },
 			});
+			const spawnedAt = Date.now();
 			let buffer = "";
 
 			const onLine = (line: string) => {
@@ -186,6 +223,8 @@ export async function runSubagent(opts: RunOptions): Promise<RunResult> {
 					return;
 				}
 				recordToolEvent(result.toolCalls, event);
+				if (event.type === "tool_execution_start") idle.toolStart();
+				else if (event.type === "tool_execution_end") idle.toolEnd();
 				if (event.type === "tool_execution_start") {
 					opts.onEvent?.({ type: "tool", name: event.toolName, args: event.args ?? {} });
 					return;
@@ -212,6 +251,8 @@ export async function runSubagent(opts: RunOptions): Promise<RunResult> {
 				const lines = buffer.split("\n");
 				buffer = lines.pop() ?? "";
 				for (const l of lines) onLine(l);
+				result.bootMs ??= Date.now() - spawnedAt;
+				idle.activity();
 			});
 			proc.stderr.on("data", (d) => stderr.push(d.toString()));
 
@@ -219,6 +260,10 @@ export async function runSubagent(opts: RunOptions): Promise<RunResult> {
 				proc.kill("SIGTERM");
 				setTimeout(() => !proc.killed && proc.kill("SIGKILL"), 5000);
 			};
+			const idle = idleWatch(opts.idleTimeoutMs ?? 0, () => {
+				stalled = true;
+				kill();
+			});
 			const timer = setTimeout(() => {
 				timedOut = true;
 				kill();
@@ -232,11 +277,13 @@ export async function runSubagent(opts: RunOptions): Promise<RunResult> {
 
 			proc.on("close", (c) => {
 				clearTimeout(timer);
+				idle.stop();
 				opts.signal?.removeEventListener("abort", onAbort);
 				if (buffer.trim()) onLine(buffer);
 				resolve(c ?? 0);
 			});
 			proc.on("error", (e) => {
+				idle.stop();
 				stderr.push(e.message);
 				resolve(1);
 			});
@@ -245,6 +292,7 @@ export async function runSubagent(opts: RunOptions): Promise<RunResult> {
 		result.text = lastAssistantText(messages);
 		if (aborted) result.error = "aborted";
 		else if (timedOut) result.error = `timed out after ${Math.round(opts.timeoutMs / 1000)}s`;
+		else if (stalled) result.error = `stalled: no output for ${Math.round((opts.idleTimeoutMs ?? 0) / 1000)}s`;
 		else if (code !== 0 && !result.error) result.error = stderr.join("").trim().slice(-2000) || `exit code ${code}`;
 		result.ok = !result.error && result.text.length > 0;
 		if (!result.ok && !result.error) result.error = "no output";

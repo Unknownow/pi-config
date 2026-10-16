@@ -543,6 +543,7 @@ export default function workflow(pi: ExtensionAPI) {
 			role: thinking ? { ...cfg.roles[role], thinking } : cfg.roles[role],
 			extensions: extensions ? [...cfg.subagent.extensions, ...extensions] : cfg.subagent.extensions,
 			timeoutMs: cfg.subagent.timeoutMs,
+			idleTimeoutMs: cfg.subagent.idleTimeoutMs,
 			onEvent: (e) => {
 				view.event(run, e, opts.cwd);
 				onChange?.(run);

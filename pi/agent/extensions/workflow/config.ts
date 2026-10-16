@@ -142,7 +142,12 @@ export interface WorkflowConfig {
 		finalFullReviewOverChars: number;
 	};
 	knowledge: KnowledgeConfig;
-	subagent: { extensions: string[]; timeoutMs: number };
+	subagent: {
+		extensions: string[];
+		timeoutMs: number;
+		/** Ends a subagent that writes nothing this long while no tool runs; 0 turns it off. */
+		idleTimeoutMs: number;
+	};
 }
 
 export const DEFAULTS: WorkflowConfig = {
@@ -202,6 +207,7 @@ export const DEFAULTS: WorkflowConfig = {
 	subagent: {
 		extensions: ["~/.pi/agent/npm/node_modules/pi-claude-bridge/src/index.ts"],
 		timeoutMs: 15 * 60_000,
+		idleTimeoutMs: 5 * 60_000,
 	},
 };
 
@@ -248,6 +254,7 @@ function parseConfig(file: string): Loaded {
 		if (!isObject(config.delivery)) config.delivery = DEFAULTS.delivery;
 		for (const k of ["base", "branchPrefix"] as const) if (typeof config.delivery[k] !== "string") config.delivery[k] = DEFAULTS.delivery[k];
 		if (config.delivery.runner !== "subagent" && config.delivery.runner !== "main") config.delivery.runner = DEFAULTS.delivery.runner;
+		if (isObject(config.subagent) && (typeof config.subagent.idleTimeoutMs !== "number" || !Number.isFinite(config.subagent.idleTimeoutMs) || config.subagent.idleTimeoutMs < 0)) config.subagent.idleTimeoutMs = DEFAULTS.subagent.idleTimeoutMs;
 		if (typeof config.handoverCompactTokens !== "number" || !Number.isFinite(config.handoverCompactTokens) || config.handoverCompactTokens < 0) config.handoverCompactTokens = DEFAULTS.handoverCompactTokens;
 		if (!isObject(config.plans)) config.plans = DEFAULTS.plans;
 		if (config.plans.sync !== "remote" && config.plans.sync !== "local") config.plans.sync = DEFAULTS.plans.sync;

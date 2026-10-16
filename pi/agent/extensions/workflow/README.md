@@ -182,7 +182,7 @@ its plan and hand over, even when you said "fix it" or "do it for me".
 - It is a guard against the planner drifting into execution, not a sandbox. The code checks are
   regexes: a determined disguise (a computed lookup on an alias of `require('fs')`, say) can still get
   past them.
-- Tests: `node --experimental-strip-types --test agent-end.test.ts readonly-bash.test.ts readonly-tools.test.ts tokens.test.ts push-guard.test.ts knowledge.test.ts mcp-forward.test.ts subagent.test.ts delivery.test.ts repos.test.ts stages.test.ts commit-guard.test.ts`.
+- Tests: `node --experimental-strip-types --test agent-end.test.ts readonly-bash.test.ts readonly-tools.test.ts tokens.test.ts push-guard.test.ts knowledge.test.ts mcp-forward.test.ts subagent.test.ts delivery.test.ts repos.test.ts stages.test.ts commit-guard.test.ts repo-diff.test.ts prompts.test.ts config.test.ts`.
 
 ## Team knowledge
 
@@ -299,3 +299,7 @@ retry with an empty reply and the run stops. The workflow then sends a `workflow
 Subagents run `pi --no-extensions` and load only the extensions in `subagent.extensions` (the
 claude-bridge provider). That way the pi-config sync and this extension don't run inside them. If a
 role uses a provider from another extension, add it there.
+
+`subagent.timeoutMs` (default 15 minutes) is a hard limit on one subagent run. `subagent.idleTimeoutMs`
+(default 5 minutes) ends a run that writes nothing for that long, with the error `stalled: no output for
+Ns`. The idle timer pauses while a tool runs, so a long build is not cut off. `0` turns it off.
