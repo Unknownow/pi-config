@@ -2,7 +2,13 @@
 
 Reference list for `pi/agent/extensions/workflow/`. Goal: less time, fewer tokens, more parallelism.
 
-Status: A3, A5, B7, B9, C2, C4, D2 and D3 are implemented; A1 is rejected; the rest are ideas only. Found by reading the code on 2026-10-16. Nothing was measured, so every benefit below is an estimate. Line numbers are from commit `3fdc69a` and will drift.
+Status: A3, A5, B7, B9, C2, C4, D2, D3 and D4 are implemented; A1 is rejected; the rest are ideas only. Found by reading the code on 2026-10-16. Nothing was measured, so every benefit below is an estimate. Line numbers are from commit `3fdc69a` and will drift.
+
+## Keeping this file current
+
+- Any change to `pi/agent/extensions/workflow/` that implements, rejects or adds a backlog item updates, in the same commit: the item's row (a **Done:** or **Rejected:** note with the commit or file names), the Status line, and the item's row in the "Effect measurement" table.
+- A new finding gets the next free ID in its section (A, B, C or D). Rows are never renumbered.
+- Line numbers in rows point at the commit named in the Status line and will drift. Fix them only when a row is edited.
 
 ## How to read the ratings
 
@@ -66,6 +72,8 @@ Plan (Opus) -> approve -> execute (Sonnet) -> judge (Opus, separate `pi` process
 | D1 | `index.ts` is 3,016 lines with almost everything in one `workflow()` closure (`index.ts:272-3016`) and no `index.test.ts`. Extract `reviewDiff`, `finishPassed`, delivery and `resumeFlow` into modules with injected dependencies, as other files already do (17 modules have tests). | Medium (safer changes) | L | Medium. Large mechanical refactor; breakage risk without tests. Do it in small steps, each with tests, before items A4, B1 or B2. | None. |
 | D2 | A subagent timeout of 15 minutes (`config.ts:204`) leaves a hung judge running a long time. Add a progress-based timeout (no output for N minutes). **Done:** `subagent.idleTimeoutMs` (default 5 min, 0 = off, paused while a tool runs); error `stalled: no output for Ns`. | Low-Medium (T) on failure only | S | Low-Medium. A slow but healthy judge could be killed. | Check how long real judges take. |
 | D3 | Add timing and token logging per role per flow (judge, knowledge, commit, compaction, explore), written next to the plan. This gives the numbers for every "Check first" above. **Done:** `metrics.ts` writes `metrics.jsonl` next to the flow's `plan.md` (subagent, compaction and flow lines); local only. | High (enables the rest) | S-M | Low. | None. Do this first. |
+| D4 | (Line numbers at `6df1ae0`.) The executor often skips `plan_check`, so the plan card stays at "0 of N done" although the work is finished. The only instruction is one bullet in the execute prompt (`prompts.ts:79`). Nothing reminds the executor later, and the judge treats ticks as claims (`index.ts:816`). **Done:** when `judge` runs in the execute phase with steps of the current stage unticked, its result ends with `Open steps not ticked: S2, S3. Tick the finished ones with plan_check.` (`openStepsReminder` in `plan-doc.ts`, commit `6df1ae0`). It is non-blocking and never auto-ticks. | Low (progress shown matches the work) | S | Low. | None. |
+| D5 | (Line numbers at `6df1ae0`.) On a protected branch (`main`, `master`, `config.ts:178`) or a detached HEAD, `prepareDelivery` (`index.ts:2472-2497`) turns a `push` delivery into `commit`. It shows only a short UI notice. The commit instruction then has no push sentence (`delivery.ts:84`), so the commit step reports that it did not push because "the instruction covered only the commit", which looks like a bug. Idea: state the reason in the commit instruction or in the flow's final report, e.g. "push skipped: `master` is protected". | Low (clearer report) | S | Low. | None. |
 
 ## Effect measurement
 
@@ -107,6 +115,8 @@ Method for every item:
 | D1 | Test coverage of the extracted modules; behavior parity | New unit tests; run all existing tests; run 2-3 real flows before and after | All tests pass; flows behave the same |
 | D2 | Time lost to hung subagents | Count timeouts and their duration in D3 | Hung runs end sooner; no healthy run is killed |
 | D3 | Presence of data | Check that every role logs time, tokens and calls for a flow | Log exists for every role in a full flow |
+| D4 | Share of flows whose final `status.json` has every step ticked | Count over recent plan folders before and after `6df1ae0` | Most flows end fully ticked; no extra judge rounds |
+| D5 | n/a | Report wording only | n/a |
 
 What to report after each change: baseline median, new median, percent change, and the quality-guard result, appended to `docs/workflow-baseline.md`.
 
