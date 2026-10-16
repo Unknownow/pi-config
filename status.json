@@ -1,0 +1,16 @@
+{
+  "v": 1,
+  "flowId": "20261016-1230-commit-the-reviewed-wt-open-and-quit-rem-6953",
+  "rev": 1,
+  "updated": "2026-10-16T05:30:10.190Z",
+  "title": "Commit the reviewed `/wt open` and quit-reminder change",
+  "delivery": "push",
+  "done": [],
+  "repos": [
+    {
+      "branch": "master",
+      "remote": "github-personal/Unknownow/pi-config",
+      "primary": true
+    }
+  ]
+}
