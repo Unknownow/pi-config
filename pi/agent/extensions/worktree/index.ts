@@ -210,8 +210,26 @@ async function listCmd(pi: ExtensionAPI, ctx: ExtensionCommandContext): Promise<
 	ctx.ui.notify(await listText(makeGit(pi), cfg, await unityEditors(pi)), "info");
 }
 
+async function pickSet(ctx: ExtensionCommandContext, cfg: WtConfig, title: string): Promise<string | null> {
+	const sets = listSets(cfg);
+	if (!sets.length) {
+		ctx.ui.notify(`no worktree sets in ${cfg.root}`, "error");
+		return null;
+	}
+	if (!ctx.hasUI) {
+		ctx.ui.notify(`give a name; sets: ${sets.join(", ")}`, "error");
+		return null;
+	}
+	return (await ctx.ui.select(title, sets)) ?? null;
+}
+
 async function removeCmd(pi: ExtensionAPI, ctx: ExtensionCommandContext, name: string): Promise<void> {
 	const cfg = await configFor(pi, ctx);
+	if (!name) {
+		const picked = await pickSet(ctx, cfg, "Remove which worktree set?");
+		if (!picked) return;
+		name = picked;
+	}
 	const env = {
 		git: makeGit(pi),
 		cfg,
@@ -226,6 +244,11 @@ async function removeCmd(pi: ExtensionAPI, ctx: ExtensionCommandContext, name: s
 
 async function openCmd(pi: ExtensionAPI, ctx: ExtensionCommandContext, name: string): Promise<void> {
 	const cfg = await configFor(pi, ctx);
+	if (!name) {
+		const picked = await pickSet(ctx, cfg, "Open which worktree set?");
+		if (!picked) return;
+		name = picked;
+	}
 	const git = makeGit(pi);
 	const t = await git(ctx.cwd, ["rev-parse", "--show-toplevel"]);
 	const preferred = t.code === 0 && t.stdout.trim() ? path.basename(slash(t.stdout.trim())) : null;
