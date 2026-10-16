@@ -332,9 +332,11 @@ Expected: every file reports `# fail 0`.
 - [x] S13 `subagent.ts`:
 - [x] S14 Tests in `subagent.test.ts` for `idleWatch`, using `mock.timers` from `node:test` (`mock.timers.enable({ apis: ["setTime
 - [x] S15 README: after the paragraph at `README.md:299-301`, add one paragraph on `subagent.timeoutMs` (hard limit, 15 minutes) a
-- [ ] S16 Create `metrics.ts` exactly as in section 4 (types, `subagentMetric`, `appendMetrics`, `MetricsQueue`). Use a type-only 
-- [ ] S17 Wire it into `index.ts`:
-- [ ] S18 Create `metrics.test.ts`. Cases are listed in section 6.
-- [ ] S19 README: add a short "Metrics" paragraph after the plan-files bullets (near `README.md:57`). Cover `<plan folder>/metrics
-- [ ] S20 In `docs/workflow-improvements.md`:
-- [ ] S21 Run every test file. All pass.
+- [x] S16 Create `metrics.ts` exactly as in section 4 (types, `subagentMetric`, `appendMetrics`, `MetricsQueue`). Use a type-only 
+- [x] S17 Wire it into `index.ts`:
+- [x] S18 Create `metrics.test.ts`. Cases are listed in section 6.
+- [x] S19 README: add a short "Metrics" paragraph after the plan-files bullets (near `README.md:57`). Cover `<plan folder>/metrics
+- [x] S20 In `docs/workflow-improvements.md`:
+- [x] S21 Run every test file. All pass.
+## Outcome
+2026-10-16T17:11:24.976Z — ok: stage 1: committed (1 commit); stage 2: committed (2 commits); stage 3: committed (1 commit); stage 4: committed (2 commits)
