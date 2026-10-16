@@ -12,7 +12,7 @@ rules and gitignored in three patterns on top of that. Log in separately on each
 ```bat
 git clone git@github.com:Unknownow/pi-config.git
 cd pi-config
-pi-config setup          :: import the config, then npm install the extensions
+pi-config setup          :: import the config, npm install the extensions, install the VS Code bridge
 ```
 
 Restart Pi and log in. That's it — the sync extension registers itself as part of the import, so
@@ -24,6 +24,7 @@ On macOS or Linux use `./pi-config.sh setup`, or call the scripts directly:
 node bin/import.js --dry-run   # see what would change
 node bin/import.js             # apply
 cd ~/.pi/agent/npm && npm install
+node bin/vscode-bridge.js      # optional: VS Code terminal bridge for /wt new
 ```
 
 ## Day to day
@@ -42,6 +43,7 @@ When you want to drive it yourself:
 | `/pi-config push` | `pi-config sync` | same as `sync` |
 | `/pi-config pull` | `git pull` | fetch the other machine's changes |
 | — | `pi-config install` | `npm install` the extensions |
+| — | `pi-config vscode` | build and install the VS Code terminal bridge used by `/wt new` (skipped by `setup` when `code` is not on PATH) |
 
 ## What's synced
 
@@ -149,7 +151,7 @@ Three behaviours worth knowing:
 - **Everything is logged** to `local/sync.log` (gitignored), including failures. The extension never
   throws into your session.
 
-Tests for the sync rules: `node --test bin/sync.test.js`.
+Tests: `node --test bin/sync.test.js bin/vscode-bridge.test.js`.
 
 ### Secret guard
 

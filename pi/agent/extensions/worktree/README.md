@@ -55,7 +55,7 @@ back to `cmd /c start`. On macOS and Linux nothing is started; the command is pr
 
 When pi runs in a VS Code terminal, `/wt new` opens the session in a new focused terminal tab (titled `pi NAME`) of the same VS Code window instead of Windows Terminal. This needs the bundled `pi-terminal-bridge` extension in `vscode/`. It listens on a local named pipe and sets `PI_VSCODE_TERMINAL` (the pipe path) for every terminal of its window. pi sends it one JSON line `{name, cwd, shellPath, shellArgs}`.
 
-Install:
+Install: run `pi-config vscode` from the pi-config repo (or `./pi-config.sh vscode`). `pi-config setup` does it too when `code` is on PATH. Or by hand:
 
 ```
 cd ~/.pi/agent/extensions/worktree/vscode

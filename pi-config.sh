@@ -7,7 +7,8 @@
 #   ./pi-config.sh export    capture this machine's config into the repo
 #   ./pi-config.sh sync      export + commit + push
 #   ./pi-config.sh install   npm install the extensions
-#   ./pi-config.sh setup     import + install, for a fresh machine
+#   ./pi-config.sh vscode    build and install the VS Code terminal bridge
+#   ./pi-config.sh setup     import + install + VS Code bridge, for a fresh machine
 set -euo pipefail
 
 cd "$(dirname "$0")"
@@ -40,13 +41,15 @@ case "${1:-help}" in
     fi
     ;;
   install) install_extensions ;;
+  vscode)  node bin/vscode-bridge.js ;;
   setup)
     node bin/import.js
     install_extensions
+    node bin/vscode-bridge.js --if-available || echo "WARNING: the VS Code bridge was not installed. Run './pi-config.sh vscode' to retry."
     echo
     echo "Setup complete. Restart Pi and log in (auth is deliberately not synced)."
     ;;
   *)
-    sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'
     ;;
 esac

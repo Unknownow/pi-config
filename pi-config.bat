@@ -9,7 +9,8 @@ REM    pi-config import       apply repo config to this machine
 REM    pi-config export       capture this machine's config into the repo
 REM    pi-config sync         export + commit + push
 REM    pi-config install      npm install the extensions
-REM    pi-config setup        import + install, for a fresh machine
+REM    pi-config vscode       build and install the VS Code terminal bridge
+REM    pi-config setup        import + install + VS Code bridge, for a fresh machine
 REM ===========================================================================
 
 setlocal EnableExtensions
@@ -52,11 +53,12 @@ echo     3.  Import    - apply repo config to this PC
 echo     4.  Export    - save this PC's config to repo
 echo     5.  Sync      - export + commit + push
 echo     6.  Install   - npm install the extensions
-echo     7.  Setup     - import + install (new machine)
-echo     8.  Quit
+echo     7.  Setup     - import + install + VS Code bridge (new machine)
+echo     8.  VS Code   - install the VS Code terminal bridge
+echo     9.  Quit
 echo.
 set "choice="
-set /p "choice=  Choose [1-8]: "
+set /p "choice=  Choose [1-9]: "
 
 if "%choice%"=="1" set "CMD=status"  & goto dispatch
 if "%choice%"=="2" set "CMD=preview" & goto dispatch
@@ -65,7 +67,8 @@ if "%choice%"=="4" set "CMD=export"  & goto dispatch
 if "%choice%"=="5" set "CMD=sync"    & goto dispatch
 if "%choice%"=="6" set "CMD=install" & goto dispatch
 if "%choice%"=="7" set "CMD=setup"   & goto dispatch
-if "%choice%"=="8" exit /b 0
+if "%choice%"=="8" set "CMD=vscode"  & goto dispatch
+if "%choice%"=="9" exit /b 0
 echo.
 echo   Not a valid choice.
 goto menu
@@ -79,6 +82,7 @@ if /i "%CMD%"=="import"  goto do_import
 if /i "%CMD%"=="export"  goto do_export
 if /i "%CMD%"=="sync"    goto do_sync
 if /i "%CMD%"=="install" goto do_install
+if /i "%CMD%"=="vscode"  goto do_vscode
 if /i "%CMD%"=="setup"   goto do_setup
 if /i "%CMD%"=="help"    goto do_help
 if /i "%CMD%"=="-h"      goto do_help
@@ -154,6 +158,14 @@ node bin\export.js
 if errorlevel 1 goto failed
 goto done
 
+:do_vscode
+echo.
+echo   Building and installing the VS Code terminal bridge...
+echo.
+node bin\vscode-bridge.js
+if errorlevel 1 goto failed
+goto done
+
 :do_install
 if not exist "%NPMDIR%" (
     echo.
@@ -173,12 +185,12 @@ goto done
 
 :do_setup
 echo.
-echo   === Step 1 of 2: import config ===
+echo   === Step 1 of 3: import config ===
 echo.
 node bin\import.js
 if errorlevel 1 goto failed
 echo.
-echo   === Step 2 of 2: install extensions ===
+echo   === Step 2 of 3: install extensions ===
 if not exist "%NPMDIR%" (
     echo   ERROR: %NPMDIR% does not exist.
     goto failed
@@ -188,6 +200,10 @@ call npm install
 set "NPMRC=%ERRORLEVEL%"
 popd
 if not "%NPMRC%"=="0" goto failed
+echo.
+echo   === Step 3 of 3: VS Code terminal bridge ===
+node bin\vscode-bridge.js --if-available
+if errorlevel 1 echo   WARNING: the VS Code bridge was not installed. Run "pi-config vscode" to retry.
 echo.
 echo   Setup complete. Now restart Pi and log in.
 echo   ^(auth is deliberately not synced^)
@@ -207,7 +223,8 @@ echo     import     apply repo config to this machine
 echo     export     capture this machine's config into the repo
 echo     sync       export + commit + push
 echo     install    npm install the extensions
-echo     setup      import + install, for a fresh machine
+echo     vscode     build and install the VS Code terminal bridge
+echo     setup      import + install + VS Code bridge, for a fresh machine
 echo.
 echo   Run with no arguments for an interactive menu.
 exit /b 0
