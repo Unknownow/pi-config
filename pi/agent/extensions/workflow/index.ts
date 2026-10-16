@@ -2086,8 +2086,7 @@ export default function workflow(pi: ExtensionAPI) {
 		state.minorSentFor = undefined;
 		let outcome: { text: string; ok: boolean };
 		if (repos?.length) {
-			const parts = [];
-			for (const r of repos) parts.push({ name: path.basename(r.root), outcome: await repoOutcome(r.root, r.mode, r.head, r.branch, r.prBefore) });
+			const parts = await Promise.all(repos.map(async (r) => ({ name: path.basename(r.root), outcome: await repoOutcome(r.root, r.mode, r.head, r.branch, r.prBefore) })));
 			outcome = combineOutcomes(parts);
 		} else {
 			outcome = (await repoOutcome(ctx.cwd, mode, head, branch, prBefore)) ?? { text: "commit step ended without a commit", ok: false };
@@ -2533,8 +2532,8 @@ export default function workflow(pi: ExtensionAPI) {
 			state.commitPending = { mode: p.mode, head: p.head, branch: p.branch, prBefore: p.prBefore };
 			instruction = deliveryInstruction(options(p));
 		} else {
-			const prepared: { root: string; p: Awaited<ReturnType<typeof prepareDelivery>> }[] = [];
-			for (const ref of changed) prepared.push({ root: ref.root, p: await prepareDelivery(ctx, ref.dir, chosen, seed, ` [${ref.root}]`) });
+			// Per-repo preparation only reads (git rev-parse, gh pr view), so the repos run at once; the order of `changed` is kept.
+			const prepared = await Promise.all(changed.map(async (ref) => ({ root: ref.root, p: await prepareDelivery(ctx, ref.dir, chosen, seed, ` [${ref.root}]`) })));
 			const first = prepared[0].p;
 			state.commitPending = {
 				mode: first.mode,
@@ -2572,11 +2571,11 @@ ${instruction}` : instruction);
 		if (!hash || !judged || judged.hash !== hash || judged.verdict !== "PASS" || !judged.repos) return false;
 		const refs = await flowRepos(ctx);
 		const now: Record<string, { head: string; tree: string }> = {};
-		for (const ref of refs) {
-			const head = await git(ref.dir, "rev-parse", "HEAD");
-			const tree = await git(ref.dir, "rev-parse", "HEAD^{tree}");
+		const read = await Promise.all(refs.map((ref) => Promise.all([git(ref.dir, "rev-parse", "HEAD"), git(ref.dir, "rev-parse", "HEAD^{tree}")])));
+		refs.forEach((ref, i) => {
+			const [head, tree] = read[i];
 			if (head.code === 0 && tree.code === 0) now[repoKey(ref.root)] = { head: head.stdout.trim(), tree: tree.stdout.trim() };
-		}
+		});
 		const handled = committedDiffs.has(hash) || !!state.summarizedPasses?.includes(hash) || !!state.commitPending;
 		if (!selfCommitted(hash, judged, now, handled)) return false;
 
