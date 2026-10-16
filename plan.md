@@ -219,10 +219,12 @@ Expected: all pass, 0 fail.
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 `layout.ts:31-69`: add `piArgs?: string[]` to `LaunchOpts` and insert it right after the pi command:
-- [ ] S2 `index.ts:85` `launch`: add a 5th parameter `piArgs: string[] = []` and put it into `opts`. Leave the `newSet` call unch
-- [ ] S3 `manage.ts:24-28`: add `repoDirsIn(setRoot)`, move `reposOf`'s body into it, and make `reposOf` delegate. Then add `open
-- [ ] S4 `index.ts`:
-- [ ] S5 `index.ts`, inside `worktree()` after `session_start`: add the `session_shutdown` handler (section 4). Import `quitRemin
-- [ ] S6 `README.md` (worktree):
-- [ ] S7 Repo `README.md:62`: change the worktree mention to include `/wt open NAME`.
+- [x] S1 `layout.ts:31-69`: add `piArgs?: string[]` to `LaunchOpts` and insert it right after the pi command:
+- [x] S2 `index.ts:85` `launch`: add a 5th parameter `piArgs: string[] = []` and put it into `opts`. Leave the `newSet` call unch
+- [x] S3 `manage.ts:24-28`: add `repoDirsIn(setRoot)`, move `reposOf`'s body into it, and make `reposOf` delegate. Then add `open
+- [x] S4 `index.ts`:
+- [x] S5 `index.ts`, inside `worktree()` after `session_start`: add the `session_shutdown` handler (section 4). Import `quitRemin
+- [x] S6 `README.md` (worktree):
+- [x] S7 Repo `README.md:62`: change the worktree mention to include `/wt open NAME`.
+## Outcome
+2026-10-16T04:34:12.306Z — failed: commit step ended without a commit
