@@ -1,7 +1,7 @@
 /**
  * /wt: run several pi sessions on the same repos without copying them. `/wt new <name>` makes a git
  * worktree for the working repo and every added folder, links or copies the gitignored files, and opens
- * a new terminal window running pi there. `/wt done` removes the set a session runs in. See README.md.
+ * a new terminal window (or VS Code terminal) running pi there. `/wt done` removes the set a session runs in. See README.md.
  */
 
 import { spawn } from "node:child_process";
@@ -10,10 +10,11 @@ import * as path from "node:path";
 import { getAgentDir, type ExtensionAPI, type ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { loadConfig, type WtConfig } from "./config.ts";
 import { setupFiles } from "./files.ts";
+import { sendToVscode } from "./vscode-bridge.ts";
 import { createAll, excludeLinks, preflight, rollback, type Git, type Planned } from "./git-ops.ts";
 import { SWEEP_SCRIPT, detectSession, finishSet, listSets, listText, parseEditors, removeSet, sessionConfig, worktreePrompt, type WtSession } from "./manage.ts";
 import { guardProblem } from "./unity-guard.ts";
-import { branchOf, checkName, launchSpec, rootProblem, setRootOf } from "./layout.ts";
+import { branchOf, checkName, launchSpec, rootProblem, setRootOf, vscodeTerminalSpec } from "./layout.ts";
 
 const STATE_ENTRY = "workflow-state";
 const SUBCOMMANDS = ["new", "list", "remove", "done"];
@@ -91,7 +92,7 @@ async function collect(git: Git, ctx: ExtensionCommandContext): Promise<Collecte
 }
 
 async function launch(cfg: WtConfig, name: string, cwd: string, folders: string[]): Promise<{ text: string; error?: string }> {
-	const spec = launchSpec({
+	const opts = {
 		platform: process.platform,
 		launch: cfg.launch,
 		wtPath: findWt(),
@@ -99,16 +100,31 @@ async function launch(cfg: WtConfig, name: string, cwd: string, folders: string[
 		cwd,
 		name,
 		folders,
-	});
-	if ("print" in spec) return { text: `Start it with: ${spec.print}` };
-	const child = spawn(spec.file, spec.args, { detached: true, stdio: "ignore", cwd });
+	};
+	const bridgeAllowed = cfg.vscode && cfg.launch !== "none";
+	const pipe = process.env.PI_VSCODE_TERMINAL;
+	let note = "";
+	let hint = "";
+	if (bridgeAllowed && pipe) {
+		const err = await sendToVscode(pipe, vscodeTerminalSpec(opts));
+		if (err === null) return { text: `Opened a new VS Code terminal running pi in ${cwd}` };
+		note = `VS Code terminal failed (${err}), used the fallback. `;
+	} else if (bridgeAllowed && process.env.TERM_PROGRAM === "vscode") {
+		hint = " (install the pi-terminal-bridge VS Code extension, or open a new VS Code terminal, to get a VS Code terminal instead; see README)";
+	}
+	const spec = launchSpec(opts);
+	if ("print" in spec) return { text: `${note}Start it with: ${spec.print}${hint}` };
+	const env = { ...process.env };
+	delete env.PI_VSCODE_TERMINAL;
+	delete env.TERM_PROGRAM;
+	const child = spawn(spec.file, spec.args, { detached: true, stdio: "ignore", cwd, env });
 	const failure = await new Promise<string | null>((resolve) => {
 		child.once("error", (e) => resolve(e.message));
 		child.once("spawn", () => resolve(null));
 	});
-	if (failure) return { text: "", error: `could not open the terminal (${spec.file}): ${failure}` };
+	if (failure) return { text: "", error: `${note}could not open the terminal (${spec.file}): ${failure}` };
 	child.unref();
-	return { text: `Opened a new ${cfg.launch === "tab" ? "tab" : "window"} running pi in ${cwd}` };
+	return { text: `${note}Opened a new ${cfg.launch === "tab" ? "tab" : "window"} running pi in ${cwd}${hint}` };
 }
 
 /** Create the worktrees and their files; on any failure undo what this run created. */

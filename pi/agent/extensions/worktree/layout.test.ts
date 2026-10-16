@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { defaults } from "./config.ts";
-import { addDirValue, branchOf, checkName, launchSpec, rootProblem, targetOf } from "./layout.ts";
+import { addDirValue, branchOf, checkName, launchSpec, rootProblem, targetOf, vscodeTerminalSpec } from "./layout.ts";
 
 const cfg = { ...defaults("D:/projects") };
 
@@ -57,4 +57,22 @@ test("launchSpec linux and none print", () => {
 	const l = launchSpec({ ...base, platform: "linux", piCommand: "" }) as { print: string };
 	assert.match(l.print, /--add-dir 'A:B'/);
 	assert.ok("print" in launchSpec({ ...base, launch: "none" }));
+});
+
+test("vscodeTerminalSpec win32", () => {
+	assert.deepEqual(vscodeTerminalSpec(base), { name: "pi x", cwd: "D:/c", shellPath: "cmd.exe", shellArgs: ["/d", "/c", "pi.cmd", "--add-dir", "A;B"] });
+});
+
+test("vscodeTerminalSpec win32 backslashes piCommand", () => {
+	assert.equal(vscodeTerminalSpec({ ...base, piCommand: "C:/u/pi.cmd" }).shellArgs[2], "C:\\u\\pi.cmd");
+});
+
+test("vscodeTerminalSpec no folders", () => {
+	assert.deepEqual(vscodeTerminalSpec({ ...base, folders: [] }).shellArgs, ["/d", "/c", "pi.cmd"]);
+});
+
+test("vscodeTerminalSpec linux", () => {
+	const s = vscodeTerminalSpec({ ...base, platform: "linux", piCommand: "" });
+	assert.equal(s.shellPath, "pi");
+	assert.deepEqual(s.shellArgs, ["--add-dir", "A:B"]);
 });

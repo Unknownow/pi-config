@@ -11,6 +11,7 @@ export interface WtConfig {
 	link: string[];
 	copy: string[];
 	unityGuard: boolean;
+	vscode: boolean;
 }
 
 export const DEFAULT_LINK = [".pi/git", ".pi/npm", "node_modules"];
@@ -27,6 +28,7 @@ export function defaults(workingRepoParent: string): WtConfig {
 		link: [...DEFAULT_LINK],
 		copy: [...DEFAULT_COPY],
 		unityGuard: true,
+		vscode: true,
 	};
 }
 
@@ -43,6 +45,10 @@ export function mergeConfig(raw: unknown, base: WtConfig): { cfg: WtConfig; warn
 	if (typeof o.branchPrefix === "string") cfg.branchPrefix = o.branchPrefix;
 	if (typeof o.piCommand === "string") cfg.piCommand = o.piCommand;
 	if (typeof o.unityGuard === "boolean") cfg.unityGuard = o.unityGuard;
+	if (o.vscode !== undefined) {
+		if (typeof o.vscode === "boolean") cfg.vscode = o.vscode;
+		else warnings.push("vscode must be true or false");
+	}
 	if (o.launch !== undefined) {
 		if (o.launch === "window" || o.launch === "tab" || o.launch === "none") cfg.launch = o.launch;
 		else warnings.push(`unknown launch ${JSON.stringify(o.launch)}, using "window"`);

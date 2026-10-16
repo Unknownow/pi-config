@@ -1,4 +1,4 @@
-/** Pure helpers: names, paths, the --add-dir value and the terminal launch command. No I/O. */
+/** Pure helpers: names, paths, the --add-dir value, the terminal launch command and the VS Code terminal request. No I/O. */
 
 import type { WtConfig } from "./config.ts";
 
@@ -54,4 +54,18 @@ export function launchSpec(o: LaunchOpts): LaunchSpec {
 		};
 	}
 	return { file: "cmd.exe", args: ["/c", "start", `pi ${o.name}`, "/D", backslashes(o.cwd), backslashes(o.piCommand), ...flag] };
+}
+
+export interface VscodeRequest {
+	name: string;
+	cwd: string;
+	shellPath: string;
+	shellArgs: string[];
+}
+
+export function vscodeTerminalSpec(o: LaunchOpts): VscodeRequest {
+	const flag = o.folders.length ? ["--add-dir", addDirValue(o.folders, o.platform)] : [];
+	const name = `pi ${o.name}`;
+	if (o.platform === "win32") return { name, cwd: o.cwd, shellPath: "cmd.exe", shellArgs: ["/d", "/c", backslashes(o.piCommand), ...flag] };
+	return { name, cwd: o.cwd, shellPath: o.piCommand || "pi", shellArgs: flag };
 }

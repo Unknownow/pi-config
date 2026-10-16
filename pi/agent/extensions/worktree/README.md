@@ -7,7 +7,7 @@ store, so a set of checkouts costs a few MB (plus whatever you build in them).
 
 | Command | What it does |
 |---|---|
-| `/wt new NAME` | Creates one worktree per git repo of this session (the working folder and every added folder) under `<root>/NAME/<repo>` on branch `wt/NAME`, starting from `origin/<default branch>` with no upstream. Links or copies the gitignored files, then opens a new Windows Terminal window running pi in the working repo's worktree with `--add-dir` set to the other worktrees. Folders that are not git repos are passed through unchanged. The current session is not changed. |
+| `/wt new NAME` | Creates one worktree per git repo of this session (the working folder and every added folder) under `<root>/NAME/<repo>` on branch `wt/NAME`, starting from `origin/<default branch>` with no upstream. Links or copies the gitignored files, then opens a new Windows Terminal window (or a new VS Code terminal when pi runs in one, see VS Code) running pi in the working repo's worktree with `--add-dir` set to the other worktrees. Folders that are not git repos are passed through unchanged. The current session is not changed. |
 | `/wt list` | Lists every set under `<root>` with, per repo: branch, changed files, ahead/behind (or "not pushed: N commits" against the base branch when there is no upstream), whether `unity/Library` exists, and whether a Unity Editor is open for it (from one `unity status` call; `unknown` if it fails). |
 | `/wt remove NAME` | Deletes a set. Refuses if this session uses it, if there is no UI, or if any repo has uncommitted changes or commits not pushed (a squash-merged branch counts as unpushed: delete those by hand). Otherwise asks for confirmation, removes the links first (never their targets), runs `git worktree remove` without `--force`, then `git branch -d` (the branch is kept if git refuses). Deletes the worktree's `Library/` with it. |
 | `/wt done` | Runs inside a worktree session and removes the set it runs in. Same checks as `/wt remove`, plus it refuses while a Unity Editor is open in the set (a failing `unity status` only adds a warning). Asks for confirmation, moves pi out of the set, removes the working repo's worktree last (links first, never their targets, no `--force`, then `git branch -d`), shows the report, then asks "Close this pi session?". On refusal or failure the session stays open. |
@@ -42,6 +42,7 @@ Unity's `Library/` is never touched: a worktree session does not get one.
 | `piCommand` | `` | Empty: `~/.pi/agent/bin/pi.cmd` on Windows if it exists, otherwise `pi`. |
 | `link` | see above | Paths (relative to each repo) to junction-link. |
 | `copy` | see above | Paths (relative to each repo) to copy. |
+| `vscode` | `true` | Open the new session in a VS Code terminal when pi runs in a VS Code terminal with the bridge installed. `false` always uses Windows Terminal. |
 | `unityGuard` | `true` | Turns the Unity guard on or off in worktree sessions. |
 
 ## Launching
@@ -49,6 +50,22 @@ Unity's `Library/` is never touched: a worktree session does not get one.
 Windows: `wt.exe -w new new-tab -d <cwd> --title "pi NAME" <pi> --add-dir "A\;B"`. Windows Terminal
 reads `;` as its own separator, so the extension escapes it. If `wt.exe` is not found, it falls
 back to `cmd /c start`. On macOS and Linux nothing is started; the command is printed.
+
+## VS Code
+
+When pi runs in a VS Code terminal, `/wt new` opens the session in a new focused terminal tab (titled `pi NAME`) of the same VS Code window instead of Windows Terminal. This needs the bundled `pi-terminal-bridge` extension in `vscode/`. It listens on a local named pipe and sets `PI_VSCODE_TERMINAL` (the pipe path) for every terminal of its window. pi sends it one JSON line `{name, cwd, shellPath, shellArgs}`.
+
+Install:
+
+```
+cd ~/.pi/agent/extensions/worktree/vscode
+npx --yes @vscode/vsce package --no-dependencies --allow-missing-repository --skip-license -o "$TEMP/pi-terminal-bridge.vsix"
+code --install-extension "$TEMP/pi-terminal-bridge.vsix" --force
+```
+
+Reload the VS Code window, then open a new terminal (terminals opened earlier lack the variable).
+
+If the bridge fails, `/wt new` falls back to Windows Terminal and says why. If pi runs in VS Code but `PI_VSCODE_TERMINAL` is missing, it falls back and adds a hint. `vscode: false` or `launch: "none"` disables the bridge.
 
 ## Unity
 
@@ -64,6 +81,9 @@ a relative `--project-path`, and commands built at runtime or started from a scr
 
 ## Limits
 
+- Terminals opened before the VS Code extension activated use Windows Terminal.
+- If VS Code does not answer within 3 s the fallback opens, and the VS Code terminal can still appear late.
+- Any process of the same user can ask the bridge to open a terminal running any program.
 - Paths with spaces or `;` are not supported.
 - Absolute paths inside tracked settings still point at the original folders.
 - A branch can be checked out in only one worktree.
@@ -76,5 +96,6 @@ a relative `--project-path`, and commands built at runtime or started from a scr
 ## Tests
 
 ```
-node --experimental-strip-types --test config.test.ts layout.test.ts files.test.ts git-ops.test.ts manage.test.ts unity-guard.test.ts
+node --experimental-strip-types --test config.test.ts layout.test.ts files.test.ts git-ops.test.ts manage.test.ts unity-guard.test.ts vscode-bridge.test.ts
+node --test vscode/request.test.js
 ```

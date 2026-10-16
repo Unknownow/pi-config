@@ -13,6 +13,7 @@ test("defaults without file", () => {
 	const { cfg, warning } = loadConfig(tmp(), "D:/projects");
 	assert.equal(cfg.root, "D:/projects/wt");
 	assert.equal(cfg.launch, "window");
+	assert.equal(cfg.vscode, true);
 	assert.equal(warning, undefined);
 });
 
@@ -39,4 +40,20 @@ test("relative root is kept and flagged", () => {
 	const { cfg } = loadConfig(dir, "D:/projects");
 	assert.equal(cfg.root, "wt");
 	assert.ok(rootProblem(cfg.root));
+});
+
+test("vscode false is read", () => {
+	const dir = tmp();
+	fs.writeFileSync(path.join(dir, "worktree.json"), JSON.stringify({ vscode: false }));
+	const { cfg, warning } = loadConfig(dir, "D:/projects");
+	assert.equal(cfg.vscode, false);
+	assert.equal(warning, undefined);
+});
+
+test("bad vscode warns", () => {
+	const dir = tmp();
+	fs.writeFileSync(path.join(dir, "worktree.json"), JSON.stringify({ vscode: "no" }));
+	const { cfg, warning } = loadConfig(dir, "D:/projects");
+	assert.equal(cfg.vscode, true);
+	assert.match(warning ?? "", /vscode/);
 });
