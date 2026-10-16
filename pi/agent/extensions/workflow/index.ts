@@ -55,7 +55,7 @@ import * as prompts from "./prompts.ts";
 import { branchName, combineOutcomes, type Delivery, type DeliveryOptions, DELIVERIES, DELIVERY_LABELS, deliveryChoices, deliveryInstruction, deliveryMenuLabel, deliveryOutcome, freshPr, isDelivery, planTitle, type PrState, repoDeliveryInstruction } from "./delivery.ts";
 import { modelChoices, pathCompletions } from "./pickers.ts";
 import { ghCandidates, withPathDir } from "./gh-path.ts";
-import { combineRepoTexts, parseAddDir, repoKey } from "./repos.ts";
+import { combineRepoTexts, parseAddDir, repoKey, uniqueRoots } from "./repos.ts";
 import { shellProblem } from "./push-guard.ts";
 import { COMMIT_GUARD_ENV, type CommitGuardSpec } from "./commit-guard.ts";
 import { commitPlan, type Finished, mergeChecklist, newFlowId, parseChecklist, type PlanStatus, planCard, pruneIds, renderPlanFile, splitPlanFile, type ChecklistItem } from "./plan-doc.ts";
@@ -896,14 +896,8 @@ export default function workflow(pi: ExtensionAPI) {
 	}
 
 	async function writePlan(ctx: ExtensionContext, snap: PlanSnap): Promise<void> {
-		const roots = [...snap.roots];
-		const seen = new Set(roots.map(repoKey));
 		const found = [...(await flowRepos(ctx)).map((r) => r.root), ...(await Promise.all(snap.touched.map((t) => gitRoot(t))))];
-		for (const r of found) {
-			if (!r || seen.has(repoKey(r))) continue;
-			seen.add(repoKey(r));
-			roots.push(r);
-		}
+		const roots = uniqueRoots([...snap.roots, ...found.filter((r): r is string => !!r)]);
 		const dir = planDirs.get(snap.flowId) ?? (await plansDir(gitEnv, roots[0] ?? null, getAgentDir()));
 		const infos = await Promise.all(roots.map((r) => repoInfo(gitEnv, r)));
 		const status: PlanStatus = {

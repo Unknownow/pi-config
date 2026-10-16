@@ -15,6 +15,10 @@ test("uniqueRoots keeps first", () => {
 	assert.deepEqual(uniqueRoots(["D:/a", "d:\\a", "D:/b"], "win32"), ["D:/a", "D:/b"]);
 });
 
+test("uniqueRoots collapses repeated roots", () => {
+	assert.deepEqual(uniqueRoots(["D:/projects/x", "D:/projects/x", "d:/projects/x/", "/d/projects/x"], "win32"), ["D:/projects/x"]);
+});
+
 test("combineRepoTexts", () => {
 	assert.equal(
 		combineRepoTexts([
