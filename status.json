@@ -1,0 +1,17 @@
+{
+  "v": 1,
+  "flowId": "20261016-2353-workflow-extension-speed-ups-plan-card-f-0754",
+  "rev": 1,
+  "updated": "2026-10-16T16:53:53.804Z",
+  "title": "Workflow extension speed-ups, plan-card fix, caches, subagent idle timeout and per-flow metrics",
+  "stage": 1,
+  "delivery": "push",
+  "done": [],
+  "repos": [
+    {
+      "branch": "master",
+      "remote": "github.com/Unknownow/pi-config",
+      "primary": true
+    }
+  ]
+}
