@@ -224,10 +224,12 @@ One function, so one commit:
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 Create `bin/vscode-bridge.js` per §4, modelled on `bin/import.js:1-17`.
-- [ ] S2 Create `bin/vscode-bridge.test.js`, modelled on `bin/sync.test.js:1-11`: a `// node --test bin/vscode-bridge.test.js` he
-- [ ] S3 `pi-config.sh`:
-- [ ] S4 `pi-config.bat`:
-- [ ] S5 Root `README.md`:
-- [ ] S6 `pi/agent/extensions/worktree/README.md`, "Install:" block (lines 58-64):
-- [ ] S7 Run the tests in §6.
+- [x] S1 Create `bin/vscode-bridge.js` per §4, modelled on `bin/import.js:1-17`.
+- [x] S2 Create `bin/vscode-bridge.test.js`, modelled on `bin/sync.test.js:1-11`: a `// node --test bin/vscode-bridge.test.js` he
+- [x] S3 `pi-config.sh`:
+- [x] S4 `pi-config.bat`:
+- [x] S5 Root `README.md`:
+- [x] S6 `pi/agent/extensions/worktree/README.md`, "Install:" block (lines 58-64):
+- [x] S7 Run the tests in §6.
+## Outcome
+2026-10-16T03:48:31.894Z — ok: committed (1 commit)
