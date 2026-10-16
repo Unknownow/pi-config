@@ -1,0 +1,16 @@
+{
+  "v": 1,
+  "flowId": "20261017-0048-record-the-plan-check-reminder-and-push-e8d9",
+  "rev": 1,
+  "updated": "2026-10-16T17:48:31.336Z",
+  "title": "Record the plan_check reminder and push-downgrade finding in the workflow backlog, and add a rule to keep it current",
+  "delivery": "push",
+  "done": [],
+  "repos": [
+    {
+      "branch": "master",
+      "remote": "github.com/Unknownow/pi-config",
+      "primary": true
+    }
+  ]
+}
