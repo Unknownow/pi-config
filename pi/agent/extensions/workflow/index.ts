@@ -55,6 +55,7 @@ import * as prompts from "./prompts.ts";
 import { branchName, combineOutcomes, type Delivery, type DeliveryOptions, DELIVERIES, DELIVERY_LABELS, deliveryChoices, deliveryInstruction, deliveryMenuLabel, deliveryOutcome, freshPr, isDelivery, planTitle, type PrState, repoDeliveryInstruction } from "./delivery.ts";
 import { modelChoices, pathCompletions } from "./pickers.ts";
 import { ghCandidates, withPathDir } from "./gh-path.ts";
+import { collectRepoDiff as collectRepoDiffImpl, type RepoDiff } from "./repo-diff.ts";
 import { combineRepoTexts, parseAddDir, repoKey, uniqueRoots } from "./repos.ts";
 import { shellProblem } from "./push-guard.ts";
 import { COMMIT_GUARD_ENV, type CommitGuardSpec } from "./commit-guard.ts";
@@ -216,15 +217,6 @@ interface RepoRef {
 }
 
 type Snaps = Record<string, { tree: string; head: string }>;
-
-interface RepoDiff {
-	full: string;
-	files: number;
-	names: string[];
-	checkNames: string[];
-	/** `names` with every path relative to the repo root. */
-	rootNames: string[];
-}
 
 function assistantText(m: AgentMessage | undefined): string {
 	if (!m || m.role !== "assistant" || !Array.isArray(m.content)) return "";
@@ -582,42 +574,8 @@ export default function workflow(pi: ExtensionAPI) {
 	}
 
 	/** Tracked changes against `base` plus untracked files of one repo (untruncated), or null outside a git work tree. */
-	async function collectRepoDiff(cwd: string, base = "HEAD"): Promise<RepoDiff | null> {
-		if ((await git(cwd, "rev-parse", "--is-inside-work-tree")).code !== 0) return null;
-		let tracked = await git(cwd, "diff", "--no-color", base);
-		if (tracked.code !== 0) tracked = await git(cwd, "diff", "--no-color"); // no commits yet
-		const parts = [tracked.stdout];
-		let files = (tracked.stdout.match(/^diff --git /gm) ?? []).length;
-
-		const untracked = (await git(cwd, "ls-files", "--others", "--exclude-standard", "-z")).stdout.split("\0").filter(Boolean);
-		for (const rel of untracked) {
-			files++;
-			try {
-				const buf = fs.readFileSync(path.join(cwd, rel));
-				if (buf.length > 200_000 || buf.includes(0)) {
-					parts.push(`\n=== new file: ${rel} (${buf.length} bytes, binary or too large, not shown) ===\n`);
-					continue;
-				}
-				const numbered = buf
-					.toString("utf8")
-					.split("\n")
-					.map((l, i) => `+${i + 1}: ${l}`)
-					.join("\n");
-				parts.push(`\n=== new file: ${rel} ===\n${numbered}\n`);
-			} catch {
-				parts.push(`\n=== new file: ${rel} (unreadable) ===\n`);
-			}
-		}
-
-		const full = parts.join("").trim();
-		const names = [...[...tracked.stdout.matchAll(/^diff --git a\/(.+?) b\//gm)].map((m) => m[1]), ...untracked];
-		let current = await git(cwd, "diff", "--name-only", "-z", "--diff-filter=d", base);
-		if (current.code !== 0) current = await git(cwd, "diff", "--name-only", "-z", "--diff-filter=d");
-		const checkNames = [...current.stdout.split("\0").filter(Boolean), ...untracked];
-		// Names relative to the repo root (ls-files is relative to `cwd`), for the multi-repo file list.
-		const trackedNames = names.slice(0, names.length - untracked.length);
-		const rootUntracked = untracked.length ? (await git(cwd, "ls-files", "--others", "--exclude-standard", "--full-name", "-z")).stdout.split("\0").filter(Boolean) : [];
-		return { full, files, names, checkNames, rootNames: [...trackedNames, ...rootUntracked] };
+	function collectRepoDiff(cwd: string, base = "HEAD"): Promise<RepoDiff | null> {
+		return collectRepoDiffImpl(git, cwd, base);
 	}
 
 	/** A Diff from untruncated text: hash over all of it, text cut at the judge's limit. */
@@ -764,7 +722,10 @@ export default function workflow(pi: ExtensionAPI) {
 	/** Each repo's working tree and HEAD, or null when a tree cannot be built. */
 	async function snapshotRepos(diff: Diff): Promise<Snaps | null> {
 		const per = await Promise.all(
-			diff.repos.map(async (r) => ({ key: repoKey(r.root), tree: await snapshotTree(r.dir), head: (await git(r.dir, "rev-parse", "HEAD")).stdout.trim() })),
+			diff.repos.map(async (r) => {
+				const [tree, head] = await Promise.all([snapshotTree(r.dir), git(r.dir, "rev-parse", "HEAD")]);
+				return { key: repoKey(r.root), tree, head: head.stdout.trim() };
+			}),
 		);
 		const snaps: Snaps = {};
 		for (const p of per) {
@@ -785,21 +746,21 @@ export default function workflow(pi: ExtensionAPI) {
 		const before = prev.repos;
 		const keys = Object.keys(snaps);
 		if (keys.length !== Object.keys(before).length || keys.some((k) => before[k]?.head !== snaps[k].head)) return fullPlan;
-		const parts = await Promise.all(
+		const per = await Promise.all(
 			diff.repos.map(async (r) => {
 				const k = repoKey(r.root);
-				return { root: r.root, text: (await git(r.dir, "diff", "--no-color", before[k].tree, snaps[k].tree)).stdout };
+				const [d, n] = await Promise.all([
+					git(r.dir, "diff", "--no-color", before[k].tree, snaps[k].tree),
+					git(r.dir, "diff", "--name-only", "-z", "--diff-filter=d", before[k].tree, snaps[k].tree),
+				]);
+				return { root: r.root, text: d.stdout, names: n.stdout.split("\0").filter(Boolean) };
 			}),
 		);
-		const delta = diff.multi ? combineRepoTexts(parts) : parts[0].text;
+		const delta = diff.multi ? combineRepoTexts(per) : per[0].text;
 		// Fixes that rewrite most of the change get a full review: little to save, more to miss.
 		if (!delta.trim() || delta.length > diff.chars * cfg.judge.recheckMaxShare) return fullPlan;
 		const changed: string[] = [];
-		for (const r of diff.repos) {
-			const k = repoKey(r.root);
-			const names = (await git(r.dir, "diff", "--name-only", "-z", "--diff-filter=d", before[k].tree, snaps[k].tree)).stdout.split("\0").filter(Boolean);
-			for (const n of names) if (!changed.includes(n)) changed.push(n);
-		}
+		for (const p of per) for (const n of p.names) if (!changed.includes(n)) changed.push(n);
 		return { kind: "recheck", snaps, prev, delta, changed };
 	}
 
