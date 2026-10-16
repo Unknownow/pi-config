@@ -1,0 +1,10 @@
+{
+	"name": "pi-terminal-bridge",
+	"displayName": "pi terminal bridge",
+	"description": "Lets pi's /wt new open a terminal in this VS Code window.",
+	"version": "0.1.0",
+	"publisher": "pi-config",
+	"engines": { "vscode": "^1.85.0" },
+	"activationEvents": ["onStartupFinished"],
+	"main": "./extension.js"
+}
