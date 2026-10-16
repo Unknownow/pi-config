@@ -222,10 +222,28 @@ function merge<T>(base: T, over: unknown): T {
 	return out as T;
 }
 
-export function loadConfig(): { config: WorkflowConfig; error?: string } {
-	if (!fs.existsSync(CONFIG_PATH)) return { config: DEFAULTS };
+type Loaded = { config: WorkflowConfig; error?: string };
+let cache: { file: string; key: string; result: Loaded } | null = null;
+
+/** Parsed again only when the file's mtime, ctime or size changed; `saveRole` clears the cache. */
+export function loadConfig(file = CONFIG_PATH): Loaded {
+	let key: string;
 	try {
-		const config = merge(DEFAULTS, JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8")));
+		const st = fs.statSync(file);
+		key = `${st.mtimeMs}:${st.ctimeMs}:${st.size}`;
+	} catch {
+		cache = null;
+		return { config: DEFAULTS };
+	}
+	if (cache && cache.file === file && cache.key === key) return cache.result;
+	const result = parseConfig(file);
+	cache = { file, key, result };
+	return result;
+}
+
+function parseConfig(file: string): Loaded {
+	try {
+		const config = merge(DEFAULTS, JSON.parse(fs.readFileSync(file, "utf8")));
 		// A delivery that is not an object (the old autoCommit style, null) would crash the first approval.
 		if (!isObject(config.delivery)) config.delivery = DEFAULTS.delivery;
 		for (const k of ["base", "branchPrefix"] as const) if (typeof config.delivery[k] !== "string") config.delivery[k] = DEFAULTS.delivery[k];
@@ -240,15 +258,16 @@ export function loadConfig(): { config: WorkflowConfig; error?: string } {
 		if (config.planRecap !== "changes" && config.planRecap !== "always") config.planRecap = DEFAULTS.planRecap;
 		return { config };
 	} catch (e) {
-		return { config: DEFAULTS, error: `${CONFIG_PATH}: ${(e as Error).message}` };
+		return { config: DEFAULTS, error: `${file}: ${(e as Error).message}` };
 	}
 }
 
 /** Updates one role in workflow.json, leaving the rest of the file as it was. */
-export function saveRole(role: Role, spec: RoleSpec): void {
-	const raw = fs.existsSync(CONFIG_PATH) ? JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8")) : {};
+export function saveRole(role: Role, spec: RoleSpec, file = CONFIG_PATH): void {
+	const raw = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : {};
 	raw.roles = { ...(raw.roles ?? {}), [role]: spec };
-	fs.writeFileSync(CONFIG_PATH, `${JSON.stringify(raw, null, 2)}\n`);
+	fs.writeFileSync(file, `${JSON.stringify(raw, null, 2)}\n`);
+	cache = null;
 }
 
 /** `provider/id[:thinking]` -> RoleSpec. */

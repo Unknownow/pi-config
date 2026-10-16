@@ -814,6 +814,16 @@ export default function workflow(pi: ExtensionAPI) {
 		return staged ? `${excerpt}\n\n${stageNote(staged.stages, staged.current)}` : excerpt;
 	}
 
+	/** `planCardText` once the plan file is written: waits for the plan write queue, at most 10 s, so the card can name the file. */
+	async function planCardReady(): Promise<string> {
+		if (!planFilePath()) {
+			let timer: ReturnType<typeof setTimeout> | undefined;
+			await Promise.race([planChain, new Promise<void>((resolve) => (timer = setTimeout(resolve, 10_000)))]);
+			clearTimeout(timer);
+		}
+		return planCardText();
+	}
+
 	/** The short plan sent after a compaction in place of the full plan. Without a plan file it carries the (trimmed) plan itself. */
 	function planCardText(): string {
 		const staged = currentStages();
@@ -841,6 +851,23 @@ export default function workflow(pi: ExtensionAPI) {
 	const planLast = new Map<string, { dir: string; status: PlanStatus }>();
 	const planWarned = new Set<string>();
 	let planChain: Promise<void> = Promise.resolve();
+	/** Plan folder per repo root: `plansDir` runs git, and the answer does not change during a session. */
+	const plansDirCache = new Map<string, string>();
+	async function planDirFor(root: string | null): Promise<string> {
+		if (root === null) return plansDir(gitEnv, null, getAgentDir());
+		const key = repoKey(root);
+		let dir = plansDirCache.get(key);
+		if (dir === undefined) {
+			let answered = false;
+			dir = await plansDir(async (cwd, args, env) => {
+				const r = await gitEnv(cwd, args, env);
+				answered = r.code === 0;
+				return r;
+			}, root, getAgentDir());
+			if (answered) plansDirCache.set(key, dir);
+		}
+		return dir;
+	}
 
 	interface PlanSnap {
 		flowId: string;
@@ -859,7 +886,7 @@ export default function workflow(pi: ExtensionAPI) {
 	async function writePlan(ctx: ExtensionContext, snap: PlanSnap): Promise<void> {
 		const found = [...(await flowRepos(ctx)).map((r) => r.root), ...(await Promise.all(snap.touched.map((t) => gitRoot(t))))];
 		const roots = uniqueRoots([...snap.roots, ...found.filter((r): r is string => !!r)]);
-		const dir = planDirs.get(snap.flowId) ?? (await plansDir(gitEnv, roots[0] ?? null, getAgentDir()));
+		const dir = planDirs.get(snap.flowId) ?? (await planDirFor(roots[0] ?? null));
 		const infos = await Promise.all(roots.map((r) => repoInfo(gitEnv, r)));
 		const status: PlanStatus = {
 			v: 1,
@@ -1008,8 +1035,9 @@ export default function workflow(pi: ExtensionAPI) {
 	/** Deletes plans past the retention limits in this flow's plan folders, and restores the active flow's file. */
 	async function planHousekeeping(ctx: ExtensionContext): Promise<void> {
 		try {
-			const dirs = new Set<string>([await plansDir(gitEnv, null, getAgentDir())]);
-			for (const r of await flowRepos(ctx)) dirs.add(await plansDir(gitEnv, r.root, getAgentDir()));
+			const repos = await flowRepos(ctx);
+			const dirs = new Set<string>([await planDirFor(null)]);
+			for (const r of repos) dirs.add(await planDirFor(r.root));
 			const active = state.planDoc && !state.planDoc.finished ? state.planDoc.flowId : undefined;
 			for (const dir of dirs) {
 				const entries = readLocalStatuses(dir).map((e) => {
@@ -1018,7 +1046,6 @@ export default function workflow(pi: ExtensionAPI) {
 				});
 				for (const id of pruneIds(entries, { keepDays: cfg.plans.keepDays, keepCount: cfg.plans.keepCount, now: Date.now(), activeId: active })) deleteLocal(dir, id);
 			}
-			const repos = await flowRepos(ctx);
 			planChain = planChain.then(() => mapLimit(repos, 3, (r) => pruneRefs(r.root, active))).then(() => {}, () => {});
 			await planChain;
 			if (active && state.approvedPlan) planMilestone(ctx, undefined, false);
@@ -1728,7 +1755,8 @@ export default function workflow(pi: ExtensionAPI) {
 				onComplete: () => {
 					compacting = false;
 					guardTokens = null;
-					send(`${msg.content}\n\n${msg.customType === "workflow-commit" ? commitExcerpt() : planCardText()}`);
+					if (msg.customType === "workflow-commit") send(`${msg.content}\n\n${commitExcerpt()}`);
+					else void planCardReady().then((card) => send(`${msg.content}\n\n${card}`));
 				},
 				onError: (e) => {
 					compacting = false;
@@ -1748,7 +1776,7 @@ export default function workflow(pi: ExtensionAPI) {
 			onComplete: () => {
 				compacting = false;
 				guardTokens = null;
-				if (state.phase === "execute" && state.approvedPlan) pi.sendMessage({ customType: "workflow-plan-card", content: planCardText(), display: true }, { triggerTurn: false });
+				if (state.phase === "execute" && state.approvedPlan) void planCardReady().then((card) => state.phase === "execute" && state.approvedPlan && pi.sendMessage({ customType: "workflow-plan-card", content: card, display: true }, { triggerTurn: false }));
 			},
 			onError: (e) => {
 				compacting = false;
