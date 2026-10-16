@@ -67,6 +67,49 @@ Plan (Opus) -> approve -> execute (Sonnet) -> judge (Opus, separate `pi` process
 | D2 | A subagent timeout of 15 minutes (`config.ts:204`) leaves a hung judge running a long time. Add a progress-based timeout (no output for N minutes). | Low-Medium (T) on failure only | S | Low-Medium. A slow but healthy judge could be killed. | Check how long real judges take. |
 | D3 | Add timing and token logging per role per flow (judge, knowledge, commit, compaction, explore), written next to the plan. This gives the numbers for every "Check first" above. | High (enables the rest) | S-M | Low. | None. Do this first. |
 
+## Effect measurement
+
+Nothing here is measured yet. D3 (logging) is the prerequisite: it records, per flow and per role, wall time, input and output tokens, and number of model calls. Without it, the "how" column below has no data.
+
+Method for every item:
+1. **Baseline**: run the same 3-5 representative flows (one small, one multi-file, one multi-stage, one multi-repo if you use them) and record the metric. Save the numbers in `docs/workflow-baseline.md`.
+2. **After**: repeat on the same inputs with the change on. Compare medians, not single runs; model runs vary.
+3. **Quality guard** (for every change that alters what a model sees: B1-B6, B8, B10, A4): count judge findings per flow and whether the same known defect is still caught. A token win that loses a finding is a failure.
+4. **Keep or revert**: keep only if the target metric meets the threshold and the quality guard holds.
+
+| # | Metric | How to measure | Keep if |
+|---|--------|----------------|---------|
+| A1 | Wall time from end of execute to judge verdict | D3 timing of the judge phase, before and after | Phase time drops by about the knowledge-pass duration; findings unchanged |
+| A2 | Delivery step wall time on a multi-repo flow | D3 timing of delivery | Faster on 2+ repos; no change on 1 repo; push order unchanged |
+| A3 | Git calls and time in `collectRepoDiff` | Count `git` spawns (wrapper counter) and time per call; also diff output equal to old output | Fewer calls, identical diff text byte for byte |
+| A4 | Number of full diff builds per flow, and time spent in them | Counter and timer around `collectFlowDiff` | Fewer builds on repeat reviews; never a stale diff (test: edit a file, review must see it) |
+| A5 | Time from execute end to judge start | D3 timing | Start-up gap shrinks; no guard failure is missed |
+| A6 | Total flow wall time on plans with independent steps; merge conflicts | Compare a sequential run to a parallel run of the same plan | Wall time drops by 30% or more with zero lost edits or conflicts |
+| A7 | Explore batch wall time; rate-limit errors | Time a batch of 8 queries at concurrency 4 and 8; count errors | Faster with no rate-limit errors |
+| A8 | Stage-to-stage gap | D3 timing between stage commit and next executor start | Gap shrinks by a clear margin; otherwise drop the item |
+| A9 | Subagent boot time per role (spawn to first model call) | Timestamps in `runSubagent` | Boot time falls; role still reaches its model |
+| B1 | Judge tokens per flow and number of full reviews | D3 token log per judge call | Tokens drop on flows with large re-reviews; no defect missed that the old final review caught |
+| B2 | Total tokens of judge + knowledge + arbiter | Sum from D3 | Combined tokens drop; knowledge output as useful as before (compare by reading 3 samples) |
+| B3 | Advisor input tokens per call | D3 token log | Input drops sharply; advice still cites the right earlier decision in a sample of calls |
+| B4 | Judge read-tool calls and tokens per run | Count `read` calls in the judge's JSON stream | Fewer reads and tokens; no finding lost that needed a cap-blocked read |
+| B5 | Peak and average context tokens during execute; number of compactions | D3 log of context size per turn | Lower average context and total tokens; executor does not lose plan detail (steps still completed correctly) |
+| B6 | Compactions per flow and tokens spent on them | Count compaction calls and tokens | Fewer compaction calls; next-phase quality unchanged |
+| B7 | Plan-card size in tokens | Measure the card sent after handover | Card stays short in every case |
+| B8 | Tokens of the system prompt per turn; executor step success | Character/token count of the prompt; steps done correctly across the sample flows | Smaller prompt, same completion rate |
+| B9 | Prompt size | Character count | Smaller; identical behavior |
+| B10 | Commit step tokens and time; commit subject quality | D3 for the commit role; check subject matches plan section 9 | Near-zero commit tokens; subjects match; hook failures still reach the model path |
+| B11 | Commit tokens and failure rate | D3 and count of failed commits | Not recommended; only keep if failure rate does not rise |
+| C1 | `snapshotTree` time on the largest repo | Time the function | Time drops; snapshot tree id equals the old one |
+| C2 | Config loads per flow and time | Counter | Fewer disk reads; config edits still take effect on the next call |
+| C3 | `git show` calls per plan listing | Counter | Fewer calls; statuses identical |
+| C4 | Housekeeping time per call | Timer | Faster; status never stale after a write (test) |
+| C5, C6 | n/a | Leave as is | n/a |
+| D1 | Test coverage of the extracted modules; behavior parity | New unit tests; run all existing tests; run 2-3 real flows before and after | All tests pass; flows behave the same |
+| D2 | Time lost to hung subagents | Count timeouts and their duration in D3 | Hung runs end sooner; no healthy run is killed |
+| D3 | Presence of data | Check that every role logs time, tokens and calls for a flow | Log exists for every role in a full flow |
+
+What to report after each change: baseline median, new median, percent change, and the quality-guard result, appended to `docs/workflow-baseline.md`.
+
 ## Suggested order
 
 1. **D3** (measurement), since most ratings above are guesses without it.
