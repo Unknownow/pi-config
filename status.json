@@ -1,0 +1,16 @@
+{
+  "v": 1,
+  "flowId": "20261016-1129-wt-open-name-to-reopen-a-worktree-set-pl-3fd8",
+  "rev": 1,
+  "updated": "2026-10-16T04:29:46.993Z",
+  "title": "`/wt open NAME` to reopen a worktree set, plus a reminder when you quit a worktree session",
+  "delivery": "push",
+  "done": [],
+  "repos": [
+    {
+      "branch": "master",
+      "remote": "github-personal/Unknownow/pi-config",
+      "primary": true
+    }
+  ]
+}
