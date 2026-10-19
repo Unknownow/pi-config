@@ -1,0 +1,16 @@
+{
+  "v": 1,
+  "flowId": "20261019-1134-live-progress-widget-for-wt-commands-and-832f",
+  "rev": 1,
+  "updated": "2026-10-19T04:34:48.896Z",
+  "title": "Live progress widget for `/wt` commands and the worktree auto-update",
+  "delivery": "merge",
+  "done": [],
+  "repos": [
+    {
+      "branch": "master",
+      "remote": "github-personal/Unknownow/pi-config",
+      "primary": true
+    }
+  ]
+}
