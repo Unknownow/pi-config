@@ -2,7 +2,7 @@
 
 Reference list for `pi/agent/extensions/workflow/`. Goal: less time, fewer tokens, more parallelism.
 
-Status: A2, A3, A5, A7, B1, B7, B9, C2, C3, C4, D2, D3, D4 and D5 are implemented; A1 is rejected; the rest are ideas only. Found by reading the code on 2026-10-16. Nothing was measured, so every benefit below is an estimate. Line numbers are from commit `3fdc69a` and will drift.
+Status: A2, A3, A5, A7, B1, B7, B9, C2, C3, C4, D2, D3, D4, D5 and D6 are implemented; A1 is rejected; the rest are ideas only. Found by reading the code on 2026-10-16. Nothing was measured, so every benefit below is an estimate. Line numbers are from commit `3fdc69a` and will drift.
 
 ## Keeping this file current
 
@@ -74,6 +74,7 @@ Plan (Opus) -> approve -> execute (Sonnet) -> judge (Opus, separate `pi` process
 | D3 | Add timing and token logging per role per flow (judge, knowledge, commit, compaction, explore), written next to the plan. This gives the numbers for every "Check first" above. **Done:** `metrics.ts` writes `metrics.jsonl` next to the flow's `plan.md` (subagent, compaction and flow lines); local only. | High (enables the rest) | S-M | Low. | None. Do this first. |
 | D4 | (Line numbers at `6df1ae0`.) The executor often skips `plan_check`, so the plan card stays at "0 of N done" although the work is finished. The only instruction is one bullet in the execute prompt (`prompts.ts:79`). Nothing reminds the executor later, and the judge treats ticks as claims (`index.ts:816`). **Done:** when `judge` runs in the execute phase with steps of the current stage unticked, its result ends with `Open steps not ticked: S2, S3. Tick the finished ones with plan_check.` (`openStepsReminder` in `plan-doc.ts`, commit `6df1ae0`). It is non-blocking and never auto-ticks. | Low (progress shown matches the work) | S | Low. | None. |
 | D5 | (Line numbers at `6df1ae0`.) On a protected branch (`main`, `master`, `config.ts:178`) or a detached HEAD, `prepareDelivery` (`index.ts:2472-2497`) turns a `push` delivery into `commit`. It shows only a short UI notice. The commit instruction then has no push sentence (`delivery.ts:84`), so the commit step reports that it did not push because "the instruction covered only the commit", which looks like a bug. Idea: state the reason in the commit instruction or in the flow's final report, e.g. "push skipped: `master` is protected". **Done:** `pushSkipReason` and `pushSkipped` in `delivery.ts` and `index.ts`; the commit instruction says `Don't push: <reason>` and the report reads `push skipped: <reason>`. | Low (clearer report) | S | Low. | None. |
+| D6 | Phase prompts returned as `systemPrompt` from `before_agent_start` are dropped by `pi-claude-bridge` (its README); the planner learns it is in the plan phase only from refused tools, which costs a refused call and a recovery turn. **Done:** `phaseSection` in `prompts.ts`; `before_agent_start` sets `systemPromptOptions.sections.workflow`. | Medium (K, T) | S | Low. Same text, other route. | None. |
 
 ## Effect measurement
 
@@ -117,6 +118,7 @@ Method for every item:
 | D3 | Presence of data | Check that every role logs time, tokens and calls for a flow | Log exists for every role in a full flow |
 | D4 | Share of flows whose final `status.json` has every step ticked | Count over recent plan folders before and after `6df1ae0` | Most flows end fully ticked; no extra judge rounds |
 | D5 | n/a | Report wording only | n/a |
+| D6 | Refused tool calls per plan phase | Count `Plan phase is read-only` refusals in session logs before and after. Implemented, not measured yet. | Close to 0; plan quality unchanged |
 
 What to report after each change: baseline median, new median, percent change, and the quality-guard result, appended to `docs/workflow-baseline.md`.
 

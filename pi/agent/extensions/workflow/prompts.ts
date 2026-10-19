@@ -1,4 +1,4 @@
-/** System-prompt text for each role. Main-session phases are appended; subagents get theirs via --append-system-prompt. */
+/** System-prompt text for each role. Main-session phases go in the `workflow` prompt section; subagents get theirs via --append-system-prompt. */
 
 import type { PlanRecap, StagedPlans } from "./config.ts";
 import { toolPrefix } from "./knowledge.ts";
@@ -83,6 +83,14 @@ ${batchLine("a codemode script, ctx_batch_execute, or one bash command joined wi
 - Never change the plan's design to satisfy a [plan-flaw] finding. End your turn; the workflow resolves it.
 - Never commit, push, or open or merge a pull request yourself, even when the plan says to: delivery is the workflow's step, and a commit or push of your own is refused. When the plan reaches such a point (or a stage ends), finish the code, get the judge's pass and end your turn. The workflow delivers it as the flow's delivery says and, for a staged plan, sends you the next stage. Don't report this as a blocker.
 - End with a report: each plan step done or not done, and the tests you ran with their results.`;
+
+/** Text for the `workflow` prompt section: the bridge drops a returned systemPrompt but forwards sections. */
+export function phaseSection(phase: string, opts: { finalize: boolean; staging: StagedPlans; recap: PlanRecap; stage?: string }): string | null {
+	if (phase === "plan") return planPhase(opts.finalize, opts.staging, opts.recap);
+	if (phase === "execute") return opts.stage ? `${EXECUTE_PHASE}
+${opts.stage}` : EXECUTE_PHASE;
+	return null;
+}
 
 export const EXPLORE = `You are the explorer: a fast, read-only helper for the planner and the executor.
 Answer the question with read, grep, find and ls; decide yourself how much to read.

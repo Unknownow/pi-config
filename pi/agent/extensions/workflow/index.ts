@@ -1597,11 +1597,15 @@ export default function workflow(pi: ExtensionAPI) {
 				}
 			}
 		}
-		if (state.phase === "plan") return { systemPrompt: `${event.systemPrompt}\n\n${prompts.planPhase(cfg.finalizePlan, cfg.stagedPlans, cfg.planRecap)}` };
-		if (state.phase === "execute") {
-			const staged = currentStages();
-			return { systemPrompt: `${event.systemPrompt}\n\n${prompts.EXECUTE_PHASE}${staged ? `\n${stageLine(staged.stages, staged.current)}` : ""}` };
-		}
+		const staged = state.phase === "execute" ? currentStages() : undefined;
+		const phaseText = prompts.phaseSection(state.phase, {
+			finalize: cfg.finalizePlan,
+			staging: cfg.stagedPlans,
+			recap: cfg.planRecap,
+			stage: staged ? stageLine(staged.stages, staged.current) : undefined,
+		});
+		if (phaseText) event.systemPromptOptions.sections.workflow = phaseText;
+		else delete event.systemPromptOptions.sections.workflow;
 	});
 
 	// Plan phase is read-only: the planner settles the approach, the execute model changes things.
