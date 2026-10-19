@@ -14,6 +14,8 @@ store, so a set of checkouts costs a few MB (plus whatever you build in them).
 | `/wt remove [NAME]` | Deletes a set (without NAME, pick one from a list). Refuses if this session uses it, if there is no UI, or if any repo has uncommitted changes or commits not pushed (a squash-merged branch counts as unpushed: delete those by hand). Otherwise asks for confirmation, removes the links first (never their targets), runs `git worktree remove` without `--force`, then `git branch -d` (the branch is kept if git refuses). Deletes the worktree's `Library/` with it. |
 | `/wt done` | Runs inside a worktree session and removes the set it runs in. Same checks as `/wt remove`, plus it refuses while a Unity Editor is open in the set (a failing `unity status` only adds a warning). Asks for confirmation, moves pi out of the set, removes the working repo's worktree last (links first, never their targets, no `--force`, then `git branch -d`), shows the report, then asks "Close this pi session?". On refusal or failure the session stays open. |
 
+While a `/wt` command or the automatic update runs, a widget above the editor shows a spinner, the current stage, the git command running now with its folder, and the elapsed time. It is hidden while a dialog is open and removed when the command ends.
+
 ## Automatic update
 
 When an interactive pi session starts (or resumes) inside a set, the extension runs the same update as
@@ -106,10 +108,11 @@ a relative `--project-path`, and commands built at runtime or started from a scr
 - Pushes to `main` stay blocked by each repo's own hook.
 - `/wt open` cannot see a pi already running in the set. Plain (non-git) folders come back only through the continued session. With no earlier session in that folder, `--continue` starts a new one.
 - On Windows the folder pi was started in stays locked by its parent processes until pi exits. `/wt done` treats that as removed and starts a detached cleanup that deletes the leftover empty folders (only empty folders, never files) for up to 2 minutes. If it cannot, delete them by hand.
+- The progress spinner pauses while gitignored files are copied (a synchronous copy).
 
 ## Tests
 
 ```
-node --experimental-strip-types --test config.test.ts layout.test.ts files.test.ts git-ops.test.ts manage.test.ts unity-guard.test.ts vscode-bridge.test.ts update.test.ts
+node --experimental-strip-types --test config.test.ts layout.test.ts files.test.ts git-ops.test.ts manage.test.ts unity-guard.test.ts vscode-bridge.test.ts update.test.ts progress.test.ts
 node --test vscode/request.test.js
 ```

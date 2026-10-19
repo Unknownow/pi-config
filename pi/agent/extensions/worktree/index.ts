@@ -16,6 +16,8 @@ import { createAll, excludeLinks, preflight, rollback, type Git, type Planned } 
 import { SWEEP_SCRIPT, detectSession, finishSet, listSets, listText, openPlan, parseEditors, quitReminder, removeSet, repoDirsIn, sessionConfig, worktreePrompt, type WtSession } from "./manage.ts";
 import { guardProblem } from "./unity-guard.ts";
 import { updateSet, worthNotifying } from "./update.ts";
+import { Progress } from "./progress.ts";
+import { truncateToWidth } from "@earendil-works/pi-tui";
 import { branchOf, checkName, launchSpec, rootProblem, setRootOf, vscodeTerminalSpec } from "./layout.ts";
 
 const STATE_ENTRY = "workflow-state";
@@ -131,12 +133,14 @@ async function launch(cfg: WtConfig, name: string, cwd: string, folders: string[
 }
 
 /** Create the worktrees and their files; on any failure undo what this run created. */
-async function build(git: Git, plan: Planned[], cfg: WtConfig, name: string): Promise<string[]> {
+async function build(git: Git, plan: Planned[], cfg: WtConfig, name: string, progress: Progress): Promise<string[]> {
 	const created: Planned[] = [];
 	const lines: string[] = [];
 	try {
+		progress.stage("creating worktrees");
 		await createAll(git, plan, branchOf(cfg, name), (p) => created.push(p));
 		for (const p of plan) {
+			progress.stage(`linking/copying files: ${path.basename(p.info.top)}`);
 			const f = setupFiles(p.info.top, p.target, cfg);
 			await excludeLinks(git, p.target, f.linked);
 			lines.push(`${p.info.top} -> ${p.target}`);
@@ -152,10 +156,11 @@ async function build(git: Git, plan: Planned[], cfg: WtConfig, name: string): Pr
 	}
 }
 
-async function newSet(pi: ExtensionAPI, ctx: ExtensionCommandContext, name: string): Promise<void> {
+async function newSet(pi: ExtensionAPI, ctx: ExtensionCommandContext, name: string, progress: Progress): Promise<void> {
 	const bad = checkName(name);
 	if (bad) return ctx.ui.notify(bad, "error");
-	const git = makeGit(pi);
+	const git = progress.wrap(makeGit(pi));
+	progress.stage("checking repos (fetching)");
 	const found = await collect(git, ctx);
 	if (typeof found === "string") return ctx.ui.notify(found, "error");
 	const loaded = await sessionConfig(git, getAgentDir(), found.workingTop);
@@ -170,7 +175,7 @@ async function newSet(pi: ExtensionAPI, ctx: ExtensionCommandContext, name: stri
 
 	let lines: string[];
 	try {
-		lines = await build(git, pre.plan, cfg, name);
+		lines = await build(git, pre.plan, cfg, name, progress);
 	} catch (e) {
 		return ctx.ui.notify((e as Error).message, "error");
 	}
@@ -178,6 +183,7 @@ async function newSet(pi: ExtensionAPI, ctx: ExtensionCommandContext, name: stri
 	const rel = path.relative(found.workingTop, ctx.cwd).replace(/\\/g, "/");
 	const cwd = rel && !rel.startsWith("..") ? `${targetOf(found.workingTop)}/${rel}` : targetOf(found.workingTop);
 	const folders = found.order.map(targetOf);
+	progress.stage("opening terminal");
 	const l = await launch(cfg, name, cwd, folders);
 	const head = `Worktree set "${name}" (branch ${branchOf(cfg, name)}) in ${setRootOf(cfg, name)}`;
 	ctx.ui.notify([head, ...lines, l.error ?? l.text].join("\n"), l.error ? "warning" : "info");
@@ -207,12 +213,15 @@ async function unityEditors(pi: ExtensionAPI): Promise<string[] | null> {
 	}
 }
 
-async function listCmd(pi: ExtensionAPI, ctx: ExtensionCommandContext): Promise<void> {
+async function listCmd(pi: ExtensionAPI, ctx: ExtensionCommandContext, progress: Progress): Promise<void> {
 	const cfg = await configFor(pi, ctx);
-	ctx.ui.notify(await listText(makeGit(pi), cfg, await unityEditors(pi)), "info");
+	progress.stage("asking Unity for open editors");
+	const editors = await progress.track("unity status", ctx.cwd, unityEditors(pi));
+	progress.stage("reading repo status");
+	ctx.ui.notify(await listText(progress.wrap(makeGit(pi)), cfg, editors), "info");
 }
 
-async function pickSet(ctx: ExtensionCommandContext, cfg: WtConfig, title: string): Promise<string | null> {
+async function pickSet(ctx: ExtensionCommandContext, cfg: WtConfig, title: string, progress: Progress): Promise<string | null> {
 	const sets = listSets(cfg);
 	if (!sets.length) {
 		ctx.ui.notify(`no worktree sets in ${cfg.root}`, "error");
@@ -222,43 +231,50 @@ async function pickSet(ctx: ExtensionCommandContext, cfg: WtConfig, title: strin
 		ctx.ui.notify(`give a name; sets: ${sets.join(", ")}`, "error");
 		return null;
 	}
-	return (await ctx.ui.select(title, sets)) ?? null;
+	return (await progress.pause(() => ctx.ui.select(title, sets))) ?? null;
 }
 
-async function removeCmd(pi: ExtensionAPI, ctx: ExtensionCommandContext, name: string): Promise<void> {
+async function removeCmd(pi: ExtensionAPI, ctx: ExtensionCommandContext, name: string, progress: Progress): Promise<void> {
 	const cfg = await configFor(pi, ctx);
 	if (!name) {
-		const picked = await pickSet(ctx, cfg, "Remove which worktree set?");
+		const picked = await pickSet(ctx, cfg, "Remove which worktree set?", progress);
 		if (!picked) return;
 		name = picked;
 	}
+	const setName = name;
+	progress.stage(`checking ${setName} (fetching)`);
 	const env = {
-		git: makeGit(pi),
+		git: progress.wrap(makeGit(pi)),
 		cfg,
 		cwd: ctx.cwd,
 		added: addedFolders(ctx),
 		hasUI: ctx.hasUI,
-		confirm: (t: string, m: string) => ctx.ui.confirm(t, m),
+		confirm: async (t: string, m: string) => {
+			const ok = await progress.pause(() => ctx.ui.confirm(t, m));
+			if (ok) progress.stage(`removing ${setName}`);
+			return ok;
+		},
 	};
 	const r = await removeSet(env, name);
 	ctx.ui.notify(r.text, r.error ? "error" : "info");
 }
 
-async function openCmd(pi: ExtensionAPI, ctx: ExtensionCommandContext, name: string): Promise<void> {
+async function openCmd(pi: ExtensionAPI, ctx: ExtensionCommandContext, name: string, progress: Progress): Promise<void> {
 	const cfg = await configFor(pi, ctx);
 	if (!name) {
-		const picked = await pickSet(ctx, cfg, "Open which worktree set?");
+		const picked = await pickSet(ctx, cfg, "Open which worktree set?", progress);
 		if (!picked) return;
 		name = picked;
 	}
-	const git = makeGit(pi);
+	progress.stage("finding the set");
+	const git = progress.wrap(makeGit(pi));
 	const t = await git(ctx.cwd, ["rev-parse", "--show-toplevel"]);
 	const preferred = t.code === 0 && t.stdout.trim() ? path.basename(slash(t.stdout.trim())) : null;
 	let p = openPlan(cfg, name, preferred);
 	if ("error" in p) return ctx.ui.notify(p.error, "error");
 	if ("choose" in p) {
 		if (!ctx.hasUI) return ctx.ui.notify(`set "${name}" has several repos (${p.choose.join(", ")}); run /wt open from one of them or with a UI`, "error");
-		const picked = await ctx.ui.select(`Working repo for "${name}"`, p.choose);
+		const picked = await progress.pause(() => ctx.ui.select(`Working repo for "${name}"`, p.choose));
 		if (picked === undefined) return ctx.ui.notify("Cancelled.", "info");
 		p = openPlan(cfg, name, picked);
 		if (!("cwd" in p)) return ctx.ui.notify("error" in p ? p.error : "could not choose a repo", "error");
@@ -266,17 +282,18 @@ async function openCmd(pi: ExtensionAPI, ctx: ExtensionCommandContext, name: str
 	const fold = (s: string) => (process.platform === "win32" ? slash(s).toLowerCase() : slash(s));
 	const cur = await detectSession(git, cfg, ctx.cwd);
 	if (cur && fold(cur.setRoot) === fold(setRootOf(cfg, name))) return ctx.ui.notify(`this session already runs in worktree set "${name}"`, "error");
+	progress.stage("opening terminal");
 	const l = await launch(cfg, name, p.cwd, p.folders, ["--continue"]);
 	ctx.ui.notify([`Reopening worktree set "${name}" in ${setRootOf(cfg, name)}`, l.error ?? l.text].join("\n"), l.error ? "warning" : "info");
 }
 
 /** `/wt update [NAME]`: without NAME, the set this session runs in (or pick one). Uncommitted changes are allowed; git refuses if they would be overwritten. */
-async function updateCmd(pi: ExtensionAPI, ctx: ExtensionCommandContext, name: string): Promise<void> {
+async function updateCmd(pi: ExtensionAPI, ctx: ExtensionCommandContext, name: string, progress: Progress): Promise<void> {
 	const cfg = await configFor(pi, ctx);
-	const git = makeGit(pi);
+	const git = progress.wrap(makeGit(pi));
 	if (!name) {
 		const cur = await detectSession(git, cfg, ctx.cwd);
-		const picked = cur ? path.basename(cur.setRoot) : await pickSet(ctx, cfg, "Update which worktree set?");
+		const picked = cur ? path.basename(cur.setRoot) : await pickSet(ctx, cfg, "Update which worktree set?", progress);
 		if (!picked) return;
 		name = picked;
 	}
@@ -284,27 +301,34 @@ async function updateCmd(pi: ExtensionAPI, ctx: ExtensionCommandContext, name: s
 	if (bad) return ctx.ui.notify(bad, "error");
 	const wts = repoDirsIn(setRootOf(cfg, name));
 	if (!wts.length) return ctx.ui.notify(`no worktree set "${name}" in ${cfg.root}`, "error");
+	progress.stage(`updating ${name}`);
 	const res = await updateSet(git, wts, true);
 	const failed = res.some((r) => r.state === "failed");
 	ctx.ui.notify([`Worktree set "${name}":`, ...res.map((r) => `  ${r.text}`)].join("\n"), failed ? "warning" : "info");
 }
 
-async function doneCmd(pi: ExtensionAPI, ctx: ExtensionCommandContext): Promise<void> {
+async function doneCmd(pi: ExtensionAPI, ctx: ExtensionCommandContext, progress: Progress): Promise<void> {
 	await ctx.waitForIdle();
 	const cfg = await configFor(pi, ctx);
-	const git = makeGit(pi);
+	progress.stage("checking the set (fetching)");
+	const git = progress.wrap(makeGit(pi));
 	const env = {
 		git,
 		cfg,
 		cwd: ctx.cwd,
 		added: addedFolders(ctx),
 		hasUI: ctx.hasUI,
-		confirm: (t: string, m: string) => ctx.ui.confirm(t, m),
+		confirm: async (t: string, m: string) => {
+			const ok = await progress.pause(() => ctx.ui.confirm(t, m));
+			if (ok) progress.stage("removing the set");
+			return ok;
+		},
 		session: await detectSession(git, cfg, ctx.cwd),
-		editors: await unityEditors(pi),
+		editors: await progress.track("unity status", ctx.cwd, unityEditors(pi)),
 		leave: (to: string) => process.chdir(to),
 	};
 	const r = await finishSet(env);
+	progress.done();
 	const text = r.text;
 	const sweep = () => {
 		try {
@@ -349,17 +373,22 @@ export default function worktree(pi: ExtensionAPI) {
 		}
 		// Interactive sessions only: a headless pi (subagent, `pi -p`) in the set must not move files under its parent.
 		if (!session || !autoUpdate || !ctx.hasUI || (event.reason !== "startup" && event.reason !== "resume")) return;
+		const progress = new Progress(ctx.ui, `worktree update (${path.basename(session.setRoot)})`, truncateToWidth);
 		try {
+			progress.stage("fetching and fast-forwarding");
 			// Only the fetch gets a short timeout and no credential dialog, so an unreachable remote delays startup
 			// by seconds; the merge keeps the normal timeout so a long checkout is never killed halfway.
-			const short = makeGit(pi, 15000);
+			const short = progress.wrap(makeGit(pi, 15000));
 			const fetchGit: Git = (cwd, args) => short(cwd, ["-c", "credential.interactive=never", ...args]);
-			const res = await updateSet(makeGit(pi), repoDirsIn(session.setRoot), false, fetchGit);
+			const res = await updateSet(progress.wrap(makeGit(pi)), repoDirsIn(session.setRoot), false, fetchGit);
+			progress.done();
 			if (!worthNotifying(res)) return;
 			const text = [`Worktree update (${path.basename(session.setRoot)}):`, ...res.map((r) => `  ${r.text}`)].join("\n");
 			ctx.ui.notify(text, res.some((r) => r.state === "failed") ? "warning" : "info");
 		} catch (e) {
 			ctx.ui.notify(`Worktree update failed: ${(e as Error).message}`, "warning");
+		} finally {
+			progress.done();
 		}
 	});
 	pi.on("session_shutdown", (event, ctx) => {
@@ -391,16 +420,19 @@ export default function worktree(pi: ExtensionAPI) {
 		},
 		handler: async (args, ctx) => {
 			const [sub, ...rest] = args.trim().split(/\s+/);
+			const progress = new Progress(ctx.hasUI ? ctx.ui : null, `/wt ${args.trim()}`, truncateToWidth);
 			try {
-				if (sub === "new") return await newSet(pi, ctx, rest[0] ?? "");
-				if (sub === "open") return await openCmd(pi, ctx, rest[0] ?? "");
-				if (sub === "list") return await listCmd(pi, ctx);
-				if (sub === "update") return await updateCmd(pi, ctx, rest[0] ?? "");
-				if (sub === "remove") return await removeCmd(pi, ctx, rest[0] ?? "");
-				if (sub === "done") return await doneCmd(pi, ctx);
+				if (sub === "new") return await newSet(pi, ctx, rest[0] ?? "", progress);
+				if (sub === "open") return await openCmd(pi, ctx, rest[0] ?? "", progress);
+				if (sub === "list") return await listCmd(pi, ctx, progress);
+				if (sub === "update") return await updateCmd(pi, ctx, rest[0] ?? "", progress);
+				if (sub === "remove") return await removeCmd(pi, ctx, rest[0] ?? "", progress);
+				if (sub === "done") return await doneCmd(pi, ctx, progress);
 				ctx.ui.notify("Usage: /wt new NAME | /wt open NAME | /wt list | /wt update [NAME] | /wt remove NAME | /wt done", "info");
 			} catch (e) {
 				ctx.ui.notify(`/wt ${sub ?? ""} failed: ${(e as Error).message}`, "error");
+			} finally {
+				progress.done();
 			}
 		},
 	});
