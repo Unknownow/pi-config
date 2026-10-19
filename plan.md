@@ -120,8 +120,10 @@ Manual check (outside the executor, in a real pi session): with `CLAUDE_BRIDGE_D
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 `prompts.ts`:
-- [ ] S2 `index.ts:1581-1604`:
-- [ ] S3 `prompts.test.ts`:
-- [ ] S4 `docs/workflow-improvements.md`:
-- [ ] S5 Run the tests (section 6).
+- [x] S1 `prompts.ts`:
+- [x] S2 `index.ts:1581-1604`:
+- [x] S3 `prompts.test.ts`:
+- [x] S4 `docs/workflow-improvements.md`:
+- [x] S5 Run the tests (section 6).
+## Outcome
+2026-10-19T09:16:13.128Z — ok: committed (1 commit), pushed

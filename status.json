@@ -1,11 +1,21 @@
 {
   "v": 1,
   "flowId": "20261019-1612-send-the-phase-prompts-as-a-prompt-secti-0aa2",
-  "rev": 1,
-  "updated": "2026-10-19T09:12:19.196Z",
+  "rev": 2,
+  "updated": "2026-10-19T09:16:13.379Z",
   "title": "Send the phase prompts as a prompt section so the bridge forwards them (D6)",
-  "delivery": "push",
-  "done": [],
+  "done": [
+    "S1",
+    "S2",
+    "S3",
+    "S4",
+    "S5"
+  ],
+  "finished": {
+    "at": "2026-10-19T09:16:13.128Z",
+    "ok": true,
+    "text": "committed (1 commit), pushed"
+  },
   "repos": [
     {
       "branch": "flow/live-progress-widget-for-wt-commands-and",
