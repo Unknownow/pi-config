@@ -1,0 +1,16 @@
+{
+  "v": 1,
+  "flowId": "20261019-1458-match-repo-relative-citations-in-the-mul-9b13",
+  "rev": 1,
+  "updated": "2026-10-19T07:58:24.624Z",
+  "title": "Match repo-relative citations in the multi-repo final-review gate (B1 follow-up)",
+  "delivery": "push",
+  "done": [],
+  "repos": [
+    {
+      "branch": "flow/live-progress-widget-for-wt-commands-and",
+      "remote": "github-personal/Unknownow/pi-config",
+      "primary": true
+    }
+  ]
+}
