@@ -1,11 +1,23 @@
 {
   "v": 1,
   "flowId": "20261019-1208-a7-b1-and-d5-from-the-workflow-backlog-2807",
-  "rev": 1,
-  "updated": "2026-10-19T05:08:58.108Z",
+  "rev": 2,
+  "updated": "2026-10-19T05:14:42.758Z",
   "title": "A7, B1 and D5 from the workflow backlog",
-  "delivery": "push",
-  "done": [],
+  "done": [
+    "S1",
+    "S2",
+    "S3",
+    "S4",
+    "S5",
+    "S6",
+    "S7"
+  ],
+  "finished": {
+    "at": "2026-10-19T05:14:42.641Z",
+    "ok": true,
+    "text": "committed (1 commit), pushed"
+  },
   "repos": [
     {
       "branch": "flow/live-progress-widget-for-wt-commands-and",

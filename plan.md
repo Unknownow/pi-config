@@ -211,10 +211,12 @@ Tests go in `delivery.test.ts`.
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 In `repo-diff.ts`, add `uncitedFiles` exactly as in Design: normalize `\` to `/`, escape regex characters, match `name:`
-- [ ] S2 In `config.ts`:
-- [ ] S3 In `index.ts`:
-- [ ] S4 In `delivery.ts`:
-- [ ] S5 In `index.ts`, wire D5 as in Design:
-- [ ] S6 In the workflow `README.md`:
-- [ ] S7 In `docs/workflow-improvements.md`, follow its "Keeping this file current" rules:
+- [x] S1 In `repo-diff.ts`, add `uncitedFiles` exactly as in Design: normalize `\` to `/`, escape regex characters, match `name:`
+- [x] S2 In `config.ts`:
+- [x] S3 In `index.ts`:
+- [x] S4 In `delivery.ts`:
+- [x] S5 In `index.ts`, wire D5 as in Design:
+- [x] S6 In the workflow `README.md`:
+- [x] S7 In `docs/workflow-improvements.md`, follow its "Keeping this file current" rules:
+## Outcome
+2026-10-19T05:14:42.641Z — ok: committed (1 commit), pushed
