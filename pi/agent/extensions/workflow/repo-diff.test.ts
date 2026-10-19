@@ -5,7 +5,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { test } from "node:test";
-import { collectRepoDiff, type RepoDiff, type RunGit } from "./repo-diff.ts";
+import { collectRepoDiff, type RepoDiff, type RunGit, needsFinalFullReview, uncitedFiles } from "./repo-diff.ts";
 
 const NUL = String.fromCharCode(0);
 
@@ -144,4 +144,21 @@ test("subfolder with spaces and unicode, tracked and untracked changes", async (
 	const r = await same(sub);
 	assert.ok(r?.names.includes("n.txt"));
 	assert.ok(r?.rootNames.includes("dir ü/n.txt"));
+});
+
+test("uncitedFiles keeps files no finding cites", () => {
+	assert.deepEqual(uncitedFiles("a/b.ts:12 - major - x", ["a/b.ts", "c.ts"]), ["c.ts"]);
+	assert.deepEqual(uncitedFiles("D:\\x\\repo\\a\\b.ts:3 - minor", ["a/b.ts"]), []);
+	assert.deepEqual(uncitedFiles("only a/b.ts was changed", ["a/b.ts"]), ["a/b.ts"]);
+	assert.deepEqual(uncitedFiles("", ["a.ts"]), ["a.ts"]);
+	assert.deepEqual(uncitedFiles("x.ts:1", []), []);
+	assert.deepEqual(uncitedFiles("ab.ts:4", ["b.ts"]), []);
+});
+
+test("needsFinalFullReview follows the switch and the citations", () => {
+	assert.equal(needsFinalFullReview(false, "a.ts:1", ["a.ts"]), true);
+	assert.equal(needsFinalFullReview(true, "a.ts:1", ["a.ts"]), false);
+	assert.equal(needsFinalFullReview(true, "a.ts:1", ["a.ts", "b.ts"]), true);
+	assert.equal(needsFinalFullReview(true, "repoA/r.md:3", ["repoB/r.md"]), true);
+	assert.equal(needsFinalFullReview(true, "repoA/r.md:3", ["repoA/r.md"]), false);
 });

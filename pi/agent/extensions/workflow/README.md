@@ -66,7 +66,7 @@ after approval runs on its own:
   function (`splitCommits`): one per feature, fix, refactor, config or docs change, with its tests; the
   final plan lists them in its Commits section. In `pr`/`merge` mode on a protected branch or a detached
   HEAD the commits go on a new branch, `branchPrefix` + a slug of the plan title, and the pull request
-  targets the branch the flow started on (`base` overrides it). It never approves a pull request and never
+  targets the branch the flow started on (`base` overrides it). In `push` mode on a protected branch or a detached HEAD it only commits, and the commit instruction and the final report say why ("push skipped: master is protected"). It never approves a pull request and never
   uses `--admin` or `--auto`: a merge GitHub blocks (review required, conflict, failed check) stops and is
   reported. `/flow delivery <commit|push|pr|merge|off>` changes it for the current flow.
   `mergeMethod` (`merge`), `deleteBranch` (`true`), `ask` (`true`) and `default` (`commit`) are configurable.
@@ -91,7 +91,8 @@ after approval runs on its own:
   falls back to a full review after a commit, rebase or branch switch, or when the changes since are
   over `judge.recheckMaxShare` (half) of the whole diff. A change over
   `judge.finalFullReviewOverChars` (80,000 characters) that passes a re-review gets one final full
-  review; the judge tool's `full: true` forces one. `"judge": { "recheck": false }` turns it off.
+  review only when the changes since the last round touched a file its findings did not cite
+  (`judge.finalFullReviewNewFilesOnly: false` runs it every time); the judge tool's `full: true` forces one. `"judge": { "recheck": false }` turns it off.
 - **Knowledge on re-reviews:** when the last round's knowledge check passed, a re-review runs `get_rule_pack` only for the files changed since that round and carries over the other files' deviation notes. Otherwise it checks the whole change. Full reviews always check everything.
 - **Judge read budget:** the judge prompts ask for about 15 read/grep/find/ls calls on a full review and about 8 on a re-review (knowledge calls excluded). A soft aim, not a limit.
 - **Commit calls:** the commit instruction asks the model to chain dependent steps with `&&` to keep the call count low.

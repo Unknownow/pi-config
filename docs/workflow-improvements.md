@@ -2,7 +2,7 @@
 
 Reference list for `pi/agent/extensions/workflow/`. Goal: less time, fewer tokens, more parallelism.
 
-Status: A2, A3, A5, B7, B9, C2, C3, C4, D2, D3 and D4 are implemented; A1 is rejected; the rest are ideas only. Found by reading the code on 2026-10-16. Nothing was measured, so every benefit below is an estimate. Line numbers are from commit `3fdc69a` and will drift.
+Status: A2, A3, A5, A7, B1, B7, B9, C2, C3, C4, D2, D3, D4 and D5 are implemented; A1 is rejected; the rest are ideas only. Found by reading the code on 2026-10-16. Nothing was measured, so every benefit below is an estimate. Line numbers are from commit `3fdc69a` and will drift.
 
 ## Keeping this file current
 
@@ -22,7 +22,7 @@ Status: A2, A3, A5, B7, B9, C2, C3, C4, D2, D3 and D4 are implemented; A1 is rej
 
 ## Pipeline recap (for context)
 
-Plan (Opus) -> approve -> execute (Sonnet) -> judge (Opus, separate `pi` process) -> commit (Sonnet low, subagent) -> next stage. Judge, knowledge pass, arbiter, commit, explore and advisor each run as a fresh `pi` child process (`subagent.ts:144-176`). Only `explore` runs in parallel (`index.ts:1418`, concurrency 4, max 8 queries).
+Plan (Opus) -> approve -> execute (Sonnet) -> judge (Opus, separate `pi` process) -> commit (Sonnet low, subagent) -> next stage. Judge, knowledge pass, arbiter, commit, explore and advisor each run as a fresh `pi` child process (`subagent.ts:144-176`). Only `explore` runs in parallel (`index.ts:1418`, concurrency 8, max 8 queries).
 
 ## A. Time and parallelism
 
@@ -34,7 +34,7 @@ Plan (Opus) -> approve -> execute (Sonnet) -> judge (Opus, separate `pi` process
 | A4 | The flow diff is rebuilt on every `reviewDiff` entry (`index.ts:2161`), in the `judge` tool (`index.ts:1537`) and in the pending plan-flaw path (`index.ts:1973`). The "same as last time" check only runs after the full diff is built and hashed (`index.ts:811-815`). Cache the result keyed by (HEAD, tree id) from `snapshotRepos`, which is cheaper than a full diff. | Medium (T) | M | Medium. A stale cache would make the judge review old code. The key must include every repo's HEAD, tree id and base. | Check how often the same state is reviewed twice. |
 | A5 | Start the judge while cheap guard checks (branch, HEAD moved) run, instead of before them. **Done**, as "run the independent git calls before the judge in parallel" (`snapshotRepos`, `reviewPlan`); no guard checks exist to overlap. | Low (T) | S | Low. | Not verified that these checks are on the critical path. |
 | A6 | Run independent plan steps in separate executor subagents at the same time. | High (T), only for plans with independent steps | L | High. Needs file-overlap detection, a merge story and per-step judging. Concurrent edits to the same file lose work. | Count how often steps are independent. Probably start with stages, not steps. |
-| A7 | Explore: 8 queries at concurrency 4 run as two waves (`config.ts:184`). Raise concurrency to 8. | Low (T) | S | Low for correctness. Costs more simultaneous processes and may hit API rate limits. | Measure child-process boot time first (see A9). |
+| A7 | Explore: 8 queries at concurrency 4 run as two waves (`config.ts:184`). Raise concurrency to 8. **Done:** `explore.concurrency` is 8 in `config.ts` and `pi/agent/workflow.json`. | Low (T) | S | Low for correctness. Costs more simultaneous processes and may hit API rate limits. | Measure child-process boot time first (see A9). |
 | A8 | Prefetch the next stage's repo reads while the current stage's commit runs. | Low (T) | M | Medium. State may change after the commit. | Not worth it unless stages are long. |
 | A9 | Each subagent is a full `pi` process that loads `pi-claude-bridge` (`config.ts:203`, `subagent.ts:140-210`) and writes its system prompts to temp files every run (`subagent.ts:145-161`). Measure boot time; skip unneeded extensions for read-only roles, and cache the static prompt files. | Medium (T) if boot is more than 1-2 s | M | Medium. A role without the bridge may lose its model access if the bridge provides the model. | Measure process boot time per role. |
 
@@ -42,7 +42,7 @@ Plan (Opus) -> approve -> execute (Sonnet) -> judge (Opus, separate `pi` process
 
 | # | Finding | Benefit | Effort | Risk | Check first |
 |---|---------|---------|--------|------|-------------|
-| B1 | A PASS on a re-review over 80k characters triggers a second full review (`index.ts:822-827`, `config.ts:189-193`). Skip it, or run it only when the delta touched files the earlier findings were not about. | High (K, T) | S | Medium. Removes a safety net that catches drift across rounds. Keep it behind a config switch and compare a few flows. | Count how often the final full review finds something the delta review did not. |
+| B1 | A PASS on a re-review over 80k characters triggers a second full review (`index.ts:822-827`, `config.ts:189-193`). Skip it, or run it only when the delta touched files the earlier findings were not about. **Done:** `uncitedFiles` in `repo-diff.ts`, gated by `judge.finalFullReviewNewFilesOnly` (default true; false restores the old behaviour) in `index.ts`. | High (K, T) | S | Medium. Removes a safety net that catches drift across rounds. Keep it behind a config switch and compare a few flows. | Count how often the final full review finds something the delta review did not. |
 | B2 | The plan (up to 60k chars, `index.ts:185`) and the full diff are re-sent to the judge, the knowledge pass (`index.ts:1270`) and the arbiter (`index.ts:2346`). Merge the knowledge pass into the judge prompt as an extra output section. Give the arbiter only the flagged findings and the files they cite. | High (K) | M | Medium. A combined prompt can lower the quality of each part. The arbiter sees less context. | Compare knowledge-pass output quality when merged. |
 | B3 | The advisor receives the whole branch transcript, up to 1.5M characters, on every call (`index.ts:718-732`, `1484-1510`, `config.ts:185`). Cap at a few hundred thousand, or send the plan card plus the last N turns and the error context. | High (K) | S | Medium. The advisor may miss an earlier decision. Keep the cap configurable. | Check the sizes of real advisor transcripts. |
 | B4 | The judge has the `read` tool with no limit (`index.ts:1322-1330`). Cap the number or total size of reads per run. | Medium (K) | S | Medium. A cap can stop the judge from checking a callee outside the diff. | Count how many reads judges do per run. |
@@ -73,7 +73,7 @@ Plan (Opus) -> approve -> execute (Sonnet) -> judge (Opus, separate `pi` process
 | D2 | A subagent timeout of 15 minutes (`config.ts:204`) leaves a hung judge running a long time. Add a progress-based timeout (no output for N minutes). **Done:** `subagent.idleTimeoutMs` (default 5 min, 0 = off, paused while a tool runs); error `stalled: no output for Ns`. | Low-Medium (T) on failure only | S | Low-Medium. A slow but healthy judge could be killed. | Check how long real judges take. |
 | D3 | Add timing and token logging per role per flow (judge, knowledge, commit, compaction, explore), written next to the plan. This gives the numbers for every "Check first" above. **Done:** `metrics.ts` writes `metrics.jsonl` next to the flow's `plan.md` (subagent, compaction and flow lines); local only. | High (enables the rest) | S-M | Low. | None. Do this first. |
 | D4 | (Line numbers at `6df1ae0`.) The executor often skips `plan_check`, so the plan card stays at "0 of N done" although the work is finished. The only instruction is one bullet in the execute prompt (`prompts.ts:79`). Nothing reminds the executor later, and the judge treats ticks as claims (`index.ts:816`). **Done:** when `judge` runs in the execute phase with steps of the current stage unticked, its result ends with `Open steps not ticked: S2, S3. Tick the finished ones with plan_check.` (`openStepsReminder` in `plan-doc.ts`, commit `6df1ae0`). It is non-blocking and never auto-ticks. | Low (progress shown matches the work) | S | Low. | None. |
-| D5 | (Line numbers at `6df1ae0`.) On a protected branch (`main`, `master`, `config.ts:178`) or a detached HEAD, `prepareDelivery` (`index.ts:2472-2497`) turns a `push` delivery into `commit`. It shows only a short UI notice. The commit instruction then has no push sentence (`delivery.ts:84`), so the commit step reports that it did not push because "the instruction covered only the commit", which looks like a bug. Idea: state the reason in the commit instruction or in the flow's final report, e.g. "push skipped: `master` is protected". | Low (clearer report) | S | Low. | None. |
+| D5 | (Line numbers at `6df1ae0`.) On a protected branch (`main`, `master`, `config.ts:178`) or a detached HEAD, `prepareDelivery` (`index.ts:2472-2497`) turns a `push` delivery into `commit`. It shows only a short UI notice. The commit instruction then has no push sentence (`delivery.ts:84`), so the commit step reports that it did not push because "the instruction covered only the commit", which looks like a bug. Idea: state the reason in the commit instruction or in the flow's final report, e.g. "push skipped: `master` is protected". **Done:** `pushSkipReason` and `pushSkipped` in `delivery.ts` and `index.ts`; the commit instruction says `Don't push: <reason>` and the report reads `push skipped: <reason>`. | Low (clearer report) | S | Low. | None. |
 
 ## Effect measurement
 
@@ -93,10 +93,10 @@ Method for every item:
 | A4 | Number of full diff builds per flow, and time spent in them | Counter and timer around `collectFlowDiff` | Fewer builds on repeat reviews; never a stale diff (test: edit a file, review must see it) |
 | A5 | Time from execute end to judge start | D3 timing | Start-up gap shrinks; no guard failure is missed |
 | A6 | Total flow wall time on plans with independent steps; merge conflicts | Compare a sequential run to a parallel run of the same plan | Wall time drops by 30% or more with zero lost edits or conflicts |
-| A7 | Explore batch wall time; rate-limit errors | Time a batch of 8 queries at concurrency 4 and 8; count errors | Faster with no rate-limit errors |
+| A7 | Explore batch wall time; rate-limit errors | Time a batch of 8 queries at concurrency 4 and 8; count errors | Faster with no rate-limit errors. Implemented, not measured yet. |
 | A8 | Stage-to-stage gap | D3 timing between stage commit and next executor start | Gap shrinks by a clear margin; otherwise drop the item |
 | A9 | Subagent boot time per role (spawn to first model call) | Timestamps in `runSubagent` | Boot time falls; role still reaches its model |
-| B1 | Judge tokens per flow and number of full reviews | D3 token log per judge call | Tokens drop on flows with large re-reviews; no defect missed that the old final review caught |
+| B1 | Judge tokens per flow and number of full reviews | D3 token log per judge call | Tokens drop on flows with large re-reviews; no defect missed that the old final review caught. Implemented, not measured yet. |
 | B2 | Total tokens of judge + knowledge + arbiter | Sum from D3 | Combined tokens drop; knowledge output as useful as before (compare by reading 3 samples) |
 | B3 | Advisor input tokens per call | D3 token log | Input drops sharply; advice still cites the right earlier decision in a sample of calls |
 | B4 | Judge read-tool calls and tokens per run | Count `read` calls in the judge's JSON stream | Fewer reads and tokens; no finding lost that needed a cap-blocked read |

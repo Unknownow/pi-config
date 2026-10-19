@@ -140,6 +140,8 @@ export interface WorkflowConfig {
 		recheckMaxShare: number;
 		/** A re-review that passes a whole diff over this many characters gets one final full review. 0 disables. */
 		finalFullReviewOverChars: number;
+		/** The final full review runs only when the changes since the last round touched a file its findings did not cite. */
+		finalFullReviewNewFilesOnly: boolean;
 	};
 	knowledge: KnowledgeConfig;
 	subagent: {
@@ -186,7 +188,7 @@ export const DEFAULTS: WorkflowConfig = {
 	planReadOnlyBash: true,
 	planBashAllow: ["^unity (cmd )?(editor_status|console_status)\\b"],
 	tokenWeights: { input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1.25 },
-	explore: { maxQueries: 8, concurrency: 4, tools: ["read", "grep", "find", "ls"] },
+	explore: { maxQueries: 8, concurrency: 8, tools: ["read", "grep", "find", "ls"] },
 	advisor: { tools: ["read", "grep", "find", "ls"], maxTranscriptChars: 1_500_000 },
 	arbiter: { tools: ["read", "grep", "find", "ls"] },
 	judge: {
@@ -196,6 +198,7 @@ export const DEFAULTS: WorkflowConfig = {
 		recheckThinking: "medium",
 		recheckMaxShare: 0.5,
 		finalFullReviewOverChars: 80_000,
+		finalFullReviewNewFilesOnly: true,
 	},
 	knowledge: {
 		server: "knowledge",

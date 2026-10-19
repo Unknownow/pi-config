@@ -12,6 +12,20 @@ export interface RepoDiff {
 
 export type RunGit = (cwd: string, ...args: string[]) => Promise<{ code: number; stdout: string }>;
 
+/** The entries of `changed` that no finding cites as `path:line` (paths compared with `/`); all of them when in doubt. */
+export function uncitedFiles(findings: string, changed: string[]): string[] {
+	const text = findings.replace(/\\/g, "/");
+	return changed.filter((name) => {
+		const esc = name.replace(/\\/g, "/").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+		return !new RegExp(`${esc}:\\d`).test(text);
+	});
+}
+
+/** Whether a passing re-review gets the final full review: always when `newFilesOnly` is off, else only if a changed file is uncited. */
+export function needsFinalFullReview(newFilesOnly: boolean, findings: string, changed: string[]): boolean {
+	return !newFilesOnly || uncitedFiles(findings, changed).length > 0;
+}
+
 /** Tracked changes against `base` plus untracked files of one repo (untruncated), or null outside a git work tree. */
 export async function collectRepoDiff(git: RunGit, cwd: string, base = "HEAD"): Promise<RepoDiff | null> {
 	const inside = await git(cwd, "rev-parse", "--is-inside-work-tree", "--show-prefix");

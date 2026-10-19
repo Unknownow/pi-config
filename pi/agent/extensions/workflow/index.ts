@@ -52,10 +52,10 @@ import {
 import { handoverAction, afterPass, noChangeStage, arbiterFirst, fixableFindings, canApprove, hasPlanFlaw, planFlawLines, planFlawOnPass, hasPlanLine, isPlanReady, judgeCapReached, minorFixOpen, selfCommitted, parseArbiter, phaseAfterFlow, shouldResume, skipJudge } from "./agent-end.ts";
 import { countTokens, type Tok } from "./tokens.ts";
 import * as prompts from "./prompts.ts";
-import { branchName, combineOutcomes, type Delivery, type DeliveryOptions, DELIVERIES, DELIVERY_LABELS, deliveryChoices, deliveryInstruction, deliveryMenuLabel, deliveryOutcome, freshPr, isDelivery, planTitle, type PrState, repoDeliveryInstruction } from "./delivery.ts";
+import { branchName, combineOutcomes, type Delivery, type DeliveryOptions, DELIVERIES, DELIVERY_LABELS, deliveryChoices, deliveryInstruction, deliveryMenuLabel, deliveryOutcome, freshPr, isDelivery, planTitle, pushSkipReason, type PrState, repoDeliveryInstruction } from "./delivery.ts";
 import { modelChoices, pathCompletions } from "./pickers.ts";
 import { ghCandidates, withPathDir } from "./gh-path.ts";
-import { collectRepoDiff as collectRepoDiffImpl, type RepoDiff } from "./repo-diff.ts";
+import { collectRepoDiff as collectRepoDiffImpl, needsFinalFullReview, type RepoDiff } from "./repo-diff.ts";
 import { combineRepoTexts, parseAddDir, repoKey, uniqueRoots } from "./repos.ts";
 import { shellProblem } from "./push-guard.ts";
 import { COMMIT_GUARD_ENV, type CommitGuardSpec } from "./commit-guard.ts";
@@ -119,7 +119,7 @@ interface FlowState {
 	flow?: FlowUsage;
 	flowStarted?: number;
 	/** Set when the commit step's instruction goes out; the run after it ends the flow. `branch`: the branch the commits go on. `prBefore`: a closed or merged PR gh already showed for the branch before the step ran; it is not this flow's. */
-	commitPending?: { mode: Exclude<Delivery, "off">; head: string; branch?: string; prBefore?: number; repos?: { root: string; mode: Exclude<Delivery, "off">; head: string; branch?: string; prBefore?: number }[] };
+	commitPending?: { mode: Exclude<Delivery, "off">; head: string; branch?: string; prBefore?: number; pushSkipped?: string; repos?: { root: string; mode: Exclude<Delivery, "off">; head: string; branch?: string; prBefore?: number; pushSkipped?: string }[] };
 	/** What happens after the judge passes in this flow, chosen at approval; unset means `delivery.default`. */
 	delivery?: Delivery;
 	/** Plan flaws go straight to the arbiter in this flow, chosen at approval; unset means `cfg.planFlaw`. */
@@ -727,7 +727,7 @@ export default function workflow(pi: ExtensionAPI) {
 
 	type ReviewPlan =
 		| { kind: "full"; snaps: Snaps | null }
-		| { kind: "recheck"; snaps: Snaps; prev: LastJudge; delta: string; changed: string[] }
+		| { kind: "recheck"; snaps: Snaps; prev: LastJudge; delta: string; changed: string[]; cites: string[] }
 		| { kind: "same"; prev: LastJudge };
 
 	/** Each repo's working tree and HEAD, or null when a tree cannot be built. */
@@ -772,13 +772,15 @@ export default function workflow(pi: ExtensionAPI) {
 		if (!delta.trim() || delta.length > diff.chars * cfg.judge.recheckMaxShare) return fullPlan;
 		const changed: string[] = [];
 		for (const p of per) for (const n of p.names) if (!changed.includes(n)) changed.push(n);
-		return { kind: "recheck", snaps, prev, delta, changed };
+		// Multi-repo findings cite `repo/path`, so the same relative path in two repos stays apart.
+		const cites = per.flatMap((p) => p.names.map((n) => (diff.multi ? `${path.basename(p.root)}/${n}` : n)));
+		return { kind: "recheck", snaps, prev, delta, changed, cites };
 	}
 
 	/**
 	 * Reviews `diff`. The first round sees the whole diff; later rounds see only the changes since the
 	 * last round plus its findings (cheaper, fresh each time). A large change that passes on a
-	 * re-review gets one final full review. `full` forces a full review.
+	 * re-review gets one final full review when the changes since touched a file the last findings did not cite. `full` forces a full review.
 	 */
 	async function judge(ctx: ExtensionContext, diff: Diff, focus: string | undefined, signal?: AbortSignal, onChange?: (run: RunView) => void, full = false, disputes?: string): Promise<JudgeResult & { run: RunView }> {
 		// Disputes need a fresh look at the code, so they never get the "no changes" shortcut (a recheck still applies).
@@ -792,7 +794,7 @@ export default function workflow(pi: ExtensionAPI) {
 		}
 		let r = await judgeOnce(ctx, diff, focus, plan, signal, onChange, disputes);
 		const limit = cfg.judge.finalFullReviewOverChars;
-		if (r.verdict === "PASS" && plan.kind === "recheck" && limit > 0 && diff.chars > limit) {
+		if (r.verdict === "PASS" && plan.kind === "recheck" && limit > 0 && diff.chars > limit && needsFinalFullReview(cfg.judge.finalFullReviewNewFilesOnly, plan.prev.text, plan.cites)) {
 			const final = await judgeOnce(ctx, diff, focus, { kind: "full", snaps: plan.snaps }, signal, onChange, disputes);
 			r = { ...final, usage: addUsage(addUsage(emptyUsage(), r.usage), final.usage) };
 		}
@@ -2080,16 +2082,16 @@ export default function workflow(pi: ExtensionAPI) {
 
 	/** The commit step ended. "advanced": a staged plan moved on to its next stage; "ended": the flow is over. */
 	async function summarizeCommit(ctx: ExtensionContext): Promise<"advanced" | "ended"> {
-		const { mode, head, branch, prBefore, repos } = state.commitPending!;
+		const { mode, head, branch, prBefore, pushSkipped, repos } = state.commitPending!;
 		state.commitPending = undefined;
 		state.minorRounds = 0;
 		state.minorSentFor = undefined;
 		let outcome: { text: string; ok: boolean };
 		if (repos?.length) {
-			const parts = await Promise.all(repos.map(async (r) => ({ name: path.basename(r.root), outcome: await repoOutcome(r.root, r.mode, r.head, r.branch, r.prBefore) })));
+			const parts = await Promise.all(repos.map(async (r) => ({ name: path.basename(r.root), outcome: await repoOutcome(r.root, r.mode, r.head, r.branch, r.prBefore, r.pushSkipped) })));
 			outcome = combineOutcomes(parts);
 		} else {
-			outcome = (await repoOutcome(ctx.cwd, mode, head, branch, prBefore)) ?? { text: "commit step ended without a commit", ok: false };
+			outcome = (await repoOutcome(ctx.cwd, mode, head, branch, prBefore, pushSkipped)) ?? { text: "commit step ended without a commit", ok: false };
 		}
 		const staged = currentStages();
 		if (staged) {
@@ -2121,7 +2123,7 @@ export default function workflow(pi: ExtensionAPI) {
 	}
 
 	/** What one repo's commit step achieved, or null when it made no commit (and merged nothing). */
-	async function repoOutcome(dir: string, mode: Exclude<Delivery, "off">, head: string, branch: string | undefined, prBefore: number | undefined): Promise<{ text: string; ok: boolean } | null> {
+	async function repoOutcome(dir: string, mode: Exclude<Delivery, "off">, head: string, branch: string | undefined, prBefore: number | undefined, pushSkipped: string | undefined): Promise<{ text: string; ok: boolean } | null> {
 		// The commits' branch; HEAD when detached, unknown (state saved by an older version) or gone (deleted after the merge).
 		const named = !!branch && branch !== "HEAD" && (await git(dir, "rev-parse", "--verify", "--quiet", `refs/heads/${branch}`)).code === 0;
 		const rev = named ? (branch as string) : "HEAD";
@@ -2135,7 +2137,7 @@ export default function workflow(pi: ExtensionAPI) {
 		const commits = counted?.code === 0 ? Number(counted.stdout.trim()) : undefined;
 		const ahead = mode === "commit" ? undefined : await git(dir, "rev-list", "--count", `${named ? branch : ""}@{u}..${rev}`);
 		const pushed = ahead?.code === 0 && ahead.stdout.trim() === "0";
-		return deliveryOutcome(mode, commits, pushed, pr, !ghOk);
+		return deliveryOutcome(mode, commits, pushed, pr, !ghOk, pushSkipped);
 	}
 
 	let ghReady: Promise<boolean> = Promise.resolve(true);
@@ -2476,8 +2478,10 @@ export default function workflow(pi: ExtensionAPI) {
 		const unsafe = !current || current === "HEAD" || cfg.protectedBranches.includes(current);
 		let branch = current;
 		let from: string | undefined;
+		let pushSkipped: string | undefined;
 		if (unsafe && mode === "push") {
 			mode = "commit";
+			pushSkipped = pushSkipReason(current);
 			ctx.ui.notify(`workflow${tag}: on ${current || "a detached HEAD"}, committing without pushing`, "warning");
 		} else if (unsafe && (mode === "pr" || mode === "merge")) {
 			// A pull request never comes from a protected branch; the commits go on a new one.
@@ -2494,7 +2498,7 @@ export default function workflow(pi: ExtensionAPI) {
 			if (old && old.state !== "OPEN") prBefore = old.number;
 		}
 		const head = (await git(dir, "rev-parse", "HEAD")).stdout.trim();
-		return { mode, branch, from, base, prBefore, head };
+		return { mode, branch, from, base, prBefore, head, pushSkipped };
 	}
 
 	/** Sends the commit step's instruction (commit, push, pull request, merge, as this flow's delivery says), prefixed with `report`. False if nothing was sent. */
@@ -2525,11 +2529,12 @@ export default function workflow(pi: ExtensionAPI) {
 			mergeMethod: cfg.delivery.mergeMethod,
 			deleteBranch: cfg.delivery.deleteBranch,
 			deviations,
+			pushSkipped: p.pushSkipped,
 		});
 		let instruction: string;
 		if (!diff.multi) {
 			const p = await prepareDelivery(ctx, ctx.cwd, chosen, seed, "");
-			state.commitPending = { mode: p.mode, head: p.head, branch: p.branch, prBefore: p.prBefore };
+			state.commitPending = { mode: p.mode, head: p.head, branch: p.branch, prBefore: p.prBefore, pushSkipped: p.pushSkipped };
 			instruction = deliveryInstruction(options(p));
 		} else {
 			// Per-repo preparation only reads (git rev-parse, gh pr view), so the repos run at once; the order of `changed` is kept.
@@ -2540,7 +2545,8 @@ export default function workflow(pi: ExtensionAPI) {
 				head: first.head,
 				branch: first.branch,
 				prBefore: first.prBefore,
-				repos: prepared.map(({ root, p }) => ({ root, mode: p.mode, head: p.head, branch: p.branch, prBefore: p.prBefore })),
+				pushSkipped: first.pushSkipped,
+				repos: prepared.map(({ root, p }) => ({ root, mode: p.mode, head: p.head, branch: p.branch, prBefore: p.prBefore, pushSkipped: p.pushSkipped })),
 			};
 			instruction = repoDeliveryInstruction(prepared.map(({ root, p }) => ({ root, options: options(p) })));
 		}
@@ -2589,7 +2595,7 @@ ${instruction}` : instruction);
 		ctx.ui.notify("workflow: the executor committed the change itself; continuing with delivery", "info");
 
 		const multi = !(refs.length === 1 && refs[0].dir === ctx.cwd);
-		const moved: { root: string; mode: Exclude<Delivery, "off">; head: string; branch: string; prBefore?: number }[] = [];
+		const moved: { root: string; mode: Exclude<Delivery, "off">; head: string; branch: string; prBefore?: number; pushSkipped?: string }[] = [];
 		for (const ref of refs) {
 			const key = repoKey(ref.root);
 			const before = judged.repos[key];
@@ -2598,20 +2604,22 @@ ${instruction}` : instruction);
 			const unsafe = !branch || branch === "HEAD" || cfg.protectedBranches.includes(branch);
 			let mode = chosen;
 			let prBefore: number | undefined;
+			let pushSkipped: string | undefined;
 			if (unsafe) {
 				mode = "commit";
+				if (chosen !== "commit") pushSkipped = pushSkipReason(branch);
 				if (chosen !== "commit") ctx.ui.notify(`workflow${multi ? ` [${ref.root}]` : ""}: the executor committed on ${branch && branch !== "HEAD" ? branch : "a detached HEAD"} itself; push and open the pull request by hand`, "warning");
 			} else if (mode === "pr" || mode === "merge") {
 				const old = await prState(ref.dir, branch);
 				if (old && old.state !== "OPEN") prBefore = old.number;
 			}
-			moved.push({ root: ref.root, mode, head: before.head, branch, prBefore });
+			moved.push({ root: ref.root, mode, head: before.head, branch, prBefore, pushSkipped });
 		}
 		if (moved.length === 0) return false;
 		const first = moved[0];
 		state.commitPending = multi
-			? { mode: first.mode, head: first.head, branch: first.branch, prBefore: first.prBefore, repos: moved.map((m) => ({ root: m.root, mode: m.mode, head: m.head, branch: m.branch, prBefore: m.prBefore })) }
-			: { mode: first.mode, head: first.head, branch: first.branch, prBefore: first.prBefore };
+			? { mode: first.mode, head: first.head, branch: first.branch, prBefore: first.prBefore, pushSkipped: first.pushSkipped, repos: moved.map((m) => ({ root: m.root, mode: m.mode, head: m.head, branch: m.branch, prBefore: m.prBefore, pushSkipped: m.pushSkipped })) }
+			: { mode: first.mode, head: first.head, branch: first.branch, prBefore: first.prBefore, pushSkipped: first.pushSkipped };
 		if (moved.every((m) => m.mode === "commit")) {
 			markPassSummarized(hash);
 			persist();
@@ -2627,6 +2635,7 @@ ${instruction}` : instruction);
 			deleteBranch: cfg.delivery.deleteBranch,
 			deviations: "",
 			committed: true,
+			pushSkipped: m.pushSkipped,
 		});
 		const instruction = multi ? repoDeliveryInstruction(moved.map((m) => ({ root: m.root, options: options(m) }))) : deliveryInstruction(options(first));
 		await sendCommitStep(ctx, hash, `**Judge: PASS**

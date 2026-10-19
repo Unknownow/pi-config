@@ -1,7 +1,7 @@
 // node --test delivery.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { branchName, combineOutcomes, repoDeliveryInstruction, deliveryChoices, freshPr, deliveryInstruction, deliveryMenuLabel, deliveryOutcome, isDelivery, planTitle, type DeliveryOptions } from "./delivery.ts";
+import { branchName, combineOutcomes, repoDeliveryInstruction, deliveryChoices, freshPr, deliveryInstruction, deliveryMenuLabel, deliveryOutcome, isDelivery, planTitle, pushSkipReason, type DeliveryOptions } from "./delivery.ts";
 import { finalize, planPhase, SHOW_PLAN } from "./prompts.ts";
 
 const d = new Date(2026, 9, 14, 9, 5);
@@ -197,4 +197,22 @@ test("committed delivery pushes without committing again", () => {
 	assert.doesNotMatch(t, /End the commit message body/);
 	assert.doesNotMatch(deliveryInstruction({ ...base, mode: "commit", committed: true }), /Then push/);
 	assert.match(repoDeliveryInstruction([{ root: "r", options: { ...base, mode: "push", committed: true } }]), /already committed/);
+});
+
+test("pushSkipReason", () => {
+	assert.equal(pushSkipReason(""), "HEAD is detached");
+	assert.equal(pushSkipReason("HEAD"), "HEAD is detached");
+	assert.equal(pushSkipReason("master"), "master is protected");
+});
+
+test("commit mode names a skipped push", () => {
+	const t = deliveryInstruction({ ...base, pushSkipped: "master is protected" });
+	assert.ok(t.includes("Don't push: master is protected, so this flow only commits. Say so in your report."));
+	assert.ok(!t.includes("git push"));
+	assert.ok(!deliveryInstruction(base).includes("Don't push"));
+});
+
+test("outcome names a skipped push", () => {
+	assert.deepEqual(deliveryOutcome("commit", 1, false, null, false, "master is protected"), { text: "committed (1 commit), push skipped: master is protected", ok: true });
+	assert.deepEqual(deliveryOutcome("push", 1, true, null, false, "x"), { text: "committed (1 commit), pushed", ok: true });
 });

@@ -90,7 +90,7 @@
   },
   "explore": {
     "maxQueries": 8,
-    "concurrency": 4,
+    "concurrency": 8,
     "tools": [
       "read",
       "grep",

@@ -56,6 +56,8 @@ export interface DeliveryOptions {
 	deviations: string;
 	/** The change is already committed on `branch` (by the executor): only push, PR and merge remain. */
 	committed?: boolean;
+	/** Why a push delivery only commits (protected branch, detached HEAD), plain text; unset otherwise. */
+	pushSkipped?: string;
 }
 
 const SPLIT =
@@ -68,6 +70,11 @@ const CHAIN_REMOTE =
 	"Run the push and any pull request commands that follow it in one bash call where the next step doesn't depend on reading their output.";
 const RULES =
 	"Never force-push, use --no-verify, or use `--admin` or `--auto` when merging. If a hook, the commit, the push or a gh command fails, stop and report it instead of working around it.";
+
+/** Why a push delivery on `branch` only commits. */
+export function pushSkipReason(branch: string): string {
+	return branch === "" || branch === "HEAD" ? "HEAD is detached" : `${branch} is protected`;
+}
 
 /** The instruction the commit step gets after the judge passes. */
 export function deliveryInstruction(o: DeliveryOptions): string {
@@ -84,6 +91,7 @@ export function deliveryInstruction(o: DeliveryOptions): string {
 				: `Then push branch \`${b}\` (\`git push\`, or \`git push -u origin ${b}\` if it has no upstream).`,
 		);
 	}
+	if (o.mode === "commit" && o.pushSkipped) parts.push(`Don't push: ${o.pushSkipped}, so this flow only commits. Say so in your report.`);
 	if (o.mode === "pr" || o.mode === "merge") {
 		parts.push(
 			`Then the pull request: run \`gh pr view ${b} --json number,state,url\`. If it shows an OPEN pull request, the push already updated it: don't open another. Otherwise (none, or only a MERGED or CLOSED one) open one with \`gh pr create --head ${b}${o.base ? ` --base ${o.base}` : ""} --title "<title>" --body "<body>"\`: the title says what the change does, the body gives the plan's goal and lists the commit subjects. Report the pull request's URL.`,
@@ -116,9 +124,9 @@ export function freshPr(pr: PrState | null, prBefore: number | undefined): PrSta
 }
 
 /** The flow summary's outcome after the commit step, and whether it did what the delivery asked. `commits` undefined: not counted. */
-export function deliveryOutcome(mode: Exclude<Delivery, "off">, commits: number | undefined, pushed: boolean, pr: PrState | null, prUnknown = false): { text: string; ok: boolean } {
+export function deliveryOutcome(mode: Exclude<Delivery, "off">, commits: number | undefined, pushed: boolean, pr: PrState | null, prUnknown = false, pushSkipped?: string): { text: string; ok: boolean } {
 	const n = commits === undefined ? "" : ` (${commits} commit${commits === 1 ? "" : "s"})`;
-	if (mode === "commit") return { text: `committed${n}`, ok: true };
+	if (mode === "commit") return { text: `committed${n}${pushSkipped ? `, push skipped: ${pushSkipped}` : ""}`, ok: true };
 	if ((mode === "pr" || mode === "merge") && pr?.state === "MERGED") return { text: `committed${n}, PR #${pr.number} merged`, ok: true };
 	const text = `committed${n}, ${pushed ? "pushed" : "not pushed"}`;
 	if (mode === "push") return { text, ok: pushed };
