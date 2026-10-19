@@ -1,14 +1,31 @@
 {
   "v": 1,
   "flowId": "20261019-1134-live-progress-widget-for-wt-commands-and-832f",
-  "rev": 1,
-  "updated": "2026-10-19T04:34:48.896Z",
+  "rev": 2,
+  "updated": "2026-10-19T04:39:35.653Z",
   "title": "Live progress widget for `/wt` commands and the worktree auto-update",
-  "delivery": "merge",
-  "done": [],
+  "done": [
+    "S1",
+    "S2",
+    "S3",
+    "S4",
+    "S5",
+    "S6",
+    "S7",
+    "S8",
+    "S9",
+    "S10",
+    "S11",
+    "S12"
+  ],
+  "finished": {
+    "at": "2026-10-19T04:39:35.553Z",
+    "ok": false,
+    "text": "committed (1 commit), pushed, no open pull request"
+  },
   "repos": [
     {
-      "branch": "master",
+      "branch": "flow/live-progress-widget-for-wt-commands-and",
       "remote": "github-personal/Unknownow/pi-config",
       "primary": true
     }

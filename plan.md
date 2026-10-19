@@ -259,15 +259,17 @@ Expected: all tests pass, `fail 0`.
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 Create `progress.ts` exactly per the Design interfaces:
-- [ ] S2 In `index.ts`, add the imports:
-- [ ] S3 In the `handler` (`index.ts:392`):
-- [ ] S4 `pickSet` (`:215`): add a `progress: Progress` parameter and run `ctx.ui.select` via `progress.pause(() => ctx.ui.select
-- [ ] S5 `newSet` (`:155`):
-- [ ] S6 `openCmd` (`:247`):
-- [ ] S7 `listCmd` (`:210`):
-- [ ] S8 `updateCmd` (`:274`):
-- [ ] S9 `removeCmd` (`:228`):
-- [ ] S10 `doneCmd` (`:292`):
-- [ ] S11 `session_start` auto-update (around `index.ts:352-363`):
-- [ ] S12 `README.md`:
+- [x] S1 Create `progress.ts` exactly per the Design interfaces:
+- [x] S2 In `index.ts`, add the imports:
+- [x] S3 In the `handler` (`index.ts:392`):
+- [x] S4 `pickSet` (`:215`): add a `progress: Progress` parameter and run `ctx.ui.select` via `progress.pause(() => ctx.ui.select
+- [x] S5 `newSet` (`:155`):
+- [x] S6 `openCmd` (`:247`):
+- [x] S7 `listCmd` (`:210`):
+- [x] S8 `updateCmd` (`:274`):
+- [x] S9 `removeCmd` (`:228`):
+- [x] S10 `doneCmd` (`:292`):
+- [x] S11 `session_start` auto-update (around `index.ts:352-363`):
+- [x] S12 `README.md`:
+## Outcome
+2026-10-19T04:39:35.553Z — failed: committed (1 commit), pushed, no open pull request
