@@ -55,7 +55,7 @@ import * as prompts from "./prompts.ts";
 import { branchName, combineOutcomes, type Delivery, type DeliveryOptions, DELIVERIES, DELIVERY_LABELS, deliveryChoices, deliveryInstruction, deliveryMenuLabel, deliveryOutcome, freshPr, isDelivery, planTitle, pushSkipReason, type PrState, repoDeliveryInstruction } from "./delivery.ts";
 import { modelChoices, pathCompletions } from "./pickers.ts";
 import { ghCandidates, withPathDir } from "./gh-path.ts";
-import { collectRepoDiff as collectRepoDiffImpl, needsFinalFullReview, type RepoDiff } from "./repo-diff.ts";
+import { citeNames, collectRepoDiff as collectRepoDiffImpl, needsFinalFullReview, type RepoDiff } from "./repo-diff.ts";
 import { combineRepoTexts, parseAddDir, repoKey, uniqueRoots } from "./repos.ts";
 import { shellProblem } from "./push-guard.ts";
 import { COMMIT_GUARD_ENV, type CommitGuardSpec } from "./commit-guard.ts";
@@ -772,9 +772,7 @@ export default function workflow(pi: ExtensionAPI) {
 		if (!delta.trim() || delta.length > diff.chars * cfg.judge.recheckMaxShare) return fullPlan;
 		const changed: string[] = [];
 		for (const p of per) for (const n of p.names) if (!changed.includes(n)) changed.push(n);
-		// Multi-repo findings cite `repo/path`, so the same relative path in two repos stays apart.
-		const cites = per.flatMap((p) => p.names.map((n) => (diff.multi ? `${path.basename(p.root)}/${n}` : n)));
-		return { kind: "recheck", snaps, prev, delta, changed, cites };
+		return { kind: "recheck", snaps, prev, delta, changed, cites: citeNames(per, diff.multi) };
 	}
 
 	/**

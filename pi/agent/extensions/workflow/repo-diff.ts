@@ -21,6 +21,18 @@ export function uncitedFiles(findings: string, changed: string[]): string[] {
 	});
 }
 
+/**
+ * The names `uncitedFiles` looks for, one per changed file. Findings cite paths relative to their repo, so a path
+ * changed in one repo stays bare (it matches `rel:` and `repo/rel:`); a path changed in several repos gets its repo
+ * folder in front, so a finding about one repo doesn't count for the other.
+ */
+export function citeNames(parts: { root: string; names: string[] }[], multi: boolean): string[] {
+	if (!multi) return parts.flatMap((p) => p.names);
+	const count = new Map<string, number>();
+	for (const p of parts) for (const n of p.names) count.set(n, (count.get(n) ?? 0) + 1);
+	return parts.flatMap((p) => p.names.map((n) => (count.get(n)! > 1 ? `${path.basename(p.root)}/${n}` : n)));
+}
+
 /** Whether a passing re-review gets the final full review: always when `newFilesOnly` is off, else only if a changed file is uncited. */
 export function needsFinalFullReview(newFilesOnly: boolean, findings: string, changed: string[]): boolean {
 	return !newFilesOnly || uncitedFiles(findings, changed).length > 0;

@@ -5,7 +5,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { test } from "node:test";
-import { collectRepoDiff, type RepoDiff, type RunGit, needsFinalFullReview, uncitedFiles } from "./repo-diff.ts";
+import { citeNames, collectRepoDiff, type RepoDiff, type RunGit, needsFinalFullReview, uncitedFiles } from "./repo-diff.ts";
 
 const NUL = String.fromCharCode(0);
 
@@ -161,4 +161,17 @@ test("needsFinalFullReview follows the switch and the citations", () => {
 	assert.equal(needsFinalFullReview(true, "a.ts:1", ["a.ts", "b.ts"]), true);
 	assert.equal(needsFinalFullReview(true, "repoA/r.md:3", ["repoB/r.md"]), true);
 	assert.equal(needsFinalFullReview(true, "repoA/r.md:3", ["repoA/r.md"]), false);
+});
+
+test("citeNames keeps a path bare unless several repos changed it", () => {
+	const parts = [
+		{ root: "/w/repoA", names: ["src/a.ts", "README.md"] },
+		{ root: "/w/repoB", names: ["README.md"] },
+	];
+	assert.deepEqual(citeNames(parts, false), ["src/a.ts", "README.md", "README.md"]);
+	const names = citeNames(parts, true);
+	assert.deepEqual(names, ["src/a.ts", "repoA/README.md", "repoB/README.md"]);
+	assert.deepEqual(uncitedFiles("src/a.ts:3 - minor - x", names), ["repoA/README.md", "repoB/README.md"]);
+	assert.deepEqual(uncitedFiles("repoA/README.md:3 - minor - x", names), ["src/a.ts", "repoB/README.md"]);
+	assert.deepEqual(citeNames([], true), []);
 });
