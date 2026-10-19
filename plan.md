@@ -96,8 +96,10 @@
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 In `repo-diff.ts`, add `citeNames` above `needsFinalFullReview` (`:25`), as in Design. Model the style on `uncitedFiles`
-- [ ] S2 In `index.ts`:
-- [ ] S3 In `repo-diff.test.ts`:
-- [ ] S4 In `docs/workflow-improvements.md:45`, append one sentence to the B1 Done: note: `In multi-repo flows \`citeNames\` keep
-- [ ] S5 Run the tests (section 6).
+- [x] S1 In `repo-diff.ts`, add `citeNames` above `needsFinalFullReview` (`:25`), as in Design. Model the style on `uncitedFiles`
+- [x] S2 In `index.ts`:
+- [x] S3 In `repo-diff.test.ts`:
+- [x] S4 In `docs/workflow-improvements.md:45`, append one sentence to the B1 Done: note: `In multi-repo flows \`citeNames\` keep
+- [x] S5 Run the tests (section 6).
+## Outcome
+2026-10-19T07:59:57.589Z — ok: committed (1 commit), pushed
