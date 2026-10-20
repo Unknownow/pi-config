@@ -63,12 +63,13 @@ export function parseEditors(stdout: string): string[] | null {
 	}
 }
 
-export async function listText(git: Git, cfg: WtConfig, editors: string[] | null): Promise<string> {
+/** `usage` adds a note about who uses a set to its heading line. */
+export async function listText(git: Git, cfg: WtConfig, editors: string[] | null, usage?: (name: string) => string): Promise<string> {
 	const sets = listSets(cfg);
 	if (!sets.length) return `No worktree sets in ${cfg.root}`;
 	const out: string[] = [];
 	for (const name of sets) {
-		out.push(`${name}:`);
+		out.push(usage ? `${name}: (${usage(name)})` : `${name}:`);
 		for (const wt of reposOf(cfg, name)) {
 			const st = await repoStatus(git, wt, await baseRefOf(git, wt));
 			const sync = st.upstream ? `ahead ${st.ahead}, behind ${st.behind}` : `not pushed: ${st.unpushed} commits`;
