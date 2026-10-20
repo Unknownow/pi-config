@@ -12,10 +12,10 @@ import { getAgentDir, type ExtensionAPI, type ExtensionCommandContext } from "@e
 import { loadConfig, type WtConfig } from "./config.ts";
 import { setupFiles } from "./files.ts";
 import { sendToVscode } from "./vscode-bridge.ts";
-import { createAll, excludeLinks, preflight, rollback, type Git, type Planned } from "./git-ops.ts";
+import { createAll, excludeLinks, preflight, rollback, type Gh, type Git, type Planned } from "./git-ops.ts";
 import { SWEEP_SCRIPT, detectSession, finishSet, listSets, listText, openPlan, parseEditors, quitReminder, removeSet, repoDirsIn, sessionConfig, worktreePrompt, type WtSession } from "./manage.ts";
 import { guardProblem } from "./unity-guard.ts";
-import { updateSet, worthNotifying } from "./update.ts";
+import { reattach, updateSet, worthNotifying } from "./update.ts";
 import { Progress } from "./progress.ts";
 import { truncateToWidth } from "@earendil-works/pi-tui";
 import { branchOf, checkName, launchSpec, rootProblem, setRootOf, vscodeTerminalSpec } from "./layout.ts";
@@ -24,6 +24,17 @@ const STATE_ENTRY = "workflow-state";
 const SUBCOMMANDS = ["new", "open", "list", "update", "remove", "done"];
 
 const slash = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "");
+
+function makeGh(pi: ExtensionAPI): Gh {
+	return async (cwd, args) => {
+		try {
+			const r = await pi.exec("gh", args, { cwd, timeout: 20000 });
+			return { code: r.code, stdout: r.stdout, stderr: r.stderr };
+		} catch (e) {
+			return { code: 1, stdout: "", stderr: (e as Error).message };
+		}
+	};
+}
 
 function makeGit(pi: ExtensionAPI, timeout = 60000): Git {
 	return async (cwd, args) => {
@@ -302,7 +313,7 @@ async function updateCmd(pi: ExtensionAPI, ctx: ExtensionCommandContext, name: s
 	const wts = repoDirsIn(setRootOf(cfg, name));
 	if (!wts.length) return ctx.ui.notify(`no worktree set "${name}" in ${cfg.root}`, "error");
 	progress.stage(`updating ${name}`);
-	const res = await updateSet(git, wts, true);
+	const res = await updateSet(git, wts, { allowDirty: true, rebase: true, branch: branchOf(cfg, name), gh: makeGh(pi) });
 	const failed = res.some((r) => r.state === "failed");
 	ctx.ui.notify([`Worktree set "${name}":`, ...res.map((r) => `  ${r.text}`)].join("\n"), failed ? "warning" : "info");
 }
@@ -358,6 +369,8 @@ export default function worktree(pi: ExtensionAPI) {
 	let session: WtSession | null = null;
 	let guardOn = true;
 	let autoUpdate = true;
+	let rebaseUnpushed = true;
+	let setBranch = "";
 	pi.on("session_start", async (event, ctx) => {
 		try {
 			const git = makeGit(pi);
@@ -367,6 +380,8 @@ export default function worktree(pi: ExtensionAPI) {
 			guardOn = cfg.unityGuard;
 			session = await detectSession(git, cfg, ctx.cwd);
 			autoUpdate = cfg.autoUpdate;
+			rebaseUnpushed = cfg.rebaseUnpushed;
+			setBranch = session ? branchOf(cfg, path.basename(session.setRoot)) : "";
 		} catch {
 			cachedParent = path.dirname(slash(ctx.cwd));
 			session = null;
@@ -380,7 +395,7 @@ export default function worktree(pi: ExtensionAPI) {
 			// by seconds; the merge keeps the normal timeout so a long checkout is never killed halfway.
 			const short = progress.wrap(makeGit(pi, 15000));
 			const fetchGit: Git = (cwd, args) => short(cwd, ["-c", "credential.interactive=never", ...args]);
-			const res = await updateSet(progress.wrap(makeGit(pi)), repoDirsIn(session.setRoot), false, fetchGit);
+			const res = await updateSet(progress.wrap(makeGit(pi)), repoDirsIn(session.setRoot), { allowDirty: false, rebase: rebaseUnpushed, branch: setBranch, gh: makeGh(pi) }, fetchGit);
 			progress.done();
 			if (!worthNotifying(res)) return;
 			const text = [`Worktree update (${path.basename(session.setRoot)}):`, ...res.map((r) => `  ${r.text}`)].join("\n");
@@ -398,7 +413,22 @@ export default function worktree(pi: ExtensionAPI) {
 			process.stderr.write(quitReminder(slash(session.setRoot)));
 		} catch {}
 	});
-	pi.on("before_agent_start", async (event) => {
+	pi.on("before_agent_start", async (event, ctx) => {
+		if (session && setBranch) {
+			// A merge with --delete-branch leaves the repos on a detached HEAD: put the set's branch back.
+			try {
+				const git = makeGit(pi);
+				const done: string[] = [];
+				for (const wt of repoDirsIn(session.setRoot)) {
+					const r = await reattach(git, wt, setBranch);
+					if (r?.state === "reattached") done.push(`  ${r.text}`);
+				}
+				if (done.length) {
+					session = (await detectSession(git, (await sessionConfig(git, getAgentDir(), ctx.cwd)).cfg, ctx.cwd)) ?? session;
+					ctx.ui.notify(["Worktree:", ...done].join("\n"), "info");
+				}
+			} catch {}
+		}
 		if (session) event.systemPromptOptions.sections.worktree = worktreePrompt(session);
 	});
 	pi.on("tool_call", async (event, ctx) => {
