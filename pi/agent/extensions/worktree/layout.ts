@@ -11,6 +11,16 @@ export function checkName(name: string): string | null {
 	return null;
 }
 
+/** The smallest `w<N>` (1..999) with no set folder and no taken branch. */
+export async function nextFreeName(existing: string[], branchTaken: (name: string) => boolean | Promise<boolean>): Promise<string> {
+	const have = new Set(existing.map((n) => n.toLowerCase()));
+	for (let n = 1; n <= 999; n++) {
+		const name = `w${n}`;
+		if (!have.has(name) && !(await branchTaken(name))) return name;
+	}
+	return `w${Date.now()}`;
+}
+
 export function rootProblem(root: string): string | null {
 	if (!/^([a-zA-Z]:)?\//.test(root.replace(/\\/g, "/"))) return `root "${root}" must be an absolute path`;
 	if (/[\s;]/.test(root)) return `root "${root}" must not contain spaces or ";"`;

@@ -21,13 +21,14 @@ import { createAll, excludeLinks, mainRepoOf, preflight, rollback, withLockRetry
 import { SWEEP_SCRIPT, classifySet, detectSession, listSets, listText, openPlan, parseEditors, quitReminder, removeWithConfirm, repoDirsIn, reposOf, sessionConfig, worktreePrompt, type WorkspaceEnv, type WtSession } from "./manage.ts";
 import { cleanFlow, deleteRemotes, discoverMains, fetchAll, planClean, remoteCandidates } from "./clean.ts";
 import { guardProblem } from "./unity-guard.ts";
+import { renameSet } from "./rename.ts";
 import { reattach, updateSet, worthNotifying } from "./update.ts";
 import { execRunner } from "./exec.ts";
 import { Progress } from "./progress.ts";
 import { truncateToWidth } from "@earendil-works/pi-tui";
-import { branchOf, checkName, launchSpec, rootProblem, setRootOf, vscodeTerminalSpec } from "./layout.ts";
+import { branchOf, checkName, launchSpec, nextFreeName, rootProblem, setRootOf, vscodeTerminalSpec } from "./layout.ts";
 
-const SUBCOMMANDS = ["new", "open", "use", "list", "update", "remove", "clean", "done", "unlink"];
+const SUBCOMMANDS = ["new", "open", "use", "list", "update", "remove", "rename", "clean", "done", "unlink"];
 
 const slash = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "");
 const fold = (p: string) => (process.platform === "win32" ? slash(p).toLowerCase() : slash(p));
@@ -206,14 +207,20 @@ interface Created {
 	setRoot: string;
 }
 
+/** The next free `w<N>`: no set folder and no such branch in any of the repos. */
+async function suggestName(git: Git, cfg: WtConfig, repos: string[]): Promise<string> {
+	return nextFreeName(listSets(cfg), async (n) => {
+		for (const r of repos) if ((await git(r, ["rev-parse", "--verify", "--quiet", `refs/heads/${branchOf(cfg, n)}`])).code === 0) return true;
+		return false;
+	});
+}
+
 /** Create a set for the working repo and the added folders (no terminal, no session). Reports problems itself and returns null. */
 async function createSet(pi: ExtensionAPI, ctx: ExtensionCommandContext, name: string, progress: Progress): Promise<Created | null> {
 	const fail = (m: string) => {
 		ctx.ui.notify(m, "error");
 		return null;
 	};
-	const bad = checkName(name);
-	if (bad) return fail(bad);
 	const git = progress.wrap(makeGit(pi));
 	progress.stage("checking repos (fetching)");
 	const found = await collect(git, ctx);
@@ -223,6 +230,19 @@ async function createSet(pi: ExtensionAPI, ctx: ExtensionCommandContext, name: s
 	if (loaded.warning) ctx.ui.notify(loaded.warning, "warning");
 	const rootBad = rootProblem(cfg.root);
 	if (rootBad) return fail(rootBad);
+	if (!name) {
+		const suggested = await suggestName(git, cfg, found.repos);
+		if (ctx.hasUI) {
+			const typed = await progress.pause(() => ctx.ui.input(`Name for the new workspace (Enter = ${suggested})`, suggested));
+			if (typed === undefined) {
+				ctx.ui.notify("Cancelled.", "info");
+				return null;
+			}
+			name = typed.trim() || suggested;
+		} else name = suggested;
+	}
+	const bad = checkName(name);
+	if (bad) return fail(bad);
 
 	const pre = await preflight(git, found.repos, cfg, name);
 	for (const w of pre.warnings) ctx.ui.notify(w, "warning");
@@ -251,11 +271,50 @@ async function createSet(pi: ExtensionAPI, ctx: ExtensionCommandContext, name: s
 async function newSet(pi: ExtensionAPI, ctx: ExtensionCommandContext, name: string, progress: Progress): Promise<void> {
 	const c = await createSet(pi, ctx, name, progress);
 	if (!c) return;
+	name = c.name;
 	progress.stage("opening terminal");
 	const git = makeGit(pi);
 	const l = await launch(c.cfg, name, await launchCwdOf(git, c.cfg, c.workingTop), c.cwd, c.folders, freshSessionFile(c.cwd));
 	const head = `Worktree set "${name}" (branch ${branchOf(c.cfg, name)}) in ${c.setRoot}`;
 	ctx.ui.notify([head, ...c.lines, l.error ?? l.text].join("\n"), l.error ? "warning" : "info");
+}
+
+/** `/wt rename [OLD] [NEW]`: rename an unused, unpushed workspace. */
+async function renameCmd(pi: ExtensionAPI, ctx: ExtensionCommandContext, oldName: string, newName: string, progress: Progress, own: WtSession | null): Promise<void> {
+	const cfg = await configFor(pi, ctx);
+	const git = progress.wrap(makeGit(pi));
+	if (!oldName) {
+		const picked = await pickSet(ctx, cfg, "Rename which workspace?", progress);
+		if (!picked) return;
+		oldName = picked;
+	}
+	if (!newName) {
+		const repos = reposOf(cfg, oldName);
+		const suggested = await suggestName(git, cfg, repos);
+		if (!ctx.hasUI) return ctx.ui.notify(`give a new name: /wt rename ${oldName} ${suggested}`, "error");
+		const typed = await progress.pause(() => ctx.ui.input(`New name for ${oldName} (Enter = ${suggested})`, suggested));
+		if (typed === undefined) return ctx.ui.notify("Cancelled.", "info");
+		newName = typed.trim() || suggested;
+	}
+	const mine = own ? fold(own.setRoot) : null;
+	const live = sessionsInUse();
+	progress.stage("asking Unity for open editors");
+	const editors = await progress.track("unity status", ctx.cwd, unityEditors(pi));
+	const r = await renameSet(
+		{
+			git,
+			cfg,
+			inUse: (root) => {
+				if (mine && fold(root) === mine) return "this session's workspace";
+				const h = setInUse(live, root, process.pid);
+				if (h) return `in use by pi ${h.pid}`;
+				return editors?.some((e) => fold(e) === fold(root) || fold(e).startsWith(`${fold(root)}/`)) ? "open in a Unity Editor" : null;
+			},
+		},
+		oldName,
+		newName,
+	);
+	ctx.ui.notify(r.text, r.error ? "error" : "info");
 }
 
 /** The config as /wt new sees it: the default root sits next to the working repo. */
@@ -573,13 +632,11 @@ async function useCmd(pi: ExtensionAPI, ctx: ExtensionCommandContext, name: stri
 	let setRepos: string[] = [];
 	let repoTop: string;
 	if (target.kind === "new") {
-		const nm = (await progress.pause(() => ctx.ui.input("Name of the new workspace", "w1")))?.trim();
-		if (!nm) return;
-		const c = await createSet(pi, ctx, nm, progress);
+		const c = await createSet(pi, ctx, "", progress);
 		if (!c) return;
 		targetCwd = c.cwd;
-		label = nm;
-		setRepos = reposOf(c.cfg, nm);
+		label = c.name;
+		setRepos = reposOf(c.cfg, c.name);
 		repoTop = c.workingTarget;
 	} else if (target.kind === "original") {
 		const home = await homeOf(git, ctx);
@@ -843,9 +900,9 @@ export default function worktree(pi: ExtensionAPI) {
 		if (shared) return { block: true, reason: shared };
 	});
 	pi.registerCommand("wt", {
-		description: "Parallel pi sessions on git worktrees: new NAME, open NAME, use [NAME], list, update [NAME], remove NAME, clean, done, unlink PATH",
+		description: "Parallel pi sessions on git worktrees: new [NAME], open NAME, use [NAME], list, update [NAME], remove NAME, rename [OLD] [NEW], clean, done, unlink PATH",
 		getArgumentCompletions: async (prefix) => {
-			const m = /^(remove|open|update|use)\s+(\S*)$/i.exec(prefix.trimStart());
+			const m = /^(remove|open|update|use|rename)\s+(\S*)$/i.exec(prefix.trimStart());
 			if (m) {
 				const sets = listSets(completionConfig()).filter((n) => n.startsWith(m[2]));
 				return sets.length ? sets.map((n) => ({ value: `${m[1].toLowerCase()} ${n}`, label: n })) : null;
@@ -868,9 +925,10 @@ export default function worktree(pi: ExtensionAPI) {
 				if (sub === "list") return await listCmd(pi, ctx, progress);
 				if (sub === "update") return await updateCmd(pi, ctx, rest[0] ?? "", progress);
 				if (sub === "remove") return await removeCmd(pi, ctx, rest[0] ?? "", progress);
+				if (sub === "rename") return await renameCmd(pi, ctx, rest[0] ?? "", rest[1] ?? "", progress, session);
 				if (sub === "clean") return await cleanCmd(pi, ctx, progress);
 				if (sub === "done") return await doneCmd(pi, ctx, progress);
-				ctx.ui.notify("Usage: /wt new NAME | /wt open NAME | /wt use [NAME] | /wt list | /wt update [NAME] | /wt remove NAME | /wt clean | /wt done | /wt unlink PATH", "info");
+				ctx.ui.notify("Usage: /wt new [NAME] | /wt open NAME | /wt use [NAME] | /wt list | /wt update [NAME] | /wt remove NAME | /wt rename [OLD] [NEW] | /wt clean | /wt done | /wt unlink PATH", "info");
 			} catch (e) {
 				ctx.ui.notify(`/wt ${sub ?? ""} failed: ${(e as Error).message}`, "error");
 			} finally {

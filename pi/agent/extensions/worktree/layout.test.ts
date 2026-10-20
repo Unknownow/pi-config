@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { defaults } from "./config.ts";
-import { addDirValue, branchOf, checkName, launchSpec, rootProblem, targetOf, vscodeTerminalSpec } from "./layout.ts";
+import { addDirValue, branchOf, checkName, launchSpec, nextFreeName, rootProblem, targetOf, vscodeTerminalSpec } from "./layout.ts";
 
 const cfg = { ...defaults("D:/projects") };
 
@@ -109,4 +109,10 @@ test("sessionFile becomes --session before the other pi arguments", () => {
 	}
 	assert.deepEqual(vscodeTerminalSpec(o).shellArgs.slice(3, 5), ["--session", "C:/s/a.jsonl"]);
 	assert.match((launchSpec({ ...o, platform: "linux" }) as { print: string }).print, /pi --session C:\/s\/a\.jsonl --add-dir/);
+});
+
+test("nextFreeName picks the smallest w<N> without a folder or branch", async () => {
+	assert.equal(await nextFreeName([], () => false), "w1");
+	assert.equal(await nextFreeName(["w1", "W2", "x"], () => false), "w3");
+	assert.equal(await nextFreeName(["w1"], async (n) => n === "w2"), "w3");
 });
