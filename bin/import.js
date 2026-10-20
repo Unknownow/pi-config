@@ -59,6 +59,7 @@ function main() {
         continue;
       }
       warnings.push(...lib.resolvePlaceholders(item.rel, json, overrides, note));
+      lib.keepMachineKeys(item.rel, json, fs.existsSync(dest) ? lib.readJson(dest) : null);
       next = Buffer.from(JSON.stringify(json, null, 2) + '\n');
     } else {
       next = fs.readFileSync(src);

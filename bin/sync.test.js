@@ -92,6 +92,21 @@ test('import records what it copied, so the next export does not keep it as a ha
   assert.doesNotMatch(out, /keep/);
 });
 
+test('lastChangelogVersion stays on the machine: not exported, not overwritten by import', () => {
+  const env = setup();
+  const settings = path.join(env.agent, 'settings.json');
+  write(settings, JSON.stringify({ lastChangelogVersion: '1.3.0', theme: 'dark' }));
+  run(env, 'export.js');
+  assert.equal(JSON.parse(read(path.join(env.mirror, 'settings.json'))).lastChangelogVersion, undefined);
+
+  // A mirror written before this rule still holds an older version.
+  write(path.join(env.mirror, 'settings.json'), JSON.stringify({ lastChangelogVersion: '1.2.0', theme: 'dark' }));
+  assert.match(run(env, 'import.js', '--dry-run'), /0 file\(s\) would change/);
+  write(settings, JSON.stringify({ lastChangelogVersion: '1.3.0', theme: 'light' }));
+  run(env, 'import.js');
+  assert.deepEqual(JSON.parse(read(settings)), { lastChangelogVersion: '1.3.0', theme: 'dark' });
+});
+
 test('dry run writes neither mirror nor state', () => {
   const env = setup();
   write(path.join(env.agent, 'extensions', 'demo', 'index.ts'), 'v1\n');

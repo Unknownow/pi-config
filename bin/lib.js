@@ -135,7 +135,16 @@ function insideRepo(p) {
  */
 const PATH_ARRAYS = ['extensions', 'skills', 'prompts', 'themes'];
 
+/**
+ * Settings Pi writes about this install rather than about your setup. They stay
+ * out of the repo, and import keeps the machine's own value: syncing
+ * `lastChangelogVersion` from a machine on another Pi version made every start
+ * import, warn "restart Pi to apply" and skip the export that would end it.
+ */
+const MACHINE_KEYS = ['lastChangelogVersion'];
+
 function scrubSettings(json, notes) {
+  for (const key of MACHINE_KEYS) delete json[key];
   for (const key of PATH_ARRAYS) {
     if (!Array.isArray(json[key])) continue;
     json[key] = json[key].map((entry) => {
@@ -171,6 +180,15 @@ function registerSyncExtension(json, log) {
   if (list.some((e) => typeof e === 'string' && samePath(e, ext))) return;
   json.extensions = [...list, ext];
   log(`extensions[] += ${ext}`);
+}
+
+/** Repo -> machine: keep this machine's MACHINE_KEYS from `current`, its settings before the import. */
+function keepMachineKeys(rel, json, current) {
+  if (path.basename(rel) !== 'settings.json') return;
+  for (const key of MACHINE_KEYS) {
+    delete json[key];
+    if (current && current[key] !== undefined) json[key] = current[key];
+  }
 }
 
 /** Find the Claude Code executable on this machine. */
@@ -302,10 +320,17 @@ function readJson(file) {
   }
 }
 
+/** Same value with object keys sorted, so key order never counts as a change. */
+function sortKeys(value) {
+  if (Array.isArray(value)) return value.map(sortKeys);
+  if (value === null || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.keys(value).sort().map((k) => [k, sortKeys(value[k])]));
+}
+
 /** Compare by meaning: Pi rewrites these files with its own formatting. */
 function sameJson(a, b) {
   try {
-    return JSON.stringify(JSON.parse(a)) === JSON.stringify(JSON.parse(b));
+    return JSON.stringify(sortKeys(JSON.parse(a))) === JSON.stringify(sortKeys(JSON.parse(b)));
   } catch (_) {
     return false;
   }
@@ -383,6 +408,6 @@ module.exports = {
   readState, writeState, editedInRepo, recordable, sha, key,
   MIRROR_DIRS, DENY_FILES, DENY_DIRS, isSecretName, secretsIn,
   CLAUDE_PLACEHOLDER, REPO_PLACEHOLDER,
-  inventory, walk, scrub, resolvePlaceholders, detectClaude,
+  inventory, walk, scrub, resolvePlaceholders, keepMachineKeys, detectClaude,
   readJson, sameJson, samePath, insideRepo, isJunk,
 };
