@@ -5,7 +5,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { test } from "node:test";
 import { defaults } from "./config.ts";
-import { createAll, deliveredState, excludeLinks, preflight, removeChecks, repoInfo, repoStatus, rollback, type Gh, type Git, type Planned } from "./git-ops.ts";
+import { createAll, deliveredState, excludeLinks, preflight, removeChecks, repoInfo, repoStatus, rollback, withLockRetry, type Gh, type Git, type Planned } from "./git-ops.ts";
 
 interface Call {
 	cwd: string;
@@ -211,4 +211,20 @@ test("deliveredState: uncommitted changes are never delivered", async () => {
 	const r = await deliveredState(git, ghWith("[]"), "/w/r", "origin/main", "wt/s1");
 	assert.deepEqual([r.delivered, r.dirty], [null, 1]);
 	assert.ok(!calls.some((c) => c.args[0] === "merge-base"));
+});
+
+test("withLockRetry retries a lock failure twice with waits of 1 s and 3 s", async () => {
+	const waits: number[] = [];
+	let calls = 0;
+	const git = withLockRetry(async () => (++calls < 3 ? { code: 128, stdout: "", stderr: "fatal: Unable to create 'D:/r/.git/index.lock': File exists." } : { code: 0, stdout: "ok", stderr: "" }), async (ms) => void waits.push(ms));
+	assert.equal((await git("d", ["add"])).stdout, "ok");
+	assert.deepEqual(waits, [1000, 3000]);
+	const w2: number[] = [];
+	const never = withLockRetry(async () => ({ code: 1, stdout: "", stderr: "cannot lock ref 'x'" }), async (ms) => void w2.push(ms));
+	assert.equal((await never("d", [])).code, 1);
+	assert.deepEqual(w2, [1000, 3000]);
+	const w3: number[] = [];
+	const other = withLockRetry(async () => ({ code: 1, stdout: "", stderr: "fatal: not a repo" }), async (ms) => void w3.push(ms));
+	await other("d", []);
+	assert.deepEqual(w3, []);
 });

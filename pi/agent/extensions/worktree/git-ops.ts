@@ -15,6 +15,21 @@ export type Git = (cwd: string, args: string[]) => Promise<GitResult>;
 /** Runs the gh CLI in a folder; same shape as `Git`. */
 export type Gh = (cwd: string, args: string[]) => Promise<GitResult>;
 
+const LOCK_RE = /cannot lock ref|Unable to create '.*\.lock'|index\.lock/;
+
+/** A `Git` that retries a call refused for a git lock held by another process: after 1 s, then after 3 s, then returns the last result. */
+export function withLockRetry(git: Git, sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms))): Git {
+	return async (cwd, args) => {
+		let r = await git(cwd, args);
+		for (const wait of [1000, 3000]) {
+			if (r.code === 0 || !LOCK_RE.test(r.stderr)) break;
+			await sleep(wait);
+			r = await git(cwd, args);
+		}
+		return r;
+	};
+}
+
 export interface RepoInfo {
 	top: string;
 	remote: string;

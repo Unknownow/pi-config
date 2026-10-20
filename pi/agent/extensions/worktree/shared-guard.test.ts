@@ -1,0 +1,38 @@
+// node --experimental-strip-types --test shared-guard.test.ts
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { sharedProblem } from "./shared-guard.ts";
+
+const o = { cwd: "D:/wt/w1/game", setRoot: "D:/wt/w1", linked: ["D:/wt/w1/game/node_modules", "D:/wt/w1/game/.pi/git"] };
+const bash = (command: string) => sharedProblem("bash", { command }, o);
+
+test("package installs are refused while node_modules is linked", () => {
+	for (const c of ["npm install", "npm i left-pad", "cd x && npm ci", "pnpm add y", "yarn", "yarn add z", "npm update"]) assert.match(bash(c) ?? "", /\/wt unlink node_modules/, c);
+	for (const c of ["npm run build", "npm test", "yarnpkg --version", "echo npm"]) assert.equal(bash(c), null, c);
+	assert.equal(sharedProblem("bash", { command: "npm install" }, { ...o, linked: ["D:/wt/w1/game/.pi/git"] }), null);
+	assert.equal(sharedProblem("bash", { command: "npm install" }, { ...o, linked: [] }), null);
+});
+
+test("recursive deletes of a link are refused", () => {
+	assert.match(bash("rm -rf node_modules") ?? "", /unlink node_modules/);
+	assert.match(bash("rm -r ./node_modules/") ?? "", /unlink node_modules/);
+	assert.match(bash("rm -rf D:/wt/w1/game/.pi/git") ?? "", /unlink \.pi\/git/);
+	assert.match(bash("rimraf node_modules") ?? "", /unlink/);
+	assert.match(bash("Remove-Item -Recurse -Force node_modules") ?? "", /unlink/);
+	assert.match(bash("rmdir /s /q node_modules") ?? "", /unlink/);
+	assert.match(bash("rm -f -r node_modules") ?? "", /unlink/);
+	assert.match(bash("rm --force --recursive node_modules") ?? "", /unlink/);
+	assert.equal(bash("rm -rf dist"), null);
+	assert.equal(bash("rm node_modules/.cache"), null);
+	assert.equal(bash("ls node_modules"), null);
+});
+
+test("other tools", () => {
+	assert.match(sharedProblem("ctx_execute", { language: "shell", code: "npm install" }, o) ?? "", /unlink/);
+	assert.equal(sharedProblem("ctx_execute", { language: "javascript", code: "npm install" }, o), null);
+	assert.match(sharedProblem("ctx_batch_execute", { commands: [{ command: "ls" }, { command: "rm -rf node_modules" }] }, o) ?? "", /unlink/);
+	assert.match(sharedProblem("write", { path: "node_modules/x/y.js" }, o) ?? "", /unlink node_modules/);
+	assert.match(sharedProblem("edit", { path: "D:/wt/w1/game/.pi/git/config" }, o) ?? "", /unlink \.pi\/git/);
+	assert.equal(sharedProblem("write", { path: "src/a.ts" }, o), null);
+	assert.equal(sharedProblem("read", { path: "node_modules/x" }, o), null);
+});
