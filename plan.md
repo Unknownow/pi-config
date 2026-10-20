@@ -635,6 +635,9 @@ Stage 5:
 ## Plan choices upheld at a pass
 pi/agent/extensions/worktree/boundary.test.ts:14 - minor - [plan-flaw] The plan's boundary rule still conflicts with existing code. §6 says worktree has "no import specifier containing `../workflow`", and D8 says worktree uses only K1, K3 and K4. But `unity-guard.ts:2` imports `KEYWORDS`, `parseCommands` and `WRAPPERS` from `../workflow/readonly-bash.ts`. The executor added a narrow exception to the test and documented it in the worktree README. The plan's contract does not list this import.
 
+## Plan choices upheld at a pass
+pi/agent/extensions/worktree/shared-guard.ts:49 - minor - [plan-flaw] The guard only checks commands that name the linked path. Deleting a parent of a link (`Remove-Item -Recurse -Force D:/wt/w1/game`, `rm -rf .`) is not refused, and on Windows PowerShell 5.1 `Remove-Item -Recurse` follows junctions into the original repo's `node_modules`.
+
 <!-- pi-workflow:status -->
 ## Checklist
 - [x] S1 `worktree/git-ops.ts`, next to `repoStatus` (`:183`): add `deliveredState(git, gh, wt, baseRef, branch)` implementing th
@@ -652,17 +655,17 @@ pi/agent/extensions/worktree/boundary.test.ts:14 - minor - [plan-flaw] The plan'
 - [x] S13 `worktree/index.ts:23-41`: `addedFolders` reads only the newest `session-folders` entry. Remove `STATE_ENTRY` and every 
 - [x] S14 `workflow/README.md`: new section "Public contract for other extensions" listing K1, K1b, K2, K3 and K4 with the exact f
 - [x] S15 `docs/workflow-improvements.md`: add the following rows, following the rules at `:7-11`.
-- [ ] S16 New `worktree/live.ts`:
-- [ ] S17 `worktree/index.ts` factory, wiring S1:
-- [ ] S18 New `worktree/sessions.ts`:
-- [ ] S19 `worktree/layout.ts:32-74` and `worktree/index.ts:98-129`, C6 launch:
-- [ ] S20 `worktree/index.ts` `build` (`:132-153`): after success, write `.pi-set.json` (C7). New `worktree/meta.ts` with `readMet
-- [ ] S21 New command `/wt use [NAME]` in `worktree/index.ts` (behaviour fixed by D4):
-- [ ] S22 `worktree/index.ts`, in-use checks:
-- [ ] S23 New `worktree/shared-guard.ts`, S3: `sharedProblem(toolName, input, { cwd, setRoot, linked: string[] })`, where `linked`
-- [ ] S24 New command `/wt unlink PATH`.
-- [ ] S25 `worktree/index.ts:27` `makeGit`, S4: retry a call that failed with stderr matching `/cannot lock ref|Unable to create '
-- [ ] S26 `worktree/README.md`:
+- [x] S16 New `worktree/live.ts`:
+- [x] S17 `worktree/index.ts` factory, wiring S1:
+- [x] S18 New `worktree/sessions.ts`:
+- [x] S19 `worktree/layout.ts:32-74` and `worktree/index.ts:98-129`, C6 launch:
+- [x] S20 `worktree/index.ts` `build` (`:132-153`): after success, write `.pi-set.json` (C7). New `worktree/meta.ts` with `readMet
+- [x] S21 New command `/wt use [NAME]` in `worktree/index.ts` (behaviour fixed by D4):
+- [x] S22 `worktree/index.ts`, in-use checks:
+- [x] S23 New `worktree/shared-guard.ts`, S3: `sharedProblem(toolName, input, { cwd, setRoot, linked: string[] })`, where `linked`
+- [x] S24 New command `/wt unlink PATH`.
+- [x] S25 `worktree/index.ts:27` `makeGit`, S4: retry a call that failed with stderr matching `/cannot lock ref|Unable to create '
+- [x] S26 `worktree/README.md`:
 - [ ] S27 `worktree/manage.ts`, C2: `classifySet(env, set)` returns:
 - [ ] S28 `worktree/manage.ts`, C1: replace `removeSet`, `removeAll` and `finishSet` (`:95-213`) with `removeWorkspace(env, set, {
 - [ ] S29 `worktree/manage.ts`, C4 discard: `discardPreview(env, state)` and `backupRepo(git, main, set, dir, ts)`.
