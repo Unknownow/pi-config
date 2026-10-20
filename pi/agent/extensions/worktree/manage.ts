@@ -152,7 +152,7 @@ async function removeAll(env: RemoveEnv, name: string, set: string, wts: string[
 					return { text: `Stopped at ${wt}: ${(rm.stderr || rm.stdout).trim()}\nRemoved: ${done.join(", ") || "nothing"}`, error: true, leftovers };
 				}
 			}
-			const br = current === branch ? await git(main, ["branch", "-d", branch]) : { code: 1, stdout: "", stderr: `worktree was on ${current}` };
+			const br = current === branch ? await git(main, ["branch", "-d", branch]) : { code: 1, stdout: "", stderr: current === "HEAD" ? "worktree is on a detached HEAD" : `worktree was on ${current}` };
 			const kept = br.code === 0 ? "" : ` (branch ${branch} kept: ${(br.stderr || br.stdout).trim().split("\n")[0]})`;
 			done.push(inUse ? `${wt} (folder in use: deleted after pi exits)${kept}` : br.code === 0 ? wt : `${wt}${kept}`);
 		} catch (e) {
