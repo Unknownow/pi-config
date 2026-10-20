@@ -677,7 +677,9 @@ pi/agent/extensions/worktree/clean.ts:121 - minor - [plan-flaw] `/wt clean` remo
 - [x] S32 `/wt done`, C5, replacing `doneCmd` (`:325-358`):
 - [x] S33 `worktree/config.ts`: `backupDays` (number ≥ 0, default 30), validated with a warning. `/wt list` shows each set's C2 ki
 - [x] S34 `worktree/README.md`:
-- [ ] S35 `worktree/layout.ts`: `nextFreeName(existing: string[], branchTaken: (name) => boolean)` returns the smallest `w<N>` (N 
-- [ ] S36 `/wt new [NAME]` and `+ new workspace` in `/wt use`, when no NAME is given:
-- [ ] S37 New command `/wt rename [OLD] [NEW]`. Missing arguments: a picker for OLD and an input for NEW (suggestion = `nextFreeNa
-- [ ] S38 `worktree/README.md`: automatic names, `/wt rename`, usage and completions (`rename` gets set names).
+- [x] S35 `worktree/layout.ts`: `nextFreeName(existing: string[], branchTaken: (name) => boolean)` returns the smallest `w<N>` (N 
+- [x] S36 `/wt new [NAME]` and `+ new workspace` in `/wt use`, when no NAME is given:
+- [x] S37 New command `/wt rename [OLD] [NEW]`. Missing arguments: a picker for OLD and an input for NEW (suggestion = `nextFreeNa
+- [x] S38 `worktree/README.md`: automatic names, `/wt rename`, usage and completions (`rename` gets set names).
+## Outcome
+2026-10-20T18:35:11.409Z — ok: stage 1: committed (5 commits), push skipped: master is protected; stage 2: committed (2 commits), push skipped: master is protected; stage 3: committed (4 commits), push skipped: master is protected; stage 4: committed (7 commits), push skipped: master is protected; stage 5: committed (1 commit), push skipped: master is protected

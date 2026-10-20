@@ -1,11 +1,9 @@
 {
   "v": 1,
   "flowId": "20261021-0011-reusable-worktree-workspaces-one-way-con-d2ef",
-  "rev": 8,
-  "updated": "2026-10-20T18:25:38.626Z",
+  "rev": 9,
+  "updated": "2026-10-20T18:35:11.516Z",
   "title": "Reusable worktree workspaces, one-way contract with the workflow, safe cleanup",
-  "stage": 5,
-  "delivery": "push",
   "done": [
     "S1",
     "S2",
@@ -40,8 +38,17 @@
     "S31",
     "S32",
     "S33",
-    "S34"
+    "S34",
+    "S35",
+    "S36",
+    "S37",
+    "S38"
   ],
+  "finished": {
+    "at": "2026-10-20T18:35:11.409Z",
+    "ok": true,
+    "text": "stage 1: committed (5 commits), push skipped: master is protected; stage 2: committed (2 commits), push skipped: master is protected; stage 3: committed (4 commits), push skipped: master is protected; stage 4: committed (7 commits), push skipped: master is protected; stage 5: committed (1 commit), push skipped: master is protected"
+  },
   "repos": [
     {
       "branch": "master",
