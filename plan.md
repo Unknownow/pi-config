@@ -634,13 +634,13 @@ Stage 5:
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 `worktree/git-ops.ts`, next to `repoStatus` (`:183`): add `deliveredState(git, gh, wt, baseRef, branch)` implementing th
-- [ ] S2 `worktree/update.ts`: add `reattach(git, wt, branch)`.
-- [ ] S3 `worktree/update.ts:23` `updateRepo`: change the signature to take an options object `{ allowDirty, rebase: boolean, bra
-- [ ] S4 `worktree/update.ts:49` `updateSet`: run the repos in parallel with `Promise.all`. They are different repos with separat
-- [ ] S5 `worktree/config.ts`: add `rebaseUnpushed` (default `true`) to `WtConfig`, `defaults` and `mergeConfig`, following the `
-- [ ] S6 `worktree/index.ts`:
-- [ ] S7 `worktree/README.md`:
+- [x] S1 `worktree/git-ops.ts`, next to `repoStatus` (`:183`): add `deliveredState(git, gh, wt, baseRef, branch)` implementing th
+- [x] S2 `worktree/update.ts`: add `reattach(git, wt, branch)`.
+- [x] S3 `worktree/update.ts:23` `updateRepo`: change the signature to take an options object `{ allowDirty, rebase: boolean, bra
+- [x] S4 `worktree/update.ts:49` `updateSet`: run the repos in parallel with `Promise.all`. They are different repos with separat
+- [x] S5 `worktree/config.ts`: add `rebaseUnpushed` (default `true`) to `WtConfig`, `defaults` and `mergeConfig`, following the `
+- [x] S6 `worktree/index.ts`:
+- [x] S7 `worktree/README.md`:
 - [ ] S8 `workflow/index.ts`, K1:
 - [ ] S9 `workflow/index.ts` `session_start` (`:2741`): before `applyAddDir`, apply K1b as specified in §4.
 - [ ] S10 `workflow/index.ts`, K2: register `pi.on("session_before_switch", …)` exactly as in §4. Model the notification on `resum
