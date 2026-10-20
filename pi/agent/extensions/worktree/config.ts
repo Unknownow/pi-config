@@ -14,6 +14,8 @@ export interface WtConfig {
 	vscode: boolean;
 	autoUpdate: boolean;
 	rebaseUnpushed: boolean;
+	/** Days a backup ref of a discarded workspace is kept; 0 keeps them forever. */
+	backupDays: number;
 }
 
 export const DEFAULT_LINK = [".pi/git", ".pi/npm", "node_modules"];
@@ -33,6 +35,7 @@ export function defaults(workingRepoParent: string): WtConfig {
 		vscode: true,
 		autoUpdate: true,
 		rebaseUnpushed: true,
+		backupDays: 30,
 	};
 }
 
@@ -56,6 +59,10 @@ export function mergeConfig(raw: unknown, base: WtConfig): { cfg: WtConfig; warn
 	if (o.rebaseUnpushed !== undefined) {
 		if (typeof o.rebaseUnpushed === "boolean") cfg.rebaseUnpushed = o.rebaseUnpushed;
 		else warnings.push("rebaseUnpushed must be true or false");
+	}
+	if (o.backupDays !== undefined) {
+		if (typeof o.backupDays === "number" && Number.isFinite(o.backupDays) && o.backupDays >= 0) cfg.backupDays = o.backupDays;
+		else warnings.push("backupDays must be a number of days, 0 or more");
 	}
 	if (o.vscode !== undefined) {
 		if (typeof o.vscode === "boolean") cfg.vscode = o.vscode;

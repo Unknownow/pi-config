@@ -79,3 +79,14 @@ test("rebaseUnpushed defaults to true, false is read, a bad value warns", () => 
 	assert.equal(bad.cfg.rebaseUnpushed, true);
 	assert.match(bad.warning ?? "", /rebaseUnpushed/);
 });
+
+test("backupDays defaults to 30, 0 is accepted, a negative value warns", () => {
+	assert.equal(loadConfig(tmp(), "D:/projects").cfg.backupDays, 30);
+	const dir = tmp();
+	fs.writeFileSync(path.join(dir, "worktree.json"), JSON.stringify({ backupDays: 0 }));
+	assert.equal(loadConfig(dir, "D:/projects").cfg.backupDays, 0);
+	fs.writeFileSync(path.join(dir, "worktree.json"), JSON.stringify({ backupDays: -1 }));
+	const bad = loadConfig(dir, "D:/projects");
+	assert.equal(bad.cfg.backupDays, 30);
+	assert.match(bad.warning ?? "", /backupDays/);
+});
