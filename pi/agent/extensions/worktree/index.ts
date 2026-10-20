@@ -1,7 +1,7 @@
 /**
  * /wt: run several pi sessions on the same repos without copying them. `/wt new <name>` makes a git
  * worktree for the working repo and every added folder, links or copies the gitignored files, and opens
- * a new terminal window (or VS Code terminal) running pi there. `/wt open <name>` reopens a set, `/wt done` removes the set a session runs in.
+ * a new terminal window (or VS Code terminal) running pi there. `/wt open <name>` reopens a set, `/wt done` moves the session home and removes its set, `/wt clean` removes everything that is safe to remove.
  * `/wt update` fast-forwards a set to its base branches; a session inside a set does that at startup. See README.md.
  */
 
@@ -18,14 +18,16 @@ import { latestSession, newSessionFile } from "./sessions.ts";
 import { sharedProblem } from "./shared-guard.ts";
 import { sendToVscode } from "./vscode-bridge.ts";
 import { createAll, excludeLinks, mainRepoOf, preflight, rollback, withLockRetry, type Gh, type Git, type Planned } from "./git-ops.ts";
-import { SWEEP_SCRIPT, detectSession, finishSet, listSets, listText, openPlan, parseEditors, quitReminder, removeSet, repoDirsIn, reposOf, sessionConfig, worktreePrompt, type WtSession } from "./manage.ts";
+import { SWEEP_SCRIPT, classifySet, detectSession, listSets, listText, openPlan, parseEditors, quitReminder, removeWithConfirm, repoDirsIn, reposOf, sessionConfig, worktreePrompt, type WorkspaceEnv, type WtSession } from "./manage.ts";
+import { cleanFlow, deleteRemotes, discoverMains, fetchAll, planClean, remoteCandidates } from "./clean.ts";
 import { guardProblem } from "./unity-guard.ts";
 import { reattach, updateSet, worthNotifying } from "./update.ts";
+import { execRunner } from "./exec.ts";
 import { Progress } from "./progress.ts";
 import { truncateToWidth } from "@earendil-works/pi-tui";
 import { branchOf, checkName, launchSpec, rootProblem, setRootOf, vscodeTerminalSpec } from "./layout.ts";
 
-const SUBCOMMANDS = ["new", "open", "use", "list", "update", "remove", "done", "unlink"];
+const SUBCOMMANDS = ["new", "open", "use", "list", "update", "remove", "clean", "done", "unlink"];
 
 const slash = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "");
 const fold = (p: string) => (process.platform === "win32" ? slash(p).toLowerCase() : slash(p));
@@ -285,12 +287,14 @@ async function listCmd(pi: ExtensionAPI, ctx: ExtensionCommandContext, progress:
 	progress.stage("asking Unity for open editors");
 	const editors = await progress.track("unity status", ctx.cwd, unityEditors(pi));
 	progress.stage("reading repo status");
-	const live = sessionsInUse();
-	const usage = (name: string) => {
-		const holder = setInUse(live, setRootOf(cfg, name), process.pid);
-		return holder ? `in use by pi ${holder.pid}` : "free";
-	};
-	ctx.ui.notify(await listText(progress.wrap(makeGit(pi)), cfg, editors, usage), "info");
+	const git = progress.wrap(makeGit(pi));
+	const env = workspaceEnv(makeGh(pi), ctx, cfg, git, editors);
+	const notes = new Map<string, string>();
+	for (const name of listSets(cfg).filter((n) => !checkName(n))) {
+		const st = await classifySet(env, name);
+		notes.set(name, `${st.kind}: ${st.reason}`);
+	}
+	ctx.ui.notify(await listText(git, cfg, editors, (name) => notes.get(name) ?? "unknown"), "info");
 }
 
 async function pickSet(ctx: ExtensionCommandContext, cfg: WtConfig, title: string, progress: Progress): Promise<string | null> {
@@ -306,6 +310,57 @@ async function pickSet(ctx: ExtensionCommandContext, cfg: WtConfig, title: strin
 	return (await progress.pause(() => ctx.ui.select(title, sets))) ?? null;
 }
 
+/** git and gh for one command. After `ctx.switchSession()` the captured `pi` is stale, so that path uses `directRun`. */
+interface Run {
+	git: Git;
+	gh: Gh;
+}
+const piRun = (pi: ExtensionAPI): Run => ({ git: makeGit(pi), gh: makeGh(pi) });
+const directRun = (): Run => ({ git: withLockRetry(execRunner("git", 60000)), gh: execRunner("gh", 20000) });
+
+/** What the removal engine needs in this session: who uses a set (also this session itself), and the open Unity Editors. */
+function workspaceEnv(gh: Gh, ctx: ExtensionCommandContext, cfg: WtConfig, git: Git, editors: string[] | null): WorkspaceEnv {
+	const mine = [ctx.cwd, ...addedFolders(ctx)];
+	return {
+		git,
+		gh,
+		cfg,
+		editors,
+		inUse: (setRoot) => {
+			if (mine.some((p) => fold(p) === fold(setRoot) || fold(p).startsWith(`${fold(setRoot)}/`))) return "in use by this session";
+			const holder = setInUse(sessionsInUse(), setRoot, process.pid);
+			return holder ? `in use by pi ${holder.pid}` : null;
+		},
+	};
+}
+
+/** Deletes leftover folders after pi exits (a Windows folder that was in use when git removed the worktree). */
+function startSweep(ctx: ExtensionCommandContext, cfg: WtConfig, leftovers: string[]): void {
+	if (!leftovers.length) return;
+	try {
+		const p = spawn(process.execPath, ["-e", SWEEP_SCRIPT, "120", "1000", ...leftovers], { detached: true, stdio: "ignore", cwd: cfg.root, windowsHide: true });
+		p.on("error", () => {});
+		p.unref();
+	} catch (e) {
+		ctx.ui.notify(`Could not start the cleanup of leftover folders: ${(e as Error).message}`, "warning");
+	}
+}
+
+/** `removeWithConfirm` with this session's dialogs; starts the sweeper for folders that were in use. */
+async function removeFlow(run: Run, ctx: ExtensionCommandContext, cfg: WtConfig, name: string, progress: Progress, editors: string[] | null) {
+	const git = progress.wrap(run.git);
+	const env = {
+		...workspaceEnv(run.gh, ctx, cfg, git, editors),
+		hasUI: ctx.hasUI,
+		confirm: (title: string, message: string) => progress.pause(() => ctx.ui.confirm(title, message)),
+		stage: (text: string) => progress.stage(text),
+		now: () => new Date(),
+	};
+	const r = await removeWithConfirm(env, name);
+	startSweep(ctx, cfg, r.leftovers);
+	return r;
+}
+
 async function removeCmd(pi: ExtensionAPI, ctx: ExtensionCommandContext, name: string, progress: Progress): Promise<void> {
 	const cfg = await configFor(pi, ctx);
 	if (!name) {
@@ -313,24 +368,54 @@ async function removeCmd(pi: ExtensionAPI, ctx: ExtensionCommandContext, name: s
 		if (!picked) return;
 		name = picked;
 	}
-	const setName = name;
-	const holder = setInUse(sessionsInUse(), setRootOf(cfg, setName), process.pid);
-	if (holder) return ctx.ui.notify(`${setName} is in use by pi ${holder.pid}`, "error");
-	progress.stage(`checking ${setName} (fetching)`);
-	const env = {
-		git: progress.wrap(makeGit(pi)),
-		cfg,
-		cwd: ctx.cwd,
-		added: addedFolders(ctx),
-		hasUI: ctx.hasUI,
-		confirm: async (t: string, m: string) => {
-			const ok = await progress.pause(() => ctx.ui.confirm(t, m));
-			if (ok) progress.stage(`removing ${setName}`);
-			return ok;
-		},
-	};
-	const r = await removeSet(env, name);
+	progress.stage("asking Unity for open editors");
+	const editors = await progress.track("unity status", ctx.cwd, unityEditors(pi));
+	const r = await removeFlow(piRun(pi), ctx, cfg, name, progress, editors);
 	ctx.ui.notify(r.text, r.error ? "error" : "info");
+}
+
+/** `/wt clean`: remove every delivered set, stale entry, merged branch and expired backup; ask before deleting remote branches. */
+async function cleanCmd(pi: ExtensionAPI, ctx: ExtensionCommandContext, progress: Progress): Promise<void> {
+	const cfg = await configFor(pi, ctx);
+	const git = progress.wrap(makeGit(pi));
+	progress.stage("finding the original repos");
+	const tops: string[] = [];
+	for (const dir of [ctx.cwd, ...addedFolders(ctx)]) {
+		const t = await git(dir, ["rev-parse", "--show-toplevel"]);
+		if (t.code === 0 && t.stdout.trim()) tops.push(slash(t.stdout.trim()));
+	}
+	const mains = await discoverMains(git, cfg, tops);
+	progress.stage(`fetching ${mains.length} repo(s)`);
+	const warnings = await fetchAll(git, mains);
+	const editors = await progress.track("unity status", ctx.cwd, unityEditors(pi));
+	progress.stage("checking the worktree sets");
+	const env = { ...workspaceEnv(makeGh(pi), ctx, cfg, git, editors), now: new Date() };
+	const plan = await planClean(env, mains);
+	const flow = await cleanFlow({ git, cfg, inUse: env.inUse }, plan, warnings, {
+		hasUI: ctx.hasUI,
+		confirm: (title, message) => progress.pause(() => ctx.ui.confirm(title, message)),
+		stage: (text) => progress.stage(text),
+	});
+	if (flow.status === "no-ui" || flow.status === "cancelled") return ctx.ui.notify(flow.text, "info");
+	startSweep(ctx, cfg, flow.leftovers);
+	const report = (head: string, items: string[]) => (items.length ? [head, ...items.map((i) => `  ${i}`)] : []);
+	const out: string[] = [flow.text];
+	if (ctx.hasUI) {
+		progress.stage("looking for merged remote branches");
+		const remote = await remoteCandidates(env, mains);
+		if (remote.length) {
+			const names = remote.map((r) => `origin/${r.branch} (${path.basename(r.main)})`);
+			const ok = await progress.pause(() => ctx.ui.confirm(`Also delete ${remote.length} remote branch(es)?`, names.join("\n")));
+			if (ok) {
+				const res = await deleteRemotes(git, remote);
+				out.push(...report("Remote branches deleted:", res.done), ...report("Remote branches failed:", res.failed));
+			} else {
+				out.push(...report("Remote branches kept:", names));
+			}
+		}
+	}
+	progress.done();
+	ctx.ui.notify(out.join("\n"), "info");
 }
 
 async function openCmd(pi: ExtensionAPI, ctx: ExtensionCommandContext, name: string, progress: Progress): Promise<void> {
@@ -389,7 +474,58 @@ async function updateCmd(pi: ExtensionAPI, ctx: ExtensionCommandContext, name: s
 	ctx.ui.notify([`Worktree set "${name}":`, ...res.map((r) => `  ${r.text}`)].join("\n"), failed ? "warning" : "info");
 }
 
+/** The original folders of this session's worktree: the main repo and the same subfolder in it. */
+async function homeOf(git: Git, ctx: ExtensionCommandContext): Promise<{ repoTop: string; targetCwd: string } | string> {
+	const top = await git(ctx.cwd, ["rev-parse", "--show-toplevel"]);
+	if (top.code !== 0) return "run this from a git repo";
+	const workingTop = slash(top.stdout.trim());
+	const main = await mainRepoOf(git, workingTop);
+	if (!main) return "could not find the original repo of this worktree";
+	const rel = path.relative(workingTop, ctx.cwd).replace(/\\/g, "/");
+	const c = rel && !rel.startsWith("..") ? `${main}/${rel}` : main;
+	return { repoTop: main, targetCwd: fs.existsSync(c) ? c : main };
+}
+
 type UseTarget = { kind: "set"; name: string } | { kind: "original" } | { kind: "new" };
+
+/** Copies this conversation into `mv.targetCwd` and switches to it; `after` runs in the new session. False when the switch was cancelled (a flow is executing). */
+async function moveConversation(
+	ctx: ExtensionCommandContext,
+	mv: { targetCwd: string; label: string; setRepos: string[]; repoTop: string; after?: (nctx: ExtensionCommandContext) => Promise<void> },
+	progress: Progress,
+): Promise<boolean> {
+	const { targetCwd, label, setRepos, repoTop } = mv;
+	const cur = ctx.sessionManager.getSessionFile();
+	let file: string;
+	try {
+		file = cur && fs.existsSync(cur) ? (SessionManager.forkFrom(cur, targetCwd).getSessionFile() ?? "") : freshSessionFile(targetCwd);
+		if (!file) throw new Error("no session file");
+	} catch (e) {
+		ctx.ui.notify(`could not copy the conversation: ${(e as Error).message}`, "error");
+		return false;
+	}
+	progress.done();
+	const res = await ctx.switchSession(file, {
+		withSession: async (nctx) => {
+			const folders = foldersFromEntries(nctx.sessionManager.getBranch() as { type: string; customType?: string; data?: unknown }[]);
+			const missing = setRepos.filter((r) => fold(r) !== fold(repoTop) && !folders.some((f) => fold(f) === fold(r))).map((r) => path.basename(r));
+			const text = `This conversation moved to ${targetCwd} (${label}). Repo paths now: ${[slash(nctx.cwd), ...folders].join(", ")}. Earlier messages refer to the old paths.`;
+			await nctx.sendMessage({
+				customType: "worktree-moved",
+				display: true,
+				content: missing.length ? `${text}\nnot attached: ${missing.join(", ")}; add them with /folders add` : text,
+			});
+			await mv.after?.(nctx);
+		},
+	});
+	if (res.cancelled) {
+		try {
+			fs.unlinkSync(file);
+		} catch {}
+		ctx.ui.notify("move cancelled", "info");
+	}
+	return !res.cancelled;
+}
 
 /** `/wt use [NAME]`: move this conversation into a free workspace, or back to the original folders (`original`). */
 async function useCmd(pi: ExtensionAPI, ctx: ExtensionCommandContext, name: string, progress: Progress, own: WtSession | null): Promise<void> {
@@ -446,10 +582,10 @@ async function useCmd(pi: ExtensionAPI, ctx: ExtensionCommandContext, name: stri
 		setRepos = reposOf(c.cfg, nm);
 		repoTop = c.workingTarget;
 	} else if (target.kind === "original") {
-		const main = await mainRepoOf(git, workingTop);
-		if (!main) return ctx.ui.notify("could not find the original repo of this worktree", "error");
-		repoTop = main;
-		targetCwd = within(main);
+		const home = await homeOf(git, ctx);
+		if (typeof home === "string") return ctx.ui.notify(home, "error");
+		repoTop = home.repoTop;
+		targetCwd = home.targetCwd;
 		label = "original folders";
 	} else {
 		const repos = reposOf(cfg, target.name);
@@ -474,34 +610,7 @@ async function useCmd(pi: ExtensionAPI, ctx: ExtensionCommandContext, name: stri
 		setRepos = repos;
 	}
 
-	const cur = ctx.sessionManager.getSessionFile();
-	let file: string;
-	try {
-		file = cur && fs.existsSync(cur) ? (SessionManager.forkFrom(cur, targetCwd).getSessionFile() ?? "") : freshSessionFile(targetCwd);
-		if (!file) throw new Error("no session file");
-	} catch (e) {
-		return ctx.ui.notify(`could not copy the conversation: ${(e as Error).message}`, "error");
-	}
-	progress.done();
-	const moved = targetCwd;
-	const res = await ctx.switchSession(file, {
-		withSession: async (nctx) => {
-			const folders = foldersFromEntries(nctx.sessionManager.getBranch() as { type: string; customType?: string; data?: unknown }[]);
-			const missing = setRepos.filter((r) => fold(r) !== fold(repoTop) && !folders.some((f) => fold(f) === fold(r))).map((r) => path.basename(r));
-			const text = `This conversation moved to ${moved} (${label}). Repo paths now: ${[slash(nctx.cwd), ...folders].join(", ")}. Earlier messages refer to the old paths.`;
-			await nctx.sendMessage({
-				customType: "worktree-moved",
-				display: true,
-				content: missing.length ? `${text}\nnot attached: ${missing.join(", ")}; add them with /folders add` : text,
-			});
-		},
-	});
-	if (res.cancelled) {
-		try {
-			fs.unlinkSync(file);
-		} catch {}
-		ctx.ui.notify("move cancelled", "info");
-	}
+	await moveConversation(ctx, { targetCwd, label, setRepos, repoTop }, progress);
 }
 
 /** The linked folders (links to the original repo) of a set. */
@@ -540,51 +649,50 @@ function unlinkCmd(ctx: ExtensionCommandContext, rel: string, session: WtSession
 	return true;
 }
 
+/** `/wt done`: move this conversation to the original folders, then remove the set it ran in (same questions as `/wt remove`). */
 async function doneCmd(pi: ExtensionAPI, ctx: ExtensionCommandContext, progress: Progress): Promise<void> {
 	await ctx.waitForIdle();
 	const cfg = await configFor(pi, ctx);
-	progress.stage("checking the set (fetching)");
 	const git = progress.wrap(makeGit(pi));
-	const env = {
-		git,
-		cfg,
-		cwd: ctx.cwd,
-		added: addedFolders(ctx),
-		hasUI: ctx.hasUI,
-		confirm: async (t: string, m: string) => {
-			const ok = await progress.pause(() => ctx.ui.confirm(t, m));
-			if (ok) progress.stage("removing the set");
-			return ok;
+	const session = await detectSession(git, cfg, ctx.cwd);
+	if (!session) return ctx.ui.notify("/wt done runs inside a worktree session; use /wt remove NAME from another session.", "error");
+	const name = path.basename(slash(session.setRoot));
+	const bad = checkName(name);
+	if (bad) return ctx.ui.notify(bad, "error");
+	if (!ctx.hasUI) return ctx.ui.notify("/wt done needs a UI to confirm.", "error");
+	progress.stage("asking Unity for open editors");
+	const editors = await progress.track("unity status", ctx.cwd, unityEditors(pi));
+	const open = editors?.find((e) => fold(e) === fold(session.setRoot) || fold(e).startsWith(`${fold(session.setRoot)}/`));
+	if (open) return ctx.ui.notify(`Nothing removed:\nUnity Editor open for ${open}; close it first`, "error");
+	const home = await homeOf(git, ctx);
+	if (typeof home === "string") return ctx.ui.notify(home, "error");
+	await moveConversation(
+		ctx,
+		{
+			targetCwd: home.targetCwd,
+			label: "original folders",
+			setRepos: [],
+			repoTop: home.repoTop,
+			after: async (nctx) => {
+				const p = new Progress(nctx.ui, `/wt done ${name}`, truncateToWidth);
+				try {
+					try {
+						const cwdNow = fold(path.resolve(process.cwd()));
+						const setNow = fold(path.resolve(session.setRoot));
+						if (cwdNow === setNow || cwdNow.startsWith(`${setNow}/`)) process.chdir(home.repoTop);
+					} catch {}
+					// The captured pi is stale after the switch: run git and gh directly.
+					const r = await removeFlow(directRun(), nctx, cfg, name, p, editors);
+					nctx.ui.notify(r.removed ? r.text : `set kept: ${r.text}`, r.error ? "error" : "info");
+				} catch (e) {
+					nctx.ui.notify(`set kept: ${(e as Error).message}`, "error");
+				} finally {
+					p.done();
+				}
+			},
 		},
-		session: await detectSession(git, cfg, ctx.cwd),
-		editors: await progress.track("unity status", ctx.cwd, unityEditors(pi)),
-		leave: (to: string) => process.chdir(to),
-	};
-	const r = await finishSet(env);
-	progress.done();
-	const text = r.text;
-	const sweep = () => {
-		try {
-			const p = spawn(process.execPath, ["-e", SWEEP_SCRIPT, "120", "1000", ...r.leftovers], { detached: true, stdio: "ignore", cwd: cfg.root, windowsHide: true });
-			p.on("error", () => {});
-			p.unref();
-		} catch (e) {
-			ctx.ui.notify(`Could not start the cleanup of leftover folders: ${(e as Error).message}`, "warning");
-		}
-	};
-	if (!r.removed) {
-		if (r.leftovers.length) sweep();
-		ctx.ui.notify(text, r.error ? "error" : "info");
-		return;
-	}
-	ctx.ui.notify(text, "info");
-	const name = path.basename(slash(env.session?.setRoot ?? ""));
-	const close = await ctx.ui.confirm(`Worktree set "${name}" removed`, `${text}
-
-Close this pi session?`);
-	if (r.leftovers.length) sweep();
-	if (close) ctx.shutdown();
-	else ctx.ui.notify("The set is removed; exit pi when you are done.", "info");
+		progress,
+	);
 }
 
 export default function worktree(pi: ExtensionAPI) {
@@ -735,7 +843,7 @@ export default function worktree(pi: ExtensionAPI) {
 		if (shared) return { block: true, reason: shared };
 	});
 	pi.registerCommand("wt", {
-		description: "Parallel pi sessions on git worktrees: new NAME, open NAME, use [NAME], list, update [NAME], remove NAME, done, unlink PATH",
+		description: "Parallel pi sessions on git worktrees: new NAME, open NAME, use [NAME], list, update [NAME], remove NAME, clean, done, unlink PATH",
 		getArgumentCompletions: async (prefix) => {
 			const m = /^(remove|open|update|use)\s+(\S*)$/i.exec(prefix.trimStart());
 			if (m) {
@@ -760,8 +868,9 @@ export default function worktree(pi: ExtensionAPI) {
 				if (sub === "list") return await listCmd(pi, ctx, progress);
 				if (sub === "update") return await updateCmd(pi, ctx, rest[0] ?? "", progress);
 				if (sub === "remove") return await removeCmd(pi, ctx, rest[0] ?? "", progress);
+				if (sub === "clean") return await cleanCmd(pi, ctx, progress);
 				if (sub === "done") return await doneCmd(pi, ctx, progress);
-				ctx.ui.notify("Usage: /wt new NAME | /wt open NAME | /wt use [NAME] | /wt list | /wt update [NAME] | /wt remove NAME | /wt done | /wt unlink PATH", "info");
+				ctx.ui.notify("Usage: /wt new NAME | /wt open NAME | /wt use [NAME] | /wt list | /wt update [NAME] | /wt remove NAME | /wt clean | /wt done | /wt unlink PATH", "info");
 			} catch (e) {
 				ctx.ui.notify(`/wt ${sub ?? ""} failed: ${(e as Error).message}`, "error");
 			} finally {
