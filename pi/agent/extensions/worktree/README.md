@@ -8,8 +8,10 @@ store, so a set of checkouts costs a few MB (plus whatever you build in them).
 | Command | What it does |
 |---|---|
 | `/wt new NAME` | Creates one worktree per git repo of this session (the working folder and every added folder) under `<root>/NAME/<repo>` on branch `wt/NAME`, starting from `origin/<default branch>` with no upstream. Links or copies the gitignored files, then opens a new Windows Terminal window (or a new VS Code terminal when pi runs in one, see VS Code) running pi in the working repo's worktree with `--add-dir` set to the other worktrees. Folders that are not git repos are passed through unchanged. The current session is not changed. |
-| `/wt open [NAME]` | Reopens an existing set (without NAME, pick one from a list): starts pi with `--continue` in the set's working repo (the only repo, or the one named like this session's repo, otherwise you pick one), with `--add-dir` for the other repos, through the same launch path as `/wt new`. Refuses from a session inside that set. When you quit an interactive pi session inside a set that still exists, a reminder is printed to stderr with how to reopen or remove it; nothing is ever deleted on quit. |
-| `/wt list` | Lists every set under `<root>` with, per repo: branch, changed files, ahead/behind (or "not pushed: N commits" against the base branch when there is no upstream), whether `unity/Library` exists, and whether a Unity Editor is open for it (from one `unity status` call; `unknown` if it fails). |
+| `/wt open [NAME]` | Reopens an existing set (without NAME, pick one from a list): starts pi on the set's newest earlier session (or a new one) in the set's working repo (the only repo, or the one named like this session's repo, otherwise you pick one), with `--add-dir` for the other repos, through the same launch path as `/wt new`. Refuses from a session inside that set and when another live pi session uses the set. When you quit an interactive pi session inside a set that still exists, a reminder is printed to stderr with how to reopen or remove it; nothing is ever deleted on quit. |
+| `/wt use [NAME]` | Moves this conversation into a free workspace (a set no other live session uses), or back to the original folders (`/wt use original`, or pick `original folders`). Without NAME, pick from the free sets, `original folders` (inside a set) or `+ new workspace` (asks for a name and creates it). The conversation is copied into a new session file in the target repo, pi switches to it, and a message lists the new paths. Added folders follow to the sibling worktrees (the workflow's folder follow rule). Refused while a flow is executing (the workflow cancels the switch), for a set in use (`<set> is in use by pi <pid>`) and for the set this session already runs in. |
+| `/wt unlink PATH` | Inside a set: removes the link `PATH` (relative to the repo, for example `node_modules`) in every repo of the set, never its target, so the workspace can install its own packages. The `.git/info/exclude` lines stay. |
+| `/wt list` | Lists every set under `<root>` (marked `free` or `in use by pi <pid>`) with, per repo: branch, changed files, ahead/behind (or "not pushed: N commits" against the base branch when there is no upstream), whether `unity/Library` exists, and whether a Unity Editor is open for it (from one `unity status` call; `unknown` if it fails). |
 | `/wt update [NAME]` | Brings a set up to date (without NAME: the set this session runs in, otherwise pick one from a list). For every repo (in parallel) it fetches, then: puts the set's branch back when the repo sits on a detached HEAD at a commit of the base branch (what `gh pr merge --delete-branch` leaves behind); fast-forwards a branch with no commits of its own to the base branch (`origin/HEAD`, `main` or `master`); resets a branch whose work was merged as a PR on GitHub (squash or rebase merge, found with `gh`; needs a clean tree); rebases unpushed own commits onto the base branch. Commits that are already pushed are never rebased (that would need a force push), a conflicting rebase is aborted and the branch is left as before, and other detached HEADs are reported and left alone. Uncommitted changes are allowed for a fast-forward (git refuses when it would overwrite one) but block a rebase or reset. |
 | `/wt remove [NAME]` | Deletes a set (without NAME, pick one from a list). Refuses if this session uses it, if there is no UI, or if any repo has uncommitted changes or commits not pushed (a squash-merged branch counts as unpushed: delete those by hand). Otherwise asks for confirmation, removes the links first (never their targets), runs `git worktree remove` without `--force`, then `git branch -d` (the branch is kept if git refuses). Deletes the worktree's `Library/` with it. |
 | `/wt done` | Runs inside a worktree session and removes the set it runs in. Same checks as `/wt remove`, plus it refuses while a Unity Editor is open in the set (a failing `unity status` only adds a warning). Asks for confirmation, moves pi out of the set, removes the working repo's worktree last (links first, never their targets, no `--force`, then `git branch -d`), shows the report, then asks "Close this pi session?". On refusal or failure the session stays open. |
@@ -65,11 +67,27 @@ Unity's `Library/` is never touched: a worktree session does not get one.
 | `autoUpdate` | `true` | Fast-forward the set's repos when a session starts inside it (see Automatic update). |
 | `rebaseUnpushed` | `true` | Let the automatic update rebase unpushed own commits onto the base branch. `false` turns off only the automatic rebase; `/wt update` still rebases. |
 
+## Running sessions and workspaces
+
+Every interactive pi session with this extension writes `<agentDir>/live/<pid>.json` (cwd, added folders, set root, busy, the workflow's phase and stage from its `workflow:status` event), every 30 s and on each change, and deletes it on exit. A file counts when it is under 120 s old and its pid is alive; readers delete files of dead pids. The footer entry `wt-sessions` shows the other live sessions as `set: working execute 2/5 · other: needs you · third: idle`, polled every 5 s. A set is in use when another live session's folder or added folder is inside it. This is display and a guard only; it does not lock anything. Headless sessions (no UI) write nothing.
+
+`/wt new` writes `<set>/.pi-set.json` (`{ v, created, branch, repos: [{ main, dir }] }`). Sets made by older versions have none and work as before.
+
+A workspace is a pool entry, not tied to a session: any session can `/wt use` a free one and move on to another or back home.
+
+## Shared files
+
+Links such as `node_modules` and `.pi/git` point into the original repo. In a set, tool calls that would change the original through a link are refused (under the same `unityGuard` switch): `npm`/`pnpm`/`yarn` installs while `node_modules` is linked, recursive deletes (`rm -r`, `rmdir /s`, `Remove-Item -Recurse`, `rimraf`, `del /s`) naming a linked path, and `edit`/`write` inside a linked path. The message says to run `/wt unlink <path>`.
+
+Git calls that fail because another process holds a git lock (`index.lock`, `cannot lock ref`) are retried after 1 s and after 3 s.
+
 ## Launching
 
-Windows: `wt.exe -w new new-tab -d <cwd> --title "pi NAME" <pi> --add-dir "A\;B"`. Windows Terminal
+Windows: `wt.exe -w new new-tab -d <cwd> --title "pi NAME" <pi> --session <file> --add-dir "A\;B"`. Windows Terminal
 reads `;` as its own separator, so the extension escapes it. If `wt.exe` is not found, it falls
 back to `cmd /c start`. On macOS and Linux nothing is started; the command is printed.
+
+The process starts in the original repo (`<cwd>` above), not in the set, so no pi process holds a workspace folder. pi starts on a session file (`--session`): `/wt new` writes a header-only file whose cwd is the set's working repo, `/wt open` uses the newest earlier session of that folder or makes a new one, and pi moves to the file's own cwd.
 
 ## VS Code
 
@@ -115,13 +133,15 @@ The dependency is one-way. This extension uses only the workflow's public contra
 - `node_modules` is shared with the original; a worktree that changes `package.json` should install its own.
 - An added folder that is a subfolder of a repo is replaced by that repo's worktree root.
 - Pushes to `main` stay blocked by each repo's own hook.
-- `/wt open` cannot see a pi already running in the set. Plain (non-git) folders come back only through the continued session. With no earlier session in that folder, `--continue` starts a new one.
-- On Windows the folder pi was started in stays locked by its parent processes until pi exits. `/wt done` treats that as removed and starts a detached cleanup that deletes the leftover empty folders (only empty folders, never files) for up to 2 minutes. If it cannot, delete them by hand.
+- pi is launched in the original repo (`--session` moves it to the set), so extensions that use `process.cwd()` (for example context-mode's project folder) see the original repo, not the workspace.
+- The running-sessions list sees only sessions on this machine, and only those that run this extension with a UI.
+- Plain (non-git) folders come back only through the session's saved folders.
+- On Windows, a pi started inside a set by an older version keeps that folder locked by its parent processes until pi exits (sessions launched by this version start in the original repo). `/wt done` treats that as removed and starts a detached cleanup that deletes the leftover empty folders (only empty folders, never files) for up to 2 minutes. If it cannot, delete them by hand.
 - The progress spinner pauses while gitignored files are copied (a synchronous copy).
 
 ## Tests
 
 ```
-node --experimental-strip-types --test config.test.ts layout.test.ts files.test.ts git-ops.test.ts manage.test.ts unity-guard.test.ts vscode-bridge.test.ts update.test.ts progress.test.ts index.test.ts folders.test.ts boundary.test.ts
+node --experimental-strip-types --test config.test.ts layout.test.ts files.test.ts git-ops.test.ts manage.test.ts unity-guard.test.ts vscode-bridge.test.ts update.test.ts progress.test.ts index.test.ts folders.test.ts boundary.test.ts live.test.ts sessions.test.ts meta.test.ts shared-guard.test.ts
 node --test vscode/request.test.js
 ```
