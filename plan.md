@@ -632,6 +632,9 @@ Stage 5:
 
 8. `feat(worktree): automatic workspace names and /wt rename` — `worktree/layout.ts`, `layout.test.ts`, `manage.ts` (or `rename.ts` with `rename.test.ts`), `index.ts`, `README.md`
 
+## Plan choices upheld at a pass
+pi/agent/extensions/worktree/boundary.test.ts:14 - minor - [plan-flaw] The plan's boundary rule still conflicts with existing code. §6 says worktree has "no import specifier containing `../workflow`", and D8 says worktree uses only K1, K3 and K4. But `unity-guard.ts:2` imports `KEYWORDS`, `parseCommands` and `WRAPPERS` from `../workflow/readonly-bash.ts`. The executor added a narrow exception to the test and documented it in the worktree README. The plan's contract does not list this import.
+
 <!-- pi-workflow:status -->
 ## Checklist
 - [x] S1 `worktree/git-ops.ts`, next to `repoStatus` (`:183`): add `deliveredState(git, gh, wt, baseRef, branch)` implementing th
@@ -641,14 +644,14 @@ Stage 5:
 - [x] S5 `worktree/config.ts`: add `rebaseUnpushed` (default `true`) to `WtConfig`, `defaults` and `mergeConfig`, following the `
 - [x] S6 `worktree/index.ts`:
 - [x] S7 `worktree/README.md`:
-- [ ] S8 `workflow/index.ts`, K1:
-- [ ] S9 `workflow/index.ts` `session_start` (`:2741`): before `applyAddDir`, apply K1b as specified in §4.
-- [ ] S10 `workflow/index.ts`, K2: register `pi.on("session_before_switch", …)` exactly as in §4. Model the notification on `resum
-- [ ] S11 `workflow/index.ts` `updateStatus` (`:352`), K4: emit `workflow:status` with the payload from §4, deduplicated by its JS
-- [ ] S12 `workflow/plan-store.ts` and `workflow/index.ts`, S2:
-- [ ] S13 `worktree/index.ts:23-41`: `addedFolders` reads only the newest `session-folders` entry. Remove `STATE_ENTRY` and every 
-- [ ] S14 `workflow/README.md`: new section "Public contract for other extensions" listing K1, K1b, K2, K3 and K4 with the exact f
-- [ ] S15 `docs/workflow-improvements.md`: add the following rows, following the rules at `:7-11`.
+- [x] S8 `workflow/index.ts`, K1:
+- [x] S9 `workflow/index.ts` `session_start` (`:2741`): before `applyAddDir`, apply K1b as specified in §4.
+- [x] S10 `workflow/index.ts`, K2: register `pi.on("session_before_switch", …)` exactly as in §4. Model the notification on `resum
+- [x] S11 `workflow/index.ts` `updateStatus` (`:352`), K4: emit `workflow:status` with the payload from §4, deduplicated by its JS
+- [x] S12 `workflow/plan-store.ts` and `workflow/index.ts`, S2:
+- [x] S13 `worktree/index.ts:23-41`: `addedFolders` reads only the newest `session-folders` entry. Remove `STATE_ENTRY` and every 
+- [x] S14 `workflow/README.md`: new section "Public contract for other extensions" listing K1, K1b, K2, K3 and K4 with the exact f
+- [x] S15 `docs/workflow-improvements.md`: add the following rows, following the rules at `:7-11`.
 - [ ] S16 New `worktree/live.ts`:
 - [ ] S17 `worktree/index.ts` factory, wiring S1:
 - [ ] S18 New `worktree/sessions.ts`:
