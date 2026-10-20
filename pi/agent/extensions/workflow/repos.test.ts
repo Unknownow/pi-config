@@ -1,7 +1,7 @@
 // node --test repos.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { combineRepoTexts, parseAddDir, repoKey, fallbackTexts, repoTexts, shellText, uniqueRoots } from "./repos.ts";
+import { followFolders, parseWorktreeList, combineRepoTexts, parseAddDir, repoKey, fallbackTexts, repoTexts, shellText, uniqueRoots } from "./repos.ts";
 import { pushProblem } from "./push-guard.ts";
 
 test("repoKey normalizes", () => {
@@ -117,4 +117,31 @@ test("fallbackTexts checks PowerShell text converted and as written", () => {
 	assert.deepEqual(both, ["bash -c 'git pu/sh'", "bash -c 'git pu\\sh'"]);
 	assert.ok(fallbackTexts("cd D:\\b\\; git push", true).some((t) => pushProblem(t, opts)));
 	assert.deepEqual(fallbackTexts("git push", true), ["git push"]);
+});
+
+test("followFolders moves added folders to the sibling worktrees", () => {
+	const lookup = (wts: string[]) => (f: string) => (f.startsWith("D:/p/knowledge") ? { top: "D:/p/knowledge", worktrees: wts } : null);
+	const both = ["D:/p/knowledge", "D:/p/wt/w1/knowledge"];
+	const fwd = followFolders(["D:/p/knowledge/docs", "D:/p/plain"], "D:/p/wt/w1/game", "D:/p/wt/w1/game", (f) => (f === "D:/p/plain" ? null : lookup(both)(f)), () => true, "win32");
+	assert.deepEqual(fwd.folders, ["D:/p/wt/w1/knowledge/docs", "D:/p/plain"]);
+	assert.deepEqual(fwd.changes, [{ from: "D:/p/knowledge/docs", to: "D:/p/wt/w1/knowledge/docs" }]);
+	const slash = followFolders(["D:/p/knowledge/docs/"], "D:/p/wt/w1/game", "D:/p/wt/w1/game", (f) => lookup(both)(f), () => true, "win32");
+	assert.deepEqual(slash.folders, ["D:/p/wt/w1/knowledge/docs"]);
+	const back = followFolders(["D:/p/wt/w1/knowledge/docs"], "D:/p", "D:/p/game", (f) => ({ top: "D:/p/wt/w1/knowledge", worktrees: both }), () => true, "win32");
+	assert.deepEqual(back.folders, ["D:/p/knowledge/docs"]);
+});
+
+test("followFolders leaves folders alone without exactly one candidate", () => {
+	const none = followFolders(["D:/p/knowledge"], "D:/q/game", "D:/q/game", () => ({ top: "D:/p/knowledge", worktrees: ["D:/p/knowledge"] }), () => true, "win32");
+	assert.deepEqual(none.changes, []);
+	const two = followFolders(["D:/p/knowledge"], "D:/p/wt/w1/game", "D:/p/wt/w1/game", () => ({ top: "D:/p/knowledge", worktrees: ["D:/p/wt/w1/a", "D:/p/wt/w1/b"] }), () => true, "win32");
+	assert.deepEqual(two.changes, []);
+	const missing = followFolders(["D:/p/knowledge"], "D:/p/wt/w1/game", "D:/p/wt/w1/game", () => ({ top: "D:/p/knowledge", worktrees: ["D:/p/wt/w1/knowledge"] }), () => false, "win32");
+	assert.deepEqual(missing.folders, ["D:/p/knowledge"]);
+});
+
+test("followFolders drops the working folder and repeats; parseWorktreeList reads porcelain", () => {
+	const r = followFolders(["D:/p/knowledge", "D:/p/wt/w1/knowledge"], "D:/p/wt/w1/knowledge", "D:/p/wt/w1/game", () => ({ top: "D:/p/knowledge", worktrees: ["D:/p/knowledge", "D:/p/wt/w1/knowledge"] }), () => true, "win32");
+	assert.deepEqual(r.folders, []);
+	assert.deepEqual(parseWorktreeList("worktree D:/a\nHEAD x\n\nworktree D:/b\r\nbranch y\n"), ["D:/a", "D:/b"]);
 });

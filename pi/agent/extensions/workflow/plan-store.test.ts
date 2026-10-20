@@ -5,7 +5,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import test from "node:test";
 import { type PlanStatus } from "./plan-doc.ts";
-import { adoptHigher, commitRef, deleteLocal, deleteRef, fetchMirror, type Git, listRefs, plansDir, pushRef, readLocalStatuses, readPlanMd, refRev, remoteOf, writeLocal } from "./plan-store.ts";
+import { claimLive, dropClaim, readClaim, writeClaim, adoptHigher, commitRef, deleteLocal, deleteRef, fetchMirror, type Git, listRefs, plansDir, pushRef, readLocalStatuses, readPlanMd, refRev, remoteOf, writeLocal } from "./plan-store.ts";
 
 const git: Git = async (cwd, args, env) => {
 	try {
@@ -192,4 +192,22 @@ test("statusAt caches status.json by commit, so listRefs reads each plan commit 
 	} finally {
 		fs.rmSync(base, { recursive: true, force: true });
 	}
+});
+
+test("claims: round trip and liveness", () => {
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "claim-"));
+	const id = "20261021-0011-some-plan-ab12";
+	const claim = { v: 1 as const, pid: 42, host: "h", cwd: "D:/x", updated: new Date(1_000_000).toISOString() };
+	assert.equal(readClaim(dir, id), null);
+	writeClaim(dir, id, claim);
+	assert.deepEqual(readClaim(dir, id), claim);
+	const alive = () => true;
+	assert.equal(claimLive(claim, 1_000_000 + 10_000, "h", alive), true);
+	assert.equal(claimLive(claim, 1_000_000 + 10_000, "other", alive), false);
+	assert.equal(claimLive(claim, 1_000_000 + 10_000, "h", () => false), false);
+	assert.equal(claimLive(claim, 1_000_000 + 180_000, "h", alive), false);
+	assert.equal(claimLive(null, 0, "h", alive), false);
+	dropClaim(dir, id);
+	assert.equal(readClaim(dir, id), null);
+	fs.rmSync(dir, { recursive: true, force: true });
 });

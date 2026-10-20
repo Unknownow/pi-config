@@ -119,3 +119,53 @@ export function parseAddDir(flag: unknown, platform: NodeJS.Platform = process.p
 		.map((s) => s.trim())
 		.filter(Boolean);
 }
+
+/** The worktree paths of `git worktree list --porcelain` output, forward slashes. */
+export function parseWorktreeList(porcelain: string): string[] {
+	return porcelain
+		.split(/\r?\n/)
+		.filter((l) => l.startsWith("worktree "))
+		.map((l) => l.slice("worktree ".length).trim().replace(/\\/g, "/"))
+		.filter(Boolean);
+}
+
+/**
+ * Moves added folders along when the working folder moved to another checkout of the same projects.
+ * `lookup(folder)` gives the git top of the folder and that repo's worktrees (null for a plain folder).
+ * A folder inside repo `T` becomes `W/<relative path>` when exactly one worktree `W` of `T` sits next to
+ * `newTop` (same parent folder) and the target exists; anything else stays. A result equal to `cwd` is
+ * dropped and repeats are removed.
+ */
+export function followFolders(
+	folders: string[],
+	cwd: string,
+	newTop: string,
+	lookup: (folder: string) => { top: string; worktrees: string[] } | null,
+	exists: (p: string) => boolean = () => true,
+	platform: NodeJS.Platform = process.platform,
+): { folders: string[]; changes: { from: string; to: string }[] } {
+	const parent = repoKey(path.posix.dirname(repoKey(newTop, platform)), platform);
+	const out: string[] = [];
+	const changes: { from: string; to: string }[] = [];
+	for (const f of folders) {
+		let next = f;
+		const info = lookup(f);
+		if (info) {
+			const top = repoKey(info.top, platform);
+			const key = repoKey(f, platform);
+			const cands = info.worktrees.filter((w) => repoKey(path.posix.dirname(repoKey(w, platform)), platform) === parent);
+			if (cands.length === 1 && (key === top || key.startsWith(`${top}/`))) {
+				const norm = f.trim().replace(/\\/g, "/").replace(/\/+$/, "");
+				const rel = key.slice(top.length).replace(/^\//, "");
+				const base = cands[0].replace(/\\/g, "/").replace(/\/+$/, "");
+				const target = rel ? `${base}/${norm.slice(norm.length - rel.length)}` : base;
+				if (exists(target)) next = target;
+			}
+		}
+		if (next !== f) changes.push({ from: f, to: next });
+		if (repoKey(next, platform) === repoKey(cwd, platform)) continue;
+		if (out.some((o) => repoKey(o, platform) === repoKey(next, platform))) continue;
+		out.push(next);
+	}
+	return { folders: out, changes };
+}

@@ -56,11 +56,11 @@ import { branchName, combineOutcomes, type Delivery, type DeliveryOptions, DELIV
 import { modelChoices, pathCompletions } from "./pickers.ts";
 import { ghCandidates, withPathDir } from "./gh-path.ts";
 import { citeNames, collectRepoDiff as collectRepoDiffImpl, needsFinalFullReview, type RepoDiff } from "./repo-diff.ts";
-import { combineRepoTexts, parseAddDir, repoKey, uniqueRoots } from "./repos.ts";
+import { combineRepoTexts, followFolders, parseAddDir, parseWorktreeList, repoKey, uniqueRoots } from "./repos.ts";
 import { shellProblem } from "./push-guard.ts";
 import { COMMIT_GUARD_ENV, type CommitGuardSpec } from "./commit-guard.ts";
 import { commitPlan, type Finished, mergeChecklist, newFlowId, openStepsReminder, parseChecklist, type PlanStatus, planCard, pruneIds, renderPlanFile, splitPlanFile, type ChecklistItem } from "./plan-doc.ts";
-import { adoptHigher, commitRef, deleteLocal, deleteRef, fetchMirror, type Git, listRefs, plansDir, pushRef, readLocalStatuses, readPlanMd, refRev, remoteOf, repoInfo, type RefEntry, writeLocal } from "./plan-store.ts";
+import { adoptHigher, claimLive, commitRef, dropClaim, pidAlive, readClaim, writeClaim, deleteLocal, deleteRef, fetchMirror, type Git, listRefs, plansDir, pushRef, readLocalStatuses, readPlanMd, refRev, remoteOf, repoInfo, type RefEntry, writeLocal } from "./plan-store.ts";
 import { type FlowFinding, recordFindings, reportFindings, type ReportStep } from "./flow-report.ts";
 import { nextStage, parseStages, stageDelivery, stageLine, stageNote, stageStart, stagesOutcome } from "./stages.ts";
 import { planToolProblem, planToolRefused } from "./readonly-tools.ts";
@@ -177,6 +177,8 @@ interface LastKnowledge {
 }
 
 const STATE_ENTRY = "workflow-state";
+/** Public contract K1: the session's working folder and added folders, `{ v: 1, cwd, folders }`. The workflow is its only writer. */
+const FOLDERS_ENTRY = "session-folders";
 /** Display-only entry (never sent to the model) with the token breakdown of a finished flow. */
 const SUMMARY_ENTRY = "workflow-summary";
 const APPROVED = "Plan approved. Execute it now, step by step, following the workflow rules.";
@@ -313,6 +315,17 @@ export default function workflow(pi: ExtensionAPI) {
 		pi.appendEntry(STATE_ENTRY, state);
 	}
 
+	/** K1: appends the folder list as a `session-folders` entry when the newest one on the branch differs. */
+	function publishFolders(ctx: ExtensionContext): void {
+		const data = { v: 1, cwd: ctx.cwd.replace(/\\/g, "/"), folders: [...(state.folders ?? [])] };
+		const newest = ctx.sessionManager
+			.getBranch()
+			.filter((e) => e.type === "custom" && (e as { customType?: string }).customType === FOLDERS_ENTRY)
+			.pop() as { data?: { cwd?: unknown; folders?: unknown } } | undefined;
+		if (newest?.data && newest.data.cwd === data.cwd && JSON.stringify(newest.data.folders) === JSON.stringify(data.folders)) return;
+		pi.appendEntry(FOLDERS_ENTRY, data);
+	}
+
 	/** Ends the current flow: shows its token breakdown and starts counting the next one. False if it had none. */
 	function summarizeFlow(outcome: string, ok: boolean): boolean {
 		if ((state.unresolvedPlanFlaws ?? 0) > 0) outcome += ` · ${state.unresolvedPlanFlaws} plan flaw(s) not settled (see the plan)`;
@@ -362,6 +375,26 @@ export default function workflow(pi: ExtensionAPI) {
 		const cl = state.checklist;
 		if (ctx.hasUI) ctx.ui.setStatus("workflow-plan", cl?.length && state.phase === "execute" ? `plan ${cl.filter((i) => i.done).length}/${cl.length}` : undefined);
 		if (ctx.hasUI) ctx.ui.setStatus("workflow-folders", n ? `+${n} folder${n === 1 ? "" : "s"}` : undefined);
+		emitStatus();
+	}
+
+	let lastStatusEvent = "";
+	/** K4: tells other extensions the phase and stage; only when it changed. */
+	function emitStatus(): void {
+		const st = currentStages();
+		const payload = {
+			v: 1,
+			phase: state.phase,
+			...(state.planDoc?.flowId ? { flowId: state.planDoc.flowId } : {}),
+			...(state.approvedPlan ? { title: planTitle(state.approvedPlan) } : {}),
+			...(st ? { stage: st.current, stages: st.stages.length } : {}),
+		};
+		const json = JSON.stringify(payload);
+		if (json === lastStatusEvent) return;
+		lastStatusEvent = json;
+		try {
+			pi.events.emit("workflow:status", payload);
+		} catch {}
 	}
 
 	/** Switches the main session to a role's model and thinking level. */
@@ -906,7 +939,25 @@ export default function workflow(pi: ExtensionAPI) {
 		retry?: boolean;
 	}
 
+	/** S2: this session's claim on its unfinished flow, rewritten every 60 s so others can tell it is alive. */
+	let claimedFlow: string | undefined;
+	let claimTimer: ReturnType<typeof setInterval> | undefined;
+	let claimCwd = "";
+	function refreshClaim(): void {
+		const dir = claimedFlow ? planDirs.get(claimedFlow) : undefined;
+		if (!claimedFlow || !dir) return;
+		try {
+			writeClaim(dir, claimedFlow, { v: 1, pid: process.pid, host: os.hostname(), cwd: claimCwd || process.cwd(), updated: new Date().toISOString() });
+		} catch {}
+	}
+	function stopClaimTimer(): void {
+		if (claimTimer) clearInterval(claimTimer);
+		claimTimer = undefined;
+		claimedFlow = undefined;
+	}
+
 	async function writePlan(ctx: ExtensionContext, snap: PlanSnap): Promise<void> {
+		claimCwd = ctx.cwd.replace(/\\/g, "/");
 		const found = [...(await flowRepos(ctx)).map((r) => r.root), ...(await Promise.all(snap.touched.map((t) => gitRoot(t))))];
 		const roots = uniqueRoots([...snap.roots, ...found.filter((r): r is string => !!r)]);
 		const dir = planDirs.get(snap.flowId) ?? (await planDirFor(roots[0] ?? null));
@@ -927,6 +978,15 @@ export default function workflow(pi: ExtensionAPI) {
 		writeLocal(dir, snap.flowId, planMd, status);
 		planDirs.set(snap.flowId, dir);
 		planLast.set(snap.flowId, { dir, status });
+		if (snap.finished) {
+			dropClaim(dir, snap.flowId);
+			if (claimedFlow === snap.flowId) stopClaimTimer();
+		} else if (state.planDoc?.flowId === snap.flowId) {
+			claimedFlow = snap.flowId;
+			refreshClaim();
+			claimTimer ??= setInterval(refreshClaim, 60_000);
+			claimTimer.unref?.();
+		}
 		metricsFlushAll();
 		const live = state.planDoc?.flowId === snap.flowId ? state.planDoc : undefined;
 		if (live && roots.join("\n") !== live.roots.join("\n")) {
@@ -1145,14 +1205,32 @@ export default function workflow(pi: ExtensionAPI) {
 			notify(wanted ? `no unfinished plan matches "${wanted}" in this repo or the added folders` : "no unfinished plan found in this repo or the added folders");
 			return;
 		}
-		let pick = candidates[0];
+		// S2: another live session may be running the flow.
+		const claims = await Promise.all(
+			candidates.map(async (c) => {
+				const claim = readClaim(await planDirFor(c.root), c.entry.flowId);
+				return claim && claim.pid !== process.pid ? claim : null;
+			}),
+		);
+		const liveClaim = (i: number) => (claims[i] && claimLive(claims[i], Date.now(), os.hostname(), pidAlive) ? claims[i] : null);
+		let pickIdx = 0;
 		if (candidates.length > 1) {
-			const labels = candidates.map((c) => `${c.entry.status?.title} \u2014 ${c.entry.status?.updated.slice(0, 16).replace("T", " ")}${c.entry.status?.stage ? `, stage ${c.entry.status.stage}` : ""} (${c.entry.flowId})`);
+			const labels = candidates.map((c, i) => {
+				const live = liveClaim(i);
+				return `${c.entry.status?.title} \u2014 ${c.entry.status?.updated.slice(0, 16).replace("T", " ")}${c.entry.status?.stage ? `, stage ${c.entry.status.stage}` : ""} (${c.entry.flowId})${live ? ` \u2014 running in ${live.cwd} (pid ${live.pid})` : ""}`;
+			});
 			const chosen = await ctx.ui.select("Resume which flow?", labels);
 			const i = chosen ? labels.indexOf(chosen) : -1;
 			if (i < 0) return;
-			pick = candidates[i];
+			pickIdx = i;
 		}
+		const pick = candidates[pickIdx];
+		const heldBy = liveClaim(pickIdx);
+		if (heldBy) {
+			notify(`${pick.entry.status?.title} is running in ${heldBy.cwd} (pid ${heldBy.pid}); finish or leave it there first`);
+			return;
+		}
+		if (claims[pickIdx]) notify(`took over a stale claim from pid ${claims[pickIdx]!.pid}`, "info");
 		if (busy && busy !== pick.entry.flowId) {
 			notify(`a flow is already running (${busy}); finish or leave it before resuming another`);
 			return;
@@ -1245,6 +1323,7 @@ export default function workflow(pi: ExtensionAPI) {
 		if (!state.checklist.length) state.checklist = undefined;
 		state.planDoc = { flowId: status.flowId, rev: status.rev, roots: roots.map((r) => r.root) };
 		persist();
+		publishFolders(ctx);
 		updateStatus(ctx);
 		planMilestone(ctx);
 		await planChain;
@@ -2726,6 +2805,33 @@ ${judged.text}`, instruction, chosen);
 		if (!changed) return;
 		state.folders = folders;
 		persist();
+		publishFolders(ctx);
+	}
+
+	/** K1b: after the session moved to another checkout of the same projects, added folders move to the matching checkouts next to the working folder. */
+	async function followWorkingFolder(ctx: ExtensionContext): Promise<void> {
+		const folders = state.folders ?? [];
+		if (!folders.length) return;
+		const newest = ctx.sessionManager
+			.getBranch()
+			.filter((e) => e.type === "custom" && (e as { customType?: string }).customType === FOLDERS_ENTRY)
+			.pop() as { data?: { cwd?: unknown } } | undefined;
+		const prev = newest?.data?.cwd;
+		if (typeof prev !== "string" || repoKey(prev) === repoKey(ctx.cwd)) return;
+		const top = await gitRoot(ctx.cwd);
+		if (!top) return;
+		const infos = new Map<string, { top: string; worktrees: string[] }>();
+		for (const f of folders) {
+			const t = await gitRoot(f);
+			if (!t) continue;
+			const r = await git(t, "worktree", "list", "--porcelain");
+			if (r.code === 0) infos.set(repoKey(f), { top: t, worktrees: parseWorktreeList(r.stdout) });
+		}
+		const res = followFolders(folders, ctx.cwd.replace(/\\/g, "/"), top, (f) => infos.get(repoKey(f)) ?? null, (p) => fs.existsSync(p));
+		if (!res.changes.length && res.folders.length === folders.length) return;
+		state.folders = res.folders;
+		persist();
+		for (const c of res.changes) ctx.ui.notify(`workflow: added folders follow the working folder: ${c.from} \u2192 ${c.to}`, "info");
 	}
 
 	pi.on("session_start", async (event, ctx) => {
@@ -2755,10 +2861,15 @@ ${judged.text}`, instruction, chosen);
 			view.flowStarted = state.flowStarted;
 			if (state.commitPending) view.stage = "commit";
 			if (state.phase === "plan") blockPlanTools();
-			if (event.reason !== "reload") applyAddDir(ctx);
+			if (event.reason !== "reload") {
+				await followWorkingFolder(ctx);
+				applyAddDir(ctx);
+				publishFolders(ctx);
+			}
 			updateStatus(ctx);
 			if (event.reason !== "reload") void planHousekeeping(ctx);
-			else if (state.planDoc && !state.planDoc.finished && state.approvedPlan) planMilestone(ctx, undefined, false);
+			// Rewrites the plan file, which also (re)starts this session's claim on an unfinished flow.
+			if (state.planDoc && !state.planDoc.finished && state.approvedPlan) planMilestone(ctx, undefined, false);
 			return;
 		}
 		if (event.reason === "reload") return;
@@ -2770,9 +2881,23 @@ ${judged.text}`, instruction, chosen);
 		view.flow = emptyFlowUsage();
 		view.flowStarted = undefined;
 		applyAddDir(ctx);
+		publishFolders(ctx);
 		if (start !== "off") await setPhase(ctx, start);
 		else updateStatus(ctx);
 		void planHousekeeping(ctx);
+	});
+
+	// K2: a session that is executing an approved plan is not switched away from.
+	pi.on("session_before_switch", async (_event, ctx) => {
+		if (state.phase !== "execute" || !state.approvedPlan) return;
+		ctx.ui.notify("workflow: a flow is executing; finish it or leave it with /flow off before switching sessions", "warning");
+		return { cancel: true };
+	});
+
+	pi.on("session_shutdown", async () => {
+		const dir = claimedFlow ? planDirs.get(claimedFlow) : undefined;
+		if (dir && claimedFlow) dropClaim(dir, claimedFlow);
+		stopClaimTimer();
 	});
 
 	// ----------------------------------------------------------------------
@@ -2884,6 +3009,7 @@ ${judged.text}`, instruction, chosen);
 				}
 				state.folders = [...folders, abs];
 				persist();
+				publishFolders(ctx);
 				updateStatus(ctx);
 				ctx.ui.notify(`workflow: added ${abs}; reloading`, "info");
 			} else {
@@ -2897,6 +3023,7 @@ ${judged.text}`, instruction, chosen);
 				const [gone] = folders.splice(i, 1);
 				state.folders = folders;
 				persist();
+				publishFolders(ctx);
 				updateStatus(ctx);
 				ctx.ui.notify(`workflow: removed ${gone}; reloading`, "info");
 			}

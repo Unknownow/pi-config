@@ -224,3 +224,57 @@ export async function adoptHigher(git: Git, root: string, flowId: string): Promi
 	}
 	return local ? { ...local, fromRemote: false } : null;
 }
+
+/** Who is working on an unfinished flow: written next to its plan file so other sessions on this machine can see it. */
+export interface Claim {
+	v: 1;
+	pid: number;
+	host: string;
+	cwd: string;
+	updated: string;
+}
+
+export const CLAIM_LIVE_MS = 180_000;
+
+export function writeClaim(dir: string, flowId: string, claim: Claim): void {
+	if (!isFlowId(flowId)) return;
+	const folder = path.join(dir, flowId);
+	fs.mkdirSync(folder, { recursive: true });
+	fs.writeFileSync(path.join(folder, "claim.json"), `${JSON.stringify(claim)}\n`);
+}
+
+export function readClaim(dir: string, flowId: string): Claim | null {
+	if (!isFlowId(flowId)) return null;
+	try {
+		const c = JSON.parse(fs.readFileSync(path.join(dir, flowId, "claim.json"), "utf8")) as Partial<Claim>;
+		if (c.v !== 1 || typeof c.pid !== "number" || typeof c.host !== "string" || typeof c.cwd !== "string" || typeof c.updated !== "string") return null;
+		return c as Claim;
+	} catch {
+		return null;
+	}
+}
+
+export function dropClaim(dir: string, flowId: string): void {
+	if (!isFlowId(flowId)) return;
+	try {
+		fs.rmSync(path.join(dir, flowId, "claim.json"), { force: true });
+	} catch {}
+}
+
+/** True when the claim was written on this host by a process that is still alive, less than 180 s ago. */
+export function claimLive(claim: Claim | null, now: number, host: string, isAlive: (pid: number) => boolean): boolean {
+	if (!claim || claim.host !== host) return false;
+	const t = Date.parse(claim.updated);
+	if (!Number.isFinite(t) || now - t >= CLAIM_LIVE_MS) return false;
+	return isAlive(claim.pid);
+}
+
+/** Whether a process exists (`EPERM` means it does, but is not ours). */
+export function pidAlive(pid: number): boolean {
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch (e) {
+		return (e as { code?: string }).code === "EPERM";
+	}
+}
