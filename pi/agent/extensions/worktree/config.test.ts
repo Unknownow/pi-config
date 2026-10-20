@@ -68,3 +68,14 @@ test("autoUpdate defaults to true, false is read, a bad value warns", () => {
 	assert.equal(bad.cfg.autoUpdate, true);
 	assert.match(bad.warning ?? "", /autoUpdate/);
 });
+
+test("rebaseUnpushed defaults to true, false is read, a bad value warns", () => {
+	assert.equal(loadConfig(tmp(), "D:/projects").cfg.rebaseUnpushed, true);
+	const dir = tmp();
+	fs.writeFileSync(path.join(dir, "worktree.json"), JSON.stringify({ rebaseUnpushed: false }));
+	assert.equal(loadConfig(dir, "D:/projects").cfg.rebaseUnpushed, false);
+	fs.writeFileSync(path.join(dir, "worktree.json"), JSON.stringify({ rebaseUnpushed: "no" }));
+	const bad = loadConfig(dir, "D:/projects");
+	assert.equal(bad.cfg.rebaseUnpushed, true);
+	assert.match(bad.warning ?? "", /rebaseUnpushed/);
+});

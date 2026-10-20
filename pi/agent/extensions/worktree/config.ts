@@ -13,6 +13,7 @@ export interface WtConfig {
 	unityGuard: boolean;
 	vscode: boolean;
 	autoUpdate: boolean;
+	rebaseUnpushed: boolean;
 }
 
 export const DEFAULT_LINK = [".pi/git", ".pi/npm", "node_modules"];
@@ -31,6 +32,7 @@ export function defaults(workingRepoParent: string): WtConfig {
 		unityGuard: true,
 		vscode: true,
 		autoUpdate: true,
+		rebaseUnpushed: true,
 	};
 }
 
@@ -50,6 +52,10 @@ export function mergeConfig(raw: unknown, base: WtConfig): { cfg: WtConfig; warn
 	if (o.autoUpdate !== undefined) {
 		if (typeof o.autoUpdate === "boolean") cfg.autoUpdate = o.autoUpdate;
 		else warnings.push("autoUpdate must be true or false");
+	}
+	if (o.rebaseUnpushed !== undefined) {
+		if (typeof o.rebaseUnpushed === "boolean") cfg.rebaseUnpushed = o.rebaseUnpushed;
+		else warnings.push("rebaseUnpushed must be true or false");
 	}
 	if (o.vscode !== undefined) {
 		if (typeof o.vscode === "boolean") cfg.vscode = o.vscode;
