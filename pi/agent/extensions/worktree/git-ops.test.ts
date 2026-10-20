@@ -228,3 +228,10 @@ test("withLockRetry retries a lock failure twice with waits of 1 s and 3 s", asy
 	await other("d", []);
 	assert.deepEqual(w3, []);
 });
+
+test("deliveredState reports a failing git status instead of reading it as clean", async () => {
+	const git: Git = async (_cwd, args) => (args[0] === "status" ? { code: 128, stdout: "", stderr: "fatal: not a git repository" } : { code: 0, stdout: "0", stderr: "" });
+	const r = await deliveredState(git, async () => ({ code: 1, stdout: "", stderr: "" }), "d", "origin/main", "wt/a");
+	assert.equal(r.delivered, null);
+	assert.match(r.error ?? "", /git status failed/);
+});

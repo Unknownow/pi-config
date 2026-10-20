@@ -222,11 +222,13 @@ export interface DeliveredState {
 	own: number;
 	dirty: number;
 	ghError?: string;
+	/** Set when a git call failed, so the counts cannot be trusted. */
+	error?: string;
 }
 
 /** The merged PR whose head commit is HEAD (covers squash and rebase merges done on GitHub); null when none. */
-export async function mergedPrOf(git: Git, gh: Gh, wt: string, branch: string): Promise<{ pr: number | null; ghError?: string }> {
-	const head = (await git(wt, ["rev-parse", "HEAD"])).stdout.trim();
+export async function mergedPrOf(git: Git, gh: Gh, wt: string, branch: string, sha?: string): Promise<{ pr: number | null; ghError?: string }> {
+	const head = sha ?? (await git(wt, ["rev-parse", "HEAD"])).stdout.trim();
 	const r = await gh(wt, ["pr", "list", "--head", branch, "--state", "merged", "--json", "number,headRefOid", "--limit", "20"]);
 	if (r.code !== 0 || !head) return { pr: null, ghError: "gh unavailable" };
 	try {
@@ -242,7 +244,9 @@ export async function mergedPrOf(git: Git, gh: Gh, wt: string, branch: string): 
 export async function deliveredState(git: Git, gh: Gh, wt: string, baseRef: string, branch: string): Promise<DeliveredState> {
 	const stat = await git(wt, ["status", "--porcelain"]);
 	const dirty = stat.stdout.split(/\r?\n/).filter((l) => l.trim()).length;
-	const own = count(await git(wt, ["rev-list", "--count", `${baseRef}..HEAD`]));
+	const ahead = await git(wt, ["rev-list", "--count", `${baseRef}..HEAD`]);
+	const own = count(ahead);
+	if (stat.code !== 0 || ahead.code !== 0) return { delivered: null, own, dirty, error: `git ${stat.code !== 0 ? "status" : "rev-list"} failed: ${firstLine(stat.code !== 0 ? stat : ahead)}` };
 	if (dirty > 0) return { delivered: null, own, dirty };
 	if ((await git(wt, ["merge-base", "--is-ancestor", "HEAD", baseRef])).code === 0) return { delivered: "base", own, dirty };
 	const { pr, ghError } = await mergedPrOf(git, gh, wt, branch);
