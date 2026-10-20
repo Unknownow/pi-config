@@ -2,7 +2,7 @@
 
 Reference list for `pi/agent/extensions/workflow/`. Goal: less time, fewer tokens, more parallelism.
 
-Status: A2, A3, A5, A7, B1, B7, B9, C2, C3, C4, D2, D3, D4, D5, D6, D7, D8, D9, D10 and D11 are implemented; A1 is rejected; the rest are ideas only. Found by reading the code on 2026-10-16. Nothing was measured, so every benefit below is an estimate. Line numbers are from commit `3fdc69a` and will drift.
+Status: A2, A3, A5, A7, B1, B7, B9, C2, C3, C4, D2, D3, D4, D5, D6, D7, D8, D9, D10, D11 and D12 are implemented; A1 is rejected; the rest are ideas only. Found by reading the code on 2026-10-16. Nothing was measured, so every benefit below is an estimate. Line numbers are from commit `3fdc69a` and will drift.
 
 ## Keeping this file current
 
@@ -82,6 +82,7 @@ Plan (Opus) -> approve -> execute (Sonnet) -> judge (Opus, separate `pi` process
 | D9 | Other extensions could not see the phase or stage of a session. **Done:** contract K4, the `workflow:status` event emitted from `updateStatus` when its payload changes. | Low (T) | S | Low. Listeners are optional. | None. |
 | D10 | Two sessions could run the same flow and overwrite each other's plan. **Done:** flow claims (`claim.json` next to the plan, `writeClaim`/`claimLive` in `plan-store.ts`); `/flow resume` refuses a flow claimed by a live session. | Medium (T) | M | Low. A stale claim (over 180 s, dead pid, other host) is ignored. | None. |
 | D11 | Nothing stopped the workflow from growing a dependency on the worktree extension. **Done:** `boundary.test.ts` in both extensions (the workflow never refers to the worktree extension; the worktree extension imports only `readonly-bash.ts` from the workflow). | Low (T) | S | None. | None. |
+| D12 | After `ctx.switchSession()` the `--add-dir` launch flag was applied again, so the folders of the set a session just left came back. **Done:** the flag is applied only at `startup`. | Low (T) | S | None. | None. |
 
 ## Effect measurement
 
@@ -131,6 +132,7 @@ Method for every item:
 | D9 | n/a | Event only | n/a |
 | D10 | Flows resumed while another session held them | Count `is running in` refusals. Implemented, not measured yet. | Two sessions never write the same plan |
 | D11 | n/a | Tests only | n/a |
+| D12 | n/a | Folders stay as moved | n/a |
 | A10 | Flow steps failed by `cannot lock ref` | Count in session logs | Idea only, not measured |
 | A11 | Plans started in a second workspace | n/a | Idea only |
 

@@ -2863,7 +2863,8 @@ ${judged.text}`, instruction, chosen);
 			if (state.phase === "plan") blockPlanTools();
 			if (event.reason !== "reload") {
 				await followWorkingFolder(ctx);
-				applyAddDir(ctx);
+				// --add-dir is a launch flag: only the first session of the process applies it, not a later switch or resume.
+				if (event.reason === "startup") applyAddDir(ctx);
 				publishFolders(ctx);
 			}
 			updateStatus(ctx);
