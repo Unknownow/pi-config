@@ -5,7 +5,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { test } from "node:test";
 import { defaults } from "./config.ts";
-import { createAll, excludeLinks, preflight, removeChecks, repoInfo, repoStatus, rollback, type Git, type Planned } from "./git-ops.ts";
+import { createAll, deliveredState, excludeLinks, preflight, removeChecks, repoInfo, repoStatus, rollback, type Gh, type Git, type Planned } from "./git-ops.ts";
 
 interface Call {
 	cwd: string;
@@ -176,4 +176,39 @@ test("removeChecks refuses when git cannot tell", async () => {
 	const { git } = fake({ "rev-parse --abbrev-ref @{u}": { stdout: "origin/wt/x\n" }, "rev-list --left-right": { code: 128 } });
 	const r = await removeChecks(git, ["D:/wt/x/a"]);
 	assert.match(r.problems.join("\n"), /rev-list failed/);
+});
+
+const ghWith = (stdout: string, code = 0): Gh => async () => ({ code, stdout, stderr: "" });
+const HEAD = "a".repeat(40);
+
+test("deliveredState: HEAD in the base ref is delivered", async () => {
+	const { git } = fake({ "rev-list --count": { stdout: "0\n" } });
+	const r = await deliveredState(git, ghWith("[]"), "/w/r", "origin/main", "wt/s1");
+	assert.equal(r.delivered, "base");
+});
+
+test("deliveredState: a merged PR whose head is HEAD is delivered as a PR", async () => {
+	const { git } = fake({ "merge-base": { code: 1 }, "rev-parse HEAD": { stdout: `${HEAD}\n` }, "rev-list --count": { stdout: "2\n" } });
+	const r = await deliveredState(git, ghWith(JSON.stringify([{ number: 9, headRefOid: HEAD }])), "/w/r", "origin/main", "wt/s1");
+	assert.deepEqual([r.delivered, r.pr, r.own], ["pr", 9, 2]);
+});
+
+test("deliveredState: a PR with another head is not delivered", async () => {
+	const { git } = fake({ "merge-base": { code: 1 }, "rev-parse HEAD": { stdout: `${HEAD}\n` } });
+	const r = await deliveredState(git, ghWith(JSON.stringify([{ number: 9, headRefOid: "b".repeat(40) }])), "/w/r", "origin/main", "wt/s1");
+	assert.equal(r.delivered, null);
+	assert.equal(r.ghError, undefined);
+});
+
+test("deliveredState: gh failing reports gh unavailable", async () => {
+	const { git } = fake({ "merge-base": { code: 1 }, "rev-parse HEAD": { stdout: `${HEAD}\n` } });
+	const r = await deliveredState(git, ghWith("", 1), "/w/r", "origin/main", "wt/s1");
+	assert.deepEqual([r.delivered, r.ghError], [null, "gh unavailable"]);
+});
+
+test("deliveredState: uncommitted changes are never delivered", async () => {
+	const { git, calls } = fake({ "status --porcelain": { stdout: " M a.txt\n" } });
+	const r = await deliveredState(git, ghWith("[]"), "/w/r", "origin/main", "wt/s1");
+	assert.deepEqual([r.delivered, r.dirty], [null, 1]);
+	assert.ok(!calls.some((c) => c.args[0] === "merge-base"));
 });

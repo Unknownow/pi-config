@@ -12,6 +12,8 @@ export interface GitResult {
 	stderr: string;
 }
 export type Git = (cwd: string, args: string[]) => Promise<GitResult>;
+/** Runs the gh CLI in a folder; same shape as `Git`. */
+export type Gh = (cwd: string, args: string[]) => Promise<GitResult>;
 
 export interface RepoInfo {
 	top: string;
@@ -195,6 +197,41 @@ export async function repoStatus(git: Git, wt: string, baseRef: string | null): 
 	const cnt = baseRef ? await git(wt, ["rev-list", "--count", `${baseRef}..HEAD`]) : null;
 	const noBase = !cnt || cnt.code !== 0 ? "cannot tell whether commits are pushed" : undefined;
 	return { branch, dirty, upstream: null, ahead: 0, behind: 0, unpushed: cnt ? count(cnt) : 0, error: error ?? noBase };
+}
+
+export interface DeliveredState {
+	/** "base": HEAD is contained in the base ref; "pr": a merged PR of the branch has HEAD as its head commit. */
+	delivered: "base" | "pr" | null;
+	pr?: number;
+	/** Commits in HEAD that the base ref does not have. */
+	own: number;
+	dirty: number;
+	ghError?: string;
+}
+
+/** The merged PR whose head commit is HEAD (covers squash and rebase merges done on GitHub); null when none. */
+export async function mergedPrOf(git: Git, gh: Gh, wt: string, branch: string): Promise<{ pr: number | null; ghError?: string }> {
+	const head = (await git(wt, ["rev-parse", "HEAD"])).stdout.trim();
+	const r = await gh(wt, ["pr", "list", "--head", branch, "--state", "merged", "--json", "number,headRefOid", "--limit", "20"]);
+	if (r.code !== 0 || !head) return { pr: null, ghError: "gh unavailable" };
+	try {
+		const list = JSON.parse(r.stdout) as { number: number; headRefOid: string }[];
+		const hit = list.find((p) => p.headRefOid === head);
+		return { pr: hit ? hit.number : null };
+	} catch {
+		return { pr: null, ghError: "gh unavailable" };
+	}
+}
+
+/** Whether the work in a worktree is already in the base branch: by ancestry, else by a merged PR (gh). */
+export async function deliveredState(git: Git, gh: Gh, wt: string, baseRef: string, branch: string): Promise<DeliveredState> {
+	const stat = await git(wt, ["status", "--porcelain"]);
+	const dirty = stat.stdout.split(/\r?\n/).filter((l) => l.trim()).length;
+	const own = count(await git(wt, ["rev-list", "--count", `${baseRef}..HEAD`]));
+	if (dirty > 0) return { delivered: null, own, dirty };
+	if ((await git(wt, ["merge-base", "--is-ancestor", "HEAD", baseRef])).code === 0) return { delivered: "base", own, dirty };
+	const { pr, ghError } = await mergedPrOf(git, gh, wt, branch);
+	return pr !== null ? { delivered: "pr", pr, own, dirty } : { delivered: null, own, dirty, ghError };
 }
 
 export interface RemoveChecks {
