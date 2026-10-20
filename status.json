@@ -1,8 +1,8 @@
 {
   "v": 1,
   "flowId": "20261021-0011-reusable-worktree-workspaces-one-way-con-d2ef",
-  "rev": 6,
-  "updated": "2026-10-20T17:47:51.091Z",
+  "rev": 7,
+  "updated": "2026-10-20T18:25:03.860Z",
   "title": "Reusable worktree workspaces, one-way contract with the workflow, safe cleanup",
   "stage": 4,
   "delivery": "push",
@@ -32,7 +32,15 @@
     "S23",
     "S24",
     "S25",
-    "S26"
+    "S26",
+    "S27",
+    "S28",
+    "S29",
+    "S30",
+    "S31",
+    "S32",
+    "S33",
+    "S34"
   ],
   "repos": [
     {

@@ -638,6 +638,9 @@ pi/agent/extensions/worktree/boundary.test.ts:14 - minor - [plan-flaw] The plan'
 ## Plan choices upheld at a pass
 pi/agent/extensions/worktree/shared-guard.ts:49 - minor - [plan-flaw] The guard only checks commands that name the linked path. Deleting a parent of a link (`Remove-Item -Recurse -Force D:/wt/w1/game`, `rm -rf .`) is not refused, and on Windows PowerShell 5.1 `Remove-Item -Recurse` follows junctions into the original repo's `node_modules`.
 
+## Plan choices upheld at a pass
+pi/agent/extensions/worktree/clean.ts:121 - minor - [plan-flaw] `/wt clean` removes every unused workspace that has no commits yet: a fresh set is "delivered" because HEAD is an ancestor of base. That works against the goal of reusable, pooled workspaces (D4).
+
 <!-- pi-workflow:status -->
 ## Checklist
 - [x] S1 `worktree/git-ops.ts`, next to `repoStatus` (`:183`): add `deliveredState(git, gh, wt, baseRef, branch)` implementing th
@@ -666,14 +669,14 @@ pi/agent/extensions/worktree/shared-guard.ts:49 - minor - [plan-flaw] The guard 
 - [x] S24 New command `/wt unlink PATH`.
 - [x] S25 `worktree/index.ts:27` `makeGit`, S4: retry a call that failed with stderr matching `/cannot lock ref|Unable to create '
 - [x] S26 `worktree/README.md`:
-- [ ] S27 `worktree/manage.ts`, C2: `classifySet(env, set)` returns:
-- [ ] S28 `worktree/manage.ts`, C1: replace `removeSet`, `removeAll` and `finishSet` (`:95-213`) with `removeWorkspace(env, set, {
-- [ ] S29 `worktree/manage.ts`, C4 discard: `discardPreview(env, state)` and `backupRepo(git, main, set, dir, ts)`.
-- [ ] S30 `/wt remove [NAME]` (`worktree/index.ts`):
-- [ ] S31 New `/wt clean`:
-- [ ] S32 `/wt done`, C5, replacing `doneCmd` (`:325-358`):
-- [ ] S33 `worktree/config.ts`: `backupDays` (number ≥ 0, default 30), validated with a warning. `/wt list` shows each set's C2 ki
-- [ ] S34 `worktree/README.md`:
+- [x] S27 `worktree/manage.ts`, C2: `classifySet(env, set)` returns:
+- [x] S28 `worktree/manage.ts`, C1: replace `removeSet`, `removeAll` and `finishSet` (`:95-213`) with `removeWorkspace(env, set, {
+- [x] S29 `worktree/manage.ts`, C4 discard: `discardPreview(env, state)` and `backupRepo(git, main, set, dir, ts)`.
+- [x] S30 `/wt remove [NAME]` (`worktree/index.ts`):
+- [x] S31 New `/wt clean`:
+- [x] S32 `/wt done`, C5, replacing `doneCmd` (`:325-358`):
+- [x] S33 `worktree/config.ts`: `backupDays` (number ≥ 0, default 30), validated with a warning. `/wt list` shows each set's C2 ki
+- [x] S34 `worktree/README.md`:
 - [ ] S35 `worktree/layout.ts`: `nextFreeName(existing: string[], branchTaken: (name) => boolean)` returns the smallest `w<N>` (N 
 - [ ] S36 `/wt new [NAME]` and `+ new workspace` in `/wt use`, when no NAME is given:
 - [ ] S37 New command `/wt rename [OLD] [NEW]`. Missing arguments: a picker for OLD and an input for NEW (suggestion = `nextFreeNa
