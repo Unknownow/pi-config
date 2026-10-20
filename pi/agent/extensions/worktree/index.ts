@@ -11,6 +11,7 @@ import * as path from "node:path";
 import { getAgentDir, type ExtensionAPI, type ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { loadConfig, type WtConfig } from "./config.ts";
 import { setupFiles } from "./files.ts";
+import { foldersFromEntries } from "./folders.ts";
 import { sendToVscode } from "./vscode-bridge.ts";
 import { createAll, excludeLinks, preflight, rollback, type Gh, type Git, type Planned } from "./git-ops.ts";
 import { SWEEP_SCRIPT, detectSession, finishSet, listSets, listText, openPlan, parseEditors, quitReminder, removeSet, repoDirsIn, sessionConfig, worktreePrompt, type WtSession } from "./manage.ts";
@@ -20,7 +21,6 @@ import { Progress } from "./progress.ts";
 import { truncateToWidth } from "@earendil-works/pi-tui";
 import { branchOf, checkName, launchSpec, rootProblem, setRootOf, vscodeTerminalSpec } from "./layout.ts";
 
-const STATE_ENTRY = "workflow-state";
 const SUBCOMMANDS = ["new", "open", "list", "update", "remove", "done"];
 
 const slash = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "");
@@ -43,13 +43,9 @@ function makeGit(pi: ExtensionAPI, timeout = 60000): Git {
 	};
 }
 
-/** The folders added to this session by the workflow extension (absolute, forward slashes). */
+/** The folders added to this session, from the workflow's public `session-folders` entry (absolute, forward slashes). */
 function addedFolders(ctx: ExtensionCommandContext): string[] {
-	const saved = ctx.sessionManager
-		.getBranch()
-		.filter((e) => e.type === "custom" && (e as { customType?: string }).customType === STATE_ENTRY)
-		.pop() as { data?: { folders?: string[] } } | undefined;
-	return (saved?.data?.folders ?? []).map(slash);
+	return foldersFromEntries(ctx.sessionManager.getBranch() as { type: string; customType?: string; data?: unknown }[]);
 }
 
 /** `existsSync` is false for app execution aliases such as wt.exe; `lstat` sees them. */

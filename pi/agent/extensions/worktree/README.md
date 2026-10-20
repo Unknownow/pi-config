@@ -99,6 +99,10 @@ and `ctx_batch_execute` calls with a `unity` command that drives an Editor or ru
 The guard reads command text only; it is not a sandbox. `cd` in the text is ignored when resolving
 a relative `--project-path`, and commands built at runtime or started from a script file are not seen.
 
+## Relationship to the workflow extension
+
+The dependency is one-way. This extension uses only the workflow's public contract (see "Public contract for other extensions" in the workflow README): the `session-folders` entry (K1) to learn the added folders, the `--add-dir` flag (K3) when it launches pi, and later the `workflow:status` event (K4). The workflow reads nothing of this extension. The one code import is the shell parser `workflow/readonly-bash.ts`, used by the Unity guard. `boundary.test.ts` enforces both sides.
+
 ## Limits
 
 - Terminals opened before the VS Code extension activated use Windows Terminal.
@@ -118,6 +122,6 @@ a relative `--project-path`, and commands built at runtime or started from a scr
 ## Tests
 
 ```
-node --experimental-strip-types --test config.test.ts layout.test.ts files.test.ts git-ops.test.ts manage.test.ts unity-guard.test.ts vscode-bridge.test.ts update.test.ts progress.test.ts index.test.ts
+node --experimental-strip-types --test config.test.ts layout.test.ts files.test.ts git-ops.test.ts manage.test.ts unity-guard.test.ts vscode-bridge.test.ts update.test.ts progress.test.ts index.test.ts folders.test.ts boundary.test.ts
 node --test vscode/request.test.js
 ```
