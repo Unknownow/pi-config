@@ -38,11 +38,15 @@ export interface LaunchOpts {
 	name: string;
 	folders: string[];
 	piArgs?: string[];
+	/** The session file pi opens (`--session`). */
+	sessionFile?: string;
 }
+
+const piArgsOf = (o: LaunchOpts) => [...(o.sessionFile ? ["--session", o.sessionFile] : []), ...(o.piArgs ?? [])];
 
 export function launchSpec(o: LaunchOpts): LaunchSpec {
 	const flag = o.folders.length ? ["--add-dir", addDirValue(o.folders, o.platform)] : [];
-	const pa = o.piArgs ?? [];
+	const pa = piArgsOf(o);
 	if (o.platform !== "win32" || o.launch === "none") {
 		const dirs = flag.length ? ` --add-dir '${flag[1]}'` : "";
 		return { print: `cd ${o.cwd} && ${o.piCommand || "pi"}${pa.map((a) => ` ${a}`).join("")}${dirs}` };
@@ -68,7 +72,7 @@ export interface VscodeRequest {
 export function vscodeTerminalSpec(o: LaunchOpts): VscodeRequest {
 	const flag = o.folders.length ? ["--add-dir", addDirValue(o.folders, o.platform)] : [];
 	const name = `pi ${o.name}`;
-	const pa = o.piArgs ?? [];
+	const pa = piArgsOf(o);
 	if (o.platform === "win32") return { name, cwd: o.cwd, shellPath: "cmd.exe", shellArgs: ["/d", "/c", backslashes(o.piCommand), ...pa, ...flag] };
 	return { name, cwd: o.cwd, shellPath: o.piCommand || "pi", shellArgs: [...pa, ...flag] };
 }

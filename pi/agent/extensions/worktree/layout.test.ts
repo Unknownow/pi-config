@@ -96,3 +96,17 @@ test("vscodeTerminalSpec piArgs", () => {
 	assert.deepEqual(vscodeTerminalSpec({ ...base, piArgs: ["--continue"] }).shellArgs, ["/d", "/c", "pi.cmd", "--continue", "--add-dir", "A\;B"]);
 	assert.deepEqual(vscodeTerminalSpec({ ...base, platform: "linux", piCommand: "", piArgs: ["--continue"] }).shellArgs, ["--continue", "--add-dir", "A:B"]);
 });
+
+test("sessionFile becomes --session before the other pi arguments", () => {
+	const o = { platform: "win32" as const, launch: "window" as const, wtPath: "C:/wt.exe", piCommand: "pi", cwd: "D:/p/game", name: "w1", folders: ["D:/wt/w1/docs"], sessionFile: "C:/s/a.jsonl" };
+	const spec = launchSpec(o);
+	assert.ok("args" in spec);
+	if ("args" in spec) {
+		const i = spec.args.indexOf("--session");
+		assert.equal(spec.args[i + 1], "C:/s/a.jsonl");
+		assert.ok(i < spec.args.indexOf("--add-dir"));
+		assert.ok(!spec.args.includes("--continue"));
+	}
+	assert.deepEqual(vscodeTerminalSpec(o).shellArgs.slice(3, 5), ["--session", "C:/s/a.jsonl"]);
+	assert.match((launchSpec({ ...o, platform: "linux" }) as { print: string }).print, /pi --session C:\/s\/a\.jsonl --add-dir/);
+});
