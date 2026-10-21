@@ -1,12 +1,15 @@
 {
   "v": 1,
   "flowId": "20261021-1204-test-and-fix-workflow-strong-supervisor-e37a",
-  "rev": 2,
-  "updated": "2026-10-21T05:30:06.956Z",
+  "rev": 3,
+  "updated": "2026-10-21T05:40:49.060Z",
   "title": "Test-and-fix workflow (strong supervisor, Haiku runners, automatic fix loop)",
-  "stage": 2,
-  "delivery": "push",
   "done": [],
+  "finished": {
+    "at": "2026-10-21T05:40:48.931Z",
+    "ok": true,
+    "text": "stage 1: committed (10 commits), push skipped: master is protected; stage 2: committed (3 commits), push skipped: master is protected"
+  },
   "repos": [
     {
       "branch": "master",
