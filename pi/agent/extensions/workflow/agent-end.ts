@@ -90,8 +90,8 @@ export function judgeCapReached(rounds: number, max: number): boolean {
 }
 
 /** The phase to go back to when a flow ends: plan, from execute, when returnToPlan is on. */
-export function phaseAfterFlow(returnToPlan: boolean, phase: "off" | "plan" | "execute"): "plan" | undefined {
-	return returnToPlan && phase === "execute" ? "plan" : undefined;
+export function phaseAfterFlow(returnToPlan: boolean, phase: "off" | "plan" | "execute" | "test"): "plan" | undefined {
+	return returnToPlan && (phase === "execute" || phase === "test") ? "plan" : undefined;
 }
 
 /** Whether a pending handover message is sent after compacting the session first. An aborted run holds it (the user stopped the flow), except the commit step, which is sent uncompacted so the pending commit is not lost. */

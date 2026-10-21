@@ -153,6 +153,7 @@ test("a finished flow returns to plan only from execute, when enabled", () => {
 	assert.equal(phaseAfterFlow(false, "execute"), undefined);
 	assert.equal(phaseAfterFlow(true, "plan"), undefined);
 	assert.equal(phaseAfterFlow(true, "off"), undefined);
+	assert.equal(phaseAfterFlow(true, "test"), "plan");
 });
 
 test("noChangeStage advances in auto mode", () => {
