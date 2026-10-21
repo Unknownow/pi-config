@@ -145,6 +145,8 @@ export interface PlanStatus {
 	title: string;
 	stage?: number;
 	delivery?: string;
+	/** "test": a test-and-fix flow, which cannot be resumed. */
+	kind?: "test";
 	/** IDs of the ticked steps. */
 	done: string[];
 	finished?: Finished;
@@ -203,6 +205,7 @@ export function parseStatus(json: string): PlanStatus | null {
 	for (const r of o.repos) {
 		if (!r || typeof r.primary !== "boolean" || (r.remote !== undefined && !isStr(r.remote)) || (r.branch !== undefined && !isStr(r.branch))) return null;
 	}
+	if (o.kind !== "test") delete o.kind;
 	return o as PlanStatus;
 }
 

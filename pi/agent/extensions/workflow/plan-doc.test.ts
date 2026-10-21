@@ -126,6 +126,12 @@ test("parseStatus rejects malformed", () => {
 	assert.equal(parseStatus("not json"), null);
 });
 
+test("parseStatus keeps kind test and drops other kinds", () => {
+	const ok = { v: 1, flowId: "20261015-0930-x-a1b2", rev: 1, updated: "2026-10-15T09:30:00Z", title: "x", done: [], repos: [] };
+	assert.equal(parseStatus(JSON.stringify({ ...ok, kind: "test" }))?.kind, "test");
+	assert.equal(parseStatus(JSON.stringify({ ...ok, kind: "other" }))?.kind, undefined);
+});
+
 test("pruneIds", () => {
 	const DAY = 86_400_000;
 	const now = 100 * DAY;
