@@ -187,7 +187,7 @@ its plan and hand over, even when you said "fix it" or "do it for me".
 - It is a guard against the planner drifting into execution, not a sandbox. The code checks are
   regexes: a determined disguise (a computed lookup on an alias of `require('fs')`, say) can still get
   past them.
-- Tests: `node --experimental-strip-types --test agent-end.test.ts readonly-bash.test.ts readonly-tools.test.ts tokens.test.ts push-guard.test.ts knowledge.test.ts mcp-forward.test.ts subagent.test.ts delivery.test.ts repos.test.ts stages.test.ts commit-guard.test.ts repo-diff.test.ts prompts.test.ts config.test.ts metrics.test.ts plan-store.test.ts boundary.test.ts plan-doc.test.ts runner-guard.test.ts test-report.test.ts test-run.test.ts view.test.ts`.
+- Tests: `node --experimental-strip-types --test agent-end.test.ts readonly-bash.test.ts readonly-tools.test.ts tokens.test.ts push-guard.test.ts knowledge.test.ts mcp-forward.test.ts subagent.test.ts delivery.test.ts repos.test.ts stages.test.ts commit-guard.test.ts repo-diff.test.ts prompts.test.ts config.test.ts metrics.test.ts plan-store.test.ts boundary.test.ts plan-doc.test.ts runner-guard.test.ts test-report.test.ts test-run.test.ts test-flow.test.ts view.test.ts`.
 
 ## Test and fix
 
@@ -211,8 +211,16 @@ Ran: <command or scenario> → <result counts>
 VERDICT: CLEAN | BUGS
 ```
 
-  A reply with no valid report gets one automatic request to fix it, then a Retry / Stop menu. The reported bugs become the steps of the flow's plan file (`kind: "test"`); the end card lists the bugs found.
-- **Not in this version**: the automatic fix loop (fix round, judge, commit, retest), and `/flow resume` for test flows (they are refused).
+  A reply with no valid report gets one automatic request to fix it, then a Retry / Stop menu.
+- **Fix loop** (`test-flow.ts`, pure; `index.ts` drives it). After a valid report:
+  1. Open `[bug]` items start a **fix round** by themselves, with no approval and no delivery menu: the plan is regenerated from the bugs (steps S<n> with Repro, Expected, Fix direction; arbiter amendments are kept), the session switches to the execute model, and the executor gets the fix-round rules (root cause, regression test, never weaken an existing test, only the listed steps).
+  2. The judge reviews it with the test-flow addendum (weakened tests, special-cased repro input and changes beyond the steps are major). The arbiter decides plan flaws; when it hands one to the user, the flow does not stop: the question is queued and the plan notes the choice as upheld.
+  3. The commit step commits (`test.delivery`, default `commit`), then the supervisor tests again: it re-runs the fixed items' repros and the `Ran:` checks and reports each as `[fixed]` or `[bug]`, then continues with the rest of the scope.
+  4. A bug that fails again after its fix makes the next fix round run on the escalate model. After `test.refails` (2) failed fixes it becomes a question.
+  5. At most `test.maxRounds` (3) fix rounds; then a menu offers that many more or Stop (`maxRounds: 0` = no limit).
+- **When it asks the user**, in one batch at the end of a test round, one prompt per question; Escape skips a question: an `[ask]` item (its Options, "Other", Skip), a `[manual]` item (do the steps on the device and type what you saw; empty skips), a `[blocked]` item ("It's available now", Skip, Stop), a bug that failed `test.refails` times (keep trying escalated, skip it, stop) and a plan question the arbiter could not settle (the test's Expected is right, the fix is right, skip). Skipped items are never asked or fixed again. Any other answer is recorded as a decision (`D2…`) and the supervisor tests again with it.
+- **End**: the flow ends when no bug and no question is open, or on Stop. The card says `test: <n> fixed in <r> fix round(s)`, then `; open: <ID tag, …>` and `; skipped: <IDs>` when there are any; it is ok when no `[bug]` item remains.
+- **Not supported**: `/flow resume` for test flows (they are refused).
 - Config: the `test` block of workflow.json (`concurrency`, `maxTasks`, `runnerTimeoutMs`, `maxRounds`, `refails`, `delivery`, `runnerTools`, `supervisorBashAllow`, `runnerDeny`, `runnerPathFlags`, `runnerPathEnv`) and the roles `test` and `runner`.
 
 ## Public contract for other extensions

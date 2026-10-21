@@ -2,7 +2,7 @@
 
 Reference list for `pi/agent/extensions/workflow/`. Goal: less time, fewer tokens, more parallelism.
 
-Status: A2, A3, A5, A7, B1, B7, B9, C2, C3, C4, D2, D3, D4, D5, D6, D7, D8, D9, D10, D11 and D12 are implemented; A12 is partly implemented (stage 1 of 2); A1 is rejected; the rest are ideas only. Found by reading the code on 2026-10-16. Nothing was measured, so every benefit below is an estimate. Line numbers are from commit `3fdc69a` and will drift.
+Status: A2, A3, A5, A7, B1, B7, B9, C2, C3, C4, D2, D3, D4, D5, D6, D7, D8, D9, D10, D11 and D12 are implemented; A12 is implemented; A1 is rejected; the rest are ideas only. Found by reading the code on 2026-10-16. Nothing was measured, so every benefit below is an estimate. Line numbers are from commit `3fdc69a` and will drift.
 
 ## Keeping this file current
 
@@ -39,7 +39,7 @@ Plan (Opus) -> approve -> execute (Sonnet) -> judge (Opus, separate `pi` process
 | A9 | Each subagent is a full `pi` process that loads `pi-claude-bridge` (`config.ts:203`, `subagent.ts:140-210`) and writes its system prompts to temp files every run (`subagent.ts:145-161`). Measure boot time; skip unneeded extensions for read-only roles, and cache the static prompt files. | Medium (T) if boot is more than 1-2 s | M | Medium. A role without the bridge may lose its model access if the bridge provides the model. | Measure process boot time per role. |
 | A10 | A git call of the workflow (`index.ts` `git` helper) fails when another process holds a git lock (`cannot lock ref`, `index.lock`). Retry a few times with a short wait. Idea only. | Low (T) | S | Low. | How often flows fail on a lock when several sessions share a repo. |
 | A11 | Hand an approved plan to a free workspace of another session by starting it with `--flow resume:<id>`. Idea only; needs the flow claims of D10. | Medium (T) | M | Medium. | Whether users want to start plans in a second window. |
-| A12 | A test-and-fix flow: a strong supervisor plans and triages, Haiku runners run the tests in parallel (ordered by resource: Unity project, device), bugs are fixed automatically and retested. **Partly done:** stage 1, the test phase, `test_run`, the runner guard and the report (`runner-guard.ts`, `test-report.ts`, `test-run.ts`, `index.ts`); stage 2, the automatic fix loop, is not built yet. | High (Q), Medium (T) | L | Medium. Runners are cheap models; their claims are checked against their tool calls. | Whether runner tokens are the larger share, and whether fixes survive the retest. |
+| A12 | A test-and-fix flow: a strong supervisor plans and triages, Haiku runners run the tests in parallel (ordered by resource: Unity project, device), bugs are fixed automatically and retested. **Done:** the test phase, `test_run`, the runner guard and the report (`runner-guard.ts`, `test-report.ts`, `test-run.ts`), and the automatic fix loop: fix round → judge/arbiter → commit → retest (`test-flow.ts`, `index.ts`, `prompts.ts`). | High (Q), Medium (T) | L | Medium. Runners are cheap models; their claims are checked against their tool calls. | Whether runner tokens are the larger share, and whether fixes survive the retest. |
 
 ## B. Tokens
 
@@ -136,7 +136,7 @@ Method for every item:
 | D12 | n/a | Folders stay as moved | n/a |
 | A10 | Flow steps failed by `cannot lock ref` | Count in session logs | Idea only, not measured |
 | A11 | Plans started in a second workspace | n/a | Idea only |
-| A12 | User prompts per test flow; supervisor vs runner tokens (D3 metrics); bugs verified fixed per flow | Count the questions asked per flow, compare `test` and `runner` tokens in the flow card, count `[fixed]` items. Stage 1 only reports bugs; not measured yet. | Most flows end without prompts beyond the crucial cases; runner tokens are the larger share; no fix is committed that the retest shows broken |
+| A12 | User prompts per test flow; supervisor vs runner tokens (D3 metrics); bugs verified fixed per flow | Count the questions asked per flow, compare `test` and `runner` tokens in the flow card, count `[fixed]` items. Not measured yet. | Most flows end without prompts beyond the crucial cases; runner tokens are the larger share; no fix is committed that the retest shows broken |
 
 What to report after each change: baseline median, new median, percent change, and the quality-guard result, appended to `docs/workflow-baseline.md`.
 

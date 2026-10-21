@@ -60,7 +60,8 @@ import { combineRepoTexts, followFolders, parseAddDir, parseWorktreeList, repoKe
 import { shellProblem } from "./push-guard.ts";
 import { COMMIT_GUARD_ENV, type CommitGuardSpec } from "./commit-guard.ts";
 import { RUNNER_GUARD_ENV, type RunnerGuardSpec } from "./runner-guard.ts";
-import { parseTestReport, type TestItem } from "./test-report.ts";
+import { parseTestReport } from "./test-report.ts";
+import { amendmentTail, answerItem, askOptions, bodyField, newTestFlow, nextAction, normalize, openBugs, pendingFromFlaws, recordReport, skipItem, testOutcome, testPlan, type TestFlow } from "./test-flow.ts";
 import { formatTaskResult, parseRunnerReply, sanitizeIds, scheduleTasks, taskCard, taskRecord, type TestTask, verifyRun } from "./test-run.ts";
 import { commitPlan, type Finished, mergeChecklist, newFlowId, openStepsReminder, parseChecklist, type PlanStatus, planCard, pruneIds, renderPlanFile, splitPlanFile, type ChecklistItem } from "./plan-doc.ts";
 import { adoptHigher, claimLive, commitRef, dropClaim, pidAlive, readClaim, writeClaim, deleteLocal, deleteRef, fetchMirror, type Git, listRefs, plansDir, pushRef, readLocalStatuses, readPlanMd, refRev, remoteOf, repoInfo, type RefEntry, writeLocal } from "./plan-store.ts";
@@ -98,26 +99,6 @@ import {
 } from "./view.ts";
 
 type Phase = "off" | "plan" | "execute" | "test";
-
-/** The state of a test-and-fix flow, from `/flow test` until it ends. */
-interface TestFlow {
-	/** What the user asked to test. */
-	scope: string;
-	/** Test rounds started, 1-based. */
-	round: number;
-	/** The latest version of each reported item, by ID. */
-	items: Record<string, { tag: string; title: string; body: string; round: number }>;
-	/** The latest report's Ran: lines. */
-	ran: string[];
-	/** The next free item number. */
-	nextId: number;
-	/** The automatic request for a valid report has been sent this round. */
-	nudged?: boolean;
-	/** Per repo (key: repoKey(root)): `git status --porcelain` lines when the round started. */
-	snapshot?: Record<string, string[]>;
-	/** Files that changed during testing, as `repo: porcelain line`. */
-	strays?: string[];
-}
 
 interface FlowState {
 	phase: Phase;
@@ -383,6 +364,12 @@ export default function workflow(pi: ExtensionAPI) {
 
 	/** A flow has ended: back to the plan phase when returnToPlan says so. */
 	async function endFlow(ctx: ExtensionContext): Promise<void> {
+		if (state.testFlow) {
+			state.testFlow = undefined;
+			state.delivery = undefined;
+			state.planFlaw = undefined;
+			persist();
+		}
 		updateStatus(ctx);
 		if (phaseAfterFlow(cfg.returnToPlan, state.phase) !== "plan") return;
 		await setPhase(ctx, "plan");
@@ -1450,16 +1437,17 @@ export default function workflow(pi: ExtensionAPI) {
 		const prevChecked = plan.kind === "recheck" && state.lastKnowledge?.status === "checked" && state.lastKnowledge.hash === plan.prev.hash;
 		const { files: knowledgeFiles, scoped } = plan.kind === "recheck" ? recheckKnowledgeFiles(prevChecked, plan.changed, diff.checkNames) : { files: diff.checkNames, scoped: false };
 		const max = cfg.judge.maxDiffChars;
+		const testJudge = state.testFlow ? prompts.JUDGE_TEST : "";
 		const systemPrompts = recheck
 			? [
-					prompts.JUDGE,
+					prompts.JUDGE + testJudge,
 					prompts.JUDGE_RECHECK,
 					`## Approved plan\n\n${planForJudge()}`,
 					`## Findings of the last round (${plan.prev.verdict})\n\n${plan.prev.text}`,
 					`## Every file in the whole change (${diff.names.length})\n\n${diff.names.join("\n")}`,
 					`## Changes since the last round\n\n${plan.delta.length > max ? `${plan.delta.slice(0, max)}\n\n[truncated; read the files for the rest]` : plan.delta}`,
 				]
-			: [prompts.JUDGE, `## Approved plan\n\n${planForJudge()}`, `## Diff under review (${diff.files} file(s)${diff.truncated ? ", truncated" : ""})\n\n${diff.text}`];
+			: [prompts.JUDGE + testJudge, `## Approved plan\n\n${planForJudge()}`, `## Diff under review (${diff.files} file(s)${diff.truncated ? ", truncated" : ""})\n\n${diff.text}`];
 		if (server) systemPrompts.splice(recheck ? 2 : 1, 0, prompts.judgeKnowledge(server, recheck, knowledgeFiles, scoped));
 		if (diff.multi) systemPrompts.splice(1, 0, prompts.repoNote(repoRoots(diff)));
 		if (disputes) systemPrompts.push(`## Executor's disputes (claims; verify each against the code)\n\n${disputes}`);
@@ -1548,31 +1536,11 @@ export default function workflow(pi: ExtensionAPI) {
 		return out;
 	}
 
-	/** The plan text of a test flow: its scope and the reported [bug] items as steps. */
-	function reportPlan(tf: TestFlow): string {
-		const first = tf.scope.split(/\r?\n/)[0].trim().slice(0, 60) || "test";
-		const bugs = Object.entries(tf.items).filter(([, i]) => i.tag === "bug");
-		return [
-			`## Plan: Test: ${first}`,
-			"1. Goal and non-goals.",
-			"Goal: every [bug] step below behaves as its Expected says, verified by its repro in a test round, without changing behaviour outside them.",
-			"Non-goals: new features; refactors; items tagged ask, blocked or manual.",
-			"2. User decisions:",
-			`D1. Test scope: ${tf.scope.replace(/\s*\r?\n\s*/g, " ")}`,
-			"3. Facts:",
-			...tf.ran.map((r) => `Ran: ${r}`),
-			"5. Steps:",
-			...bugs.map(([id, i]) => `**${id}.** [bug] ${i.title}${i.body ? `\n${i.body}` : ""}`),
-			"7. Done when:",
-			"- each step's Expected holds and its repro passes in a test round",
-		].join("\n");
-	}
-
 	/** Starts a test flow for `scope` in the test phase (the caller has switched to it). Returns false when a flow is already active. */
 	async function startTestFlow(ctx: ExtensionContext, scope: string): Promise<boolean> {
 		if (state.testFlow) return false;
-		state.testFlow = { scope, round: 1, items: {}, ran: [], nextId: 1, snapshot: await porcelain(ctx), strays: [] };
-		state.approvedPlan = reportPlan(state.testFlow);
+		state.testFlow = newTestFlow(scope, cfg.test.maxRounds, await porcelain(ctx));
+		state.approvedPlan = testPlan(state.testFlow);
 		state.checklist = undefined;
 		state.planDoc = undefined;
 		state.flowFindings = undefined;
@@ -1614,7 +1582,7 @@ export default function workflow(pi: ExtensionAPI) {
 			return;
 		}
 		const text = assistantText(last).trim();
-		const report = parseTestReport(text, { nextId: tf.nextId, known: Object.keys(tf.items), mustReport: [] });
+		const report = parseTestReport(text, { nextId: tf.nextId, known: Object.keys(tf.items), mustReport: tf.lastFixIds ?? [] });
 		if (!report || report.problems.length) {
 			const problems = report ? report.problems : ["the reply has no '## Test report: <scope>' heading and VERDICT line"];
 			if (!tf.nudged) {
@@ -1633,21 +1601,153 @@ export default function workflow(pi: ExtensionAPI) {
 			}
 			return;
 		}
-		// Record: the latest version of each item wins.
-		for (const it of report.items) tf.items[it.id] = { tag: it.tag, title: it.title, body: it.body, round: tf.round };
-		tf.ran = report.ran;
-		tf.nextId = Math.max(tf.nextId, ...report.items.map((i) => Number(i.id.slice(1)) + 1));
-		tf.strays = [...(tf.strays ?? []), ...(await newPorcelain(ctx, tf.snapshot))];
-		const count = (tag: TestItem["tag"]) => report.items.filter((i) => i.tag === tag).length;
-		const bugs = count("bug");
-		state.approvedPlan = reportPlan(tf);
+		const flow = recordReport(tf, report, cfg.test.refails);
+		flow.strays = [...(tf.strays ?? []), ...(await newPorcelain(ctx, tf.snapshot))];
+		state.testFlow = flow;
+		if (flow.strays.length) ctx.ui.notify(`workflow: files changed during testing: ${flow.strays.join("; ")}`, "warning");
+		persist();
+		await afterTestRound(ctx);
+	}
+
+	/** Steps 4-8 of the end of a test round: fix, ask, or finish. */
+	async function afterTestRound(ctx: ExtensionContext): Promise<void> {
+		const flow = state.testFlow;
+		if (!flow) return;
+		const next = nextAction(flow, cfg.test);
+		if (next === "fix") return startFixRound(ctx);
+		if (next === "ask") return askBatch(ctx);
+		if (next === "limit") {
+			const more = `Run ${cfg.test.maxRounds} more fix rounds`;
+			const choice = await ctx.ui.select(`Fix round limit reached with ${openBugs(flow).length} open bug(s)`, [more, "Stop"]);
+			if (choice === more) {
+				state.testFlow = { ...normalize(flow), fixBudget: normalize(flow).fixBudget + cfg.test.maxRounds };
+				return startFixRound(ctx);
+			}
+		}
+		await finishTestFlow(ctx);
+	}
+
+	/** Ends the flow with the outcome line; the plan is regenerated so the record shows the last state. */
+	async function finishTestFlow(ctx: ExtensionContext): Promise<void> {
+		const flow = state.testFlow;
+		if (!flow) return;
+		const outcome = testOutcome(flow);
+		state.approvedPlan = testPlan(flow, amendmentTail(state.approvedPlan));
 		refreshChecklist();
 		planMilestone(ctx);
-		if (tf.strays.length) ctx.ui.notify(`workflow: files changed during testing: ${tf.strays.join("; ")}`, "warning");
-		const found = [bugs && `${bugs} bug(s)`, count("ask") && `${count("ask")} ask`, count("blocked") && `${count("blocked")} blocked`, count("manual") && `${count("manual")} manual`].filter(Boolean);
-		summarizeFlow(found.length ? `test: ${found.join(", ")} found; not fixed` : "test: clean", bugs === 0);
-		state.testFlow = undefined;
+		summarizeFlow(outcome.text, outcome.ok);
 		await endFlow(ctx);
+	}
+
+	/** Moves the main session between the test and execute phases of a running test flow, keeping the flow's plan and state. */
+	async function switchRoundPhase(ctx: ExtensionContext, phase: "test" | "execute"): Promise<void> {
+		if (state.phase !== phase) {
+			if (state.phase === "test") restorePlanTools();
+			if (phase === "test") blockPlanTools("test");
+			state.phase = phase;
+		}
+		state.escalated = false;
+		state.judgeRounds = 0;
+		state.minorRounds = 0;
+		state.minorSentFor = undefined;
+		state.commitPending = undefined;
+		state.finalizing = undefined;
+		state.pendingPlanFlaw = undefined;
+		state.stageJudged = undefined;
+		if (state.passedDiff) markPassSummarized(state.passedDiff); // a leftover diff from the round before is not this round's
+		state.lastJudge = undefined; // a new round gets a full review, not a re-review of the last one
+		planReady = false;
+		planProposed = false;
+		consecutiveErrors = 0;
+		await applyRole(ctx, phase);
+		persist();
+		updateStatus(ctx);
+	}
+
+	/** Starts a fix round for the open bugs: the plan is regenerated and the execute model gets the steps. */
+	async function startFixRound(ctx: ExtensionContext): Promise<void> {
+		let flow = normalize(state.testFlow!);
+		const ids = openBugs(flow);
+		const strays = flow.strays ?? [];
+		flow = { ...flow, fixRounds: flow.fixRounds + 1, fixBudget: Math.max(0, flow.fixBudget - 1), lastFixIds: ids, strays: [], nudged: undefined };
+		const escalating = !!flow.escalateNext;
+		flow.escalateNext = false;
+		state.testFlow = flow;
+		state.approvedPlan = testPlan(flow, amendmentTail(state.approvedPlan));
+		state.checklist = undefined;
+		refreshChecklist();
+		planMilestone(ctx);
+		await switchRoundPhase(ctx, "execute");
+		if (escalating) await escalate(ctx);
+		persist();
+		ctx.ui.notify(`workflow: fix round ${flow.fixRounds}: ${ids.join(", ")}${escalating ? " (escalated)" : ""}`, "info");
+		handover("workflow-test-fix", prompts.fixRoundMessage(ids, strays));
+	}
+
+	/** Starts the next test round (after a committed fix round or the user's answers). */
+	async function startTestRound(ctx: ExtensionContext, why: "retest" | "answers"): Promise<void> {
+		const flow = normalize(state.testFlow!);
+		const fixed = flow.lastFixIds.map((id) => ({ id, repro: bodyField(flow.items[id]?.body ?? "", "Repro") }));
+		state.testFlow = { ...flow, round: flow.round + 1, nudged: undefined, snapshot: await porcelain(ctx), answersSent: flow.answers.length };
+		await switchRoundPhase(ctx, "test");
+		handover("workflow-test-round", prompts.testRoundMessage({ why, fixed, ran: flow.ran, answers: flow.answers.slice(flow.answersSent ?? 0), nextId: flow.nextId }));
+	}
+
+	/** The pending questions, one prompt each; then retest, fix again or finish. Escape skips a question. */
+	async function askBatch(ctx: ExtensionContext): Promise<void> {
+		let flow = normalize(state.testFlow!);
+		let answered = false as boolean;
+		let stop = false;
+		const take = (id: string, answer: string | undefined) => {
+			if (answer === undefined || !answer.trim()) {
+				flow = skipItem(flow, id);
+				return;
+			}
+			flow = answerItem(flow, id, answer);
+			answered = true;
+		};
+		for (const p of flow.pending) {
+			if (stop) break;
+			const body = flow.items[p.id]?.body ?? "";
+			if (p.kind === "ask") {
+				const other = "Other (type it)";
+				const choice = await ctx.ui.select(`${p.id}: ${bodyField(body, "Question") || p.text}`, [...askOptions(body), other, "Skip"]);
+				if (choice === other) take(p.id, await ctx.ui.input(`${p.id}: your answer`, ""));
+				else take(p.id, choice === "Skip" ? undefined : choice);
+			} else if (p.kind === "manual") {
+				take(p.id, await ctx.ui.input(`Do: ${bodyField(body, "Steps")}. Look for: ${bodyField(body, "Look for")}. What did you see? (empty skips)`, ""));
+			} else if (p.kind === "blocked") {
+				const choice = await ctx.ui.select(`${p.id} was blocked: ${bodyField(body, "Needs") || p.text}`, ["It's available now", "Skip", "Stop the flow"]);
+				if (choice === "Stop the flow") stop = true;
+				else take(p.id, choice === "It's available now" ? choice : undefined);
+			} else if (p.kind === "refail") {
+				const n = flow.refails[p.id] ?? 0;
+				const keep = "Keep trying (escalated)";
+				const choice = await ctx.ui.select(`${p.id} still fails after ${n} fix${n === 1 ? "" : "es"}: ${p.text}`, [keep, "Skip this bug", "Stop the flow"]);
+				if (choice === keep) flow = { ...flow, refails: { ...flow.refails, [p.id]: Math.max(0, n - 1) }, escalateNext: true };
+				else if (choice === "Stop the flow") stop = true;
+				else flow = skipItem(flow, p.id);
+			} else {
+				const right = "The test's Expected is right";
+				const choice = await ctx.ui.select(`Plan question: ${p.text}`, [right, "The fix is right; the Expected is wrong", "Skip"]);
+				take(p.id, choice === "Skip" ? undefined : choice);
+			}
+		}
+		state.testFlow = { ...flow, pending: [] };
+		persist();
+		if (stop) return finishTestFlow(ctx);
+		if (openBugs(state.testFlow).length) return afterTestRound(ctx);
+		if (answered) return startTestRound(ctx, "answers");
+		await finishTestFlow(ctx);
+	}
+
+	/** Queues the plan-flaw lines of a judge report as dispute questions for the end of the round. */
+	function queueDisputes(report: string): void {
+		if (!state.testFlow) return;
+		const flow = normalize(state.testFlow);
+		const fresh = pendingFromFlaws(planFlawLines(report)).filter((p) => !flow.pending.some((x) => x.kind === p.kind && x.text === p.text));
+		state.testFlow = { ...flow, pending: [...flow.pending, ...fresh] };
+		persist();
 	}
 
 	const title = (theme: Theme, name: string, role: Role) =>
@@ -1933,6 +2033,7 @@ export default function workflow(pi: ExtensionAPI) {
 			staging: cfg.stagedPlans,
 			recap: cfg.planRecap,
 			stage: staged ? stageLine(staged.stages, staged.current) : undefined,
+			testFix: state.phase === "execute" && !!state.testFlow,
 		});
 		if (phaseText) event.systemPromptOptions.sections.workflow = phaseText;
 		else delete event.systemPromptOptions.sections.workflow;
@@ -2457,6 +2558,11 @@ export default function workflow(pi: ExtensionAPI) {
 		} else {
 			outcome = (await repoOutcome(ctx.cwd, mode, head, branch, prBefore, pushSkipped)) ?? { text: "commit step ended without a commit", ok: false };
 		}
+		if (state.testFlow) {
+			if (!outcome.ok) ctx.ui.notify(`workflow: the fix round's delivery is incomplete (${outcome.text}); testing again anyway`, "warning");
+			await startTestRound(ctx, "retest");
+			return "advanced";
+		}
 		const staged = currentStages();
 		if (staged) {
 			state.stageOutcomes = [...(state.stageOutcomes ?? []), outcome];
@@ -2554,6 +2660,10 @@ export default function workflow(pi: ExtensionAPI) {
 			if (manual) ctx.ui.notify("workflow: no changes to review", "info");
 			else {
 				if (await deliverSelfCommit(ctx)) return;
+				if (state.testFlow) {
+					if (!turnAborted) await startTestRound(ctx, "retest");
+					return;
+				}
 				const staged = currentStages();
 				if (staged) await noChangeTurn(ctx, staged);
 			}
@@ -2663,6 +2773,11 @@ export default function workflow(pi: ExtensionAPI) {
 				arbiter = false;
 				const outcome = await runArbiter(ctx, report, diff);
 				if (outcome !== "ask") return outcome;
+				if (state.testFlow) {
+					queueDisputes(report);
+					notePlanFlaws(ctx, report, "Plan choices upheld until the user answers");
+					return "continue";
+				}
 				canAsk = false; // the arbiter had its say; offer the rest
 			}
 			if (!ctx.hasUI) {
@@ -2711,8 +2826,9 @@ export default function workflow(pi: ExtensionAPI) {
 		if (route === "arbiter") {
 			const outcome = await runArbiter(ctx, report, diff, false);
 			if (outcome !== "ask") return outcome;
+			queueDisputes(report);
 			const n = notePlanFlaws(ctx, report, heading);
-			state.unresolvedPlanFlaws = (state.unresolvedPlanFlaws ?? 0) + n;
+			if (!state.testFlow) state.unresolvedPlanFlaws = (state.unresolvedPlanFlaws ?? 0) + n; // a test flow asks about it at the end of the round
 			persist();
 			if (n > 0) ctx.ui.notify(`workflow: the arbiter did not settle ${n} plan flaw(s); noted in the plan, continuing`, "warning");
 			return "continue";
@@ -2729,7 +2845,7 @@ export default function workflow(pi: ExtensionAPI) {
 		try {
 			const max = cfg.judge.maxDiffChars;
 			const { result, run } = await runRole("arbiter", "plan-flaw", {
-				systemPrompts: [...(diff.multi ? [prompts.repoNote(repoRoots(diff))] : []), prompts.ARBITER, `## Approved plan\n\n${planForJudge()}`, `## Judge report\n\n${report}`, `## Diff\n\n${diff.text.length > max ? diff.text.slice(0, max) : diff.text}`],
+				systemPrompts: [...(diff.multi ? [prompts.repoNote(repoRoots(diff))] : []), prompts.ARBITER + (state.testFlow ? prompts.ARBITER_TEST : ""), `## Approved plan\n\n${planForJudge()}`, `## Judge report\n\n${report}`, `## Diff\n\n${diff.text.length > max ? diff.text.slice(0, max) : diff.text}`],
 				tools: cfg.arbiter.tools,
 				task: "Decide on the [plan-flaw] findings in your system prompt.",
 				cwd: ctx.cwd,
@@ -2803,8 +2919,21 @@ export default function workflow(pi: ExtensionAPI) {
 		state.summarizedPasses = [...(state.summarizedPasses ?? []).filter((h) => h !== hash), hash].slice(-20);
 	}
 
+	/** The user chose Stop at the knowledge prompt of the pass being summarized. */
+	let passStopped = false;
+
 	/** The flow ends at a pass that won't be committed (delivery off, or Stop at the knowledge prompt), and may go back to planning. */
 	async function summarizePass(ctx: ExtensionContext, hash: string): Promise<void> {
+		const stopped = passStopped;
+		passStopped = false;
+		if (state.testFlow) {
+			markPassSummarized(hash);
+			if (turnAborted) return;
+			// Nothing was committed: test again, unless the user chose Stop at the knowledge prompt.
+			if (stopped) await finishTestFlow(ctx);
+			else await startTestRound(ctx, "retest");
+			return;
+		}
 		const staged = currentStages();
 		if (state.summarizedPasses?.includes(hash)) {
 			// A staged plan's stage added nothing to the diff that was already passed.
@@ -2867,6 +2996,7 @@ export default function workflow(pi: ExtensionAPI) {
 
 	/** Sends the commit step's instruction (commit, push, pull request, merge, as this flow's delivery says), prefixed with `report`. False if nothing was sent. */
 	async function finishPassed(ctx: ExtensionContext, diff: Diff, report?: string): Promise<boolean> {
+		passStopped = false;
 		const hash = diff.hash;
 		const staged = currentStages();
 		const stage = staged?.stages[staged.current - 1];
@@ -2879,7 +3009,10 @@ export default function workflow(pi: ExtensionAPI) {
 		// D5: a pass without a knowledge check commits only when you say so.
 		if (knowledge?.status === "unavailable" && ctx.hasUI) {
 			const choice = await ctx.ui.select(`Judge passed, knowledge not checked: ${knowledge.reason}`, ["Commit anyway", "Stop"]);
-			if (choice !== "Commit anyway") return false;
+			if (choice !== "Commit anyway") {
+				passStopped = true;
+				return false;
+			}
 		}
 
 		const seed = branchName(cfg.delivery.branchPrefix, stage?.title || planTitle(state.approvedPlan), new Date());
@@ -3209,7 +3342,7 @@ ${judged.text}`, instruction, chosen);
 		const lines = [
 			`phase      ${state.phase}${state.escalated ? " (escalated)" : ""}`,
 			`judge     ${state.judgeRounds} failed round(s); auto=${cfg.autoJudge}; then ${DELIVERY_LABELS[state.delivery ?? defaultDelivery()]}${state.delivery ? "" : " (default)"}`,
-			...(state.testFlow ? [`test flow  round ${state.testFlow.round}, ${Object.keys(state.testFlow.items).length} item(s) reported`] : []),
+			...(state.testFlow ? [`test flow  round ${state.testFlow.round}, fix rounds ${normalize(state.testFlow).fixRounds}, fixed ${normalize(state.testFlow).fixed.length}, open ${openBugs(state.testFlow).length}, pending questions ${normalize(state.testFlow).pending.length}`] : []),
 			...(currentStages() ? [`stage     ${currentStages()!.current} of ${currentStages()!.stages.length}: ${currentStages()!.stages[currentStages()!.current - 1].title}`] : []),
 			state.planFlaw === "auto" ? "flaws     arbiter (this flow)" : `flaws     ${cfg.planFlaw === "auto" ? "arbiter" : "ask"} (config)`,
 			`guard     compact at ${cfg.contextGuardTokens || "off"} tokens`,
