@@ -484,13 +484,13 @@ Tests go with the code they test.
 - [x] S1 Split delivery into three reusable functions in `index.ts` (anchors `finishPassed` 3010, `commitInSubagent` 3157, `summa
 - [x] S2 Read commits from the branch they landed on (D14).
 - [x] S3 Commit-only instruction (`deliveryInstruction`, `delivery.ts:80`).
-- [ ] S4 Add `waits.ts` (pure). It exports:
-- [ ] S5 Stage `after` tag (`stages.ts:13-46`).
-- [ ] S6 Waiting state, status and plan card.
-- [ ] S7 The `wait_for_user` tool (`index.ts`, modelled on `plan_check` 1899).
-- [ ] S8 Polling and resume.
-- [ ] S9 Stage-start waits (`startNextStage`, `index.ts:2500`, and the first stage's start in `startExecution`).
-- [ ] S10 A stage that ends with no changes (`noChangeStage`, `agent-end.ts:158`).
+- [x] S4 Add `waits.ts` (pure). It exports:
+- [x] S5 Stage `after` tag (`stages.ts:13-46`).
+- [x] S6 Waiting state, status and plan card.
+- [x] S7 The `wait_for_user` tool (`index.ts`, modelled on `plan_check` 1899).
+- [x] S8 Polling and resume.
+- [x] S9 Stage-start waits (`startNextStage`, `index.ts:2500`, and the first stage's start in `startExecution`).
+- [x] S10 A stage that ends with no changes (`noChangeStage`, `agent-end.ts:158`).
 - [ ] S11 Add `checkpoints.ts` (pure). It exports:
 - [ ] S12 Add `tags.ts` (pure). It exports:
 - [ ] S13 The `deliver` tool (`index.ts`, next to `judge` 1974).
