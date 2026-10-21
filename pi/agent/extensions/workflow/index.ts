@@ -57,6 +57,7 @@ import { modelChoices, pathCompletions } from "./pickers.ts";
 import { ghCandidates, withPathDir } from "./gh-path.ts";
 import { citeNames, collectRepoDiff as collectRepoDiffImpl, needsFinalFullReview, type RepoDiff } from "./repo-diff.ts";
 import { combineRepoTexts, followFolders, parseAddDir, parseWorktreeList, repoKey, uniqueRoots } from "./repos.ts";
+import { askFolderAdd } from "./folder-add.ts";
 import { shellProblem } from "./push-guard.ts";
 import { COMMIT_GUARD_ENV, type CommitGuardSpec } from "./commit-guard.ts";
 import { RUNNER_GUARD_ENV, type RunnerGuardSpec } from "./runner-guard.ts";
@@ -3438,11 +3439,39 @@ ${judged.text}`, instruction, chosen);
 					ctx.ui.notify(`workflow: ${abs} is already added`, "warning");
 					return;
 				}
-				state.folders = [...folders, abs];
+				const answer = await askFolderAdd((d) => pi.events.emit("workflow:folder-add", d), ctx.cwd.replace(/\\/g, "/"), abs);
+				if ("error" in answer) {
+					ctx.ui.notify(`workflow: ${abs} not added: ${answer.error}`, "error");
+					return;
+				}
+				let final = abs;
+				if (repoKey(answer.folder) !== repoKey(abs)) {
+					final = path.resolve(ctx.cwd, answer.folder).replace(/\\/g, "/");
+					let finalIsDir = false;
+					try {
+						finalIsDir = fs.statSync(final).isDirectory();
+					} catch {
+						// not there
+					}
+					if (!finalIsDir) {
+						ctx.ui.notify(`workflow: ${final} is not a folder`, "warning");
+						return;
+					}
+					if (repoKey(final) === repoKey(ctx.cwd)) {
+						ctx.ui.notify("workflow: that is already the working folder", "warning");
+						return;
+					}
+				}
+				const current = state.folders ?? [];
+				if (current.some((f) => repoKey(f) === repoKey(final))) {
+					ctx.ui.notify(`workflow: ${final} is already added`, "warning");
+					return;
+				}
+				state.folders = [...current, final];
 				persist();
 				publishFolders(ctx);
 				updateStatus(ctx);
-				ctx.ui.notify(`workflow: added ${abs}; reloading`, "info");
+				ctx.ui.notify(final === abs ? `workflow: added ${abs}; reloading` : `workflow: added ${final} (for ${abs}); reloading`, "info");
 			} else {
 				const n = /^\d+$/.test(arg) ? Number(arg) - 1 : -1;
 				const i = n >= 0 ? n : folders.findIndex((f) => repoKey(f) === repoKey(path.resolve(ctx.cwd, arg)));
