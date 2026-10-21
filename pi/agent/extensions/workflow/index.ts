@@ -52,7 +52,7 @@ import {
 import { handoverAction, afterPass, noChangeStage, arbiterFirst, fixableFindings, canApprove, hasPlanFlaw, planFlawLines, planFlawOnPass, hasPlanLine, isPlanReady, judgeCapReached, minorFixOpen, selfCommitted, parseArbiter, phaseAfterFlow, shouldResume, skipJudge } from "./agent-end.ts";
 import { countTokens, type Tok } from "./tokens.ts";
 import * as prompts from "./prompts.ts";
-import { branchName, combineOutcomes, type Delivery, type DeliveryOptions, DELIVERIES, DELIVERY_LABELS, deliveryChoices, deliveryInstruction, deliveryMenuLabel, deliveryOutcome, freshPr, isDelivery, planTitle, pushSkipReason, type PrState, repoDeliveryInstruction } from "./delivery.ts";
+import { branchName, combineOutcomes, type Delivery, type DeliveryOptions, DELIVERIES, DELIVERY_LABELS, deliveryChoices, deliveryInstruction, deliveryMenuLabel, deliveryOutcome, freshPr, isDelivery, landedBranch, planTitle, pushSkipReason, type PrState, repoDeliveryInstruction } from "./delivery.ts";
 import { modelChoices, pathCompletions } from "./pickers.ts";
 import { ghCandidates, withPathDir } from "./gh-path.ts";
 import { citeNames, collectRepoDiff as collectRepoDiffImpl, needsFinalFullReview, type RepoDiff } from "./repo-diff.ts";
@@ -2557,19 +2557,23 @@ export default function workflow(pi: ExtensionAPI) {
 		return `${done.map((p, i) => `stage ${i + 1}: ${p.text}`).join("; ")}; ${text}`;
 	}
 
+	/** What the commit step achieved in every repo of `pending`, read from git and gh. */
+	async function readOutcome(ctx: ExtensionContext, pending: NonNullable<FlowState["commitPending"]>): Promise<{ text: string; ok: boolean }> {
+		const { mode, head, branch, prBefore, pushSkipped, repos } = pending;
+		if (repos?.length) {
+			const parts = await Promise.all(repos.map(async (r) => ({ name: path.basename(r.root), outcome: await repoOutcome(r.root, r.mode, r.head, r.branch, r.prBefore, r.pushSkipped) })));
+			return combineOutcomes(parts);
+		}
+		return (await repoOutcome(ctx.cwd, mode, head, branch, prBefore, pushSkipped)) ?? { text: "commit step ended without a commit", ok: false };
+	}
+
 	/** The commit step ended. "advanced": a staged plan moved on to its next stage; "ended": the flow is over. */
 	async function summarizeCommit(ctx: ExtensionContext): Promise<"advanced" | "ended"> {
-		const { mode, head, branch, prBefore, pushSkipped, repos } = state.commitPending!;
+		const pending = state.commitPending!;
 		state.commitPending = undefined;
 		state.minorRounds = 0;
 		state.minorSentFor = undefined;
-		let outcome: { text: string; ok: boolean };
-		if (repos?.length) {
-			const parts = await Promise.all(repos.map(async (r) => ({ name: path.basename(r.root), outcome: await repoOutcome(r.root, r.mode, r.head, r.branch, r.prBefore, r.pushSkipped) })));
-			outcome = combineOutcomes(parts);
-		} else {
-			outcome = (await repoOutcome(ctx.cwd, mode, head, branch, prBefore, pushSkipped)) ?? { text: "commit step ended without a commit", ok: false };
-		}
+		let outcome = await readOutcome(ctx, pending);
 		if (state.testFlow) {
 			if (!outcome.ok) ctx.ui.notify(`workflow: the fix round's delivery is incomplete (${outcome.text}); testing again anyway`, "warning");
 			await startTestRound(ctx, "retest");
@@ -2607,6 +2611,12 @@ export default function workflow(pi: ExtensionAPI) {
 	/** What one repo's commit step achieved, or null when it made no commit (and merged nothing). */
 	async function repoOutcome(dir: string, mode: Exclude<Delivery, "off">, head: string, branch: string | undefined, prBefore: number | undefined, pushSkipped: string | undefined): Promise<{ text: string; ok: boolean } | null> {
 		// The commits' branch; HEAD when detached, unknown (state saved by an older version) or gone (deleted after the merge).
+		const recordedNamed = !!branch && branch !== "HEAD" && (await git(dir, "rev-parse", "--verify", "--quiet", `refs/heads/${branch}`)).code === 0;
+		if (recordedNamed) {
+			// The commit step may have switched to a new branch (D14): then the commits are there, not on the recorded one.
+			const landed = await landedBranch((...a) => git(dir, ...a), branch as string, head);
+			if (landed) branch = landed;
+		}
 		const named = !!branch && branch !== "HEAD" && (await git(dir, "rev-parse", "--verify", "--quiet", `refs/heads/${branch}`)).code === 0;
 		const rev = named ? (branch as string) : "HEAD";
 		const now = (await git(dir, "rev-parse", rev)).stdout.trim();
@@ -3003,7 +3013,43 @@ export default function workflow(pi: ExtensionAPI) {
 			if (old && old.state !== "OPEN") prBefore = old.number;
 		}
 		const head = (await git(dir, "rev-parse", "HEAD")).stdout.trim();
-		return { mode, branch, from, base, prBefore, head, pushSkipped };
+		const mergeInProgress = (await git(dir, "rev-parse", "-q", "--verify", "MERGE_HEAD")).code === 0;
+		return { mode, branch, from, base, prBefore, head, pushSkipped, mergeInProgress };
+	}
+
+	/** Prepares every changed repo of `diff` for the commit step: the pending record (not stored in state) and the instruction. Only reads. */
+	async function prepareAllRepos(ctx: ExtensionContext, diff: Diff, chosen: Exclude<Delivery, "off">, seed: string, deviations: string): Promise<{ pending: NonNullable<FlowState["commitPending"]>; instruction: string }> {
+		const options = (p: Awaited<ReturnType<typeof prepareDelivery>>): DeliveryOptions => ({
+			mode: p.mode,
+			branch: p.branch,
+			from: p.from,
+			base: p.base,
+			split: cfg.delivery.splitCommits,
+			mergeMethod: cfg.delivery.mergeMethod,
+			deleteBranch: cfg.delivery.deleteBranch,
+			deviations,
+			pushSkipped: p.pushSkipped,
+			mergeInProgress: p.mergeInProgress,
+		});
+		if (!diff.multi) {
+			const p = await prepareDelivery(ctx, ctx.cwd, chosen, seed, "");
+			return { pending: { mode: p.mode, head: p.head, branch: p.branch, prBefore: p.prBefore, pushSkipped: p.pushSkipped }, instruction: deliveryInstruction(options(p)) };
+		}
+		const changed = diff.repos.filter((r) => r.changed);
+		// Per-repo preparation only reads (git rev-parse, gh pr view), so the repos run at once; the order of `changed` is kept.
+		const prepared = await Promise.all(changed.map(async (ref) => ({ root: ref.root, p: await prepareDelivery(ctx, ref.dir, chosen, seed, ` [${ref.root}]`) })));
+		const first = prepared[0].p;
+		return {
+			pending: {
+				mode: first.mode,
+				head: first.head,
+				branch: first.branch,
+				prBefore: first.prBefore,
+				pushSkipped: first.pushSkipped,
+				repos: prepared.map(({ root, p }) => ({ root, mode: p.mode, head: p.head, branch: p.branch, prBefore: p.prBefore, pushSkipped: p.pushSkipped })),
+			},
+			instruction: repoDeliveryInstruction(prepared.map(({ root, p }) => ({ root, options: options(p) }))),
+		};
 	}
 
 	/** Sends the commit step's instruction (commit, push, pull request, merge, as this flow's delivery says), prefixed with `report`. False if nothing was sent. */
@@ -3029,36 +3075,8 @@ export default function workflow(pi: ExtensionAPI) {
 
 		const seed = branchName(cfg.delivery.branchPrefix, stage?.title || planTitle(state.approvedPlan), new Date());
 		const deviations = knowledge ? deviationBlock(knowledge.deviations) : "";
-		const options = (p: Awaited<ReturnType<typeof prepareDelivery>>): DeliveryOptions => ({
-			mode: p.mode,
-			branch: p.branch,
-			from: p.from,
-			base: p.base,
-			split: cfg.delivery.splitCommits,
-			mergeMethod: cfg.delivery.mergeMethod,
-			deleteBranch: cfg.delivery.deleteBranch,
-			deviations,
-			pushSkipped: p.pushSkipped,
-		});
-		let instruction: string;
-		if (!diff.multi) {
-			const p = await prepareDelivery(ctx, ctx.cwd, chosen, seed, "");
-			state.commitPending = { mode: p.mode, head: p.head, branch: p.branch, prBefore: p.prBefore, pushSkipped: p.pushSkipped };
-			instruction = deliveryInstruction(options(p));
-		} else {
-			// Per-repo preparation only reads (git rev-parse, gh pr view), so the repos run at once; the order of `changed` is kept.
-			const prepared = await Promise.all(changed.map(async (ref) => ({ root: ref.root, p: await prepareDelivery(ctx, ref.dir, chosen, seed, ` [${ref.root}]`) })));
-			const first = prepared[0].p;
-			state.commitPending = {
-				mode: first.mode,
-				head: first.head,
-				branch: first.branch,
-				prBefore: first.prBefore,
-				pushSkipped: first.pushSkipped,
-				repos: prepared.map(({ root, p }) => ({ root, mode: p.mode, head: p.head, branch: p.branch, prBefore: p.prBefore, pushSkipped: p.pushSkipped })),
-			};
-			instruction = repoDeliveryInstruction(prepared.map(({ root, p }) => ({ root, options: options(p) })));
-		}
+		const { pending, instruction } = await prepareAllRepos(ctx, diff, chosen, seed, deviations);
+		state.commitPending = pending;
 
 		await sendCommitStep(ctx, hash, report, instruction, chosen);
 		return true;
@@ -3153,16 +3171,8 @@ ${judged.text}`, instruction, chosen);
 		return true;
 	}
 
-	/** Runs the commit step in a fresh subagent with its own push guard, then reads the outcome from git and gh. */
-	async function commitInSubagent(ctx: ExtensionContext, report: string | undefined, instruction: string, chosen: Delivery): Promise<void> {
-		if (report) pi.sendMessage({ customType: "workflow-judge", content: report, display: true }, { triggerTurn: false });
-		if (!fs.existsSync(COMMIT_GUARD_EXTENSION)) {
-			pi.sendMessage({ customType: "workflow-commit", content: `**Commit step** failed: commit guard extension not found at ${COMMIT_GUARD_EXTENSION}`, display: true }, { triggerTurn: false });
-			if (state.commitPending) await summarizeCommit(ctx);
-			resetCommitStage();
-			return;
-		}
-		const pending = state.commitPending;
+	/** Runs the commit step in a fresh subagent with its own push guard; returns its report (or the failure) as text. */
+	async function runCommitSubagent(ctx: ExtensionContext, instruction: string, chosen: Delivery, pending: FlowState["commitPending"], signal?: AbortSignal): Promise<string> {
 		commitSubagentRunning = true;
 		let result: RunResult;
 		try {
@@ -3179,6 +3189,7 @@ ${judged.text}`, instruction, chosen);
 				tools: ["bash"],
 				task: instruction,
 				cwd: ctx.cwd,
+				signal,
 				env: { [COMMIT_GUARD_ENV]: JSON.stringify(spec) },
 				extensions: [COMMIT_GUARD_EXTENSION],
 			});
@@ -3188,7 +3199,20 @@ ${judged.text}`, instruction, chosen);
 			commitSubagentRunning = false;
 			ctx.ui.setWorkingMessage();
 		}
-		pi.sendMessage({ customType: "workflow-commit", content: `**Commit step** (${describeRole(cfg.roles.commit)})\n\n${result.ok ? result.text : `failed: ${result.error}`}`, display: true }, { triggerTurn: false });
+		return result.ok ? result.text : `failed: ${result.error}`;
+	}
+
+	/** Runs the commit step in a fresh subagent with its own push guard, then reads the outcome from git and gh. */
+	async function commitInSubagent(ctx: ExtensionContext, report: string | undefined, instruction: string, chosen: Delivery): Promise<void> {
+		if (report) pi.sendMessage({ customType: "workflow-judge", content: report, display: true }, { triggerTurn: false });
+		if (!fs.existsSync(COMMIT_GUARD_EXTENSION)) {
+			pi.sendMessage({ customType: "workflow-commit", content: `**Commit step** failed: commit guard extension not found at ${COMMIT_GUARD_EXTENSION}`, display: true }, { triggerTurn: false });
+			if (state.commitPending) await summarizeCommit(ctx);
+			resetCommitStage();
+			return;
+		}
+		const text = await runCommitSubagent(ctx, instruction, chosen, state.commitPending);
+		pi.sendMessage({ customType: "workflow-commit", content: `**Commit step** (${describeRole(cfg.roles.commit)})\n\n${text}`, display: true }, { triggerTurn: false });
 		if (state.commitPending) await summarizeCommit(ctx);
 		resetCommitStage();
 	}
