@@ -455,8 +455,8 @@ async function cleanCmd(pi: ExtensionAPI, ctx: ExtensionCommandContext, progress
 		confirm: (title, message) => progress.pause(() => ctx.ui.confirm(title, message)),
 		stage: (text) => progress.stage(text),
 	});
-	if (flow.status === "no-ui" || flow.status === "cancelled") return ctx.ui.notify(flow.text, "info");
-	startSweep(ctx, cfg, flow.leftovers);
+	if (flow.status === "no-ui") return ctx.ui.notify(flow.text, "info");
+	if (flow.status !== "cancelled") startSweep(ctx, cfg, flow.leftovers);
 	const report = (head: string, items: string[]) => (items.length ? [head, ...items.map((i) => `  ${i}`)] : []);
 	const out: string[] = [flow.text];
 	if (ctx.hasUI) {
@@ -740,7 +740,8 @@ async function doneCmd(pi: ExtensionAPI, ctx: ExtensionCommandContext, progress:
 					} catch {}
 					// The captured pi is stale after the switch: run git and gh directly.
 					const r = await removeFlow(directRun(), nctx, cfg, name, p, editors);
-					nctx.ui.notify(r.removed ? r.text : `set kept: ${r.text}`, r.error ? "error" : "info");
+					const kept = r.error || r.text === "Cancelled.";
+					nctx.ui.notify(kept ? `set kept: ${r.text}` : r.removed ? r.text : `${r.text}\n(folder kept: it still holds files)`, r.error ? "error" : "info");
 				} catch (e) {
 					nctx.ui.notify(`set kept: ${(e as Error).message}`, "error");
 				} finally {

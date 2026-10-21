@@ -96,7 +96,7 @@ A workspace is a pool entry, not tied to a session: any session can `/wt use` a 
 
 **Discard with backup.** For a `has-work` set, `/wt remove` shows up to 10 commits per repo and the number of changed files, and says that files git does not track are not backed up and will be lost. Before anything is deleted it writes `refs/wt-backup/<set>/<dir>/<yyyymmdd-hhmmss>` for the commits `...-branch` for the set's branch when it holds commits HEAD lacks, and `...-wip` for the tracked changes (`git stash create`), then removes with `--force`. A failing backup stops the removal. The report prints how to restore: `git -C <repo> switch -c <branch> <ref>` and `git -C <repo> stash apply <ref>-wip`. Backups older than `backupDays` are deleted by `/wt clean`.
 
-**`/wt clean`** removes in one confirmation: `delivered` and `leftover` sets, stale worktree entries (`git worktree prune`, only entries whose folder is gone), local `<branchPrefix>*` branches that no worktree has checked out and whose tip is in the base branch or is the head of a merged PR, and expired backup refs. Sets that are kept are listed with the reason, for example `w3: game has 2 unpushed commits; /wt remove w3 to discard`. Without a UI it only reports. Remote branches `origin/<branchPrefix>*` that match a merged PR and are not checked out are offered in a second, separate confirmation and deleted with `git push origin --delete`. One failure does not stop the rest; the report lists what was removed, kept and failed.
+**`/wt clean`** removes in one confirmation: `delivered` and `leftover` sets, stale worktree entries (`git worktree prune`, only entries whose folder is gone), local `<branchPrefix>*` branches that no worktree has checked out and whose tip is in the base branch or is the head of a merged PR, and expired backup refs. An idle workspace with no work counts as `delivered`, so `/wt clean` also removes unused pool workspaces; `/wt new` (or `+ new workspace` in `/wt use`) makes a new one when needed. Sets that are kept are listed with the reason, for example `w3: game has 2 unpushed commits; /wt remove w3 to discard`. Without a UI it only reports. Remote branches `origin/<branchPrefix>*` that match a merged PR and are not checked out are offered in a second, separate confirmation (also when the first one was declined) and deleted with a plain `git push origin --delete` (no force flag), only while `git ls-remote` still shows the tip that was checked; a branch that moved is kept. One failure does not stop the rest; the report lists what was removed, kept and failed.
 
 pi session files are never deleted by any command.
 
@@ -144,7 +144,7 @@ a relative `--project-path`, and commands built at runtime or started from a scr
 
 ## Relationship to the workflow extension
 
-The dependency is one-way. This extension uses only the workflow's public contract (see "Public contract for other extensions" in the workflow README): the `session-folders` entry (K1) to learn the added folders, the `--add-dir` flag (K3) when it launches pi, and later the `workflow:status` event (K4). The workflow reads nothing of this extension. The one code import is the shell parser `workflow/readonly-bash.ts`, used by the Unity guard. `boundary.test.ts` enforces both sides.
+The dependency is one-way. This extension uses only the workflow's public contract (see "Public contract for other extensions" in the workflow README): the `session-folders` entry (K1) to learn the added folders, the `--add-dir` flag (K3) when it launches pi, and later the `workflow:status` event (K4). The workflow reads nothing of this extension. The one code import is the shell parser `workflow/readonly-bash.ts` (K5), used by the Unity guard. `boundary.test.ts` enforces both sides.
 
 ## Limits
 
@@ -155,6 +155,7 @@ The dependency is one-way. This extension uses only the workflow's public contra
 - Absolute paths inside tracked settings still point at the original folders.
 - A branch can be checked out in only one worktree.
 - Avoid `git gc` in the original repos while worktrees exist. `/wt clean` prunes only worktree entries whose folder is gone.
+- The shared-file guard refuses recursive deletes of a link and of any folder that holds one (`rm -rf .`, `Remove-Item -Recurse <repo>`); it cannot see paths built at run time (variables, scripts).
 - `node_modules` is shared with the original; a worktree that changes `package.json` should install its own.
 - An added folder that is a subfolder of a repo is replaced by that repo's worktree root.
 - Pushes to `main` stay blocked by each repo's own hook.

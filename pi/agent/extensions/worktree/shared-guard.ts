@@ -54,6 +54,22 @@ export function sharedProblem(toolName: string, input: Record<string, unknown>, 
 				const hit = tokens.some((tok) => tok && names.some((n) => fold(tok) === fold(n) || fold(tok).endsWith(`/${fold(r)}`)));
 				if (hit) return `${r} is a link to the original repo; deleting recursively could delete the original's files. Ask the user to run /wt unlink ${r}.`;
 			}
+			// A folder that holds a link: some delete tools follow the link into the original.
+			// Only the delete command's own arguments count, not a `cd` or `find .` elsewhere in the text.
+			const args = text.split(/[;&|\n]+/).filter((s) => RECURSIVE_DELETE.test(s)).flatMap((seg) => {
+				const toks = seg.split(/[\s"'`;|&()]+/);
+				const v = toks.findIndex((x) => /^(rm|rmdir|remove-item|rimraf|del)$/i.test(x));
+				if (v < 0 || (v > 0 && /^rm$/i.test(toks[v]) && /^git$/i.test(toks[v - 1]))) return [];
+				const cmd = /^(rmdir|del)$/i.test(toks[v]);
+				return toks.slice(v + 1).filter((x) => !(cmd && /^\/[sq]$/i.test(x)));
+			});
+			for (const raw of args) {
+				if (!raw || raw.startsWith("-")) continue;
+				const tok = raw === "*" || raw === "**" ? "." : raw.replace(/\/\*{1,2}$/, "");
+				const abs = path.isAbsolute(tok) ? tok : path.join(o.cwd, tok);
+				const l = o.linked.find((x) => insidePath(x, abs));
+				if (l) return `${raw} holds ${inRepo(l)}, a link to the original repo; deleting it recursively could delete the original's files. Ask the user to run /wt unlink ${inRepo(l)} first (or /wt remove for the whole set).`;
+			}
 		}
 	}
 	return null;

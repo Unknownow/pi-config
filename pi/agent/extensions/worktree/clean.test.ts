@@ -159,12 +159,14 @@ test("remote branches need a merged PR with the same tip and no worktree on them
 	const moved = items.find((i) => i.branch === "wt/unmerged")!;
 	const stale = await deleteRemotes(git, [{ ...moved, tip: "1".repeat(40) }]);
 	assert.equal(stale.failed.length, 1);
+	assert.match(stale.failed[0], /moved since the check/);
 	assert.match(run(f.main, ["ls-remote", "--heads", "origin", "wt/unmerged"]), /wt\/unmerged/);
 	const res = await deleteRemotes(git, items);
 	assert.equal(res.failed.length, 0, res.failed.join("|"));
 	assert.equal(run(f.main, ["ls-remote", "--heads", "origin", "wt/old"]).trim(), "");
 	const bad = await deleteRemotes(git, [{ main: f.main, branch: "wt/none", tip: "0".repeat(40) }]);
 	assert.equal(bad.failed.length, 1);
+	assert.match(bad.failed[0], /no longer on origin/);
 });
 
 test("cleanFlow without a UI makes no removal call, with a decline neither; with a yes it runs the plan", async () => {

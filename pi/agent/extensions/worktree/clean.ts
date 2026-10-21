@@ -224,11 +224,22 @@ export async function remoteCandidates(env: CleanEnv, mains: string[]): Promise<
 	return out;
 }
 
-/** `git push origin --delete <branch>` per item, only while the remote tip is still the planned one; returns report lines. */
+/** `git push origin --delete <branch>` per item (no force flag), only while `ls-remote` still shows the planned tip; returns report lines. */
 export async function deleteRemotes(git: Git, items: RemoteItem[]): Promise<{ done: string[]; failed: string[] }> {
 	const res = { done: [] as string[], failed: [] as string[] };
 	for (const i of items) {
-		const r = await git(i.main, ["push", `--force-with-lease=refs/heads/${i.branch}:${i.tip}`, "origin", "--delete", i.branch]);
+		const where = `origin/${i.branch} in ${path.basename(i.main)}`;
+		const now = await git(i.main, ["ls-remote", "--heads", "origin", `refs/heads/${i.branch}`]);
+		if (now.code !== 0) {
+			res.failed.push(`${where}: ${(now.stderr || now.stdout).trim().split("\n")[0]}`);
+			continue;
+		}
+		const tip = now.stdout.trim().split(/\s+/)[0] ?? "";
+		if (tip !== i.tip) {
+			res.failed.push(`${where}: ${tip ? "moved since the check; kept" : "no longer on origin"}`);
+			continue;
+		}
+		const r = await git(i.main, ["push", "origin", "--delete", i.branch]);
 		if (r.code === 0) res.done.push(`origin/${i.branch} in ${path.basename(i.main)}`);
 		else res.failed.push(`origin/${i.branch} in ${path.basename(i.main)}: ${(r.stderr || r.stdout).trim().split("\n")[0]}`);
 	}
