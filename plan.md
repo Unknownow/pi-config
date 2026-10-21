@@ -163,11 +163,30 @@ The existing assertions stay and must still pass, including `ls node_modules →
 - `docs(workflow): document readonly-bash exports as contract K5` (`workflow/README.md`)
 - `fix(worktree): guard folders holding links, plain remote delete, clean/done messages` (`worktree/shared-guard.ts`, `worktree/shared-guard.test.ts`, `worktree/clean.ts`, `worktree/clean.test.ts`, `worktree/index.ts`, `worktree/README.md`)
 
+## Amendment 1 (arbiter)
+**S2 (replaces the tokenizing rule of S2; the message, wildcard mapping, path resolution and `insidePath` test stay as written).** `worktree/shared-guard.ts`, `sharedProblem`, inside the `RECURSIVE_DELETE` branch, after the unchanged per-link loop at `:50-56`:
+- Split `text` into segments on `/[;&|\n]+/`. Only segments that match `RECURSIVE_DELETE` are checked.
+- In each such segment, split tokens with the same separator regex as `:53`. Find the first delete verb: `rm`, `rmdir`, `Remove-Item`, `rimraf` or `del`, case-insensitive for `Remove-Item`, `rmdir` and `del`. Wrappers before it, like `sudo` or `xargs`, are fine. Only the tokens after the verb are delete arguments.
+- Skip empty tokens, tokens that start with `-`, and the `cmd` switches `/s`, `/q` (any case) after `rmdir` and `del`. Then apply the existing wildcard mapping (`*`/`**` → `.`, trailing `/*` or `/**` removed, other `*` tokens taken literally), resolve against `o.cwd`, and run the `insidePath(link, resolved)` test.
+- On a hit, return the same `holds` message as in S2.
+- Why: only the delete's own arguments can name the folder being deleted. A `cd`, `find .` or `Get-ChildItem .` elsewhere in the command must not trigger the guard.
+- Accepted limit, already covered by the S6 Limits line about paths built at run time: a `cd` before the delete is not tracked, so `cd .. && rm -rf game` is not caught.
+
+**Tests (added to the S2 test block in `worktree/shared-guard.test.ts`, test `"recursive deletes of a link are refused"`).** Keep every new `holds` assertion and every existing one. Add:
+- `assert.equal(bash("cd .. && rm -rf dist"), null)`
+- `assert.equal(bash("find . -name x; rm -rf dist"), null)`
+- `assert.equal(bash("cd D:/wt/w1/game && rm -rf dist"), null)`
+- `assert.equal(bash("Remove-Item -Recurse build; Get-ChildItem ."), null)`
+- `assert.match(bash("cd src && rm -rf .") ?? "", /holds/)`: `.` is a delete argument and resolves to cwd, which is accepted (the guard does not track `cd`).
+- `assert.match(bash("rmdir /s /q .") ?? "", /holds/)`
+
+Run the plan's same test commands; both must report `fail 0`.
+
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 `workflow/README.md:198`. After the K4 line, add one contract entry:
-- [ ] S2 `worktree/shared-guard.ts`, in the `RECURSIVE_DELETE` branch, after the per-link loop at `:50-56`: add a second check fo
-- [ ] S3 `worktree/clean.ts:227-236`, `deleteRemotes`. For each item, in order:
-- [ ] S4 `worktree/index.ts:458-459`, `cleanCmd`.
-- [ ] S5 `worktree/index.ts:743`, `doneCmd` `after` callback. Compute `kept = r.error || r.text === "Cancelled."`.
-- [ ] S6 `worktree/README.md` text updates:
+- [x] S1 `workflow/README.md:198`. After the K4 line, add one contract entry:
+- [x] S2 `worktree/shared-guard.ts`, in the `RECURSIVE_DELETE` branch, after the per-link loop at `:50-56`: add a second check fo
+- [x] S3 `worktree/clean.ts:227-236`, `deleteRemotes`. For each item, in order:
+- [x] S4 `worktree/index.ts:458-459`, `cleanCmd`.
+- [x] S5 `worktree/index.ts:743`, `doneCmd` `after` callback. Compute `kept = r.error || r.text === "Cancelled."`.
+- [x] S6 `worktree/README.md` text updates:
