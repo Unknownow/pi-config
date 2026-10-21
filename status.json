@@ -1,0 +1,16 @@
+{
+  "v": 1,
+  "flowId": "20261021-0910-close-the-open-worktree-findings-k5-cont-44bb",
+  "rev": 1,
+  "updated": "2026-10-21T02:10:33.868Z",
+  "title": "Close the open worktree findings (K5 contract, parent-of-link guard, plain remote delete, clean/done messages)",
+  "delivery": "push",
+  "done": [],
+  "repos": [
+    {
+      "branch": "master",
+      "remote": "github-personal/Unknownow/pi-config",
+      "primary": true
+    }
+  ]
+}
