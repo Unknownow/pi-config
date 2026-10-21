@@ -196,3 +196,10 @@ test("selfCommitted only when the passed tree was committed", () => {
 	const two = { ...J, repos: { a: { tree: "t1", head: "c1" }, b: { tree: "u1", head: "d1" } } };
 	assert.equal(selfCommitted("h", two, { a: { head: "c2", tree: "t1" }, b: { head: "d1", tree: "u1" } }, false), true);
 });
+
+test("noChangeStage keeps a stage with open steps", () => {
+	assert.equal(noChangeStage(false, true, true, 2), "ask");
+	assert.equal(noChangeStage(false, false, true, 2), "wait");
+	assert.equal(noChangeStage(true, true, true, 2), "advance");
+	assert.equal(noChangeStage(false, true, true, 0), "advance");
+});
