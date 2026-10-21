@@ -68,6 +68,7 @@ Unity's `Library/` is never touched: a worktree session does not get one.
 | `unityGuard` | `true` | Turns the Unity guard on or off in worktree sessions. |
 | `autoUpdate` | `true` | Fast-forward the set's repos when a session starts inside it (see Automatic update). |
 | `rebaseUnpushed` | `true` | Let the automatic update rebase unpushed own commits onto the base branch. `false` turns off only the automatic rebase; `/wt update` still rebases. |
+| `addFolderWorktree` | `true` | `/folders add` inside a set attaches the repo's worktree in the set (created on the set's branch if missing). `false` attaches the folder as given. |
 | `backupDays` | `30` | Days a backup ref of discarded work is kept; `/wt clean` deletes older ones. `0` keeps them until you delete them. |
 
 ## Running sessions and workspaces
@@ -142,12 +143,17 @@ and `ctx_batch_execute` calls with a `unity` command that drives an Editor or ru
 The guard reads command text only; it is not a sandbox. `cd` in the text is ignored when resolving
 a relative `--project-path`, and commands built at runtime or started from a script file are not seen.
 
+## Adding folders inside a set
+
+In a session inside a set, `/folders add <path>` for a git repo attaches that repo's worktree in the set, not the original checkout (the workflow asks through its `workflow:folder-add` event, K6). If a worktree of that repo already sits under the set, it is reused. Otherwise one is created like `/wt new` does: branch `<branchPrefix><set>` from the remote's default branch, gitignored files linked or copied, and the repo added to `.pi-set.json`; a progress line shows while it fetches and creates. A subfolder maps to the same subfolder in the worktree if it exists there, otherwise to the worktree root. Plain folders, folders already in the set and sessions outside a set are left alone. If the worktree cannot be created (target folder taken, branch already exists, no remote, git failure), nothing is added, nothing is left behind and the error is shown. `addFolderWorktree: false` turns this off.
+
 ## Relationship to the workflow extension
 
-The dependency is one-way. This extension uses only the workflow's public contract (see "Public contract for other extensions" in the workflow README): the `session-folders` entry (K1) to learn the added folders, the `--add-dir` flag (K3) when it launches pi, and later the `workflow:status` event (K4). The workflow reads nothing of this extension. The one code import is the shell parser `workflow/readonly-bash.ts` (K5), used by the Unity guard. `boundary.test.ts` enforces both sides.
+The dependency is one-way. This extension uses only the workflow's public contract (see "Public contract for other extensions" in the workflow README): the `session-folders` entry (K1) to learn the added folders, the `--add-dir` flag (K3) when it launches pi, the `workflow:status` event (K4), and the `workflow:folder-add` event (K6) to answer `/folders add` (see "Adding folders inside a set"). The workflow reads nothing of this extension. The one code import is the shell parser `workflow/readonly-bash.ts` (K5), used by the Unity guard. `boundary.test.ts` enforces both sides.
 
 ## Limits
 
+- If `wt/<name>` already exists in a newly added repo without a worktree, `/folders add` refuses; remove or rename that branch first.
 - Terminals opened before the VS Code extension activated use Windows Terminal.
 - If VS Code does not answer within 3 s the fallback opens, and the VS Code terminal can still appear late.
 - Any process of the same user can ask the bridge to open a terminal running any program.
@@ -169,6 +175,6 @@ The dependency is one-way. This extension uses only the workflow's public contra
 ## Tests
 
 ```
-node --experimental-strip-types --test config.test.ts layout.test.ts files.test.ts git-ops.test.ts manage.test.ts unity-guard.test.ts vscode-bridge.test.ts update.test.ts rename.test.ts progress.test.ts index.test.ts folders.test.ts boundary.test.ts live.test.ts sessions.test.ts meta.test.ts shared-guard.test.ts clean.test.ts exec.test.ts
+node --experimental-strip-types --test config.test.ts add-folder.test.ts layout.test.ts files.test.ts git-ops.test.ts manage.test.ts unity-guard.test.ts vscode-bridge.test.ts update.test.ts rename.test.ts progress.test.ts index.test.ts folders.test.ts boundary.test.ts live.test.ts sessions.test.ts meta.test.ts shared-guard.test.ts clean.test.ts exec.test.ts
 node --test vscode/request.test.js
 ```

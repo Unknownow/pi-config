@@ -10,14 +10,14 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { CURRENT_SESSION_VERSION, getAgentDir, SessionManager, type ExtensionAPI, type ExtensionCommandContext, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_LINK, loadConfig, type WtConfig } from "./config.ts";
-import { isLink, setupFiles, unlinkLink } from "./files.ts";
+import { isLink, unlinkLink } from "./files.ts";
 import { foldersFromEntries } from "./folders.ts";
 import { footerText, pidAlive, readLive, removeLive, setInUse, writeLive, type LiveEntry } from "./live.ts";
 import { readMeta, writeMeta } from "./meta.ts";
 import { latestSession, newSessionFile } from "./sessions.ts";
 import { sharedProblem } from "./shared-guard.ts";
 import { sendToVscode } from "./vscode-bridge.ts";
-import { createAll, excludeLinks, mainRepoOf, preflight, rollback, withLockRetry, type Gh, type Git, type Planned } from "./git-ops.ts";
+import { mainRepoOf, preflight, withLockRetry, type Gh, type Git } from "./git-ops.ts";
 import { SWEEP_SCRIPT, classifySet, detectSession, listSets, listText, openPlan, parseEditors, quitReminder, removeWithConfirm, repoDirsIn, reposOf, sessionConfig, worktreePrompt, type WorkspaceEnv, type WtSession } from "./manage.ts";
 import { cleanFlow, deleteRemotes, discoverMains, fetchAll, planClean, remoteCandidates } from "./clean.ts";
 import { guardProblem } from "./unity-guard.ts";
@@ -25,6 +25,7 @@ import { renameSet } from "./rename.ts";
 import { reattach, updateSet, worthNotifying } from "./update.ts";
 import { execRunner } from "./exec.ts";
 import { Progress } from "./progress.ts";
+import { build, worktreeForFolder } from "./add-folder.ts";
 import { truncateToWidth } from "@earendil-works/pi-tui";
 import { branchOf, checkName, launchSpec, nextFreeName, rootProblem, setRootOf, vscodeTerminalSpec } from "./layout.ts";
 
@@ -166,30 +167,6 @@ async function launch(cfg: WtConfig, name: string, cwd: string, shown: string, f
 	if (failure) return { text: "", error: `${note}could not open the terminal (${spec.file}): ${failure}` };
 	child.unref();
 	return { text: `${note}Opened a new ${cfg.launch === "tab" ? "tab" : "window"} running pi in ${shown}${hint}` };
-}
-
-/** Create the worktrees and their files; on any failure undo what this run created. */
-async function build(git: Git, plan: Planned[], cfg: WtConfig, name: string, progress: Progress): Promise<string[]> {
-	const created: Planned[] = [];
-	const lines: string[] = [];
-	try {
-		progress.stage("creating worktrees");
-		await createAll(git, plan, branchOf(cfg, name), (p) => created.push(p));
-		for (const p of plan) {
-			progress.stage(`linking/copying files: ${path.basename(p.info.top)}`);
-			const f = setupFiles(p.info.top, p.target, cfg);
-			await excludeLinks(git, p.target, f.linked);
-			lines.push(`${p.info.top} -> ${p.target}`);
-			if (f.linked.length) lines.push(`  linked: ${f.linked.join(", ")}`);
-			if (f.copied.length) lines.push(`  copied: ${f.copied.join(", ")}`);
-			for (const w of f.warnings) lines.push(`  warning: ${w}`);
-		}
-		return lines;
-	} catch (e) {
-		const problems = await rollback(git, created, cfg, name);
-		const extra = problems.length ? `\nRollback left problems:\n${problems.join("\n")}` : "\nNothing was left behind.";
-		throw new Error(`${(e as Error).message}${extra}`);
-	}
 }
 
 interface Created {
@@ -768,6 +745,8 @@ export default function worktree(pi: ExtensionAPI) {
 	let liveCtx: ExtensionContext | null = null;
 	let liveTimers: ReturnType<typeof setInterval>[] = [];
 	let unsubStatus: (() => void) | undefined;
+	let unsubFolderAdd: (() => void) | undefined;
+	let addFolderCfg: WtConfig | null = null;
 	const publishLive = () => {
 		const c = liveCtx;
 		if (!c) return;
@@ -833,6 +812,7 @@ export default function worktree(pi: ExtensionAPI) {
 			const cfg = sc.cfg;
 			guardOn = cfg.unityGuard;
 			session = await detectSession(git, cfg, ctx.cwd);
+			addFolderCfg = cfg;
 			autoUpdate = cfg.autoUpdate;
 			rebaseUnpushed = cfg.rebaseUnpushed;
 			setBranch = session ? branchOf(cfg, path.basename(session.setRoot)) : "";
@@ -843,9 +823,33 @@ export default function worktree(pi: ExtensionAPI) {
 		} catch {
 			cachedParent = path.dirname(slash(ctx.cwd));
 			session = null;
+			addFolderCfg = null;
 			linkPaths = [];
 			repoRoot = null;
 		}
+		unsubFolderAdd?.();
+		unsubFolderAdd = pi.events.on("workflow:folder-add", (d) => {
+			const req = d as { v?: number; folder?: unknown; claim?: unknown } | null;
+			if (!req || req.v !== 1 || typeof req.folder !== "string" || typeof req.claim !== "function") return;
+			const cfg = addFolderCfg;
+			const sess = session;
+			if (!sess || !cfg || !cfg.addFolderWorktree) return;
+			const folder = req.folder;
+			(req.claim as (p: Promise<unknown>) => void)(
+				(async () => {
+					const progress = new Progress(ctx.hasUI ? ctx.ui : null, `worktree add (${path.basename(sess.setRoot)})`, truncateToWidth);
+					try {
+						const res = await worktreeForFolder(progress.wrap(makeGit(pi)), { cfg, setRoot: sess.setRoot, folder }, progress);
+						if (res && "folder" in res && ctx.hasUI) ctx.ui.notify([`Worktree ready in set "${path.basename(sess.setRoot)}": ${res.folder}`, ...res.lines].join("\n"), "info");
+						return res;
+					} catch (e) {
+						return { error: (e as Error).message };
+					} finally {
+						progress.done();
+					}
+				})(),
+			);
+		});
 		startLive(ctx);
 		// Interactive sessions only: a headless pi (subagent, `pi -p`) in the set must not move files under its parent.
 		if (!session || !autoUpdate || !ctx.hasUI || (event.reason !== "startup" && event.reason !== "resume")) return;
@@ -869,6 +873,8 @@ export default function worktree(pi: ExtensionAPI) {
 	});
 	pi.on("session_shutdown", (event, ctx) => {
 		stopLive();
+		unsubFolderAdd?.();
+		unsubFolderAdd = undefined;
 		try {
 			if (event.reason !== "quit" || !session || !ctx.hasUI || !process.stderr.isTTY) return;
 			if (!repoDirsIn(session.setRoot).length) return;

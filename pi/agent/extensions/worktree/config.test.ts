@@ -90,3 +90,14 @@ test("backupDays defaults to 30, 0 is accepted, a negative value warns", () => {
 	assert.equal(bad.cfg.backupDays, 30);
 	assert.match(bad.warning ?? "", /backupDays/);
 });
+
+test("addFolderWorktree defaults to true, false is read, a bad value warns", () => {
+	assert.equal(loadConfig(tmp(), "D:/projects").cfg.addFolderWorktree, true);
+	const dir = tmp();
+	fs.writeFileSync(path.join(dir, "worktree.json"), JSON.stringify({ addFolderWorktree: false }));
+	assert.equal(loadConfig(dir, "D:/projects").cfg.addFolderWorktree, false);
+	fs.writeFileSync(path.join(dir, "worktree.json"), JSON.stringify({ addFolderWorktree: "no" }));
+	const bad = loadConfig(dir, "D:/projects");
+	assert.equal(bad.cfg.addFolderWorktree, true);
+	assert.match(bad.warning ?? "", /addFolderWorktree must be true or false/);
+});

@@ -13,6 +13,8 @@ export interface WtConfig {
 	unityGuard: boolean;
 	vscode: boolean;
 	autoUpdate: boolean;
+	/** `/folders add` inside a set attaches the repo's worktree in the set. */
+	addFolderWorktree: boolean;
 	rebaseUnpushed: boolean;
 	/** Days a backup ref of a discarded workspace is kept; 0 keeps them forever. */
 	backupDays: number;
@@ -34,6 +36,7 @@ export function defaults(workingRepoParent: string): WtConfig {
 		unityGuard: true,
 		vscode: true,
 		autoUpdate: true,
+		addFolderWorktree: true,
 		rebaseUnpushed: true,
 		backupDays: 30,
 	};
@@ -55,6 +58,10 @@ export function mergeConfig(raw: unknown, base: WtConfig): { cfg: WtConfig; warn
 	if (o.autoUpdate !== undefined) {
 		if (typeof o.autoUpdate === "boolean") cfg.autoUpdate = o.autoUpdate;
 		else warnings.push("autoUpdate must be true or false");
+	}
+	if (o.addFolderWorktree !== undefined) {
+		if (typeof o.addFolderWorktree === "boolean") cfg.addFolderWorktree = o.addFolderWorktree;
+		else warnings.push("addFolderWorktree must be true or false");
 	}
 	if (o.rebaseUnpushed !== undefined) {
 		if (typeof o.rebaseUnpushed === "boolean") cfg.rebaseUnpushed = o.rebaseUnpushed;
