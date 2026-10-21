@@ -294,6 +294,11 @@ export function readOnlyProblem(command: string, allow: RegExp[] = []): string |
 	return null;
 }
 
+/** Why this one parsed command would change something, or null; `allow` works as in `readOnlyProblem`. */
+export function commandReadOnlyProblem(cmd: ParsedCommand, allow: RegExp[] = []): string | null {
+	return commandProblem(cmd, allow);
+}
+
 function commandProblem(cmd: ParsedCommand, allow: RegExp[]): string | null {
 	const text = cmd.words.join(" ");
 	const write = cmd.writes.find((t) => !DEV_NULL.has(t));

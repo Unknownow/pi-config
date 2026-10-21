@@ -1,7 +1,12 @@
 // node --test readonly-bash.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { parseCommands, readOnlyProblem } from "./readonly-bash.ts";
+import { commandReadOnlyProblem, parseCommands, readOnlyProblem } from "./readonly-bash.ts";
+
+test("commandReadOnlyProblem checks one parsed command", () => {
+	assert.ok(commandReadOnlyProblem(parseCommands("git push")[0]));
+	assert.equal(commandReadOnlyProblem(parseCommands("git status")[0]), null);
+});
 
 const reads = [
 	"ls -la && cat README.md | head -20",
