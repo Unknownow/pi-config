@@ -64,3 +64,18 @@ test("fix round prompts", async () => {
 	for (const t of ["S1: run it", "unity run-tests", "D2. S3: yes", "S5"]) assert.ok(msg.includes(t), t);
 	assert.match(p.fixRoundMessage(["S1", "S2"], ["repo: ?? x"]), /S1, S2[\s\S]*repo: \?\? x/);
 });
+
+test("execute prompt names deliver and wait_for_user", () => {
+	assert.ok(EXECUTE_PHASE.includes("deliver"));
+	assert.ok(EXECUTE_PHASE.includes("wait_for_user"));
+	assert.ok(!EXECUTE_PHASE.includes("even when the plan says to"));
+});
+
+test("planner prompts teach Deliver and Wait steps", async () => {
+	const { finalize } = await import("./prompts.ts");
+	for (const text of [planPhase(true, "auto"), finalize(false)]) {
+		assert.ok(text.includes("Deliver:"));
+		assert.ok(text.includes("Wait:"));
+		assert.ok(text.includes("(after:"));
+	}
+});

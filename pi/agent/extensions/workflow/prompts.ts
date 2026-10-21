@@ -13,6 +13,9 @@ function batchLine(tools: string): string {
 const STAGE_WHEN = "the work splits into parts that each leave the code working and tested, and at least one of these holds: a later part builds on an earlier one (a refactor or migration before the feature that needs it, a shared module or API before its callers); the change is large (roughly more than 8 files or 500 changed lines, too much for one review); or it bundles separate features or fixes";
 const STAGE_LIMITS = "Use 2-5 stages, one per part. Don't stage a small or tightly coupled change, or when the user asked for it in one go.";
 
+/** Planning guidance for steps that publish or need a person. Shared by planPhase and finalize. */
+const CHECKPOINTS = `- Use a checkpoint (\`**S<n>.** Deliver: <what>\`) to publish and then continue the same change; use a stage for a separate part. A step a person must do (publish with \`updates.bat\`, open an Editor) is \`**S<n>.** Wait: <what> (check: <command>)\`, with a read-only check that proves it is finished, for example \`git ls-remote --exit-code --tags origin <name>/v<version>\` and not \`npm view\`. A stage that needs one first ends its heading in \`(after: <what>; check: <command>)\`. Shared tags such as \`unity-build/v*\` are created or moved only as a named Deliver step.`;
+
 /** The planner prompt. `finalize`: after approval the planner writes the final execution plan in one more reply. `staging`: whether it proposes stages on its own. */
 export function planPhase(finalize: boolean, staging: StagedPlans = "auto", recap: PlanRecap = "changes"): string {
 	const proposing =
@@ -38,7 +41,8 @@ ${batchLine("a codemode script, ctx_execute for read-only analysis, or one bash 
 - For design or architecture questions, cover components and their responsibilities, interfaces and data contracts, data model and migrations, failure modes, expected scale (numbers, not adjectives), and the options you rejected and why.
 - ${proposing}
 - ${ending}
-- A cheaper model executes the plan and writes the code, and an independent judge checks the result against it. Leave no design decision open, but give direction, not implementation: say what to change, why and how it must behave, not the code.${stages}`;
+- A cheaper model executes the plan and writes the code, and an independent judge checks the result against it. Leave no design decision open, but give direction, not implementation: say what to change, why and how it must behave, not the code.${stages}
+${CHECKPOINTS}`;
 }
 
 /** Sent after approval when finalizePlan is on: the planner's last job. `commits`: the plan also says how the change splits into commits. */
@@ -64,6 +68,7 @@ Use exactly this structure:
 8. Risks, rollback, and what not to touch.${item}
 Goal, Non-goals, User decisions and Done when are the target. The judge and the arbiter treat them as fixed. Everything else will be checked against the code.
 Give direction, not implementation. Don't write the code: the executor writes it. Code appears only where an exact contract must match (a signature, a type, a config key, a message or file format, a pattern the tests check), a few lines at most each.
+${CHECKPOINTS}
 Include every decision from the discussion. Leave no design decision open: every behaviour, interface and edge case is settled. How to write the code is the executor's job.`;
 }
 
@@ -81,7 +86,7 @@ ${batchLine("a codemode script, ctx_batch_execute, or one bash command joined wi
 - When done, run the plan's tests, then call \`judge\` with \`focus\` set to the plan's title. Fix every blocker and major finding by following its Fix directions. When the judge passes, end your turn: the workflow decides whether the minor findings get a fix round. If a finding is wrong, don't change code for it: put the finding and your file:line evidence in the judge tool's \`disputes\` parameter on the next call. Then call \`judge\` again.
 - A finding "[knowledge <id>] deviation from a recommended rule" is minor: you don't have to change the code for it. If you keep the code on purpose, give the reason in \`disputes\` on your next judge call; deviations go into the commit message.
 - Never change the plan's design to satisfy a [plan-flaw] finding. End your turn; the workflow resolves it.
-- Never commit, push, or open or merge a pull request yourself, even when the plan says to: delivery is the workflow's step, and a commit or push of your own is refused. When the plan reaches such a point (or a stage ends), finish the code, get the judge's pass and end your turn. The workflow delivers it as the flow's delivery says and, for a staged plan, sends you the next stage. Don't report this as a blocker.
+- Never commit, push, or open or merge a pull request through your own shell: a commit or push of your own is refused. When the plan has a \`Deliver:\` step, or you must publish to continue, call \`deliver\` (within the approved delivery; a call the plan does not name is added to it as an amendment) and carry on in the same turn. At a \`Wait:\` step, or when a person must act (publish with \`updates.bat\`, open the Editor), call \`wait_for_user\` with a read-only check that proves the step is finished, then end your turn: the workflow resumes you. At a stage end, finish the code, get the judge's pass and end your turn: the workflow delivers it as the flow's delivery says and, for a staged plan, sends you the next stage. Don't report this as a blocker.
 - End with a report: each plan step done or not done, and the tests you ran with their results.`;
 
 /** The test supervisor (phase `test`): plans tests, sends runners, triages, writes the report. */
