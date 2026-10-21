@@ -58,12 +58,20 @@ export interface DeliveryOptions {
 	committed?: boolean;
 	/** Why a push delivery only commits (protected branch, detached HEAD), plain text; unset otherwise. */
 	pushSkipped?: string;
+	/** A merge is in progress in this repo: it is concluded with one commit, not split. */
+	mergeInProgress?: boolean;
 }
 
 const SPLIT =
 	"Commit exactly the reviewed changes now, without editing any file first. Split them into commits by function: one commit per logical change (a feature, a fix, a refactor, config, docs), each with the tests that cover it. Follow the plan's Commits section when it has one, adjusted to the actual diff; a change with one function is one commit. Stage each commit's files by path (`git add <paths>`, never `git add -A` or `git add .`), commit, then stage the next. A file whose changes serve several functions stays whole, in the commit of its main change; don't stage parts of files. Order the commits so each one builds on the ones before it. Each message follows the repo's conventions (check `git log --oneline -10`), and its subject says what that commit does. When you are done, `git status --short` shows none of the reviewed files.";
 const SINGLE =
 	"Commit exactly the reviewed changes now: stage the changed and new files from the diff without editing anything first, and write a clear message that follows the repo's conventions.";
+const MERGE =
+	"A merge is in progress: stage all reviewed files by path and conclude it with one `git commit --no-edit`; don't split it.";
+const MERGE_FIRST =
+	"stage all reviewed files by path and conclude the merge with one `git commit --no-edit`, without splitting it.";
+const NO_PUSH =
+	"Don't run `git push` in any command, not even chained after a commit: the guard refuses the whole command and nothing is committed.";
 const CHAIN =
 	"Use as few tool calls as you can: chain steps that depend on each other with `&&` in one bash call, so a failure stops the chain (for example each commit's `git add <paths> && git commit …`, and several commits in one call).";
 const CHAIN_REMOTE =
@@ -82,8 +90,9 @@ export function deliveryInstruction(o: DeliveryOptions): string {
 	const method: MergeMethod = (["merge", "rebase", "squash"] as const).includes(o.mergeMethod) ? o.mergeMethod : "merge";
 	const parts = ["The judge passed."];
 	if (o.committed) parts.push(`The change is already committed on \`${b}\`: don't commit again, and don't amend or rewrite those commits.`);
+	else if (o.from && o.mergeInProgress) parts.push(`A merge is in progress, so \`git switch\` would refuse: first create branch \`${b}\` with \`git checkout -b ${b}\` (the merge state comes along), then ${MERGE_FIRST} Leave \`${o.from}\` as it is.`);
 	else if (o.from) parts.push(`First create branch \`${b}\` with \`git switch -c ${b}\` (the working-tree changes come along). Commit there and leave \`${o.from}\` as it is.`);
-	if (!o.committed) parts.push(o.split ? SPLIT : SINGLE);
+	if (!o.committed && !(o.from && o.mergeInProgress)) parts.push(o.mergeInProgress ? MERGE : o.split ? SPLIT : SINGLE);
 	if (o.mode !== "commit") {
 		parts.push(
 			o.from
@@ -102,6 +111,7 @@ export function deliveryInstruction(o: DeliveryOptions): string {
 			`Then merge it: wait for its checks with \`gh pr checks <number> --watch --fail-fast\` (a pull request without checks is fine). If a check fails, stop and report it; don't merge. Then run \`gh pr merge <number> --${method}${o.deleteBranch ? " --delete-branch" : ""}\`. If GitHub refuses the merge (a required review, a conflict, a branch rule), stop and report why; don't approve it yourself.`,
 		);
 	}
+	if (o.mode === "commit") parts.push(NO_PUSH);
 	if (!o.committed) parts.push(CHAIN);
 	if (o.mode !== "commit") parts.push(CHAIN_REMOTE);
 	parts.push(RULES);
@@ -116,6 +126,27 @@ export function deliveryInstruction(o: DeliveryOptions): string {
 export interface PrState {
 	number: number;
 	state: string;
+}
+
+/** The branch the commits landed on when the commit step switched away from the recorded one; undefined to keep the recorded branch. */
+export function outcomeRef(o: { recorded?: string; recordedMoved: boolean; current: string; currentAhead: boolean }): string | undefined {
+	if (!o.recorded || o.recordedMoved || !o.currentAhead) return undefined;
+	if (!o.current || o.current === "HEAD" || o.current === o.recorded) return undefined;
+	return o.current;
+}
+
+/** Finds where the commit step's commits landed, from git facts read through `git` (injected for tests). Undefined keeps the recorded branch. */
+export async function landedBranch(
+	git: (...args: string[]) => Promise<{ code: number; stdout: string }>,
+	recorded: string,
+	head: string,
+): Promise<string | undefined> {
+	const out = async (...a: string[]) => (await git(...a)).stdout.trim();
+	const recordedNow = await out("rev-parse", recorded);
+	const current = await out("rev-parse", "--abbrev-ref", "HEAD");
+	const currentSha = await out("rev-parse", "HEAD");
+	const currentAhead = currentSha !== head && (await git("merge-base", "--is-ancestor", head, "HEAD")).code === 0;
+	return outcomeRef({ recorded, recordedMoved: recordedNow !== head, current, currentAhead });
 }
 
 /** `pr`, unless it is the PR that already existed, closed or merged, before the commit step ran: then it says nothing about this flow. */

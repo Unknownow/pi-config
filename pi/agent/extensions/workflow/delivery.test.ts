@@ -1,7 +1,7 @@
 // node --test delivery.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { branchName, combineOutcomes, repoDeliveryInstruction, deliveryChoices, freshPr, deliveryInstruction, deliveryMenuLabel, deliveryOutcome, isDelivery, planTitle, pushSkipReason, type DeliveryOptions } from "./delivery.ts";
+import { branchName, combineOutcomes, repoDeliveryInstruction, deliveryChoices, freshPr, deliveryInstruction, deliveryMenuLabel, deliveryOutcome, isDelivery, landedBranch, outcomeRef, planTitle, pushSkipReason, type DeliveryOptions } from "./delivery.ts";
 import { finalize, planPhase, SHOW_PLAN } from "./prompts.ts";
 
 const d = new Date(2026, 9, 14, 9, 5);
@@ -40,7 +40,7 @@ test("commit only, split by function", () => {
 	const t = deliveryInstruction(base);
 	assert.ok(t.includes("Split them into commits by function"));
 	assert.ok(t.includes("Never force-push"));
-	for (const no of ["git push", "gh pr", "git switch"]) assert.ok(!t.includes(no), no);
+	for (const no of ["git push -u", "Then push", "gh pr", "git switch"]) assert.ok(!t.includes(no), no);
 });
 
 test("single commit when not splitting", () => {
@@ -208,11 +208,62 @@ test("pushSkipReason", () => {
 test("commit mode names a skipped push", () => {
 	const t = deliveryInstruction({ ...base, pushSkipped: "master is protected" });
 	assert.ok(t.includes("Don't push: master is protected, so this flow only commits. Say so in your report."));
-	assert.ok(!t.includes("git push"));
+	assert.ok(!t.includes("git push -u") && !t.includes("Then push"));
 	assert.ok(!deliveryInstruction(base).includes("Don't push"));
 });
 
 test("outcome names a skipped push", () => {
 	assert.deepEqual(deliveryOutcome("commit", 1, false, null, false, "master is protected"), { text: "committed (1 commit), push skipped: master is protected", ok: true });
 	assert.deepEqual(deliveryOutcome("push", 1, true, null, false, "x"), { text: "committed (1 commit), pushed", ok: true });
+});
+
+test("outcomeRef uses the branch the commits landed on", () => {
+	assert.equal(outcomeRef({ recorded: "master", recordedMoved: false, current: "feat/x", currentAhead: true }), "feat/x");
+});
+
+test("outcomeRef keeps the recorded branch", () => {
+	assert.equal(outcomeRef({ recorded: "master", recordedMoved: true, current: "feat/x", currentAhead: true }), undefined);
+	assert.equal(outcomeRef({ recorded: "master", recordedMoved: false, current: "master", currentAhead: true }), undefined);
+	assert.equal(outcomeRef({ recorded: "master", recordedMoved: false, current: "feat/x", currentAhead: false }), undefined);
+	assert.equal(outcomeRef({ recorded: "master", recordedMoved: false, current: "HEAD", currentAhead: true }), undefined);
+});
+
+test("commit-only instruction forbids a chained push", () => {
+	assert.ok(deliveryInstruction({ ...base, mode: "commit" }).includes("Don't run `git push` in any command"));
+	assert.ok(!deliveryInstruction({ ...base, mode: "push" }).includes("Don't run `git push` in any command"));
+});
+
+test("a merge in progress is concluded with one commit", () => {
+	const text = deliveryInstruction({ ...base, mergeInProgress: true });
+	assert.ok(text.includes("git commit --no-edit"));
+	assert.ok(!text.includes("Split them into commits"));
+});
+
+test("a merge on a protected branch is concluded before the switch", () => {
+	const text = deliveryInstruction({ ...base, mode: "pr", from: "master", mergeInProgress: true });
+	assert.ok(text.indexOf("git checkout -b") >= 0 && text.indexOf("git checkout -b") < text.indexOf("--no-edit"));
+	assert.ok(!text.includes("git switch -c"));
+});
+
+function fakeGit(facts: { recorded: string; recordedSha: string; current: string; currentSha: string; ancestor: boolean }) {
+	return async (...a: string[]) => {
+		if (a[0] === "merge-base") return { code: facts.ancestor ? 0 : 1, stdout: "" };
+		const ref = a[a.length - 1];
+		if (ref === "--abbrev-ref" || a.includes("--abbrev-ref")) return { code: 0, stdout: facts.current };
+		if (ref === "HEAD") return { code: 0, stdout: facts.currentSha };
+		if (ref === facts.recorded) return { code: 0, stdout: facts.recordedSha };
+		return { code: 128, stdout: "" };
+	};
+}
+
+test("landedBranch finds the new branch the commits went on (D14)", async () => {
+	assert.equal(await landedBranch(fakeGit({ recorded: "master", recordedSha: "a", current: "feat/x", currentSha: "b", ancestor: true }), "master", "a"), "feat/x");
+});
+
+test("landedBranch keeps the recorded branch when it moved", async () => {
+	assert.equal(await landedBranch(fakeGit({ recorded: "b1", recordedSha: "c", current: "b1", currentSha: "c", ancestor: true }), "b1", "a"), undefined);
+});
+
+test("landedBranch keeps the recorded branch when it was deleted after a merge", async () => {
+	assert.equal(await landedBranch(fakeGit({ recorded: "b1", recordedSha: "", current: "master", currentSha: "m", ancestor: true }), "b1", "a"), undefined);
 });
