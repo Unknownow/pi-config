@@ -32,6 +32,14 @@
     "escalate": {
       "model": "claude-bridge/claude-opus-5-5",
       "thinking": "high"
+    },
+    "test": {
+      "model": "claude-bridge/claude-opus-5-5",
+      "thinking": "medium"
+    },
+    "runner": {
+      "model": "claude-bridge/claude-haiku-5-5",
+      "thinking": "low"
     }
   },
   "startPhase": "plan",
@@ -87,6 +95,26 @@
     "output": 5,
     "cacheRead": 0.1,
     "cacheWrite": 1.25
+  },
+  "test": {
+    "concurrency": 4,
+    "maxTasks": 8,
+    "runnerTimeoutMs": 2700000,
+    "maxRounds": 3,
+    "refails": 2,
+    "delivery": "commit",
+    "runnerTools": ["bash", "read", "grep", "find", "ls"],
+    "supervisorBashAllow": [
+      "^adb( -[sdetHP] \\S+)* (devices|shell getprop)\\b",
+      "^unity (cmd )?(status|editor_status|console_status)\\b"
+    ],
+    "runnerDeny": [
+      "^adb( -[sdetHP] \\S+)* (reboot|reboot-bootloader|sideload|root|unroot|remount|disable-verity|enable-verity)\\b",
+      "^adb\\b.*\\bshell\\b.*(\\brm\\s+-[a-z]*r|\\bwipe\\b|\\brecovery\\b|\\bfactory\\b|\\bformat\\b|\\breboot\\b)",
+      "^fastboot\\b"
+    ],
+    "runnerPathFlags": ["--project-path", "-projectPath"],
+    "runnerPathEnv": ["UNITY_PROJECT_PATH"]
   },
   "explore": {
     "maxQueries": 8,

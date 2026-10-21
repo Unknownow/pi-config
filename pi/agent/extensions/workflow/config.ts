@@ -8,13 +8,13 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { PLAN_TOOLS } from "./readonly-tools.ts";
-import type { Delivery, MergeMethod } from "./delivery.ts";
+import { type Delivery, isDelivery, type MergeMethod } from "./delivery.ts";
 import type { TokenWeights } from "./tokens.ts";
 
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 export type Thinking = (typeof THINKING_LEVELS)[number];
 
-export const ROLES = ["plan", "execute", "explore", "advisor", "judge", "arbiter", "commit", "escalate"] as const;
+export const ROLES = ["plan", "execute", "explore", "advisor", "judge", "arbiter", "commit", "escalate", "test", "runner"] as const;
 export type Role = (typeof ROLES)[number];
 
 export interface RoleSpec {
@@ -73,6 +73,32 @@ export interface PlansConfig {
 	keepCount: number;
 }
 
+/** The test-and-fix flow: a supervisor (role `test`) sends `runner` subagents through the test_run tool. */
+export interface TestConfig {
+	/** Runners at once; tasks sharing a resource always run one after another. 1 = one at a time. */
+	concurrency: number;
+	/** Tasks one test_run call may carry. */
+	maxTasks: number;
+	/** One runner's time limit. */
+	runnerTimeoutMs: number;
+	/** Fix rounds before the flow asks whether to go on. 0 = no limit. */
+	maxRounds: number;
+	/** Failed fixes of one bug before the user is asked. */
+	refails: number;
+	/** Delivery after each fix round; test flows never show the delivery menu. */
+	delivery: Delivery;
+	/** The runners' tools (regular names; no edit or write). */
+	runnerTools: string[];
+	/** Extra commands the supervisor's bash may run, as regexes over the command's words. */
+	supervisorBashAllow: string[];
+	/** Commands runners may not run, as regexes over the command's words or the whole text. */
+	runnerDeny: string[];
+	/** Flags whose value is a project path that must lie inside the flow's folders. */
+	runnerPathFlags: string[];
+	/** Environment variable names that runners may not set (use the path flags instead). */
+	runnerPathEnv: string[];
+}
+
 export interface WorkflowConfig {
 	roles: Record<Role, RoleSpec>;
 	/** Phase a new session starts in. */
@@ -126,6 +152,7 @@ export interface WorkflowConfig {
 	 * cache reads 0.1, cache writes 1.25, output 5. All 1 makes the two figures equal.
 	 */
 	tokenWeights: TokenWeights;
+	test: TestConfig;
 	explore: { maxQueries: number; concurrency: number; tools: string[] };
 	advisor: { tools: string[]; maxTranscriptChars: number };
 	arbiter: { tools: string[] };
@@ -162,6 +189,8 @@ export const DEFAULTS: WorkflowConfig = {
 		arbiter: { model: "claude-bridge/claude-fable-5-1", thinking: "high" },
 		commit: { model: "claude-bridge/claude-sonnet-5-5", thinking: "low" },
 		escalate: { model: "claude-bridge/claude-fable-5-1", thinking: "high" },
+		test: { model: "claude-bridge/claude-opus-5-5", thinking: "medium" },
+		runner: { model: "claude-bridge/claude-haiku-5-5", thinking: "low" },
 	},
 	startPhase: "plan",
 	contextGuardTokens: 140_000,
@@ -188,6 +217,23 @@ export const DEFAULTS: WorkflowConfig = {
 	planReadOnlyBash: true,
 	planBashAllow: ["^unity (cmd )?(editor_status|console_status)\\b"],
 	tokenWeights: { input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1.25 },
+	test: {
+		concurrency: 4,
+		maxTasks: 8,
+		runnerTimeoutMs: 45 * 60_000,
+		maxRounds: 3,
+		refails: 2,
+		delivery: "commit",
+		runnerTools: ["bash", "read", "grep", "find", "ls"],
+		supervisorBashAllow: ["^adb( -[sdetHP] \\S+)* (devices|shell getprop)\\b", "^unity (cmd )?(status|editor_status|console_status)\\b"],
+		runnerDeny: [
+			"^adb( -[sdetHP] \\S+)* (reboot|reboot-bootloader|sideload|root|unroot|remount|disable-verity|enable-verity)\\b",
+			"^adb\\b.*\\bshell\\b.*(\\brm\\s+-[a-z]*r|\\bwipe\\b|\\brecovery\\b|\\bfactory\\b|\\bformat\\b|\\breboot\\b)",
+			"^fastboot\\b",
+		],
+		runnerPathFlags: ["--project-path", "-projectPath"],
+		runnerPathEnv: ["UNITY_PROJECT_PATH"],
+	},
 	explore: { maxQueries: 8, concurrency: 8, tools: ["read", "grep", "find", "ls"] },
 	advisor: { tools: ["read", "grep", "find", "ls"], maxTranscriptChars: 1_500_000 },
 	arbiter: { tools: ["read", "grep", "find", "ls"] },
@@ -266,6 +312,17 @@ function parseConfig(file: string): Loaded {
 		if (config.stagedPlans !== "auto" && config.stagedPlans !== "onRequest") config.stagedPlans = DEFAULTS.stagedPlans;
 		if (config.stageAdvance !== "auto" && config.stageAdvance !== "ask") config.stageAdvance = DEFAULTS.stageAdvance;
 		if (config.planRecap !== "changes" && config.planRecap !== "always") config.planRecap = DEFAULTS.planRecap;
+		const t = (config.test = isObject(config.test) ? config.test : DEFAULTS.test);
+		const num = (v: unknown, min: number, max = Infinity): v is number => typeof v === "number" && Number.isInteger(v) && v >= min && v <= max;
+		if (!num(t.concurrency, 1)) t.concurrency = DEFAULTS.test.concurrency;
+		if (!num(t.maxTasks, 1, 16)) t.maxTasks = DEFAULTS.test.maxTasks;
+		if (typeof t.runnerTimeoutMs !== "number" || !Number.isFinite(t.runnerTimeoutMs) || t.runnerTimeoutMs < 60_000) t.runnerTimeoutMs = DEFAULTS.test.runnerTimeoutMs;
+		if (!num(t.maxRounds, 0)) t.maxRounds = DEFAULTS.test.maxRounds;
+		if (!num(t.refails, 1)) t.refails = DEFAULTS.test.refails;
+		if (!isDelivery(t.delivery)) t.delivery = DEFAULTS.test.delivery;
+		for (const k of ["runnerTools", "supervisorBashAllow", "runnerDeny", "runnerPathFlags", "runnerPathEnv"] as const) {
+			if (!Array.isArray(t[k]) || t[k].some((s) => typeof s !== "string")) t[k] = DEFAULTS.test[k];
+		}
 		return { config };
 	} catch (e) {
 		return { config: DEFAULTS, error: `${file}: ${(e as Error).message}` };

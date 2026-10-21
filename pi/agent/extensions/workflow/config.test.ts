@@ -66,3 +66,38 @@ test("idleTimeoutMs: bad value falls back to the default, 0 is kept", () => {
 	assert.equal(idle("0"), 0);
 	assert.equal(idle("1000"), 1000);
 });
+
+test("test block defaults", () => {
+	const t = DEFAULTS.test;
+	assert.equal(t.concurrency, 4);
+	assert.equal(t.maxTasks, 8);
+	assert.equal(t.runnerTimeoutMs, 2700000);
+	assert.equal(t.maxRounds, 3);
+	assert.equal(t.refails, 2);
+	assert.equal(t.delivery, "commit");
+	assert.deepEqual(DEFAULTS.roles.test, { model: "claude-bridge/claude-opus-5-5", thinking: "medium" });
+	assert.deepEqual(DEFAULTS.roles.runner, { model: "claude-bridge/claude-haiku-5-5", thinking: "low" });
+});
+
+test("test block validation: bad values fall back, concurrency 1 is kept", () => {
+	const f = tmp();
+	fs.writeFileSync(f, JSON.stringify({ test: { concurrency: 0, maxTasks: 99, runnerTimeoutMs: 5, refails: 0, delivery: "x", runnerDeny: "str" } }));
+	const t = loadConfig(f).config.test;
+	assert.equal(t.concurrency, 4);
+	assert.equal(t.maxTasks, 8);
+	assert.equal(t.runnerTimeoutMs, 2700000);
+	assert.equal(t.refails, 2);
+	assert.equal(t.delivery, "commit");
+	assert.deepEqual(t.runnerDeny, DEFAULTS.test.runnerDeny);
+	const g = tmp();
+	fs.writeFileSync(g, JSON.stringify({ test: { concurrency: 1, maxRounds: 0 } }));
+	assert.equal(loadConfig(g).config.test.concurrency, 1);
+	assert.equal(loadConfig(g).config.test.maxRounds, 0);
+});
+
+test("the shipped workflow.json test block matches the defaults", () => {
+	const shipped = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, "..", "..", "workflow.json"), "utf8"));
+	assert.deepEqual(shipped.test, DEFAULTS.test);
+	assert.deepEqual(shipped.roles.test, DEFAULTS.roles.test);
+	assert.deepEqual(shipped.roles.runner, DEFAULTS.roles.runner);
+});
