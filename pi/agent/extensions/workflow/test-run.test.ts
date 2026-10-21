@@ -152,3 +152,26 @@ test("runnerGate: waiting runners start in order", async () => {
 	await Promise.all(["A", "B", "C"].map((n) => gate("none", async () => { order.push(n); await sleep(5); })));
 	assert.deepEqual(order, ["A", "B", "C"]);
 });
+
+test("runnerGate: a newcomer does not take a freed slot from a waiter", async () => {
+	for (let ticks = 0; ticks < 12; ticks++) {
+		const gate = runnerGate(() => 1);
+		const order: string[] = [];
+		let releaseA = () => {};
+		const a = gate("none", async () => {
+			order.push("A");
+			await new Promise<void>((r) => (releaseA = r));
+		});
+		const b = gate("none", async () => {
+			order.push("B");
+		});
+		await sleep(5);
+		releaseA();
+		for (let i = 0; i < ticks; i++) await Promise.resolve();
+		const d = gate("none", async () => {
+			order.push("D");
+		});
+		await Promise.all([a, b, d]);
+		assert.deepEqual(order, ["A", "B", "D"], `D after ${ticks} microtasks`);
+	}
+});
