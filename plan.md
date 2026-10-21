@@ -243,8 +243,10 @@ export async function worktreeForFolder(git: Git, o: { cfg: WtConfig; setRoot: s
 - [x] S3 `workflow/folder-add.test.ts`: the tests listed in section 6. Add `folder-add.test.ts` to the test command at `workflow/
 - [x] S4 `workflow/README.md`:
 - [x] S5 `docs/workflow-improvements.md`:
-- [ ] S6 `worktree/config.ts`:
-- [ ] S7 Create `worktree/add-folder.ts`.
-- [ ] S8 `worktree/index.ts` factory (`:756`):
-- [ ] S9 `worktree/README.md`:
-- [ ] S10 `worktree/add-folder.test.ts` and `worktree/config.test.ts`: the tests listed in section 6.
+- [x] S6 `worktree/config.ts`:
+- [x] S7 Create `worktree/add-folder.ts`.
+- [x] S8 `worktree/index.ts` factory (`:756`):
+- [x] S9 `worktree/README.md`:
+- [x] S10 `worktree/add-folder.test.ts` and `worktree/config.test.ts`: the tests listed in section 6.
+## Outcome
+2026-10-21T09:36:26.026Z — ok: stage 1: committed (1 commit), pushed; stage 2: committed (1 commit), pushed
