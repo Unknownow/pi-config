@@ -1,12 +1,16 @@
 {
   "v": 1,
   "flowId": "20261022-0130-mid-plan-delivery-wait-points-and-tag-pu-8dd4",
-  "rev": 1,
-  "updated": "2026-10-21T18:30:49.043Z",
+  "rev": 2,
+  "updated": "2026-10-21T18:38:06.253Z",
   "title": "Mid-plan delivery, wait points and tag pushes in the workflow extension",
-  "stage": 1,
+  "stage": 2,
   "delivery": "push",
-  "done": [],
+  "done": [
+    "S1",
+    "S2",
+    "S3"
+  ],
   "repos": [
     {
       "branch": "flow/runnergate-test-covers-a-newcomer-arrivi",

@@ -481,9 +481,9 @@ Tests go with the code they test.
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 Split delivery into three reusable functions in `index.ts` (anchors `finishPassed` 3010, `commitInSubagent` 3157, `summa
-- [ ] S2 Read commits from the branch they landed on (D14).
-- [ ] S3 Commit-only instruction (`deliveryInstruction`, `delivery.ts:80`).
+- [x] S1 Split delivery into three reusable functions in `index.ts` (anchors `finishPassed` 3010, `commitInSubagent` 3157, `summa
+- [x] S2 Read commits from the branch they landed on (D14).
+- [x] S3 Commit-only instruction (`deliveryInstruction`, `delivery.ts:80`).
 - [ ] S4 Add `waits.ts` (pure). It exports:
 - [ ] S5 Stage `after` tag (`stages.ts:13-46`).
 - [ ] S6 Waiting state, status and plan card.
