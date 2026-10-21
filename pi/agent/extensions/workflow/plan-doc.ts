@@ -154,7 +154,7 @@ export interface PlanStatus {
 	/** The wait the flow is in, so a resumed flow keeps waiting. */
 	waiting?: { reason: string; check?: string; since: string; planned?: boolean; atStageStart?: boolean; held?: string };
 	/** Checkpoints delivered mid-plan. */
-	checkpoints?: { step?: string; text: string; ok: boolean }[];
+	checkpoints?: { step?: string; stage?: number; text: string; ok: boolean }[];
 	repos: { remote?: string; branch?: string; primary: boolean }[];
 }
 
@@ -211,7 +211,7 @@ export function parseStatus(json: string): PlanStatus | null {
 	const w = o.waiting;
 	if (w !== undefined && !(w && isStr(w.reason) && isStr(w.since) && (w.check === undefined || isStr(w.check)) && (w.held === undefined || isStr(w.held)) && (w.planned === undefined || typeof w.planned === "boolean") && (w.atStageStart === undefined || typeof w.atStageStart === "boolean"))) return null;
 	const cps = o.checkpoints;
-	if (cps !== undefined && !(Array.isArray(cps) && cps.every((c: any) => c && isStr(c.text) && typeof c.ok === "boolean" && (c.step === undefined || isStr(c.step))))) return null;
+	if (cps !== undefined && !(Array.isArray(cps) && cps.every((c: any) => c && isStr(c.text) && typeof c.ok === "boolean" && (c.step === undefined || isStr(c.step)) && (c.stage === undefined || Number.isInteger(c.stage))))) return null;
 	for (const r of o.repos) {
 		if (!r || typeof r.primary !== "boolean" || (r.remote !== undefined && !isStr(r.remote)) || (r.branch !== undefined && !isStr(r.branch))) return null;
 	}

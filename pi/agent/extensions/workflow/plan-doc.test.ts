@@ -187,3 +187,9 @@ test("parseStatus waiting and checkpoints", () => {
 	assert.equal(parseStatus(JSON.stringify({ ...base, waiting: { reason: 5, since: "t" } })), null);
 	assert.equal(parseStatus(JSON.stringify({ ...base, checkpoints: [{ text: "t" }] })), null);
 });
+
+test("parseStatus checkpoint stage", () => {
+	const base = { v: 1, flowId: "20261022-0130-x-ab12", rev: 1, updated: "t", title: "x", done: [], repos: [] };
+	assert.ok(parseStatus(JSON.stringify({ ...base, checkpoints: [{ stage: 2, text: "t", ok: true }] })));
+	assert.equal(parseStatus(JSON.stringify({ ...base, checkpoints: [{ stage: "2", text: "t", ok: true }] })), null);
+});
