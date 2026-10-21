@@ -83,5 +83,7 @@ If the new test passes on the old code, it doesn't guard the race. In that case 
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 In `test-run.test.ts`, after the test at `:149-154`, add the test `runnerGate: a newcomer does not take a freed slot fro
-- [ ] S2 Check that the new test catches the old bug, without touching the repo:
+- [x] S1 In `test-run.test.ts`, after the test at `:149-154`, add the test `runnerGate: a newcomer does not take a freed slot fro
+- [x] S2 Check that the new test catches the old bug, without touching the repo:
+## Outcome
+2026-10-21T07:07:35.022Z — failed: committed (1 commit), pushed, no open pull request
