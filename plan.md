@@ -496,5 +496,7 @@ Tests go with the code they test.
 - [x] S13 The `deliver` tool (`index.ts`, next to `judge` 1974).
 - [x] S14 Outcomes and the judge note.
 - [x] S15 Prompts (`prompts.ts`).
-- [ ] S16 `README.md`.
-- [ ] S17 `docs/workflow-improvements.md`.
+- [x] S16 `README.md`.
+- [x] S17 `docs/workflow-improvements.md`.
+## Outcome
+2026-10-21T18:57:47.316Z — ok: stage 1: committed (2 commits), pushed; stage 2: committed (2 commits), pushed; stage 3: committed (5 commits), pushed; stage 4: committed (1 commit), pushed
