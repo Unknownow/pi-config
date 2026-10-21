@@ -70,3 +70,25 @@ test("stagesOutcome", () => {
 	assert.equal(part.ok, false);
 	assert.equal(stagesOutcome([{ text: "a", ok: true }, { text: "b", ok: false }], 2).ok, false);
 });
+
+test("parseStages reads an after tag", () => {
+	const check = "git ls-remote --exit-code --tags origin com.iecgames.core/v0.15.0";
+	const stages = parseStages(`### Stage 1: core\n### Stage 2: game-template (after: publish core 0.15.0; check: ${check})\n`);
+	assert.equal(stages[1].title, "game-template");
+	assert.deepEqual(stages[1].after, { reason: "publish core 0.15.0", check });
+});
+
+test("parseStages reads delivery and after in either order", () => {
+	for (const tags of ["(delivery: merge) (after: x; check: y)", "(after: x; check: y) (delivery: merge)"]) {
+		const s = parseStages(`### Stage 1: a\n### Stage 2: b ${tags}\n`)[1];
+		assert.equal(s.title, "b");
+		assert.equal(s.delivery, "merge");
+		assert.deepEqual(s.after, { reason: "x", check: "y" });
+	}
+});
+
+test("parseStages: an after tag without a check", () => {
+	const s = parseStages("### Stage 1: a\n### Stage 2: b (after: open the Editor)\n")[1];
+	assert.equal(s.after?.reason, "open the Editor");
+	assert.equal(s.after?.check, undefined);
+});

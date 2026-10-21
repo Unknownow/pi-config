@@ -62,6 +62,17 @@ export type StagedPlans = "auto" | "onRequest";
 export type PlanRecap = "changes" | "always";
 
 /** Where approved plans are kept (inside each repo's .git folder) and how long. */
+export interface WaitConfig {
+	/** How often a waiting flow runs its check while the session is idle. */
+	pollMs: number;
+	/** Polling stops after this long; your next message checks again. */
+	maxMs: number;
+	/** A check that runs longer than this counts as not passed. */
+	checkTimeoutMs: number;
+	/** Continue by itself when the check passes; false only notifies. */
+	autoResume: boolean;
+}
+
 export interface PlansConfig {
 	/** "remote": plan refs are pushed to each repo's remote (Stage 3); "local": never pushed. */
 	sync: "remote" | "local";
@@ -132,6 +143,8 @@ export interface WorkflowConfig {
 	/** Branches never pushed automatically; the commit stays local. */
 	protectedBranches: string[];
 	plans: PlansConfig;
+	/** Wait points: how a flow waits for a person and checks that the wait is over. */
+	wait: WaitConfig;
 	/** In plan phase, a message matching this (case-insensitive, whole message) approves the plan. */
 	approvePattern: string;
 	/** Pop up an Approve / Keep planning menu whenever a plan is ready (otherwise just a hint). */
@@ -208,6 +221,7 @@ export const DEFAULTS: WorkflowConfig = {
 	delivery: { ask: true, default: "commit", splitCommits: true, mergeMethod: "merge", deleteBranch: true, base: "", branchPrefix: "flow/", runner: "subagent" },
 	protectedBranches: ["main", "master"],
 	plans: { sync: "remote", localOnly: [], keepDays: 14, keepCount: 50 },
+	wait: { pollMs: 120_000, maxMs: 3_600_000, checkTimeoutMs: 30_000, autoResume: true },
 	approvePattern:
 		"^((ok(ay)?|yes|yeah|yep|sure|alright|fine|great|good)[,.! ]+)?(then[, ]+)?(go|go ahead|go for it|do it|do that|do this|do them|do (it )?all( of (it|that|them))?|approved?|lgtm|ship it|execute( it| that| this| the plan)?|proceed|start|let'?s go|let'?s do it|run it|implement( it| that| this| the plan)?|build it|make it so)( for me)?( now)?( please)?[.! ]*$",
 	planPrompt: true,
@@ -309,6 +323,9 @@ function parseConfig(file: string): Loaded {
 		if (config.plans.sync !== "remote" && config.plans.sync !== "local") config.plans.sync = DEFAULTS.plans.sync;
 		if (!Array.isArray(config.plans.localOnly) || config.plans.localOnly.some((s) => typeof s !== "string")) config.plans.localOnly = DEFAULTS.plans.localOnly;
 		for (const k of ["keepDays", "keepCount"] as const) if (typeof config.plans[k] !== "number" || !Number.isFinite(config.plans[k]) || config.plans[k] < 0) config.plans[k] = DEFAULTS.plans[k];
+		if (!isObject(config.wait)) config.wait = DEFAULTS.wait;
+		for (const k of ["pollMs", "maxMs", "checkTimeoutMs"] as const) if (typeof config.wait[k] !== "number" || !Number.isFinite(config.wait[k]) || config.wait[k] <= 0) config.wait[k] = DEFAULTS.wait[k];
+		if (typeof config.wait.autoResume !== "boolean") config.wait.autoResume = DEFAULTS.wait.autoResume;
 		if (config.stagedPlans !== "auto" && config.stagedPlans !== "onRequest") config.stagedPlans = DEFAULTS.stagedPlans;
 		if (config.stageAdvance !== "auto" && config.stageAdvance !== "ask") config.stageAdvance = DEFAULTS.stageAdvance;
 		if (config.planRecap !== "changes" && config.planRecap !== "always") config.planRecap = DEFAULTS.planRecap;

@@ -100,7 +100,7 @@ export function openStepsReminder(checklist: ChecklistItem[] | undefined, stage?
  * `stage`/`stageCount`: the current stage of a staged plan (open steps are then that stage's).
  * A plan with neither Goal nor Done when is sent whole.
  */
-export function planCard(plan: string, checklist: ChecklistItem[] | undefined, stage?: number, stageCount?: number, path?: string): string {
+export function planCard(plan: string, checklist: ChecklistItem[] | undefined, stage?: number, stageCount?: number, path?: string, waiting?: string): string {
 	const s = planSections(plan);
 	if (!s.goal && !s.doneWhen) return `## The approved plan\n\n${plan}`;
 	const out = [path ? `## Plan card (full plan: ${path})` : "## Plan card"];
@@ -114,6 +114,7 @@ export function planCard(plan: string, checklist: ChecklistItem[] | undefined, s
 		const where = stage !== undefined && stageCount ? ` (stage ${stage} of ${stageCount})` : "";
 		out.push(`### Open steps${where} — ${done} of ${checklist.length} done\n${open.length ? open.map((i) => `- [ ] ${i.id} ${i.text}`).join("\n") : "(none open)"}`);
 	}
+	if (waiting) out.push(`### Waiting for\n${waiting}`);
 	if (path) out.push(`Read ${path} for a step's details.`);
 	else out.push(`## Full plan (no plan file yet)\n\n${plan}`);
 	return out.join("\n\n");
@@ -150,6 +151,10 @@ export interface PlanStatus {
 	/** IDs of the ticked steps. */
 	done: string[];
 	finished?: Finished;
+	/** The wait the flow is in, so a resumed flow keeps waiting. */
+	waiting?: { reason: string; check?: string; since: string; planned?: boolean; atStageStart?: boolean; held?: string };
+	/** Checkpoints delivered mid-plan. */
+	checkpoints?: { step?: string; text: string; ok: boolean }[];
 	repos: { remote?: string; branch?: string; primary: boolean }[];
 }
 
@@ -167,9 +172,10 @@ export function newFlowId(title: string, now: Date, hex4: string): string {
 }
 
 /** The readable plan file: the approved text exactly, then a status block below a marker line. */
-export function renderPlanFile(flowId: string, plan: string, checklist: ChecklistItem[] | undefined, finished?: Finished): string {
+export function renderPlanFile(flowId: string, plan: string, checklist: ChecklistItem[] | undefined, finished?: Finished, waiting?: string): string {
 	const out = [`${FILE_HEADER}${flowId} -->`, plan, "", STATUS_MARKER];
 	if (checklist?.length) out.push("## Checklist", ...checklist.map((i) => `- [${i.done ? "x" : " "}] ${i.id} ${i.text}`));
+	if (waiting) out.push(`**Waiting for:** ${waiting}`);
 	if (finished) out.push("## Outcome", `${finished.at} — ${finished.ok ? "ok" : "failed"}: ${finished.text}`);
 	return `${out.join("\n")}\n`;
 }
@@ -202,6 +208,10 @@ export function parseStatus(json: string): PlanStatus | null {
 	if (o.delivery !== undefined && !isStr(o.delivery)) return null;
 	const f = o.finished;
 	if (f !== undefined && !(f && isStr(f.at) && typeof f.ok === "boolean" && isStr(f.text))) return null;
+	const w = o.waiting;
+	if (w !== undefined && !(w && isStr(w.reason) && isStr(w.since) && (w.check === undefined || isStr(w.check)) && (w.held === undefined || isStr(w.held)) && (w.planned === undefined || typeof w.planned === "boolean") && (w.atStageStart === undefined || typeof w.atStageStart === "boolean"))) return null;
+	const cps = o.checkpoints;
+	if (cps !== undefined && !(Array.isArray(cps) && cps.every((c: any) => c && isStr(c.text) && typeof c.ok === "boolean" && (c.step === undefined || isStr(c.step))))) return null;
 	for (const r of o.repos) {
 		if (!r || typeof r.primary !== "boolean" || (r.remote !== undefined && !isStr(r.remote)) || (r.branch !== undefined && !isStr(r.branch))) return null;
 	}

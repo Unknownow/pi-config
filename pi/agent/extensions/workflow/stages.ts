@@ -8,10 +8,13 @@ export interface PlanStage {
 	title: string;
 	/** The stage's own delivery, from a trailing `(delivery: <mode>)` on its heading. */
 	delivery?: Exclude<Delivery, "off">;
+	/** A person's action the stage waits for before it starts, from a trailing `(after: <what>; check: <command>)` on its heading. */
+	after?: { reason: string; check?: string };
 }
 
 export const HEADING = /^#{2,4}\s*[*_]*Stage\s+(\d+)[*_]*\s*[:.\u2013\u2014-]\s*(.*?)\s*[*_]*\s*$/i;
 const TAG = /\s*\(\s*deliver(?:y)?\s*:\s*([a-z]+)\s*\)\s*$/i;
+const AFTER = /\s*\(\s*after\s*:\s*([^;)]*?)\s*(?:;\s*check\s*:\s*([^)]*?)\s*)?\)\s*$/i;
 const MODES = ["commit", "push", "pr", "merge"] as const;
 
 /**
@@ -30,13 +33,21 @@ export function parseStages(plan: string | undefined): PlanStage[] {
 		seen.add(n);
 		let title = m[2];
 		let delivery: PlanStage["delivery"];
-		const tag = TAG.exec(title);
-		if (tag) {
-			title = title.slice(0, tag.index);
-			const mode = tag[1].toLowerCase();
-			delivery = (MODES as readonly string[]).includes(mode) ? (mode as PlanStage["delivery"]) : undefined;
+		let after: PlanStage["after"];
+		// The two tags may come in either order; strip them from the end.
+		for (let i = 0; i < 2; i++) {
+			const tag = TAG.exec(title);
+			const aft = tag ? null : AFTER.exec(title);
+			if (tag) {
+				title = title.slice(0, tag.index);
+				const mode = tag[1].toLowerCase();
+				delivery = (MODES as readonly string[]).includes(mode) ? (mode as PlanStage["delivery"]) : undefined;
+			} else if (aft) {
+				title = title.slice(0, aft.index);
+				if (aft[1].trim()) after = { reason: aft[1].trim(), ...(aft[2]?.trim() ? { check: aft[2].trim() } : {}) };
+			} else break;
 		}
-		stages.push({ n, title: title.replace(/[*_\s]+$/, "").trim(), ...(delivery ? { delivery } : {}) });
+		stages.push({ n, title: title.replace(/[*_\s]+$/, "").trim(), ...(delivery ? { delivery } : {}), ...(after ? { after } : {}) });
 	}
 	if (stages.length < 2 || stages.some((s, i) => s.n !== i + 1)) return [];
 	return stages;

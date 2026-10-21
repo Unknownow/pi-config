@@ -101,3 +101,14 @@ test("the shipped workflow.json test block matches the defaults", () => {
 	assert.deepEqual(shipped.roles.test, DEFAULTS.roles.test);
 	assert.deepEqual(shipped.roles.runner, DEFAULTS.roles.runner);
 });
+
+test("wait defaults and validation", () => {
+	assert.deepEqual(DEFAULTS.wait, { pollMs: 120_000, maxMs: 3_600_000, checkTimeoutMs: 30_000, autoResume: true });
+	const g = tmp();
+	fs.writeFileSync(g, JSON.stringify({ wait: { pollMs: -1, maxMs: "x", autoResume: "x", checkTimeoutMs: 5000 } }));
+	const w = loadConfig(g).config.wait;
+	assert.equal(w.pollMs, DEFAULTS.wait.pollMs);
+	assert.equal(w.maxMs, DEFAULTS.wait.maxMs);
+	assert.equal(w.autoResume, true);
+	assert.equal(w.checkTimeoutMs, 5000);
+});

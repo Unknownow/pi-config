@@ -67,6 +67,8 @@ import { callDir, formatTaskResult, parseRunnerReply, runnerGate, sanitizeIds, s
 import { commitPlan, type Finished, mergeChecklist, newFlowId, openStepsReminder, parseChecklist, type PlanStatus, planCard, pruneIds, renderPlanFile, splitPlanFile, type ChecklistItem } from "./plan-doc.ts";
 import { adoptHigher, claimLive, commitRef, dropClaim, pidAlive, readClaim, writeClaim, deleteLocal, deleteRef, fetchMirror, type Git, listRefs, plansDir, pushRef, readLocalStatuses, readPlanMd, refRev, remoteOf, repoInfo, type RefEntry, writeLocal } from "./plan-store.ts";
 import { type FlowFinding, recordFindings, reportFindings, type ReportStep } from "./flow-report.ts";
+import { readOnlyProblem } from "./readonly-bash.ts";
+import { parseWaitStep, pollDecision, resumePrefix, waitAmendment } from "./waits.ts";
 import { nextStage, parseStages, stageDelivery, stageLine, stageNote, stageStart, stagesOutcome } from "./stages.ts";
 import { planToolProblem, planToolRefused } from "./readonly-tools.ts";
 import { MetricsQueue, type MetricEvent, subagentMetric } from "./metrics.ts";
@@ -163,6 +165,10 @@ interface FlowState {
 	touchedRepos?: string[];
 	/** Set while a test-and-fix flow is active (phase "test"). */
 	testFlow?: TestFlow;
+	/** The flow waits for a person (and maybe a check) before it continues; no judge, delivery or stage advance meanwhile. */
+	waiting?: { reason: string; check?: string; step?: string; stage?: number; since: string; planned: boolean; atStageStart?: boolean; checkPassed?: boolean; held?: string };
+	/** Deliveries made inside the plan, before the end of a stage or flow. */
+	checkpoints?: { step?: string; stage?: number; text: string; ok: boolean }[];
 }
 
 interface LastJudge {
@@ -365,6 +371,8 @@ export default function workflow(pi: ExtensionAPI) {
 
 	/** A flow has ended: back to the plan phase when returnToPlan says so. */
 	async function endFlow(ctx: ExtensionContext): Promise<void> {
+		state.waiting = undefined;
+		stopWaitTimer();
 		if (state.testFlow) {
 			state.testFlow = undefined;
 			state.delivery = undefined;
@@ -390,6 +398,7 @@ export default function workflow(pi: ExtensionAPI) {
 		const n = existingFolders().length + (state.touchedRepos?.length ?? 0);
 		const cl = state.checklist;
 		if (ctx.hasUI) ctx.ui.setStatus("workflow-plan", cl?.length && state.phase === "execute" ? `plan ${cl.filter((i) => i.done).length}/${cl.length}` : undefined);
+		if (ctx.hasUI) ctx.ui.setStatus("workflow-wait", state.waiting && state.phase === "execute" ? `waiting: ${state.waiting.reason.slice(0, 40)}` : undefined);
 		if (ctx.hasUI) ctx.ui.setStatus("workflow-folders", n ? `+${n} folder${n === 1 ? "" : "s"}` : undefined);
 		emitStatus();
 	}
@@ -443,7 +452,7 @@ export default function workflow(pi: ExtensionAPI) {
 	}
 
 	function testBlockedTools(): string[] {
-		return [...cfg.planBlockedTools, "judge", "plan_check"];
+		return [...cfg.planBlockedTools, "judge", "plan_check", "wait_for_user", "deliver"];
 	}
 
 	/** The widget stage the main session is in. */
@@ -477,6 +486,9 @@ export default function workflow(pi: ExtensionAPI) {
 		state.minorRounds = 0;
 		state.minorSentFor = undefined;
 		state.commitPending = undefined;
+		state.waiting = undefined;
+		state.checkpoints = undefined;
+		stopWaitTimer();
 		state.finalizing = undefined;
 		state.planRevisions = undefined;
 		state.pendingPlanFlaw = undefined;
@@ -520,7 +532,9 @@ export default function workflow(pi: ExtensionAPI) {
 		planMilestone(ctx);
 		if (!stages.length) return "";
 		ctx.ui.notify(`workflow: staged plan, ${stages.length} stages; stage 1: ${stages[0].title}`, "info");
-		return `\n\n${stageStart(stages, 1, state.delivery ?? defaultDelivery())}`;
+		const first = stageStart(stages, 1, state.delivery ?? defaultDelivery());
+		if (holdForStageWait(ctx, stages[0], first)) return `\n\nStage 1 waits for: ${stages[0].after?.reason}. Don't start it; end your turn now. The workflow sends you the stage when the wait is over.`;
+		return `\n\n${first}`;
 	}
 
 	/** The stages of the approved plan and the current one, or null when the plan is not staged. */
@@ -908,7 +922,7 @@ export default function workflow(pi: ExtensionAPI) {
 		const staged = currentStages();
 		const file = planFilePath();
 		const plan = state.approvedPlan ?? "";
-		return planCard(file ? plan : trimPlan(plan), state.checklist, staged?.current, staged?.stages.length, file);
+		return planCard(file ? plan : trimPlan(plan), state.checklist, staged?.current, staged?.stages.length, file, state.waiting?.reason);
 	}
 
 	// ----------------------------------------------------------------------
@@ -971,6 +985,8 @@ export default function workflow(pi: ExtensionAPI) {
 		kind?: "test";
 		touched: string[];
 		finished?: Finished;
+		waiting?: NonNullable<PlanStatus["waiting"]>;
+		checkpoints?: { step?: string; text: string; ok: boolean }[];
 		/** A restore of the file (no new rev): never commits over a newer ref. */
 		retry?: boolean;
 	}
@@ -1009,9 +1025,11 @@ export default function workflow(pi: ExtensionAPI) {
 			...(snap.kind ? { kind: snap.kind } : {}),
 			done: (snap.checklist ?? []).filter((i) => i.done).map((i) => i.id),
 			...(snap.finished ? { finished: snap.finished } : {}),
+			...(snap.waiting ? { waiting: snap.waiting } : {}),
+			...(snap.checkpoints?.length ? { checkpoints: snap.checkpoints } : {}),
 			repos: infos.map((info, i) => ({ ...info, primary: i === 0 })),
 		};
-		const planMd = renderPlanFile(snap.flowId, snap.plan, snap.checklist, snap.finished);
+		const planMd = renderPlanFile(snap.flowId, snap.plan, snap.checklist, snap.finished, snap.waiting?.reason);
 		writeLocal(dir, snap.flowId, planMd, status);
 		planDirs.set(snap.flowId, dir);
 		planLast.set(snap.flowId, { dir, status });
@@ -1098,6 +1116,15 @@ export default function workflow(pi: ExtensionAPI) {
 	}
 
 	/** A point where the plan file is rewritten: approval, an amendment, a stage end, the flow's end. Runs in the background, in order; `bump: false` only restores the file. */
+	/** The wait and checkpoints as they go into the plan's status. */
+	function waitSnapshot(): Pick<PlanSnap, "waiting" | "checkpoints"> {
+		const w = state.waiting;
+		return {
+			...(w ? { waiting: { reason: w.reason, ...(w.check ? { check: w.check } : {}), since: w.since, planned: w.planned, ...(w.atStageStart ? { atStageStart: true } : {}), ...(w.held ? { held: w.held } : {}) } } : {}),
+			...(state.checkpoints?.length ? { checkpoints: state.checkpoints.map((c) => ({ ...(c.step ? { step: c.step } : {}), text: c.text, ok: c.ok })) } : {}),
+		};
+	}
+
 	function planMilestone(ctx: ExtensionContext | undefined, finished?: Finished, bump = true): void {
 		const plan = state.approvedPlan;
 		if (!plan) return;
@@ -1115,6 +1142,7 @@ export default function workflow(pi: ExtensionAPI) {
 			...(state.testFlow ? { kind: "test" as const } : {}),
 			touched: [...(state.touchedRepos ?? [])],
 			finished: doc.finished,
+			...waitSnapshot(),
 			retry: !bump,
 		};
 		const c = ctx ?? lastCtx;
@@ -1135,7 +1163,10 @@ export default function workflow(pi: ExtensionAPI) {
 		if (!doc || !last || !state.approvedPlan) return undefined;
 		try {
 			const status: PlanStatus = { ...last.status, updated: new Date().toISOString(), done: (state.checklist ?? []).filter((i) => i.done).map((i) => i.id) };
-			const file = writeLocal(last.dir, doc.flowId, renderPlanFile(doc.flowId, state.approvedPlan, state.checklist, doc.finished), status);
+			delete status.waiting;
+			delete status.checkpoints;
+			Object.assign(status, waitSnapshot());
+			const file = writeLocal(last.dir, doc.flowId, renderPlanFile(doc.flowId, state.approvedPlan, state.checklist, doc.finished, state.waiting?.reason), status);
 			last.status = status;
 			return file;
 		} catch {
@@ -1363,11 +1394,30 @@ export default function workflow(pi: ExtensionAPI) {
 		state.stageJudged = undefined;
 		state.checklist = parseChecklist(plan).map((i) => ({ ...i, done: status.done.includes(i.id) }));
 		if (!state.checklist.length) state.checklist = undefined;
+		state.checkpoints = status.checkpoints?.map((c) => ({ ...c }));
+		state.waiting = undefined;
+		if (status.waiting) {
+			// Older status files lack the held text and the flags: rebuild the plain stage start for a stage that declares this wait.
+			const resumedStages = state.stage ? parseStages(plan) : [];
+			const after = state.stage ? resumedStages[state.stage - 1]?.after : undefined;
+			const atStart = status.waiting.atStageStart ?? (!!after && after.reason === status.waiting.reason);
+			const held = status.waiting.held ?? (atStart && state.stage ? stageStart(resumedStages, state.stage, state.delivery ?? defaultDelivery()) : undefined);
+			state.waiting = {
+				reason: status.waiting.reason,
+				...(status.waiting.check ? { check: status.waiting.check } : {}),
+				since: status.waiting.since,
+				stage: state.stage,
+				planned: status.waiting.planned ?? true,
+				...(atStart ? { atStageStart: true } : {}),
+				...(held ? { held } : {}),
+			};
+		}
 		state.planDoc = { flowId: status.flowId, rev: status.rev, roots: roots.map((r) => r.root) };
 		persist();
 		publishFolders(ctx);
 		updateStatus(ctx);
 		planMilestone(ctx);
+		startWaitTimer();
 		await planChain;
 		pi.sendMessage(
 			{ customType: "workflow-resume-plan", content: `Resumed on this device: check \`git status\` and the branch in each repo, then continue with the open steps.\n\n${planCardText()}`, display: true },
@@ -1896,6 +1946,119 @@ export default function workflow(pi: ExtensionAPI) {
 		renderResult: (result, opts, theme) => renderRuns(result, opts, theme, 0),
 	});
 
+	// ----------------------------------------------------------------------
+	// Wait points
+	// ----------------------------------------------------------------------
+
+	let waitTimer: ReturnType<typeof setInterval> | undefined;
+	let waitTimerStart = 0;
+	let waitChecking = false;
+
+	function stopWaitTimer(): void {
+		if (waitTimer) clearInterval(waitTimer);
+		waitTimer = undefined;
+	}
+
+	/** Polls the wait's check every `wait.pollMs` while the session is idle. A wait without a check, or whose check already passed, is not polled. */
+	function startWaitTimer(): void {
+		stopWaitTimer();
+		const w = state.waiting;
+		if (!w?.check || w.checkPassed) return;
+		waitTimerStart = Date.now();
+		waitTimer = setInterval(() => void waitTick(), cfg.wait.pollMs);
+		(waitTimer as { unref?: () => void }).unref?.();
+	}
+
+	/** A check passes only on exit code 0; a failure, an error or a timeout counts as "not yet". */
+	async function runWaitCheck(check: string): Promise<boolean> {
+		try {
+			return (await pi.exec("bash", ["-c", check], { cwd: lastCtx?.cwd, timeout: cfg.wait.checkTimeoutMs })).code === 0;
+		} catch {
+			return false;
+		}
+	}
+
+	/** The wait is over: clears it and records the new state. */
+	function clearWait(ctx: ExtensionContext): void {
+		state.waiting = undefined;
+		stopWaitTimer();
+		persist();
+		updateStatus(ctx);
+		planMilestone(ctx);
+	}
+
+	async function waitTick(): Promise<void> {
+		const w = state.waiting;
+		const ctx = lastCtx;
+		if (!w || !ctx || waitChecking || state.phase !== "execute") return;
+		const elapsedMs = Date.now() - waitTimerStart;
+		const idle = ctx.isIdle() && (!ctx.hasUI || ctx.ui.getEditorText().trim() === "");
+		const d = pollDecision({ waiting: true, hasCheck: !!w.check && !w.checkPassed, idle, elapsedMs, maxMs: cfg.wait.maxMs });
+		if (d === "hold") return;
+		if (d === "stop") {
+			stopWaitTimer();
+			if (w.check && elapsedMs >= cfg.wait.maxMs) ctx.ui.notify(`workflow: stopped polling "${w.check}" after ${Math.round(elapsedMs / 60_000)} min; your next message checks again`, "warning");
+			return;
+		}
+		waitChecking = true;
+		try {
+			if (!(await runWaitCheck(w.check as string)) || state.waiting !== w) return;
+			stopWaitTimer();
+			if (cfg.wait.autoResume) {
+				clearWait(ctx);
+				const body = w.held ?? "Continue with the open steps of the plan.";
+				pi.sendMessage({ customType: "workflow-wait", content: `${resumePrefix(w.reason, "passed")} ${body}`, display: true }, { triggerTurn: true, deliverAs: "followUp" });
+			} else {
+				w.checkPassed = true;
+				persist();
+				ctx.ui.notify(`workflow: "${w.check}" passed; send any message to continue`, "info");
+			}
+		} finally {
+			waitChecking = false;
+		}
+	}
+
+	pi.registerTool({
+		name: "wait_for_user",
+		label: "Wait for user",
+		description:
+			"Pause the flow until a person has done something you cannot (publish a package, open the Unity Editor). Optional `check` is a read-only command that exits 0 once it is done; the workflow runs it every few minutes and resumes you by itself. Then end your turn. Name the plan step as `step` when the plan has a `Wait:` step; otherwise the wait is added to the plan as an amendment.",
+		promptSnippet: "wait_for_user: pause the flow until a person did something; resumes by check or by their reply",
+		parameters: Type.Object({
+			reason: Type.String({ description: "What the person must do, in one line" }),
+			check: Type.Optional(Type.String({ description: "A read-only command that exits 0 once it is done, e.g. git ls-remote --exit-code --tags origin <tag>" })),
+			step: Type.Optional(Type.String({ description: "The plan's Wait step, e.g. S7" })),
+		}),
+		async execute(_id, params, _signal, _onUpdate, ctx) {
+			const reply = (text: string) => ({ content: [{ type: "text" as const, text }], details: {} });
+			const plan = state.approvedPlan;
+			if (state.phase !== "execute" || !plan) return reply("wait_for_user works only while executing an approved plan. Nothing changed.");
+			const reason = params.reason.trim();
+			if (!reason) return reply("Give a reason: what the person must do. Nothing changed.");
+			const check = params.check?.trim() || undefined;
+			if (check) {
+				const problem = readOnlyProblem(check);
+				if (problem) return reply(`The check must be read-only (${problem}). Nothing changed.`);
+			}
+			const step = params.step?.trim().toUpperCase() || undefined;
+			const planned = !!step && !!parseWaitStep(plan, step);
+			if (!planned) {
+				const n = (plan.match(/^## Amendment \d+/gm) ?? []).length + 1;
+				state.approvedPlan = `${plan.replace(/\s+$/, "")}\n\n${waitAmendment(n, { reason, step, check })}\n`;
+				refreshChecklist();
+			}
+			state.waiting = { reason, ...(check ? { check } : {}), ...(step ? { step } : {}), stage: state.stage, since: new Date().toISOString(), planned };
+			persist();
+			updateStatus(ctx);
+			planMilestone(ctx);
+			startWaitTimer();
+			return reply(`Waiting for: ${reason}. End your turn now; the workflow resumes you when ${check ? "the check passes" : "the user replies"}.`);
+		},
+		renderCall(args, theme) {
+			return new Text(`${title(theme, "wait_for_user", "execute")}${theme.fg("accent", ` ${String(args.reason ?? "").slice(0, 80)}`)}`, 0, 0);
+		},
+	});
+
 	pi.registerTool({
 		name: "plan_check",
 		label: "Plan check",
@@ -2303,6 +2466,37 @@ export default function workflow(pi: ExtensionAPI) {
 	// Saying "go" in plan phase approves the plan: switch to execute and send the message on as the start signal.
 	pi.on("input", async (event, ctx) => {
 		if (event.source !== "extension") resumes = 0;
+		// A typed message ends a wait (after the check, if it has one).
+		const typed = event.text.trim();
+		if (state.phase === "execute" && state.waiting && event.source !== "extension" && !event.streamingBehavior && typed && !typed.startsWith("/")) {
+			const w = state.waiting;
+			let how: "passed" | "forced" | "plain" = w.check ? "passed" : "plain";
+			// The poll timer must not end this wait while the check or the question is open.
+			stopWaitTimer();
+			waitChecking = true;
+			try {
+				if (w.check && !w.checkPassed && !(await runWaitCheck(w.check))) {
+					if (state.waiting !== w) return { action: "continue" };
+					if (!ctx.hasUI) {
+						startWaitTimer();
+						return { action: "handled" };
+					}
+					const choice = await ctx.ui.select(`Check not passing: ${w.check}`, ["Continue anyway", "Keep waiting"]);
+					if (state.waiting !== w) return { action: "continue" };
+					if (choice !== "Continue anyway") {
+						ctx.ui.notify(`workflow: still waiting for "${w.reason}"`, "info");
+						startWaitTimer();
+						return { action: "handled" };
+					}
+					how = "forced";
+				}
+			} finally {
+				waitChecking = false;
+			}
+			if (state.waiting !== w) return { action: "continue" };
+			clearWait(ctx);
+			return { action: "transform", text: `${resumePrefix(w.reason, how)}\n\n${w.held ? `${w.held}\n\n` : ""}${typed}` };
+		}
 		// In the test phase without a flow, the first typed message is what to test.
 		if (state.phase === "test" && !state.testFlow && event.source !== "extension" && !event.streamingBehavior && event.text.trim() && !event.text.trim().startsWith("/")) {
 			await startTestFlow(ctx, event.text.trim());
@@ -2448,6 +2642,8 @@ export default function workflow(pi: ExtensionAPI) {
 			return;
 		}
 		if (state.phase !== "execute") return;
+		// Waiting for a person: no judge, no delivery, no stage advance until the wait is over.
+		if (state.waiting) return;
 		if (skipJudge(last)) {
 			const choice = await ctx.ui.select("The executor's last reply ended in an error", ["Retry", "Back to planning", "Stop"]);
 			if (choice === "Retry") {
@@ -2496,6 +2692,18 @@ export default function workflow(pi: ExtensionAPI) {
 		await reviewDiff(ctx, rejudge);
 	}
 
+	/** A stage that declares `(after: …)` waits before it starts: keeps its start text until the wait is over. True when it now waits. */
+	function holdForStageWait(ctx: ExtensionContext, stage: ReturnType<typeof parseStages>[number], held: string): boolean {
+		if (!stage.after) return false;
+		state.waiting = { reason: stage.after.reason, ...(stage.after.check ? { check: stage.after.check } : {}), stage: stage.n, since: new Date().toISOString(), planned: true, atStageStart: true, held };
+		persist();
+		updateStatus(ctx);
+		planMilestone(ctx);
+		ctx.ui.notify(`workflow: stage ${stage.n} waits for: ${stage.after.reason}`, "info");
+		startWaitTimer();
+		return true;
+	}
+
 	/** Staged plan: moves on to the next stage and sends its start message. */
 	function startNextStage(ctx: ExtensionContext, stages: ReturnType<typeof parseStages>, outcome: string): void {
 		const next = (state.stage ?? 0) + 1;
@@ -2511,13 +2719,16 @@ export default function workflow(pi: ExtensionAPI) {
 		planMilestone(ctx);
 		persist();
 		ctx.ui.notify(`workflow: stage ${next} of ${stages.length}: ${stages[next - 1].title}`, "info");
-		handover("workflow-stage", nextStage(stages, next, state.delivery ?? defaultDelivery(), outcome));
+		const text = nextStage(stages, next, state.delivery ?? defaultDelivery(), outcome);
+		if (holdForStageWait(ctx, stages[next - 1], text)) return;
+		handover("workflow-stage", text);
 	}
 
 	/** A staged plan's turn ended with nothing new to review: it ends the stage only if the executor handed it over (judge called) or the user confirms. */
 	async function noChangeTurn(ctx: ExtensionContext, staged: { stages: ReturnType<typeof parseStages>; current: number }): Promise<void> {
 		const auto = cfg.stageAdvance === "auto" && !turnAborted;
-		const what = noChangeStage(!!state.stageJudged, ctx.hasUI, auto);
+		const open = (state.checklist ?? []).filter((i) => !i.done && (i.stage === undefined || i.stage === staged.current)).length;
+		const what = noChangeStage(!!state.stageJudged, ctx.hasUI, auto, open);
 		if (what === "wait") return;
 		if (what === "advance" && auto && !state.stageJudged) ctx.ui.notify(`workflow: stage ${staged.current} ended with no changes; continuing (stageAdvance: auto)`, "info");
 		if (what === "ask") {
@@ -3320,6 +3531,7 @@ ${judged.text}`, instruction, chosen);
 				publishFolders(ctx);
 			}
 			updateStatus(ctx);
+			if (state.phase === "execute" && state.waiting) startWaitTimer();
 			if (event.reason !== "reload") void planHousekeeping(ctx);
 			// Rewrites the plan file, which also (re)starts this session's claim on an unfinished flow.
 			if (state.planDoc && !state.planDoc.finished && state.approvedPlan) planMilestone(ctx, undefined, false);
@@ -3349,6 +3561,7 @@ ${judged.text}`, instruction, chosen);
 	});
 
 	pi.on("session_shutdown", async () => {
+		stopWaitTimer();
 		const dir = claimedFlow ? planDirs.get(claimedFlow) : undefined;
 		if (dir && claimedFlow) dropClaim(dir, claimedFlow);
 		stopClaimTimer();

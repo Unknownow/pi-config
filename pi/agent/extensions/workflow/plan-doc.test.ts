@@ -169,3 +169,21 @@ test("openStepsReminder: singular", () => {
 test("openStepsReminder: only the current stage", () => {
 	assert.equal(openStepsReminder([item("S1", false, 1), item("S2", false, 2), item("S3", false)], 2), `Open steps not ticked: S2, S3. ${TAIL}`);
 });
+
+test("planCard shows the wait", () => {
+	const card = planCard(PLAN, undefined, undefined, undefined, "/p/plan.md", "publish core");
+	assert.ok(card.includes("### Waiting for\npublish core"));
+	assert.ok(!planCard(PLAN, undefined, undefined, undefined, "/p/plan.md").includes("Waiting for"));
+});
+
+test("renderPlanFile writes the wait below the checklist", () => {
+	assert.ok(renderPlanFile("20261022-0130-x-ab12", "plan", undefined, undefined, "publish core").includes("**Waiting for:** publish core"));
+});
+
+test("parseStatus waiting and checkpoints", () => {
+	const base = { v: 1, flowId: "20261022-0130-x-ab12", rev: 1, updated: "t", title: "x", done: [], repos: [] };
+	assert.ok(parseStatus(JSON.stringify(base)));
+	assert.ok(parseStatus(JSON.stringify({ ...base, waiting: { reason: "r", check: "c", since: "t" }, checkpoints: [{ step: "S1", text: "t", ok: true }] })));
+	assert.equal(parseStatus(JSON.stringify({ ...base, waiting: { reason: 5, since: "t" } })), null);
+	assert.equal(parseStatus(JSON.stringify({ ...base, checkpoints: [{ text: "t" }] })), null);
+});
