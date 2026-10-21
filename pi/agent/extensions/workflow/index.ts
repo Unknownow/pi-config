@@ -59,6 +59,9 @@ import { citeNames, collectRepoDiff as collectRepoDiffImpl, needsFinalFullReview
 import { combineRepoTexts, followFolders, parseAddDir, parseWorktreeList, repoKey, uniqueRoots } from "./repos.ts";
 import { shellProblem } from "./push-guard.ts";
 import { COMMIT_GUARD_ENV, type CommitGuardSpec } from "./commit-guard.ts";
+import { RUNNER_GUARD_ENV, type RunnerGuardSpec } from "./runner-guard.ts";
+import { parseTestReport, type TestItem } from "./test-report.ts";
+import { formatTaskResult, parseRunnerReply, sanitizeIds, scheduleTasks, taskCard, taskRecord, type TestTask, verifyRun } from "./test-run.ts";
 import { commitPlan, type Finished, mergeChecklist, newFlowId, openStepsReminder, parseChecklist, type PlanStatus, planCard, pruneIds, renderPlanFile, splitPlanFile, type ChecklistItem } from "./plan-doc.ts";
 import { adoptHigher, claimLive, commitRef, dropClaim, pidAlive, readClaim, writeClaim, deleteLocal, deleteRef, fetchMirror, type Git, listRefs, plansDir, pushRef, readLocalStatuses, readPlanMd, refRev, remoteOf, repoInfo, type RefEntry, writeLocal } from "./plan-store.ts";
 import { type FlowFinding, recordFindings, reportFindings, type ReportStep } from "./flow-report.ts";
@@ -94,7 +97,27 @@ import {
 	summaryLines,
 } from "./view.ts";
 
-type Phase = "off" | "plan" | "execute";
+type Phase = "off" | "plan" | "execute" | "test";
+
+/** The state of a test-and-fix flow, from `/flow test` until it ends. */
+interface TestFlow {
+	/** What the user asked to test. */
+	scope: string;
+	/** Test rounds started, 1-based. */
+	round: number;
+	/** The latest version of each reported item, by ID. */
+	items: Record<string, { tag: string; title: string; body: string; round: number }>;
+	/** The latest report's Ran: lines. */
+	ran: string[];
+	/** The next free item number. */
+	nextId: number;
+	/** The automatic request for a valid report has been sent this round. */
+	nudged?: boolean;
+	/** Per repo (key: repoKey(root)): `git status --porcelain` lines when the round started. */
+	snapshot?: Record<string, string[]>;
+	/** Files that changed during testing, as `repo: porcelain line`. */
+	strays?: string[];
+}
 
 interface FlowState {
 	phase: Phase;
@@ -156,6 +179,8 @@ interface FlowState {
 	folders?: string[];
 	/** Git roots edited in this flow that are neither the working folder's repo nor an added folder's repo. */
 	touchedRepos?: string[];
+	/** Set while a test-and-fix flow is active (phase "test"). */
+	testFlow?: TestFlow;
 }
 
 interface LastJudge {
@@ -193,6 +218,8 @@ const execFileAsync = promisify(execFile);
 /** Subagent-only extension that registers forwarded MCP servers (see mcp-forward.ts). */
 const FORWARD_EXTENSION = path.join(path.dirname(CONFIG_PATH), "extensions", "workflow", "mcp-forward.ts");
 const COMMIT_GUARD_EXTENSION = path.join(path.dirname(CONFIG_PATH), "extensions", "workflow", "commit-guard.ts");
+/** Subagent-only extension that guards the test runners (see runner-guard.ts). */
+const RUNNER_GUARD_EXTENSION = path.join(path.dirname(CONFIG_PATH), "extensions", "workflow", "runner-guard.ts");
 
 interface Diff {
 	text: string;
@@ -297,7 +324,7 @@ export default function workflow(pi: ExtensionAPI) {
 	});
 
 	pi.registerFlag("flow", {
-		description: "Workflow phase to start in: plan, execute or off (default from workflow.json)",
+		description: "Workflow phase to start in: plan, execute, test or off (default from workflow.json)",
 		type: "string",
 	});
 
@@ -369,7 +396,8 @@ export default function workflow(pi: ExtensionAPI) {
 		view.phase = state.phase;
 		view.escalated = state.escalated;
 		if (state.phase === "plan") view.stage = "plan";
-		else if (view.stage === "plan") view.stage = "execute";
+		else if (state.phase === "test") view.stage = "test";
+		else if (view.stage === "plan" || view.stage === "test") view.stage = "execute";
 		if (ctx.hasUI) view.mount(ctx.ui);
 		const n = existingFolders().length + (state.touchedRepos?.length ?? 0);
 		const cl = state.checklist;
@@ -414,10 +442,25 @@ export default function workflow(pi: ExtensionAPI) {
 		return true;
 	}
 
-	function blockPlanTools(): void {
+	/** The read-only tool set of plan phase; the test phase adds test_run and drops judge and plan_check. */
+	function blockPlanTools(phase: "plan" | "test" = "plan"): void {
 		state.toolsBeforePlan ??= pi.getActiveTools();
-		const allowed = planAllowedTools();
-		pi.setActiveTools(state.toolsBeforePlan.filter((t) => !planToolRefused(t, allowed, cfg.planBlockedTools)));
+		const allowed = phase === "test" ? testAllowedTools() : planAllowedTools();
+		const blocked = phase === "test" ? testBlockedTools() : cfg.planBlockedTools;
+		pi.setActiveTools(state.toolsBeforePlan.filter((t) => !planToolRefused(t, allowed, blocked)));
+	}
+
+	function testAllowedTools(): RegExp[] {
+		return [...planAllowedTools(), /^test_run$/];
+	}
+
+	function testBlockedTools(): string[] {
+		return [...cfg.planBlockedTools, "judge", "plan_check"];
+	}
+
+	/** The widget stage the main session is in. */
+	function phaseStage(): Stage {
+		return state.phase === "plan" ? "plan" : state.phase === "test" ? "test" : "execute";
 	}
 
 	function restorePlanTools(): void {
@@ -428,14 +471,18 @@ export default function workflow(pi: ExtensionAPI) {
 	}
 
 	async function setPhase(ctx: ExtensionContext, phase: Phase): Promise<void> {
-		if (state.phase === "execute" && phase !== "execute" && state.approvedPlan && !state.flowSummarized) {
+		const leavingFlow = (state.phase === "execute" || state.phase === "test") && phase !== state.phase;
+		if (leavingFlow && state.approvedPlan && !state.flowSummarized) {
 			summarizeFlow(stoppedSummary(phase === "plan" ? "back to planning" : "abandoned"), false);
 		}
 		planReady = false;
 		planProposed = false;
-		if (state.phase === "plan" && phase !== "plan") restorePlanTools();
-		if (phase === "plan") blockPlanTools();
-		if (state.phase === "execute" && phase !== "execute" && state.planDoc && !state.planDoc.finished) planMilestone(ctx, { at: new Date().toISOString(), ok: false, text: "abandoned" });
+		const readOnly = (p: Phase) => p === "plan" || p === "test";
+		if (readOnly(state.phase) && phase !== state.phase) restorePlanTools();
+		if (readOnly(phase) && phase !== state.phase) blockPlanTools(phase as "plan" | "test");
+		if (leavingFlow && state.planDoc && !state.planDoc.finished) planMilestone(ctx, { at: new Date().toISOString(), ok: false, text: "abandoned" });
+		const leftTest = state.phase === "test";
+		state.testFlow = undefined;
 		state.phase = phase;
 		state.escalated = false;
 		state.judgeRounds = 0;
@@ -450,7 +497,7 @@ export default function workflow(pi: ExtensionAPI) {
 		state.stage = undefined;
 		state.stageJudged = undefined;
 		state.stageOutcomes = undefined;
-		if (phase === "plan") {
+		if (phase === "plan" || leftTest) {
 			state.approvedPlan = undefined;
 			state.checklist = undefined;
 			state.planDoc = undefined;
@@ -569,12 +616,12 @@ export default function workflow(pi: ExtensionAPI) {
 	async function runRole(
 		role: SubRole,
 		label: string,
-		opts: { systemPrompts: string[]; tools: string[]; task: string; cwd: string; signal?: AbortSignal; thinking?: Thinking; env?: Record<string, string>; extensions?: string[] },
+		opts: { systemPrompts: string[]; tools: string[]; task: string; cwd: string; signal?: AbortSignal; thinking?: Thinking; env?: Record<string, string>; extensions?: string[]; timeoutMs?: number },
 		onChange?: (run: RunView) => void,
 	): Promise<{ result: RunResult; run: RunView }> {
 		const run = view.start(role, label);
 		onChange?.(run);
-		const { thinking, extensions, ...rest } = opts;
+		const { thinking, extensions, timeoutMs, ...rest } = opts;
 		const k = knowledgeFor(role);
 		const started = Date.now();
 		const result = await runSubagent({
@@ -584,7 +631,7 @@ export default function workflow(pi: ExtensionAPI) {
 			mcp: k ? { servers: k.servers, extension: FORWARD_EXTENSION } : undefined,
 			role: thinking ? { ...cfg.roles[role], thinking } : cfg.roles[role],
 			extensions: extensions ? [...cfg.subagent.extensions, ...extensions] : cfg.subagent.extensions,
-			timeoutMs: cfg.subagent.timeoutMs,
+			timeoutMs: timeoutMs ?? cfg.subagent.timeoutMs,
 			idleTimeoutMs: cfg.subagent.idleTimeoutMs,
 			onEvent: (e) => {
 				view.event(run, e, opts.cwd);
@@ -933,6 +980,7 @@ export default function workflow(pi: ExtensionAPI) {
 		checklist?: ChecklistItem[];
 		stage?: number;
 		delivery?: string;
+		kind?: "test";
 		touched: string[];
 		finished?: Finished;
 		/** A restore of the file (no new rev): never commits over a newer ref. */
@@ -970,6 +1018,7 @@ export default function workflow(pi: ExtensionAPI) {
 			title: planTitle(snap.plan),
 			...(snap.stage ? { stage: snap.stage } : {}),
 			...(snap.delivery ? { delivery: snap.delivery } : {}),
+			...(snap.kind ? { kind: snap.kind } : {}),
 			done: (snap.checklist ?? []).filter((i) => i.done).map((i) => i.id),
 			...(snap.finished ? { finished: snap.finished } : {}),
 			repos: infos.map((info, i) => ({ ...info, primary: i === 0 })),
@@ -1075,6 +1124,7 @@ export default function workflow(pi: ExtensionAPI) {
 			checklist: state.checklist?.map((i) => ({ ...i })),
 			stage: state.stage,
 			delivery: state.delivery,
+			...(state.testFlow ? { kind: "test" as const } : {}),
 			touched: [...(state.touchedRepos ?? [])],
 			finished: doc.finished,
 			retry: !bump,
@@ -1165,7 +1215,7 @@ export default function workflow(pi: ExtensionAPI) {
 	/** `/flow resume`: rebuilds an unfinished flow from its plan ref, found in the working folder's repo or an added folder. */
 	async function resumeFlow(ctx: ExtensionContext, wanted: string | undefined): Promise<void> {
 		const notify = (text: string, level: "info" | "warning" = "warning") => ctx.ui.notify(`workflow: ${text}`, level);
-		const busy = state.phase === "execute" && state.planDoc && !state.planDoc.finished ? state.planDoc.flowId : undefined;
+		const busy = (state.phase === "execute" || state.phase === "test") && state.planDoc && !state.planDoc.finished ? state.planDoc.flowId : undefined;
 		if (busy && (!wanted || !busy.startsWith(wanted))) {
 			notify(`a flow is already running (${busy}); finish or leave it before resuming another`);
 			return;
@@ -1217,7 +1267,7 @@ export default function workflow(pi: ExtensionAPI) {
 		if (candidates.length > 1) {
 			const labels = candidates.map((c, i) => {
 				const live = liveClaim(i);
-				return `${c.entry.status?.title} \u2014 ${c.entry.status?.updated.slice(0, 16).replace("T", " ")}${c.entry.status?.stage ? `, stage ${c.entry.status.stage}` : ""} (${c.entry.flowId})${live ? ` \u2014 running in ${live.cwd} (pid ${live.pid})` : ""}`;
+				return `${c.entry.status?.title} \u2014 ${c.entry.status?.updated.slice(0, 16).replace("T", " ")}${c.entry.status?.stage ? `, stage ${c.entry.status.stage}` : ""}${c.entry.status?.kind === "test" ? " (test flow)" : ""} (${c.entry.flowId})${live ? ` \u2014 running in ${live.cwd} (pid ${live.pid})` : ""}`;
 			});
 			const chosen = await ctx.ui.select("Resume which flow?", labels);
 			const i = chosen ? labels.indexOf(chosen) : -1;
@@ -1236,6 +1286,10 @@ export default function workflow(pi: ExtensionAPI) {
 			return;
 		}
 		const status = pick.entry.status;
+		if (status?.kind === "test") {
+			notify("test flows can't be resumed; start a new one with /flow test");
+			return;
+		}
 		const md = await readPlanMd(gitEnv, pick.root, pick.entry.commit);
 		if (!status || !md) {
 			notify("the plan ref is unreadable");
@@ -1426,7 +1480,7 @@ export default function workflow(pi: ExtensionAPI) {
 		);
 		seenDiffs.add(diff.hash);
 		if (!result.ok) {
-			view.stage = state.phase === "plan" ? "plan" : "execute";
+			view.stage = phaseStage();
 			return { verdict: "ERROR", text: `judge failed: ${result.error}`, hash: diff.hash, usage: result.usage, run };
 		}
 		let text = result.text;
@@ -1452,7 +1506,7 @@ export default function workflow(pi: ExtensionAPI) {
 		view.finish(run, verdict === "PASS", `${verdict} · ${findings} finding${findings === 1 ? "" : "s"}${recheck ? " · re-review" : ""}${knowledgeNote}`);
 		onChange?.(run);
 		// Back to the phase's stage either way; finishPassed moves to commit once the commit is actually handed over.
-		view.stage = state.phase === "plan" ? "plan" : "execute";
+		view.stage = phaseStage();
 		state.lastJudge = plan.snaps ? { hash: diff.hash, repos: plan.snaps, base: diff.base, verdict, text } : undefined;
 		if (state.phase === "execute") state.flowFindings = recordFindings(state.flowFindings, state.stage, text);
 		state.lastKnowledge = knowledge;
@@ -1463,6 +1517,138 @@ export default function workflow(pi: ExtensionAPI) {
 	// ----------------------------------------------------------------------
 	// Tools
 	// ----------------------------------------------------------------------
+
+	// ----------------------------------------------------------------------
+	// Test flow
+	// ----------------------------------------------------------------------
+
+	/** `git status --porcelain` lines of every repo of the flow, by repo key. */
+	async function porcelain(ctx: ExtensionContext): Promise<Record<string, string[]>> {
+		const out: Record<string, string[]> = {};
+		for (const r of await flowRepos(ctx)) {
+			const g = await git(r.root, "status", "--porcelain");
+			const lines = g.code === 0 ? g.stdout.split(/\r?\n/).filter(Boolean) : [];
+			// The hash tells a file that changed again from one that stayed as it was.
+			out[repoKey(r.root)] = await mapLimit(lines, 8, async (l) => {
+				const h = await git(r.root, "hash-object", "--", l.slice(3).split(" -> ").pop()!.replace(/^"|"$/g, ""));
+				return h.code === 0 ? `${l}\t#${h.stdout.trim()}` : l;
+			});
+		}
+		return out;
+	}
+
+	/** Entries that appeared in the repos since `before`, as `repo: line`. */
+	async function newPorcelain(ctx: ExtensionContext, before: Record<string, string[]> | undefined): Promise<string[]> {
+		const now = await porcelain(ctx);
+		const out: string[] = [];
+		for (const [key, lines] of Object.entries(now)) {
+			const had = new Set(before?.[key] ?? []);
+			for (const l of lines) if (!had.has(l)) out.push(`${path.basename(key)}: ${l.replace(/\t#[0-9a-f]+$/, "")}`);
+		}
+		return out;
+	}
+
+	/** The plan text of a test flow: its scope and the reported [bug] items as steps. */
+	function reportPlan(tf: TestFlow): string {
+		const first = tf.scope.split(/\r?\n/)[0].trim().slice(0, 60) || "test";
+		const bugs = Object.entries(tf.items).filter(([, i]) => i.tag === "bug");
+		return [
+			`## Plan: Test: ${first}`,
+			"1. Goal and non-goals.",
+			"Goal: every [bug] step below behaves as its Expected says, verified by its repro in a test round, without changing behaviour outside them.",
+			"Non-goals: new features; refactors; items tagged ask, blocked or manual.",
+			"2. User decisions:",
+			`D1. Test scope: ${tf.scope.replace(/\s*\r?\n\s*/g, " ")}`,
+			"3. Facts:",
+			...tf.ran.map((r) => `Ran: ${r}`),
+			"5. Steps:",
+			...bugs.map(([id, i]) => `**${id}.** [bug] ${i.title}${i.body ? `\n${i.body}` : ""}`),
+			"7. Done when:",
+			"- each step's Expected holds and its repro passes in a test round",
+		].join("\n");
+	}
+
+	/** Starts a test flow for `scope` in the test phase (the caller has switched to it). Returns false when a flow is already active. */
+	async function startTestFlow(ctx: ExtensionContext, scope: string): Promise<boolean> {
+		if (state.testFlow) return false;
+		state.testFlow = { scope, round: 1, items: {}, ran: [], nextId: 1, snapshot: await porcelain(ctx), strays: [] };
+		state.approvedPlan = reportPlan(state.testFlow);
+		state.checklist = undefined;
+		state.planDoc = undefined;
+		state.flowFindings = undefined;
+		state.flowSummarized = undefined;
+		state.delivery = cfg.test.delivery;
+		state.planFlaw = "auto";
+		refreshChecklist();
+		planMilestone(ctx);
+		persist();
+		updateStatus(ctx);
+		return true;
+	}
+
+	/** The folder for one round's runner logs and records: next to the plan file, else in the temp folder. */
+	function runsDir(round: number): string {
+		const plan = planFilePath();
+		const base = plan ? path.dirname(plan) : path.join(os.tmpdir(), "pi-test-runs", state.planDoc?.flowId ?? `flow-${process.pid}`);
+		const dir = path.join(base, "runs", String(round));
+		fs.mkdirSync(dir, { recursive: true });
+		return dir;
+	}
+
+	const reportRequest = (problems: string[]) => `Your report is not valid:\n${problems.map((p) => `- ${p}`).join("\n")}\n\nEnd with the test report in the required format.`;
+
+	/** The end of a supervisor turn in the test phase: check the report, record it, and end the flow. */
+	async function onTestEnd(ctx: ExtensionContext, last: AgentMessage | undefined): Promise<void> {
+		const tf = state.testFlow;
+		if (!tf || turnAborted) return;
+		if (skipJudge(last)) {
+			const choice = await ctx.ui.select("The test supervisor's last reply ended in an error", ["Retry", "Stop"]);
+			if (choice === "Retry") {
+				pi.sendMessage({ customType: "workflow-retry", content: "Your last reply ended in an error. Continue the test round where you stopped.", display: true }, { triggerTurn: true, deliverAs: "followUp" });
+			} else {
+				ctx.ui.notify("workflow: stopped: the supervisor's reply failed", "warning");
+				summarizeFlow("stopped: the supervisor's reply failed", false);
+				state.testFlow = undefined;
+				await endFlow(ctx);
+			}
+			return;
+		}
+		const text = assistantText(last).trim();
+		const report = parseTestReport(text, { nextId: tf.nextId, known: Object.keys(tf.items), mustReport: [] });
+		if (!report || report.problems.length) {
+			const problems = report ? report.problems : ["the reply has no '## Test report: <scope>' heading and VERDICT line"];
+			if (!tf.nudged) {
+				tf.nudged = true;
+				persist();
+				pi.sendMessage({ customType: "workflow-test-report", content: reportRequest(problems), display: true }, { triggerTurn: true, deliverAs: "followUp" });
+				return;
+			}
+			const choice = await ctx.ui.select(`The test report is still not valid (${problems[0]})`, ["Retry", "Stop"]);
+			if (choice === "Retry") {
+				pi.sendMessage({ customType: "workflow-test-report", content: reportRequest(problems), display: true }, { triggerTurn: true, deliverAs: "followUp" });
+			} else {
+				summarizeFlow("stopped: no valid test report", false);
+				state.testFlow = undefined;
+				await endFlow(ctx);
+			}
+			return;
+		}
+		// Record: the latest version of each item wins.
+		for (const it of report.items) tf.items[it.id] = { tag: it.tag, title: it.title, body: it.body, round: tf.round };
+		tf.ran = report.ran;
+		tf.nextId = Math.max(tf.nextId, ...report.items.map((i) => Number(i.id.slice(1)) + 1));
+		tf.strays = [...(tf.strays ?? []), ...(await newPorcelain(ctx, tf.snapshot))];
+		const count = (tag: TestItem["tag"]) => report.items.filter((i) => i.tag === tag).length;
+		const bugs = count("bug");
+		state.approvedPlan = reportPlan(tf);
+		refreshChecklist();
+		planMilestone(ctx);
+		if (tf.strays.length) ctx.ui.notify(`workflow: files changed during testing: ${tf.strays.join("; ")}`, "warning");
+		const found = [bugs && `${bugs} bug(s)`, count("ask") && `${count("ask")} ask`, count("blocked") && `${count("blocked")} blocked`, count("manual") && `${count("manual")} manual`].filter(Boolean);
+		summarizeFlow(found.length ? `test: ${found.join(", ")} found; not fixed` : "test: clean", bugs === 0);
+		state.testFlow = undefined;
+		await endFlow(ctx);
+	}
 
 	const title = (theme: Theme, name: string, role: Role) =>
 		theme.fg("toolTitle", theme.bold(`${name} `)) + theme.fg("muted", shortModel(cfg.roles[role].model));
@@ -1529,6 +1715,71 @@ export default function workflow(pi: ExtensionAPI) {
 			const reason = typeof args.reason === "string" ? theme.fg("warning", ` · ${args.reason.replace(/_/g, " ")}`) : "";
 			const head = `${title(theme, "explore", "explore")}${theme.fg("accent", ` ${queries.length} quer${queries.length === 1 ? "y" : "ies"}`)}${reason}`;
 			return new Text(head, 0, 0);
+		},
+		renderResult: (result, opts, theme) => renderRuns(result, opts, theme, 0),
+	});
+
+	pi.registerTool({
+		name: "test_run",
+		label: "Test run",
+		description:
+			"Send cheap runner agents to run test tasks, in parallel. Each task is a card: exact commands to run (run), what to capture (observe), and when it passes (pass). Tasks that share a resource (e.g. unity:<project>, device:<serial>) run one after another; others run together. Each result lists the commands the runner actually ran; a result marked unverified is only a claim, so rerun it. Full logs and per-task records are written to the artifacts folder.",
+		promptSnippet: "test_run: run test task cards on cheap runner agents (parallel by resource), results with the commands actually run",
+		parameters: Type.Object({
+			tasks: Type.Array(
+				Type.Object({
+					id: Type.String({ description: "Short name for the task" }),
+					run: Type.String({ description: "The exact commands or scenario to run" }),
+					observe: Type.String({ description: "What to capture (output lines, logcat, screenshot, exit code)" }),
+					pass: Type.String({ description: "The criteria for PASS" }),
+					resource: Type.String({ description: "What the task needs alone: unity:<project folder>, device:<serial>, or none" }),
+				}),
+				{ description: "Test tasks", minItems: 1 },
+			),
+		}),
+		async execute(_id, params, signal, onUpdate, ctx) {
+			const given = params.tasks.slice(0, cfg.test.maxTasks);
+			const ids = sanitizeIds(given.map((t) => t.id));
+			const tasks: TestTask[] = given.map((t, i) => ({ id: ids[i], run: t.run, observe: t.observe, pass: t.pass, resource: t.resource.trim() || "none" }));
+			const progress = toolProgress(onUpdate);
+			const usage = emptyUsage();
+			const notes: string[] = [];
+			if (params.tasks.length > given.length) notes.push(`(${params.tasks.length - given.length} more tasks dropped: limit is ${cfg.test.maxTasks} per call)`);
+			if (!fs.existsSync(RUNNER_GUARD_EXTENSION)) {
+				const sections = tasks.map((t) => `### ${t.id} · ${t.resource} · ERROR: runner guard extension not found at ${RUNNER_GUARD_EXTENSION}`);
+				return { content: [{ type: "text", text: [...sections, ...notes].join("\n\n") }], details: { runs: [] as RunView[] }, usage };
+			}
+			const dir = runsDir(state.testFlow?.round ?? 1);
+			const roots = uniqueRoots([...(await flowRepos(ctx)).map((r) => r.root), ...existingFolders(), ctx.cwd]);
+			const spec: RunnerGuardSpec = { roots, deny: cfg.test.runnerDeny, pathFlags: cfg.test.runnerPathFlags, pathEnv: cfg.test.runnerPathEnv };
+			const runnerTools = cfg.test.runnerTools.filter((t) => !/^(edit|write)$/.test(t));
+			const sections = await scheduleTasks(tasks, cfg.test.concurrency, async (task) => {
+				const card = taskCard(task, ctx.cwd, dir);
+				const { result, run } = await runRole(
+					"runner",
+					`[${task.resource}] ${task.id}`,
+					{ systemPrompts: [prompts.RUNNER], tools: runnerTools, task: card, cwd: ctx.cwd, signal, env: { [RUNNER_GUARD_ENV]: JSON.stringify(spec) }, extensions: [RUNNER_GUARD_EXTENSION], timeoutMs: cfg.test.runnerTimeoutMs },
+					progress.track,
+				);
+				addUsage(usage, result.usage);
+				const reply = parseRunnerReply(result.ok ? result.text : "");
+				const verified = verifyRun(reply, result.toolCalls);
+				const status = result.ok ? verified.status : `ERROR: ${result.error ?? "the runner failed"}`;
+				let record: string | undefined = path.join(dir, `${task.id}.md`);
+				try {
+					fs.writeFileSync(record, taskRecord(card, result.ok ? result.text : `(failed: ${result.error})`, result.toolCalls));
+				} catch {
+					record = undefined;
+				}
+				if (result.ok) view.finish(run, status === "PASS", status.length > 30 ? `${status.slice(0, 30)}…` : status);
+				progress.track(run);
+				return formatTaskResult({ id: task.id, resource: task.resource, status, reply: result.ok ? reply : undefined, ran: verified.ran, record });
+			});
+			return { content: [{ type: "text", text: [`Artifacts folder: ${dir}`, ...sections, ...notes].join("\n\n") }], details: { runs: progress.snapshot() }, usage };
+		},
+		renderCall(args, theme) {
+			const n = Array.isArray(args.tasks) ? args.tasks.length : 0;
+			return new Text(`${title(theme, "test_run", "runner")}${theme.fg("accent", ` ${n} task${n === 1 ? "" : "s"}`)}`, 0, 0);
 		},
 		renderResult: (result, opts, theme) => renderRuns(result, opts, theme, 0),
 	});
@@ -1690,6 +1941,7 @@ export default function workflow(pi: ExtensionAPI) {
 	// Plan phase is read-only: the planner settles the approach, the execute model changes things.
 	// Nested calls (codemode's tools.bash) pass through here too.
 	pi.on("tool_call", async (event, ctx) => {
+		if (event.toolName === "test_run" && state.phase !== "test") return { block: true, reason: "test_run works only in the test phase." };
 		if (state.phase === "execute") {
 			// Pushing is the workflow's job after the judge passes; the executor may not publish or skip hooks.
 			const input = (event.input ?? {}) as Record<string, unknown>;
@@ -1726,6 +1978,17 @@ export default function workflow(pi: ExtensionAPI) {
 			}
 			return;
 		}
+		if (state.phase === "test") {
+			// The supervisor only reads and sends runners; the plan phase's read-only checks, plus the test allow list.
+			const blocked = (why: string) => ({ block: true as const, reason: `Test phase: the supervisor only reads and sends runners (${why}). Do not work around this (no other tool, no script): put what must run into a test_run task, and what must change into a [bug] item.` });
+			const refused = planToolRefused(event.toolName, testAllowedTools(), testBlockedTools());
+			if (refused) return blocked(refused);
+			if (!cfg.planReadOnlyBash) return;
+			if (event.toolName === "powershell") return blocked("PowerShell commands are not checked, so they are off in the test phase");
+			const problem = planToolProblem(event.toolName, (event.input ?? {}) as Record<string, unknown>, [...planAllow(), ...regexes(cfg.test.supervisorBashAllow)]);
+			if (problem) return blocked(problem);
+			return;
+		}
 		if (state.phase !== "plan") return;
 		const refused = planToolRefused(event.toolName, planAllowedTools(), cfg.planBlockedTools);
 		if (refused) return { block: true, reason: planBlocked(refused) };
@@ -1734,6 +1997,17 @@ export default function workflow(pi: ExtensionAPI) {
 		const problem = planToolProblem(event.toolName, (event.input ?? {}) as Record<string, unknown>, planAllow());
 		if (problem) return { block: true, reason: planBlocked(problem) };
 	});
+
+	/** The valid regexes among `patterns`. */
+	function regexes(patterns: string[]): RegExp[] {
+		return patterns.flatMap((p) => {
+			try {
+				return [new RegExp(p)];
+			} catch {
+				return [];
+			}
+		});
+	}
 
 	function planAllowedTools(): RegExp[] {
 		return cfg.planAllowedTools.flatMap((p) => {
@@ -1916,6 +2190,11 @@ export default function workflow(pi: ExtensionAPI) {
 	// Saying "go" in plan phase approves the plan: switch to execute and send the message on as the start signal.
 	pi.on("input", async (event, ctx) => {
 		if (event.source !== "extension") resumes = 0;
+		// In the test phase without a flow, the first typed message is what to test.
+		if (state.phase === "test" && !state.testFlow && event.source !== "extension" && !event.streamingBehavior && event.text.trim() && !event.text.trim().startsWith("/")) {
+			await startTestFlow(ctx, event.text.trim());
+			return { action: "continue" };
+		}
 		if (state.phase !== "plan" || event.source === "extension" || event.streamingBehavior) return { action: "continue" };
 		// Without a plan on screen, "yes, do that" answers a question; it doesn't approve anything.
 		if (!planReady || !approveRe().test(event.text.trim())) return { action: "continue" };
@@ -2051,6 +2330,10 @@ export default function workflow(pi: ExtensionAPI) {
 			return;
 		}
 
+		if (state.phase === "test") {
+			await onTestEnd(ctx, last);
+			return;
+		}
 		if (state.phase !== "execute") return;
 		if (skipJudge(last)) {
 			const choice = await ctx.ui.select("The executor's last reply ended in an error", ["Retry", "Back to planning", "Stop"]);
@@ -2767,7 +3050,7 @@ ${judged.text}`, instruction, chosen);
 
 	function resetCommitStage(): void {
 		if (view.stage !== "commit") return;
-		view.stage = state.phase === "plan" ? "plan" : "execute";
+		view.stage = phaseStage();
 		view.changed();
 	}
 
@@ -2860,7 +3143,7 @@ ${judged.text}`, instruction, chosen);
 			view.flow = { ...emptyFlowUsage(), ...structuredClone(state.flow) };
 			view.flowStarted = state.flowStarted;
 			if (state.commitPending) view.stage = "commit";
-			if (state.phase === "plan") blockPlanTools();
+			if (state.phase === "plan" || state.phase === "test") blockPlanTools(state.phase);
 			if (event.reason !== "reload") {
 				await followWorkingFolder(ctx);
 				// --add-dir is a launch flag: only the first session of the process applies it, not a later switch or resume.
@@ -2876,7 +3159,7 @@ ${judged.text}`, instruction, chosen);
 		if (event.reason === "reload") return;
 
 		const flag = pi.getFlag("flow");
-		const start = (typeof flag === "string" && ["plan", "execute", "off"].includes(flag) ? flag : cfg.startPhase) as Phase;
+		const start = (typeof flag === "string" && ["plan", "execute", "test", "off"].includes(flag) ? flag : cfg.startPhase) as Phase;
 		state = { phase: "off", escalated: false, judgeRounds: 0 };
 		view.used = emptyStageTokens();
 		view.flow = emptyFlowUsage();
@@ -2890,7 +3173,7 @@ ${judged.text}`, instruction, chosen);
 
 	// K2: a session that is executing an approved plan is not switched away from.
 	pi.on("session_before_switch", async (_event, ctx) => {
-		if (state.phase !== "execute" || !state.approvedPlan) return;
+		if (!((state.phase === "execute" && state.approvedPlan) || (state.phase === "test" && state.testFlow))) return;
 		ctx.ui.notify("workflow: a flow is executing; finish it or leave it with /flow off before switching sessions", "warning");
 		return { cancel: true };
 	});
@@ -2911,6 +3194,7 @@ ${judged.text}`, instruction, chosen);
 		{ value: "approve", label: "approve - approve the plan, switch to execute and start" },
 		{ value: "delivery", label: "delivery <commit|push|pr|merge|off> - what happens after the judge passes, this flow" },
 		{ value: "execute", label: "execute - execute phase without sending anything" },
+		{ value: "test", label: "test [scope] - test phase: a strong supervisor sends cheap runners and reports bugs" },
 		{ value: "off", label: "off - leave the workflow; model stays as is" },
 		{ value: "escalate", label: "escalate - switch to the escalate model (Fable)" },
 		{ value: "back", label: "back - return to the phase's own model" },
@@ -2925,6 +3209,7 @@ ${judged.text}`, instruction, chosen);
 		const lines = [
 			`phase      ${state.phase}${state.escalated ? " (escalated)" : ""}`,
 			`judge     ${state.judgeRounds} failed round(s); auto=${cfg.autoJudge}; then ${DELIVERY_LABELS[state.delivery ?? defaultDelivery()]}${state.delivery ? "" : " (default)"}`,
+			...(state.testFlow ? [`test flow  round ${state.testFlow.round}, ${Object.keys(state.testFlow.items).length} item(s) reported`] : []),
 			...(currentStages() ? [`stage     ${currentStages()!.current} of ${currentStages()!.stages.length}: ${currentStages()!.stages[currentStages()!.current - 1].title}`] : []),
 			state.planFlaw === "auto" ? "flaws     arbiter (this flow)" : `flaws     ${cfg.planFlaw === "auto" ? "arbiter" : "ask"} (config)`,
 			`guard     compact at ${cfg.contextGuardTokens || "off"} tokens`,
@@ -3069,7 +3354,30 @@ ${judged.text}`, instruction, chosen);
 					await setPhase(ctx, sub.toLowerCase() as Phase);
 					ctx.ui.notify(`workflow: ${state.phase}`, "info");
 					return;
+				case "test": {
+					const scope = rest.join(" ").trim();
+					if (state.testFlow || (state.phase === "execute" && state.approvedPlan && !state.flowSummarized)) {
+						ctx.ui.notify("workflow: a flow is running; finish it or leave it with /flow off first", "warning");
+						return;
+					}
+					await setPhase(ctx, "test");
+					if (!scope) {
+						ctx.ui.notify(`workflow: test phase on ${describeRole(cfg.roles.test)}; describe what to test`, "info");
+						return;
+					}
+					await startTestFlow(ctx, scope);
+					ctx.ui.notify(`workflow: testing on ${describeRole(cfg.roles.test)}, runners on ${describeRole(cfg.roles.runner)}`, "info");
+					pi.sendMessage(
+						{ customType: "workflow-test", content: `Test this: ${scope}\n\nPlan the tests, send runners with test_run, and end with the test report. Next free ID: S1.`, display: true },
+						{ triggerTurn: true, deliverAs: "followUp" },
+					);
+					return;
+				}
 				case "approve":
+					if (state.phase === "test") {
+						ctx.ui.notify("workflow: approve is not used in the test phase", "info");
+						return;
+					}
 					await approve(ctx);
 					return;
 				case "resume":
@@ -3099,6 +3407,10 @@ ${judged.text}`, instruction, chosen);
 					await deescalate(ctx);
 					return;
 				case "judge":
+					if (state.phase === "test") {
+						ctx.ui.notify("workflow: judge is not used in the test phase", "info");
+						return;
+					}
 					await reviewDiff(ctx, true);
 					return;
 				case "tokens":

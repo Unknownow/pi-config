@@ -26,6 +26,8 @@ plan is read-only:   bash refuses commands that change files, git or GitHub
 | `arbiter` | sub-`pi` with the plan, the judge's report and the diff | the judge questions the plan and `planFlaw` is `auto`, or a passed review has a major plan flaw (whatever `planFlaw` is) (or you pick "Let the arbiter decide", or you picked *Approve, arbiter solves plan flaws* for this flow) |
 | `commit` | sub-`pi` with bash only, the plan's goal and Commits section and the delivery instruction, and its own push guard (`commit-guard.ts`) | after the judge passes; `delivery.runner: "main"` runs it in the main session instead (compacted first at the handover) |
 | `escalate` | main session model | `/flow escalate` |
+| `test` | main session model; edit/write/judge off, bash read-only plus `test.supervisorBashAllow`, plus `test_run` | `/flow test <scope>`: plans tests, sends runners, writes the test report (see Test and fix) |
+| `runner` | `test_run` tool, parallel sub-`pi` processes with `bash, read, grep, find, ls` and their own guard (`runner-guard.ts`) | one per test task card; reports facts only |
 
 ## Hands-off run
 
@@ -185,7 +187,33 @@ its plan and hand over, even when you said "fix it" or "do it for me".
 - It is a guard against the planner drifting into execution, not a sandbox. The code checks are
   regexes: a determined disguise (a computed lookup on an alias of `require('fs')`, say) can still get
   past them.
-- Tests: `node --experimental-strip-types --test agent-end.test.ts readonly-bash.test.ts readonly-tools.test.ts tokens.test.ts push-guard.test.ts knowledge.test.ts mcp-forward.test.ts subagent.test.ts delivery.test.ts repos.test.ts stages.test.ts commit-guard.test.ts repo-diff.test.ts prompts.test.ts config.test.ts metrics.test.ts plan-store.test.ts boundary.test.ts`.
+- Tests: `node --experimental-strip-types --test agent-end.test.ts readonly-bash.test.ts readonly-tools.test.ts tokens.test.ts push-guard.test.ts knowledge.test.ts mcp-forward.test.ts subagent.test.ts delivery.test.ts repos.test.ts stages.test.ts commit-guard.test.ts repo-diff.test.ts prompts.test.ts config.test.ts metrics.test.ts plan-store.test.ts boundary.test.ts plan-doc.test.ts runner-guard.test.ts test-report.test.ts test-run.test.ts view.test.ts`.
+
+## Test and fix
+
+A flow for testing and fixing, next to plan → execute → judge → commit. `/flow test <scope>` (or `/flow test` and then typing the scope, or `pi --flow test`) starts the **test phase**.
+
+- **Supervisor** (role `test`, Opus medium): runs in the main session. Reads like the plan phase (edit, write, judge and plan_check are off; bash is read-only plus `test.supervisorBashAllow`, by default `adb devices`, `adb shell getprop` and `unity status`). It plans the tests, sends task cards to runners with the `test_run` tool, triages the results, diagnoses bugs and ends each round with a test report.
+- **Runners** (role `runner`, Haiku low): one sub-`pi` per task card, with `bash, read, grep, find, ls` (`test.runnerTools`; edit and write are always removed). A runner runs exactly the card and replies `RESULT: PASS | FAIL | ERROR`, the command, the exit code, at most 40 lines of output and artifact paths.
+- **`test_run`**: up to `test.maxTasks` (8) tasks per call, each with `id`, `run`, `observe`, `pass` and `resource`. Tasks with the same resource (`unity:<project folder>`, `device:<serial>`) run one after another; the other groups run in parallel, up to `test.concurrency` (4; 1 runs one task at a time). Each runner has `test.runnerTimeoutMs` (45 minutes). A record per task (card, reply, every bash command with the start of its result) is written to `runs/<round>/<id>.md` in the plan's folder (the temp folder when there is no plan file).
+- **Runner results are claims.** The tool result lists the commands the runner actually ran (read from its tool calls). A PASS or FAIL with no bash call, or a PASS with a failed command, is marked `unverified`, and the supervisor reruns it.
+- **Runner guard** (`runner-guard.ts`, loaded only in runner sub-processes): refuses git and gh commands that change anything, commands matching `test.runnerDeny` (by default `adb reboot` and friends, `adb shell rm -r`, wipe, recovery, format, `fastboot`), a project path after a flag in `test.runnerPathFlags` (`--project-path`, `-projectPath`) that lies outside the flow's folders or cannot be checked (`$`, backticks, `%`), and assigning a name from `test.runnerPathEnv` (`UNITY_PROJECT_PATH`). `adb install -r`, `uninstall` and `pm clear` stay allowed; add patterns to `runnerDeny` when a device is not a dedicated test phone. It is a guard against drift, not a sandbox: a `cd` inside a command does not move the base of relative paths.
+- **Test report**: the supervisor's last reply of a round, parsed by `test-report.ts`:
+
+```
+## Test report: <scope>
+Ran: <command or scenario> → <result counts>
+**S1.** [bug] <title>      (Repro, Expected (source: ...), Actual, Suspect, Root cause, Fix direction)
+**S2.** [ask] <title>      (Question, Options)
+**S3.** [blocked] <title>  (Needs)
+**S4.** [manual] <title>   (Steps, Look for)
+**S5.** [fixed] <title>    (Evidence)
+VERDICT: CLEAN | BUGS
+```
+
+  A reply with no valid report gets one automatic request to fix it, then a Retry / Stop menu. The reported bugs become the steps of the flow's plan file (`kind: "test"`); the end card lists the bugs found.
+- **Not in this version**: the automatic fix loop (fix round, judge, commit, retest), and `/flow resume` for test flows (they are refused).
+- Config: the `test` block of workflow.json (`concurrency`, `maxTasks`, `runnerTimeoutMs`, `maxRounds`, `refails`, `delivery`, `runnerTools`, `supervisorBashAllow`, `runnerDeny`, `runnerPathFlags`, `runnerPathEnv`) and the roles `test` and `runner`.
 
 ## Public contract for other extensions
 
@@ -193,9 +221,9 @@ Other extensions (the worktree extension in this repo) may rely on exactly these
 
 - **K1. `session-folders` entry.** `customType: "session-folders"`, data `{ "v": 1, "cwd": "<working folder, forward slashes>", "folders": ["<absolute, forward slashes>", ...] }`. The workflow is the only writer. It appends one whenever the added folders change, and at every session start (not reload) when the newest one is missing or differs. Readers use the newest entry on the branch; none means no added folders.
 - **K1b. Folder follow rule.** At session start (not reload), when saved state exists and the newest `session-folders` entry names another working folder than the current one, each added folder inside a git repo is replaced by the same path in the one worktree of that repo that sits next to the working folder's repo (same parent folder), if it exists. Plain folders, folders without exactly one such worktree and missing targets stay. A result equal to the working folder is dropped. A notice lists the moves.
-- **K2. Switch guard.** `session_before_switch` (`new` and `resume`) is cancelled while the phase is execute and a plan is approved, with the notice "a flow is executing; finish it or leave it with /flow off before switching sessions".
-- **K3. CLI flags.** `--add-dir` takes absolute folders joined by `;` on Windows and `:` elsewhere (applied at startup only, not again after a session switch); `--flow plan|execute|off` sets the start phase.
-- **K4. `workflow:status` event.** `pi.events.emit("workflow:status", { v: 1, phase: "off"|"plan"|"execute", flowId?, title?, stage?, stages? })`, emitted when the payload changes.
+- **K2. Switch guard.** `session_before_switch` (`new` and `resume`) is cancelled while the phase is execute and a plan is approved, or the phase is test and a test flow is active, with the notice "a flow is executing; finish it or leave it with /flow off before switching sessions".
+- **K3. CLI flags.** `--add-dir` takes absolute folders joined by `;` on Windows and `:` elsewhere (applied at startup only, not again after a session switch); `--flow plan|execute|test|off` sets the start phase.
+- **K4. `workflow:status` event.** `pi.events.emit("workflow:status", { v: 1, phase: "off"|"plan"|"execute"|"test", flowId?, title?, stage?, stages? })`, emitted when the payload changes.
 - **K5. Shell parser.** `readonly-bash.ts` exports `parseCommands`, `KEYWORDS` and `WRAPPERS`. Other extensions may import these three; changing their names, signatures or meaning is a contract change.
 
 ## Team knowledge
@@ -270,6 +298,7 @@ next run starts.
 |---|---|
 | `/flow` | status: phase, the model for each role, config path |
 | `/flow plan` / `execute` / `off` | switch phase (`off` leaves the model alone) |
+| `/flow test [scope]` | test phase: a strong supervisor plans tests, cheap runners run them, the report lists the bugs (without a scope, type it as the next message) |
 | `/flow approve` | approve the plan: switch to execute and start (also offered when a plan ends) |
 | `/flow delivery <commit\|push\|pr\|merge\|off>` | what happens after the judge passes, for the current flow |
 | `/flow escalate` (`fable`) / `/flow back` (`opusplan`) | manual escalation and return |
@@ -277,7 +306,7 @@ next run starts.
 | `/flow tokens` | token breakdown of the current flow so far |
 | `/flow model [role] [provider/id[:thinking]]` | set a role's model and save it to workflow.json; left out, it lists the roles, the models with auth and the thinking levels (Tab completes model IDs) |
 | `/flow reload` | re-read workflow.json |
-| `pi --flow execute` | start a session in a given phase |
+| `pi --flow execute` (`plan`, `test`, `off`) | start a session in a given phase |
 | `/folders add <path>` / `remove <path\|n>` / `list` | folders that are part of this session (reloads Pi); Tab completes folder paths after `add` and folder numbers after `remove` |
 | `pi --add-dir <path>` | start a session with extra folders (`;` separates several on Windows, `:` elsewhere) |
 
