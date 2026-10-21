@@ -2,7 +2,7 @@
 
 Reference list for `pi/agent/extensions/workflow/`. Goal: less time, fewer tokens, more parallelism.
 
-Status: A2, A3, A5, A7, B1, B7, B9, C2, C3, C4, D2, D3, D4, D5, D6, D7, D8, D9, D10, D11, D12 and D13 are implemented; A12 is implemented; A1 is rejected; the rest are ideas only. Found by reading the code on 2026-10-16. Nothing was measured, so every benefit below is an estimate. Line numbers are from commit `3fdc69a` and will drift.
+Status: A2, A3, A5, A7, B1, B7, B9, C2, C3, C4, D2, D3, D4, D5, D6, D7, D8, D9, D10, D11, D12, D13 and D14 are implemented; A13 and A14 are implemented; A12 is implemented; A1 is rejected; the rest are ideas only. Found by reading the code on 2026-10-16. Nothing was measured, so every benefit below is an estimate. Line numbers are from commit `3fdc69a` and will drift.
 
 ## Keeping this file current
 
@@ -40,6 +40,8 @@ Plan (Opus) -> approve -> execute (Sonnet) -> judge (Opus, separate `pi` process
 | A10 | A git call of the workflow (`index.ts` `git` helper) fails when another process holds a git lock (`cannot lock ref`, `index.lock`). Retry a few times with a short wait. Idea only. | Low (T) | S | Low. | How often flows fail on a lock when several sessions share a repo. |
 | A11 | Hand an approved plan to a free workspace of another session by starting it with `--flow resume:<id>`. Idea only; needs the flow claims of D10. | Medium (T) | M | Medium. | Whether users want to start plans in a second window. |
 | A12 | A test-and-fix flow: a strong supervisor plans and triages, Haiku runners run the tests in parallel (ordered by resource: Unity project, device), bugs are fixed automatically and retested. **Done:** the test phase, `test_run`, the runner guard and the report (`runner-guard.ts`, `test-report.ts`, `test-run.ts`), and the automatic fix loop: fix round → judge/arbiter → commit → retest (`test-flow.ts`, `index.ts`, `prompts.ts`). | High (Q), Medium (T) | L | Medium. Runners are cheap models; their claims are checked against their tool calls. | Whether runner tokens are the larger share, and whether fixes survive the retest. |
+| A13 | Commit, push, PR and merge happened only at the end of a stage or flow, so a plan that must publish and then continue needed a replan or a new flow. **Done:** checkpoints: the `deliver` tool (judge-gated, limited by the stage's delivery, unplanned ones amend the plan), `Deliver:` steps and the tag action (`checkpoints.ts`, `tags.ts`, `index.ts`, `prompts.ts`). | High (T) | M | Medium. Delivery is outward-facing, so it is capped and gated. | Checkpoints per flow. |
+| A14 | A flow could not wait for a person (publish with `updates.bat`, open an Editor): a blocked stage ended as "delivered: no changes" and the flow moved on. **Done:** wait points: `wait_for_user`, `Wait:` steps, stage-start `(after: ...; check: ...)`, polled checks with auto-resume, and a stage with open steps no longer advances on a no-change turn (`waits.ts`, `stages.ts`, `agent-end.ts`, `plan-doc.ts`, `config.ts`, `index.ts`). | High (T) | M | Medium. Auto-resume sends a message when the check passes. | Stages ending "no changes" with open steps. |
 
 ## B. Tokens
 
@@ -85,6 +87,7 @@ Plan (Opus) -> approve -> execute (Sonnet) -> judge (Opus, separate `pi` process
 | D11 | Nothing stopped the workflow from growing a dependency on the worktree extension. **Done:** `boundary.test.ts` in both extensions (the workflow never refers to the worktree extension; the worktree extension imports only `readonly-bash.ts` from the workflow). | Low (T) | S | None. | None. |
 | D12 | After `ctx.switchSession()` the `--add-dir` launch flag was applied again, so the folders of the set a session just left came back. **Done:** the flag is applied only at `startup`. | Low (T) | S | None. | None. |
 | D13 | `/folders add` inside a worktree set attached the original checkout, so edits went outside the set. **Done:** K6 hook `workflow:folder-add` (`folder-add.ts`, `/folders add` in `index.ts`); the worktree extension answers it. | Medium (T) | M | Low. No listener: unchanged. | None. |
+| D14 | A commit step that committed on a new branch (pr/merge delivery) was reported as "ended without a commit", and a commit-only instruction did not forbid a chained `git push`. **Done:** `outcomeRef`/`landedBranch` in `delivery.ts`, delivery split into prepare, commit step and outcome in `index.ts`, `NO_PUSH` in the commit-only instruction. | Medium (T) | S | Low. | "Commit step ended without a commit" outcomes where commits exist. |
 
 ## Effect measurement
 
@@ -136,9 +139,12 @@ Method for every item:
 | D11 | n/a | Tests only | n/a |
 | D12 | n/a | Folders stay as moved | n/a |
 | D13 | n/a | Added folders inside a set are worktrees | n/a |
+| D14 | "Commit step ended without a commit" outcomes where commits exist | Count in flow outcomes. Implemented, not measured yet. | Zero such outcomes |
 | A10 | Flow steps failed by `cannot lock ref` | Count in session logs | Idea only, not measured |
 | A11 | Plans started in a second workspace | n/a | Idea only |
 | A12 | User prompts per test flow; supervisor vs runner tokens (D3 metrics); bugs verified fixed per flow | Count the questions asked per flow, compare `test` and `runner` tokens in the flow card, count `[fixed]` items. Not measured yet. | Most flows end without prompts beyond the crucial cases; runner tokens are the larger share; no fix is committed that the retest shows broken |
+| A13 | Checkpoints per flow; stage counts per plan | Count `checkpoint` lines in flow outcomes and `### Stage` headings per plan. Implemented, not measured yet. | Fewer plans split only to deliver midway |
+| A14 | Replans per original plan; stages ending "no changes" with open steps; how many times the user asked "have all stages finished?" | Count `Amendment N (executor: wait)` and replans in session logs. Implemented, not measured yet. | No stage ends "no changes" while steps are open |
 
 What to report after each change: baseline median, new median, percent change, and the quality-guard result, appended to `docs/workflow-baseline.md`.
 

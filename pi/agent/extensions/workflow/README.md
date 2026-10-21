@@ -62,7 +62,8 @@ after approval runs on its own:
   differently; otherwise the flow's delivery applies, and `off` for the flow wins (nothing is delivered, the
   stages still follow one another after each judge pass). If a stage's delivery is incomplete (push failed, merge
   blocked, no commit), a menu asks to continue with the next stage or stop; without a UI it stops. The judge is told
-  which stage it reviews.
+  which stage it reviews. A stage heading may also end in `(after: <what>; check: <command>)`: the stage then starts
+  with a wait point (see below). Both tags work in either order.
 - **Delivery** (chosen for each flow at approval; `delivery` in workflow.json): `commit` only (default),
   `push`, `pr` (also opens a pull request, or reuses the branch's open one), `merge` (also waits for the
   checks with `gh pr checks --watch`, then `gh pr merge --merge --delete-branch`), or `off`. Commits are split by
@@ -105,7 +106,7 @@ after approval runs on its own:
   the code, and drops the finding only if the code shows the executor is right.
 - **Turning steps back to manual:** set `"autoJudge": "ask"`, `"delivery": { "default": "off" }`
   (nothing is committed unless you pick it at approval), and `"planPrompt": false` for a "say go" hint instead of the Approve menu.
-  `"handoverCompactTokens": 0` turns off compaction at handovers. `"returnToPlan": false` stays in execute after a flow ends. `"planRecap": "always"` makes every planner reply repeat the plan. `"stageAdvance": "auto"` (default) starts the next stage at once, even after an incomplete delivery or a stage with no changes, with a warning (not after a run you aborted); `"ask"` asks first. When `gh` is not on PATH, the workflow looks in the standard GitHub CLI install folders and adds the one it finds to pi's PATH; when there is none, outcomes say the PR state is unknown. `"stagedPlans": "onRequest"` makes the planner use stages only when you ask for delivery in parts.
+  `"handoverCompactTokens": 0` turns off compaction at handovers. `"returnToPlan": false` stays in execute after a flow ends. `"planRecap": "always"` makes every planner reply repeat the plan. `"stageAdvance": "auto"` (default) starts the next stage at once, even after an incomplete delivery or a stage with no changes, with a warning (not after a run you aborted, and never while the stage has open steps, no changes and no judge call); `"ask"` asks first. When `gh` is not on PATH, the workflow looks in the standard GitHub CLI install folders and adds the one it finds to pi's PATH; when there is none, outcomes say the PR state is unknown. `"stagedPlans": "onRequest"` makes the planner use stages only when you ask for delivery in parts.
 
 ## The plan, the judge and the arbiter
 
@@ -116,7 +117,7 @@ after approval runs on its own:
   contracts, not code: what to change, why and how it must behave. The execute model writes the code
   and the judge checks the result against it. With `finalizePlan: false` the last `Plan:` reply is used.
 - **Execute** follows the plan in order and writes the code within its contracts.
-  It stops and says so when a step cannot be done as written. It never commits or pushes: at a delivery point it ends its turn after the judge passes.
+  It stops and says so when a step cannot be done as written. It never runs `git commit` or `git push` itself (the push guard refuses them): at a delivery point it ends its turn after the judge passes, or it calls `deliver` (see Checkpoints).
   When the flow ends it switches back to the plan phase (`returnToPlan`, default on).
 - **The judge** runs in its own session. It sees the approved plan and the diff, not the discussion,
   and assumes the change is wrong. It is asked to stay within about 15 read/grep/find/ls calls on a full review and about 8 on a re-review (knowledge calls excluded), a soft aim, not a limit. What it trusts:
@@ -143,6 +144,30 @@ after approval runs on its own:
   whatever `planFlaw` is: `KEEP` commits, `REVISE` reworks before the commit. If the arbiter cannot decide,
   the flaws are noted, the commit goes ahead and the flow summary says "N plan flaw(s) not settled". A
   blocker plan flaw, or one in a FAIL, blocks the commit until resolved.
+
+## Wait points, checkpoints and tags
+
+These let one plan deliver or pause partway through, without replanning and without changing step or stage numbers. Without the tools below, flows behave as before.
+
+**Wait points.** Some steps need a person (publish a package with `updates.bat`, open the Unity Editor).
+- **Plan syntax:** a step `**S7.** Wait: <what> (check: <read-only command>)`, or a stage heading ending in `(after: <what>; check: <command>)` that holds the stage back until the wait is over.
+- **Tool:** `wait_for_user {reason, check?, step?}` (execute phase only). The check must pass the read-only bash filter. An unplanned wait adds `## Amendment N (executor: wait)` to the plan.
+- **Polling:** with a `check`, the workflow runs it every 2 minutes for up to 1 hour. When it exits 0 and the session is idle, the flow resumes by itself with a message naming the wait; `wait.autoResume: false` only notifies. Without a check, or after the hour, your next typed message ends the wait ("Continue anyway" / "Keep waiting" when you type while a check still fails).
+- **State:** the plan card, the status bar (`workflow-wait`) and the plan file show the wait; plan, stage and ticks stay. It survives `/flow resume`.
+- **Config:** `wait: { pollMs: 120000, maxMs: 3600000, checkTimeoutMs: 30000, autoResume: true }`.
+- **No-change stages:** a stage that ends with no changes, no judge call and open steps waits instead of counting as "delivered: no changes".
+
+**Checkpoints.** `deliver {mode?, tag?, step?, reason?}` delivers inside the executor's turn and then continues the same stage.
+- **Limit:** `mode` (`commit`, `push`, `pr`, `merge`) may not go beyond the stage's delivery (the flow's, or the heading's `(delivery: …)`); `off` allows none.
+- **Gate:** the diff must pass the judge first (an unchanged passed diff is reused). The commit subagent does the delivery; the executor's own shell still cannot commit or push.
+- **Plan:** a step `**S4.** Deliver: push` is a planned checkpoint. A call without one adds `## Amendment N (executor: checkpoint)`; a retried call adds no second amendment.
+- **Outcomes:** each checkpoint is recorded (kept over `/flow resume`) and listed in the stage and flow outcome (`checkpoint S4: …`); the judge is told which checkpoints were delivered earlier. An unstaged flow whose remaining changes were all delivered at checkpoints ends with that outcome.
+
+**Tags.** Tags are made only when the plan has a `Deliver:` step for them or the executor asks through `deliver {tag}`; the workflow never tags on its own, and never publishes packages.
+- **Create:** a plain push of a new tag; an existing tag is never overwritten.
+- **Move:** needs a plan step that names the tag and says "move"; pushed with `--force-with-lease=refs/tags/<name>:<sha>` on the recorded SHA, and only forward (the old commit must be an ancestor of the new one).
+- **Target:** defaults to the tip of the remote default branch and must be on it. `--no-verify` and a bare `--force` are never used.
+- **Several sessions:** a lost race, a refused move or a failed push waits for a person instead of overwriting.
 
 ## Plan phase is read-only
 
