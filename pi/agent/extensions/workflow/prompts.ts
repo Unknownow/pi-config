@@ -140,10 +140,9 @@ Artifacts: <paths of the files you wrote, comma-separated, or none>
 PASS when the card's "Pass when" holds, FAIL when it does not, ERROR when you could not run the task.`;
 
 /** Text for the `workflow` prompt section: the bridge drops a returned systemPrompt but forwards sections. */
-export function phaseSection(phase: string, opts: { finalize: boolean; staging: StagedPlans; recap: PlanRecap; stage?: string }): string | null {
+export function phaseSection(phase: string, opts: { finalize: boolean; staging: StagedPlans; recap: PlanRecap; stage?: string; testFix?: boolean }): string | null {
 	if (phase === "plan") return planPhase(opts.finalize, opts.staging, opts.recap);
-	if (phase === "execute") return opts.stage ? `${EXECUTE_PHASE}
-${opts.stage}` : EXECUTE_PHASE;
+	if (phase === "execute") return [EXECUTE_PHASE, opts.stage, opts.testFix ? FIX_ROUND : undefined].filter(Boolean).join("\n");
 	if (phase === "test") return TEST_PHASE;
 	return null;
 }
@@ -167,6 +166,53 @@ Read the transcript, check claims against the code with your read-only tools whe
 - Watch out: pitfalls the agent is likely to hit.
 For "done?" questions, compare the work against the plan and the user's requests and list every gap.
 Be direct and brief (at most ~300 words). You do not edit files.`;
+
+/** Added to the execute prompt in a fix round of a test flow. */
+export const FIX_ROUND = `
+## Fix round of a test flow
+The steps come from a test report: each [bug] step has a Repro, an Expected and maybe a Fix direction.
+- Fix the root cause. Treat the Fix direction as a claim to verify against the code, not as an order.
+- Add a regression test that fails without the fix, or say in your report why none can exist for that layer.
+- Run the step's Repro and the suites named under Facts before you call judge.
+- Never change an existing test's expectation or an expected value unless the step says it is wrong.
+- Fix only the listed steps. Report other problems you see instead of fixing them.
+- Restore or delete stray files from testing unless a step needs them.`;
+
+/** Added after JUDGE when the change is a fix round of a test flow. */
+export const JUDGE_TEST = `
+## Fix round of a test flow
+The plan's steps come from a test report. In addition to the rules above:
+- A weakened, deleted or rewritten existing test or expected value is major, unless the step says the expectation is wrong.
+- A fix that special-cases the repro input instead of fixing the root cause is major.
+- A fix without a regression test that fails without it, and without a stated reason why none can exist, is minor.
+- Changes beyond the listed steps are major.
+- A step whose Expected contradicts the source it cites is a [plan-flaw], not a code finding.`;
+
+/** Added after ARBITER when the plan's steps come from a test report. */
+export const ARBITER_TEST = `
+## Steps from a test report
+The steps come from a test report. Decide each disputed Expected from the source it cites (a spec, a doc, the code's own contract).
+REVISE amends that step's Expected and Fix direction. ASK_USER when the source is ambiguous.`;
+
+/** The message that starts a test round after a fix round or an answer. */
+export function testRoundMessage(o: { why: "retest" | "answers"; fixed: { id: string; repro: string }[]; ran: string[]; answers: string[]; nextId: number }): string {
+	return [
+		o.why === "retest" ? "The fix round is committed. Test again." : "The user answered your questions. Test again with the answers.",
+		o.fixed.length ? `Re-run these repros and report each as [fixed] or [bug]:\n${o.fixed.map((f) => `- ${f.id}: ${f.repro || "(no repro recorded)"}`).join("\n")}` : "",
+		o.ran.length ? `Re-run these as the regression check:\n${o.ran.map((r) => `- ${r}`).join("\n")}` : "",
+		o.answers.length ? `The user's answers:\n${o.answers.join("\n")}` : "",
+		`The next free ID is S${o.nextId}.`,
+		"Then continue with the parts of the scope not yet covered. End with the test report.",
+	].filter(Boolean).join("\n\n");
+}
+
+/** The message that starts a fix round. */
+export function fixRoundMessage(stepIds: string[], strays: string[]): string {
+	return [
+		`A test round found bugs. Fix ${stepIds.join(", ")} of the plan, following the fix-round rules, then call judge.`,
+		strays.length ? `Files changed during testing (restore or delete them unless a step needs them):\n${strays.map((s) => `- ${s}`).join("\n")}` : "",
+	].filter(Boolean).join("\n\n");
+}
 
 export const JUDGE = `You are the judge for a software change: an independent, adversarial reviewer in a separate session. Assume the change is wrong until the code proves otherwise; you did not write it and owe it nothing.
 You get the approved plan (when there is one) and the diff. Use your read-only tools on surrounding code, callers, tests and config.

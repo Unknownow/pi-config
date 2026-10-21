@@ -51,3 +51,16 @@ test("the test report template parses", async () => {
 	assert.deepEqual(r.problems, []);
 	assert.equal(r.items.length, 5);
 });
+
+test("fix round prompts", async () => {
+	const p = await import("./prompts.ts");
+	const opts = { finalize: false, staging: "off", recap: "off" } as never;
+	assert.ok(!p.phaseSection("execute", opts)!.includes("Fix round of a test flow"));
+	assert.ok(p.phaseSection("execute", { ...(opts as object), testFix: true } as never)!.includes("regression test"));
+	assert.ok(!p.JUDGE.includes("test flow"));
+	assert.match(p.JUDGE_TEST, /weakened, deleted or rewritten/);
+	assert.match(p.ARBITER_TEST, /ASK_USER/);
+	const msg = p.testRoundMessage({ why: "retest", fixed: [{ id: "S1", repro: "run it" }], ran: ["unity run-tests"], answers: ["D2. S3: yes"], nextId: 5 });
+	for (const t of ["S1: run it", "unity run-tests", "D2. S3: yes", "S5"]) assert.ok(msg.includes(t), t);
+	assert.match(p.fixRoundMessage(["S1", "S2"], ["repo: ?? x"]), /S1, S2[\s\S]*repo: \?\? x/);
+});
