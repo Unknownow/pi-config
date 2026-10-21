@@ -68,6 +68,8 @@ import { commitPlan, type Finished, mergeChecklist, newFlowId, openStepsReminder
 import { adoptHigher, claimLive, commitRef, dropClaim, pidAlive, readClaim, writeClaim, deleteLocal, deleteRef, fetchMirror, type Git, listRefs, plansDir, pushRef, readLocalStatuses, readPlanMd, refRev, remoteOf, repoInfo, type RefEntry, writeLocal } from "./plan-store.ts";
 import { type FlowFinding, recordFindings, reportFindings, type ReportStep } from "./flow-report.ts";
 import { readOnlyProblem } from "./readonly-bash.ts";
+import { checkpointAmendment, checkpointNote, checkpointOutcome, hasCheckpointAmendment, checkpointText, isPlannedTag, modeAllowed, parseDeliverStep, withCheckpoints } from "./checkpoints.ts";
+import { pushArgs, tagDecision } from "./tags.ts";
 import { parseWaitStep, pollDecision, resumePrefix, waitAmendment } from "./waits.ts";
 import { nextStage, parseStages, stageDelivery, stageLine, stageNote, stageStart, stagesOutcome } from "./stages.ts";
 import { planToolProblem, planToolRefused } from "./readonly-tools.ts";
@@ -896,7 +898,23 @@ export default function workflow(pi: ExtensionAPI) {
 		const staged = currentStages();
 		const note = staged ? `\n\n${stageNote(staged.stages, staged.current)}` : "";
 		const list = state.checklist?.length ? `\n\n## Executor's checklist (claims, not proof)\n${state.checklist.map((i) => `- [${i.done ? "x" : " "}] ${i.id} ${i.text}`).join("\n")}` : "";
-		return trimPlan(plan) + note + list;
+		return trimPlan(plan) + note + list + checkpointSection();
+	}
+
+	/** Checkpoints delivered earlier: this stage's in a staged plan, all of them otherwise. */
+	function stageCheckpoints(): NonNullable<FlowState["checkpoints"]> {
+		const staged = currentStages();
+		return (state.checkpoints ?? []).filter((c) => !staged || c.stage === staged.current);
+	}
+
+	function checkpointSection(): string {
+		const note = checkpointNote(stageCheckpoints());
+		return note ? `\n\n${note}` : "";
+	}
+
+	/** N of the next `## Amendment N`: the amendments already in the approved plan + 1 (shared by the arbiter and the executor). */
+	function nextAmendmentNumber(): number {
+		return (state.approvedPlan?.match(/^## Amendment \d+/gm) ?? []).length + 1;
 	}
 
 	/** The commit step's view of the plan: goal, commits, amendments and the stage being delivered; the whole plan when it has no Commits section. */
@@ -904,7 +922,7 @@ export default function workflow(pi: ExtensionAPI) {
 		const excerpt = commitPlan(state.approvedPlan ?? "");
 		if (!excerpt) return `## Approved plan\n\n${planForJudge()}`;
 		const staged = currentStages();
-		return staged ? `${excerpt}\n\n${stageNote(staged.stages, staged.current)}` : excerpt;
+		return (staged ? `${excerpt}\n\n${stageNote(staged.stages, staged.current)}` : excerpt) + checkpointSection();
 	}
 
 	/** `planCardText` once the plan file is written: waits for the plan write queue, at most 10 s, so the card can name the file. */
@@ -986,7 +1004,7 @@ export default function workflow(pi: ExtensionAPI) {
 		touched: string[];
 		finished?: Finished;
 		waiting?: NonNullable<PlanStatus["waiting"]>;
-		checkpoints?: { step?: string; text: string; ok: boolean }[];
+		checkpoints?: { step?: string; stage?: number; text: string; ok: boolean }[];
 		/** A restore of the file (no new rev): never commits over a newer ref. */
 		retry?: boolean;
 	}
@@ -1121,7 +1139,7 @@ export default function workflow(pi: ExtensionAPI) {
 		const w = state.waiting;
 		return {
 			...(w ? { waiting: { reason: w.reason, ...(w.check ? { check: w.check } : {}), since: w.since, planned: w.planned, ...(w.atStageStart ? { atStageStart: true } : {}), ...(w.held ? { held: w.held } : {}) } } : {}),
-			...(state.checkpoints?.length ? { checkpoints: state.checkpoints.map((c) => ({ ...(c.step ? { step: c.step } : {}), text: c.text, ok: c.ok })) } : {}),
+			...(state.checkpoints?.length ? { checkpoints: state.checkpoints.map((c) => ({ ...(c.step ? { step: c.step } : {}), ...(c.stage ? { stage: c.stage } : {}), text: c.text, ok: c.ok })) } : {}),
 		};
 	}
 
@@ -2043,8 +2061,7 @@ export default function workflow(pi: ExtensionAPI) {
 			const step = params.step?.trim().toUpperCase() || undefined;
 			const planned = !!step && !!parseWaitStep(plan, step);
 			if (!planned) {
-				const n = (plan.match(/^## Amendment \d+/gm) ?? []).length + 1;
-				state.approvedPlan = `${plan.replace(/\s+$/, "")}\n\n${waitAmendment(n, { reason, step, check })}\n`;
+				state.approvedPlan = `${plan.replace(/\s+$/, "")}\n\n${waitAmendment(nextAmendmentNumber(), { reason, step, check })}\n`;
 				refreshChecklist();
 			}
 			state.waiting = { reason, ...(check ? { check } : {}), ...(step ? { step } : {}), stage: state.stage, since: new Date().toISOString(), planned };
@@ -2175,6 +2192,199 @@ export default function workflow(pi: ExtensionAPI) {
 		},
 		renderCall(args, theme) {
 			return new Text(`${title(theme, "judge", "judge")} ${theme.fg("dim", String(args.focus ?? "current diff"))}`, 0, 0);
+		},
+		renderResult: (result, opts, theme) => renderRuns(result, opts, theme, 40),
+	});
+
+	/** The tag part of `deliver`: creates or moves a tag on the remote default branch, safely. A wait is returned for the caller to set. */
+	async function deliverTag(ctx: ExtensionContext, t: { name: string; commit?: string; move: boolean; repo?: string }, planned: boolean): Promise<{ text: string; ok: boolean; wait?: string }> {
+		const fail = (text: string) => ({ text: `tag ${t.name}: ${text}`, ok: false });
+		const refs = await flowRepos(ctx);
+		const want = t.repo?.trim();
+		const ref = want ? refs.find((r) => r.root === want || path.basename(r.root) === want || repoKey(r.root) === repoKey(want)) : undefined;
+		if (want && !ref) return fail(`no repo of this flow matches "${want}"`);
+		const dir = ref?.dir ?? ctx.cwd;
+		const remotes = (await git(dir, "remote")).stdout.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+		const remote = remotes.includes("origin") ? "origin" : remotes[0];
+		if (!remote) return fail("the repo has no remote");
+		const sym = await git(dir, "ls-remote", "--symref", remote, "HEAD");
+		const head = /^ref:\s+refs\/heads\/(\S+)\s+HEAD/m.exec(sym.stdout);
+		if (sym.code !== 0 || !head) return fail(`cannot read the default branch of ${remote}`);
+		const branch = head[1];
+		const fetched = await git(dir, "fetch", remote, branch);
+		if (fetched.code !== 0) return fail(`cannot fetch ${remote} ${branch}`);
+		const remoteRef = `${remote}/${branch}`;
+		const resolved = await git(dir, "rev-parse", "--verify", "--quiet", `${t.commit?.trim() || remoteRef}^{commit}`);
+		const target = resolved.stdout.trim();
+		if (resolved.code !== 0 || !target) return fail(`cannot resolve ${t.commit?.trim() || remoteRef}`);
+		const onDefault = (await git(dir, "merge-base", "--is-ancestor", target, remoteRef)).code === 0;
+
+		const listed = await git(dir, "ls-remote", "--tags", remote, `refs/tags/${t.name}`, `refs/tags/${t.name}^{}`);
+		if (listed.code !== 0) return fail(`cannot read the tags of ${remote}`);
+		let tagObject: string | undefined;
+		let peeled: string | undefined;
+		for (const line of listed.stdout.split(/\r?\n/)) {
+			const [sha, ref2] = line.trim().split(/\s+/);
+			if (ref2 === `refs/tags/${t.name}`) tagObject = sha;
+			else if (ref2 === `refs/tags/${t.name}^{}`) peeled = sha;
+		}
+		const remoteSha = peeled ?? tagObject;
+		let oldIsAncestor: boolean | undefined;
+		if (remoteSha && t.move) {
+			if ((await git(dir, "cat-file", "-e", `${remoteSha}^{commit}`)).code !== 0) {
+				// A tag ref is always fetchable; a raw SHA only where the server allows it.
+				const viaRef = await git(dir, "fetch", remote, `+refs/tags/${t.name}:refs/tmp-deliver/${t.name}`);
+				if (viaRef.code !== 0) await git(dir, "fetch", remote, remoteSha);
+				await git(dir, "update-ref", "-d", `refs/tmp-deliver/${t.name}`);
+			}
+			oldIsAncestor = (await git(dir, "merge-base", "--is-ancestor", remoteSha, target)).code === 0;
+		}
+		const d = tagDecision({ name: t.name, planned, move: t.move, remoteSha, target, onDefault, oldIsAncestor });
+		if (d.action === "refuse") return { text: `tag ${t.name}: ${d.text}`, ok: d.ok === true };
+		if (d.action === "wait") return { text: `tag ${t.name}: ${d.reason}`, ok: false, wait: d.reason };
+		const lease = d.action === "move" ? (tagObject ?? d.lease) : undefined;
+		const pushed = await pi.exec("git", ["-C", dir, ...pushArgs(remote, t.name, target, lease)], { timeout: 120_000 });
+		if (pushed.code !== 0) {
+			const why = `tag ${t.name} was not pushed: ${(pushed.stderr || pushed.stdout).split(/\r?\n/).find((l) => l.trim())?.trim() ?? "git push failed"}`;
+			return { text: why, ok: false, wait: why };
+		}
+		const synced = await git(dir, "fetch", remote, `+refs/tags/${t.name}:refs/tags/${t.name}`);
+		const note = synced.code === 0 ? "" : " (the local tag was not updated)";
+		return { text: d.action === "move" ? `moved ${t.name} from ${(remoteSha as string).slice(0, 9)} to ${target.slice(0, 9)}${note}` : `tag ${t.name} created at ${target.slice(0, 9)}${note}`, ok: true };
+	}
+
+	pi.registerTool({
+		name: "deliver",
+		label: "Deliver",
+		description:
+			"Deliver inside the plan, then carry on in the same turn: commit, push, open a pull request or merge (`mode`), and/or create or move a tag on the remote default branch (`tag`). Within this stage's approved delivery only. The diff must pass the judge first (an unchanged passed diff is reused). Name the plan's `Deliver:` step as `step`; a call without one is added to the plan as an amendment. Tags are created or moved only for a named plan step or when you need them to continue; a move needs a plan step that names the tag and the word move.",
+		promptSnippet: "deliver: commit/push/PR/merge and tags inside the plan (judge-gated), then continue",
+		parameters: Type.Object({
+			mode: Type.Optional(Type.String({ description: "commit, push, pr or merge. Omit to only handle a tag." })),
+			tag: Type.Optional(
+				Type.Object({
+					name: Type.String({ description: "Tag name, e.g. unity-build/v1.0.8" }),
+					commit: Type.Optional(Type.String({ description: "Commit to tag. Default: the tip of the remote default branch" })),
+					move: Type.Optional(Type.Boolean({ description: "Move an existing tag forward (needs a plan step that names it)" })),
+					repo: Type.Optional(Type.String({ description: "Repo root or folder name. Default: the working folder's repo" })),
+				}),
+			),
+			step: Type.Optional(Type.String({ description: "The plan's Deliver step, e.g. S4" })),
+			reason: Type.Optional(Type.String({ description: "Why, for an unplanned checkpoint (goes into the plan's amendment)" })),
+		}),
+		async execute(_id, params, signal, onUpdate, ctx) {
+			const reply = (text: string, details?: unknown) => ({ content: [{ type: "text" as const, text }], details });
+			const plan = state.approvedPlan;
+			if (state.phase !== "execute" || !plan) return reply("deliver works only while executing an approved plan. Nothing changed.");
+			const staged = currentStages();
+			const stage = staged?.stages[staged.current - 1];
+			const cap = stageDelivery(state.delivery ?? defaultDelivery(), stage);
+			if (cap === "off") return reply("Delivery is off for this stage. Nothing changed.");
+			const mode = params.mode?.trim().toLowerCase() || undefined;
+			const tag = params.tag && params.tag.name?.trim() ? { ...params.tag, name: params.tag.name.trim(), move: params.tag.move === true } : undefined;
+			if (!mode && !tag) return reply("Give a mode (commit, push, pr, merge) or a tag. Nothing changed.");
+			if (mode && !["commit", "push", "pr", "merge"].includes(mode)) return reply(`Unknown mode "${mode}": use commit, push, pr or merge. Nothing changed.`);
+			if (mode && !modeAllowed(mode, cap)) return reply(`mode ${mode} is beyond this stage's delivery (${cap}). Nothing changed.`);
+			if (tag && !modeAllowed("push", cap)) return reply(`A tag is pushed: this stage's delivery (${cap}) does not allow a push. Nothing changed.`);
+
+			const step = params.step?.trim().toUpperCase() || undefined;
+			const stepText = step ? parseDeliverStep(plan, step) : null;
+			const planned = stepText !== null;
+			if (!planned) {
+				const reason = params.reason?.trim() || "needed to continue";
+				const amend = { mode, tag: tag?.name, reason };
+				if (!hasCheckpointAmendment(plan, amend)) {
+					state.approvedPlan = `${plan.replace(/\s+$/, "")}\n\n${checkpointAmendment(nextAmendmentNumber(), amend)}\n`;
+					refreshChecklist();
+					planMilestone(ctx);
+					persist();
+				}
+			}
+
+			const parts: string[] = [];
+			let ok = true;
+			let acted = false;
+			let waitReason: string | undefined;
+			if (mode) {
+				const diff = await collectFlowDiff(ctx);
+				if (!diff) throw new Error("no git work tree in this flow (working folder, /folders, or repos edited this flow); deliver commits git diffs");
+				if (!diff.text || (diff.multi && !diff.repos.some((r) => r.changed))) parts.push("no changes to deliver");
+				else {
+					const reuse = state.passedDiff === diff.hash && state.lastJudge?.hash === diff.hash && state.lastJudge.verdict === "PASS";
+					if (!reuse) {
+						if (staged) state.stageJudged = true;
+						const progress = toolProgress(onUpdate);
+						const r = await judge(ctx, diff, params.reason?.trim() || undefined, signal, progress.track);
+						if (r.verdict === "ERROR") throw new Error(r.text);
+						if (r.verdict === "FAIL") state.judgeRounds++;
+						let text = r.text;
+						const reminder = openStepsReminder(state.checklist, staged?.current);
+						if (reminder) text += `\n\n${reminder}`;
+						state.pendingPlanFlaw = hasPlanFlaw(r.text) ? r.text : undefined;
+						persist();
+						if (r.verdict === "FAIL") return reply(`${text}\n\nNot delivered: fix the findings and call deliver again.`, { runs: progress.snapshot(), verdict: r.verdict });
+						if (state.pendingPlanFlaw) return reply(`${text}\n\nThis review questions the plan. Do not change the plan's design yourself: end your turn now; the workflow resolves it. Nothing was delivered.`, { runs: progress.snapshot(), verdict: r.verdict });
+					}
+					if (!fs.existsSync(COMMIT_GUARD_EXTENSION)) return reply(`Not delivered: commit guard extension not found at ${COMMIT_GUARD_EXTENSION}.`);
+					const knowledge = state.lastKnowledge?.hash === diff.hash ? state.lastKnowledge : undefined;
+					if (knowledge?.status === "unavailable" && ctx.hasUI) {
+						const choice = await ctx.ui.select(`Judge passed, knowledge not checked: ${knowledge.reason}`, ["Commit anyway", "Stop"]);
+						if (choice !== "Commit anyway") return reply("Not delivered: stopped at the knowledge check.");
+					}
+					const seed = branchName(cfg.delivery.branchPrefix, stage?.title || planTitle(plan), new Date());
+					const { pending, instruction } = await prepareAllRepos(ctx, diff, mode as Exclude<Delivery, "off">, seed, knowledge ? deviationBlock(knowledge.deviations) : "");
+					view.stage = "commit";
+					view.changed();
+					let report: string;
+					let outcome: { text: string; ok: boolean };
+					try {
+						report = await runCommitSubagent(ctx, instruction, mode as Delivery, pending, signal);
+						outcome = await readOutcome(ctx, pending);
+					} finally {
+						view.stage = "execute";
+						view.changed();
+					}
+					committedDiffs.add(diff.hash);
+					state.lastJudge = undefined;
+					state.passedDiff = undefined;
+					state.stageJudged = false;
+					acted = true;
+					ok = outcome.ok;
+					parts.push(outcome.text);
+					if (!outcome.ok && report) parts.push(`commit step: ${report.slice(0, 500)}`);
+				}
+			}
+			if (tag) {
+				if (mode && !ok) parts.push(`tag ${tag.name} not attempted: the delivery is incomplete`);
+				else {
+					acted = true;
+					const t = await deliverTag(ctx, tag, isPlannedTag(stepText, tag.name, tag.move));
+					parts.push(t.text);
+					if (!t.ok) ok = false;
+					waitReason = t.wait;
+				}
+			}
+			if (waitReason) {
+				state.waiting = { reason: waitReason, ...(planned && step ? { step } : {}), stage: state.stage, since: new Date().toISOString(), planned };
+			}
+			const text = parts.join("; ");
+			if (acted) {
+				state.checkpoints = [...(state.checkpoints ?? []), { ...(planned && step ? { step } : {}), stage: state.stage, text: checkpointText(planned ? step : undefined, text), ok }];
+			}
+			persist();
+			updateStatus(ctx);
+			planMilestone(ctx);
+			if (waitReason) return reply(`${text}\n\nWaiting for: ${waitReason}. End your turn now; the workflow resumes you when the user replies.`);
+			const branches: string[] = [];
+			for (const ref of await flowRepos(ctx)) {
+				const b = (await git(ref.dir, "rev-parse", "--abbrev-ref", "HEAD")).stdout.trim();
+				if (b) branches.push(`${path.basename(ref.root)}: ${b}`);
+			}
+			return reply(`${text}${branches.length ? `\n\nCurrent branch: ${branches.join(", ")}` : ""}\n\nContinue with the next steps in this turn.`);
+		},
+		renderCall(args, theme) {
+			const what = [args.mode, args.tag?.name ? `tag ${args.tag.name}` : ""].filter(Boolean).join(" + ");
+			return new Text(`${title(theme, "deliver", "execute")}${theme.fg("accent", ` ${what}`)}`, 0, 0);
 		},
 		renderResult: (result, opts, theme) => renderRuns(result, opts, theme, 40),
 	});
@@ -2738,9 +2948,27 @@ export default function workflow(pi: ExtensionAPI) {
 		await stageWithoutChanges(ctx, staged);
 	}
 
+	/** An unstaged flow whose remaining changes were all delivered by checkpoints: ends it with their outcome. Open steps ask first (and do nothing without a UI). */
+	async function flowWithoutChanges(ctx: ExtensionContext): Promise<void> {
+		const outcome = checkpointOutcome(state.checkpoints ?? []);
+		if (!outcome || state.phase !== "execute" || turnAborted) return;
+		if ((state.checklist ?? []).some((i) => !i.done)) {
+			if (!ctx.hasUI) return;
+			const yes = "Mark done and finish";
+			if ((await ctx.ui.select("All changes were delivered at checkpoints, but plan steps are still open", [yes, "Wait"])) !== yes) return;
+		}
+		state.minorRounds = 0;
+		state.minorSentFor = undefined;
+		state.delivery = undefined;
+		state.planFlaw = undefined;
+		view.stage = "execute";
+		if (!summarizeFlow(outcome.text, outcome.ok)) persist();
+		await endFlow(ctx);
+	}
+
 	/** A staged plan's stage ended with nothing to review: records it and starts the next stage, or ends the flow after the last one. */
 	async function stageWithoutChanges(ctx: ExtensionContext, staged: { stages: ReturnType<typeof parseStages>; current: number }): Promise<void> {
-		const outcome = { text: "no changes", ok: true };
+		const outcome = checkpointOutcome(stageCheckpoints()) ?? { text: "no changes", ok: true };
 		state.stageOutcomes = [...(state.stageOutcomes ?? []), outcome];
 		if (staged.current < staged.stages.length) {
 			startNextStage(ctx, staged.stages, outcome.text);
@@ -2785,6 +3013,8 @@ export default function workflow(pi: ExtensionAPI) {
 		state.minorRounds = 0;
 		state.minorSentFor = undefined;
 		let outcome = await readOutcome(ctx, pending);
+		const cps = stageCheckpoints();
+		if (cps.length && !state.testFlow) outcome = { text: withCheckpoints(cps.map((c) => c.text), outcome.text), ok: outcome.ok && cps.every((c) => c.ok) };
 		if (state.testFlow) {
 			if (!outcome.ok) ctx.ui.notify(`workflow: the fix round's delivery is incomplete (${outcome.text}); testing again anyway`, "warning");
 			await startTestRound(ctx, "retest");
@@ -2899,6 +3129,7 @@ export default function workflow(pi: ExtensionAPI) {
 				}
 				const staged = currentStages();
 				if (staged) await noChangeTurn(ctx, staged);
+				else await flowWithoutChanges(ctx);
 			}
 			return;
 		}
@@ -3112,7 +3343,7 @@ export default function workflow(pi: ExtensionAPI) {
 				return "ask";
 			}
 			state.planRevisions = done + 1;
-			state.approvedPlan = `${state.approvedPlan ?? ""}\n\n## Amendment ${done + 1} (arbiter)\n${d.amendment}`;
+			state.approvedPlan = `${state.approvedPlan ?? ""}\n\n## Amendment ${nextAmendmentNumber()} (arbiter)\n${d.amendment}`;
 			refreshChecklist();
 			planMilestone(ctx);
 			persist();
