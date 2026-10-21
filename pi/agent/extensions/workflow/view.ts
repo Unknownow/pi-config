@@ -24,8 +24,8 @@ import { countTokens, type Tok, type TokenWeights } from "./tokens.ts";
 import type { SubagentEvent } from "./subagent.ts";
 import { reportLines, type ReportFinding, type ReportStep } from "./flow-report.ts";
 
-export type Stage = "plan" | "execute" | "judge" | "commit";
-export type SubRole = "explore" | "advisor" | "judge" | "arbiter" | "commit";
+export type Stage = "plan" | "test" | "execute" | "judge" | "commit";
+export type SubRole = "explore" | "advisor" | "judge" | "arbiter" | "commit" | "runner";
 
 export interface RunView {
 	id: number;
@@ -46,7 +46,7 @@ export interface RunView {
 	stage: Stage;
 }
 
-export const STAGES: Stage[] = ["plan", "execute", "judge", "commit"];
+export const STAGES: Stage[] = ["plan", "test", "execute", "judge", "commit"];
 
 const zero = (): Tok => ({ raw: 0, cost: 0 });
 const isZero = (t: Tok): boolean => t.raw === 0 && t.cost === 0;
@@ -61,7 +61,7 @@ function asTok(x: Tok | number | undefined): Tok {
 }
 
 export function emptyStageTokens(): Record<Stage, Tok> {
-	return { plan: zero(), execute: zero(), judge: zero(), commit: zero() };
+	return { plan: zero(), test: zero(), execute: zero(), judge: zero(), commit: zero() };
 }
 
 /** Where one stage's tokens went during a flow. */
@@ -77,7 +77,7 @@ export type FlowUsage = Record<Stage, StageUsage>;
 
 export function emptyFlowUsage(): FlowUsage {
 	const empty = (): StageUsage => ({ tokens: zero(), main: zero(), models: [], subs: {} });
-	return { plan: empty(), execute: empty(), judge: empty(), commit: empty() };
+	return { plan: empty(), test: empty(), execute: empty(), judge: empty(), commit: empty() };
 }
 
 /** Data of the summary entry shown when a flow ends. */
@@ -191,8 +191,10 @@ export function runLine(run: RunView, theme: Theme, opts: { showRole: boolean })
  *     commit   ░░░░░░░░░░░░░░░░░░░░    20,000 (4,200)   2%  sonnet-5-5
  */
 export function summaryLines(s: FlowSummary, theme: Theme): string[] {
-	const stageTokens = (st: Stage) => asTok(s.stages[st].tokens);
+	const stageTokens = (st: Stage) => asTok(s.stages[st]?.tokens);
 	const total = STAGES.reduce((n, st) => add(n, stageTokens(st)), zero());
+	// The test row shows only for flows that tested.
+	const rows = STAGES.filter((st) => st !== "test" || !isZero(stageTokens(st)));
 	const unit = s.weighted ? "cost-weighted tokens" : "tokens";
 	const head = [
 		s.ok ? theme.fg("success", "✓") : theme.fg("warning", "■"),
@@ -203,9 +205,9 @@ export function summaryLines(s: FlowSummary, theme: Theme): string[] {
 	].join(" ");
 	const lines = [head];
 	const width = 20;
-	const labelWidth = Math.max(...STAGES.map((st) => fmtTok(stageTokens(st)).length));
-	for (const stage of STAGES) {
-		const u = s.stages[stage];
+	const labelWidth = Math.max(...rows.map((st) => fmtTok(stageTokens(st)).length));
+	for (const stage of rows) {
+		const u = s.stages[stage] ?? { tokens: zero(), main: zero(), models: [], subs: {} };
 		const t = stageTokens(stage);
 		const share = total.raw ? t.raw / total.raw : 0;
 		const filled = t.raw ? Math.max(1, Math.round(share * width)) : 0;
@@ -225,7 +227,7 @@ export function summaryLines(s: FlowSummary, theme: Theme): string[] {
 }
 
 export class FlowView {
-	phase: "off" | "plan" | "execute" = "off";
+	phase: "off" | "plan" | "execute" | "test" = "off";
 	escalated = false;
 	stage: Stage = "plan";
 	roles: Record<Role, RoleSpec>;
@@ -444,8 +446,9 @@ export class FlowView {
 			};
 			const sep = theme.fg("dim", " ▸ ");
 			const total = STAGES.reduce((sum, s) => add(sum, this.stageTokens(s)), zero());
+			const testNode = this.stage === "test" || !isZero(this.stageTokens("test")) ? `${node("test", "test")}${sep}` : "";
 			lines.push(
-				`${theme.fg("muted", "flow ")} ${node("plan", "plan")}${sep}${node("execute", "execute")}${sep}${node("judge", "judge")}${sep}${node("commit", null)}${isZero(total) ? "" : theme.fg("dim", ` · Σ ${fmtTok(total)}`)}`,
+				`${theme.fg("muted", "flow ")} ${node("plan", "plan")}${sep}${testNode}${node("execute", "execute")}${sep}${node("judge", "judge")}${sep}${node("commit", null)}${isZero(total) ? "" : theme.fg("dim", ` · Σ ${fmtTok(total)}`)}`,
 			);
 		}
 
