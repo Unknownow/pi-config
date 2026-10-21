@@ -491,10 +491,10 @@ Tests go with the code they test.
 - [x] S8 Polling and resume.
 - [x] S9 Stage-start waits (`startNextStage`, `index.ts:2500`, and the first stage's start in `startExecution`).
 - [x] S10 A stage that ends with no changes (`noChangeStage`, `agent-end.ts:158`).
-- [ ] S11 Add `checkpoints.ts` (pure). It exports:
-- [ ] S12 Add `tags.ts` (pure). It exports:
-- [ ] S13 The `deliver` tool (`index.ts`, next to `judge` 1974).
-- [ ] S14 Outcomes and the judge note.
-- [ ] S15 Prompts (`prompts.ts`).
+- [x] S11 Add `checkpoints.ts` (pure). It exports:
+- [x] S12 Add `tags.ts` (pure). It exports:
+- [x] S13 The `deliver` tool (`index.ts`, next to `judge` 1974).
+- [x] S14 Outcomes and the judge note.
+- [x] S15 Prompts (`prompts.ts`).
 - [ ] S16 `README.md`.
 - [ ] S17 `docs/workflow-improvements.md`.
