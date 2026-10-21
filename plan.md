@@ -226,11 +226,13 @@ Every existing test in the file must still pass unchanged.
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 `readonly-bash.ts`, next to `wrapperProblem` (`:427`): add `unwrapCommand` as in Design.
-- [ ] S2 `runner-guard.ts` `runsGit` (`:54-61`): decide by the first word of `unwrapCommand(words)` (basename `git`/`gh`). Remove
-- [ ] S3 `runner-guard.ts` `runnerProblem` step 2: test each deny regex against both the keyword-stripped and the unwrapped words
-- [ ] S4 `test-run.ts`: add `callDir` as in Design, after `scheduleTasks` (`:61`). It must not import `node:fs` directly; the fs 
-- [ ] S5 `test-run.ts`: add `runnerGate` as in Design, using `resourceKey` (`:32`). Pure, with no imports beyond what the file ha
-- [ ] S6 `index.ts` `test_run` execute (`:1852-1878`):
-- [ ] S7 `index.ts` `session_start` (`:3302`): after `setPhase(ctx, start)`, add the notice for `start === "test"` with UI, using
-- [ ] S8 README.md:
+- [x] S1 `readonly-bash.ts`, next to `wrapperProblem` (`:427`): add `unwrapCommand` as in Design.
+- [x] S2 `runner-guard.ts` `runsGit` (`:54-61`): decide by the first word of `unwrapCommand(words)` (basename `git`/`gh`). Remove
+- [x] S3 `runner-guard.ts` `runnerProblem` step 2: test each deny regex against both the keyword-stripped and the unwrapped words
+- [x] S4 `test-run.ts`: add `callDir` as in Design, after `scheduleTasks` (`:61`). It must not import `node:fs` directly; the fs 
+- [x] S5 `test-run.ts`: add `runnerGate` as in Design, using `resourceKey` (`:32`). Pure, with no imports beyond what the file ha
+- [x] S6 `index.ts` `test_run` execute (`:1852-1878`):
+- [x] S7 `index.ts` `session_start` (`:3302`): after `setPhase(ctx, start)`, add the notice for `start === "test"` with UI, using
+- [x] S8 README.md:
+## Outcome
+2026-10-21T05:54:31.734Z — ok: committed (2 commits), push skipped: master is protected
