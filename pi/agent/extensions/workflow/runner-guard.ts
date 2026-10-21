@@ -8,7 +8,7 @@
  */
 import * as path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { commandReadOnlyProblem, KEYWORDS, parseCommands, WRAPPERS } from "./readonly-bash.ts";
+import { commandReadOnlyProblem, KEYWORDS, parseCommands, unwrapCommand } from "./readonly-bash.ts";
 import { repoKey } from "./repos.ts";
 
 export const RUNNER_GUARD_ENV = "PI_WORKFLOW_RUNNER_GUARD";
@@ -52,12 +52,8 @@ function stripKeywords(words: string[]): string[] {
 
 /** Does the command run git or gh, directly or behind a wrapper such as timeout or env? */
 function runsGit(words: string[]): boolean {
-	const w = stripKeywords(words);
-	if (!w.length) return false;
-	const first = nameOf(w[0]);
-	if (first === "git" || first === "gh") return true;
-	if (first in WRAPPERS) return w.slice(1).some((x) => ["git", "gh"].includes(nameOf(x)));
-	return false;
+	const w = unwrapCommand(words);
+	return w.length > 0 && ["git", "gh"].includes(nameOf(w[0]));
 }
 
 function insideRoots(value: string, roots: string[], cwd: string, platform: NodeJS.Platform): boolean {
@@ -90,7 +86,7 @@ export function runnerProblem(text: string, spec: RunnerGuardSpec, cwd: string, 
 		} catch {
 			continue;
 		}
-		const hit = cmds.length ? cmds.some((c) => re.test(stripKeywords(c.words).join(" "))) : re.test(text.trim());
+		const hit = cmds.length ? cmds.some((c) => re.test(stripKeywords(c.words).join(" ")) || re.test(unwrapCommand(c.words).join(" "))) : re.test(text.trim());
 		if (hit) return `refused by test.runnerDeny: ${raw}`;
 	}
 	// 3. Project paths.

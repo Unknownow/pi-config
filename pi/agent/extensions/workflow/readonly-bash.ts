@@ -424,17 +424,35 @@ function commandName(word: string): string {
 	return word.split(/[\\/]/).pop()!.replace(/\.exe$/i, "");
 }
 
-function wrapperProblem(name: string, args: string[], allow: RegExp[]): string | null {
-	if (name === "command" && /^-[vV]$/.test(args[0] ?? "")) return null;
-	const risky = name === "env" ? args.map((a) => a.split("=")[0]).find((n) => RISKY_ENV.test(n)) : undefined;
-	if (risky) return `sets ${risky}, which can make commands run other programs`;
+/** How many of a wrapper's arguments are its own: options, env assignments, the timeout duration. */
+function wrapperSkip(name: string, args: string[]): number {
 	const valued = WRAPPERS[name];
 	let i = 0;
 	while (i < args.length && (args[i].startsWith("-") || (name === "env" && /^[A-Za-z_]\w*=/.test(args[i])))) {
 		i += valued.includes(args[i]) ? 2 : 1;
 	}
 	if (name === "timeout") i++; // the duration
-	const rest = args.slice(i);
+	return i;
+}
+
+/** The words of the real command: leading shell keywords and wrappers (with their options and arguments) removed, repeatedly. */
+export function unwrapCommand(words: string[]): string[] {
+	let w = words;
+	for (;;) {
+		while (w.length && KEYWORDS.has(w[0])) w = w.slice(1);
+		if (!w.length) return [];
+		const name = commandName(w[0]);
+		if (!Object.prototype.hasOwnProperty.call(WRAPPERS, name)) return w;
+		if (name === "command" && /^-[vV]$/.test(w[1] ?? "")) return [];
+		w = w.slice(1 + wrapperSkip(name, w.slice(1)));
+	}
+}
+
+function wrapperProblem(name: string, args: string[], allow: RegExp[]): string | null {
+	if (name === "command" && /^-[vV]$/.test(args[0] ?? "")) return null;
+	const risky = name === "env" ? args.map((a) => a.split("=")[0]).find((n) => RISKY_ENV.test(n)) : undefined;
+	if (risky) return `sets ${risky}, which can make commands run other programs`;
+	const rest = args.slice(wrapperSkip(name, args));
 	if (!rest.length) return null;
 	return commandProblem({ words: rest, writes: [], env: [] }, allow);
 }

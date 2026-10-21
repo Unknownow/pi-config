@@ -1,7 +1,7 @@
 // node --test readonly-bash.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { commandReadOnlyProblem, parseCommands, readOnlyProblem } from "./readonly-bash.ts";
+import { commandReadOnlyProblem, parseCommands, readOnlyProblem, unwrapCommand } from "./readonly-bash.ts";
 
 test("commandReadOnlyProblem checks one parsed command", () => {
 	assert.ok(commandReadOnlyProblem(parseCommands("git push")[0]));
@@ -272,3 +272,14 @@ const round5Writes: [string, RegExp][] = [
 ];
 for (const cmd of round5Reads) test(`reads: ${cmd}`, () => assert.equal(readOnlyProblem(cmd), null));
 for (const [cmd, why] of round5Writes) test(`blocks: ${cmd}`, () => assert.match(readOnlyProblem(cmd) ?? "allowed", why));
+
+test("unwrapCommand", () => {
+	const u = (s: string) => unwrapCommand(s.split(" ").filter(Boolean));
+	assert.deepEqual(u("timeout 60 adb -s R58 reboot"), ["adb", "-s", "R58", "reboot"]);
+	assert.deepEqual(u("env X=1 fastboot flash boot x"), ["fastboot", "flash", "boot", "x"]);
+	assert.deepEqual(u("timeout -s KILL 5 git push"), ["git", "push"]);
+	assert.deepEqual(u("if git status"), ["git", "status"]);
+	assert.deepEqual(u("timeout 5 env A=1 adb devices"), ["adb", "devices"]);
+	assert.deepEqual(u("command -v git"), []);
+	assert.deepEqual(u("timeout 5"), []);
+});

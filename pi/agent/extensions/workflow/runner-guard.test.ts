@@ -68,3 +68,14 @@ test("read-only git with redirected output is fine, a push is not", () => {
 test("deny patterns apply per command, not across a chain", () => {
 	assert.equal(problem("adb shell ls && echo format"), null);
 });
+
+test("deny patterns apply behind wrappers", () => {
+	assert.match(problem("timeout 60 adb -s R58 reboot") ?? "", /runnerDeny/);
+	assert.match(problem("env X=1 fastboot flash boot x") ?? "", /runnerDeny/);
+});
+
+test("git behind a wrapper is the real command only", () => {
+	assert.equal(problem("timeout 60 unity run-tests --project-path D:/projects/game/git"), null);
+	assert.equal(problem("timeout 60 npm test -- --grep gh"), null);
+	assert.match(problem("timeout 60 git push") ?? "", /git or GitHub/);
+});
