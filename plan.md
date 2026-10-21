@@ -238,11 +238,11 @@ export async function worktreeForFolder(git: Git, o: { cfg: WtConfig; setRoot: s
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 Create `pi/agent/extensions/workflow/folder-add.ts` with `askFolderAdd` exactly as in Design.
-- [ ] S2 `workflow/index.ts`, `/folders add` branch (`:3421-3446`):
-- [ ] S3 `workflow/folder-add.test.ts`: the tests listed in section 6. Add `folder-add.test.ts` to the test command at `workflow/
-- [ ] S4 `workflow/README.md`:
-- [ ] S5 `docs/workflow-improvements.md`:
+- [x] S1 Create `pi/agent/extensions/workflow/folder-add.ts` with `askFolderAdd` exactly as in Design.
+- [x] S2 `workflow/index.ts`, `/folders add` branch (`:3421-3446`):
+- [x] S3 `workflow/folder-add.test.ts`: the tests listed in section 6. Add `folder-add.test.ts` to the test command at `workflow/
+- [x] S4 `workflow/README.md`:
+- [x] S5 `docs/workflow-improvements.md`:
 - [ ] S6 `worktree/config.ts`:
 - [ ] S7 Create `worktree/add-folder.ts`.
 - [ ] S8 `worktree/index.ts` factory (`:756`):

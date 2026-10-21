@@ -1,12 +1,18 @@
 {
   "v": 1,
   "flowId": "20261021-1626-worktree-for-folders-added-with-folders-cb2f",
-  "rev": 1,
-  "updated": "2026-10-21T09:26:08.478Z",
+  "rev": 2,
+  "updated": "2026-10-21T09:29:22.633Z",
   "title": "worktree for folders added with `/folders add` inside a worktree set",
-  "stage": 1,
+  "stage": 2,
   "delivery": "push",
-  "done": [],
+  "done": [
+    "S1",
+    "S2",
+    "S3",
+    "S4",
+    "S5"
+  ],
   "repos": [
     {
       "branch": "flow/runnergate-test-covers-a-newcomer-arrivi",
