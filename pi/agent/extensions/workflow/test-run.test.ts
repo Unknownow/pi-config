@@ -1,7 +1,7 @@
 // node --test test-run.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { formatTaskResult, parseRunnerReply, sanitizeIds, scheduleTasks, verifyRun } from "./test-run.ts";
+import { callDir, formatTaskResult, parseRunnerReply, runnerGate, sanitizeIds, scheduleTasks, verifyRun } from "./test-run.ts";
 import type { ToolCall } from "./subagent.ts";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -94,4 +94,61 @@ test("formatTaskResult lists the commands actually run", () => {
 	assert.match(text, /### t1 · none · PASS/);
 	assert.match(text, /Commands actually run \(1\):\n- ok `ls`/);
 	assert.match(text, /Record: \/r\/t1\.md/);
+});
+
+async function gateTrace(limit: number, resources: string[]) {
+	const gate = runnerGate(() => limit);
+	let active = 0;
+	let max = 0;
+	await Promise.all(
+		resources.map((r) =>
+			gate(r, async () => {
+				active++;
+				max = Math.max(max, active);
+				await sleep(15);
+				active--;
+			}),
+		),
+	);
+	return max;
+}
+
+test("runnerGate: one runner per resource across calls", async () => {
+	assert.equal(await gateTrace(4, ["unity:D:/p", "unity:D:/p"]), 1);
+	assert.equal(await gateTrace(4, ["unity:D:/p", "device:A"]), 2);
+	assert.equal(await gateTrace(4, ["UNITY:D:/P", "unity:d:/p"]), 1);
+});
+
+test("runnerGate: global limit", async () => {
+	assert.equal(await gateTrace(1, ["none", "none", "none"]), 1);
+	assert.equal(await gateTrace(3, ["none", "", "none"]), 3);
+});
+
+test("runnerGate: releases on error", async () => {
+	const gate = runnerGate(() => 2);
+	await assert.rejects(gate("device:A", async () => { throw new Error("boom"); }), /boom/);
+	assert.equal(await gate("device:A", async () => 7), 7);
+});
+
+test("callDir: next free numbered folder", () => {
+	const made: string[] = [];
+	let fail = 1;
+	const fsx = {
+		readdirSync: () => ["1", "a.md"],
+		mkdirSync: (p: string) => {
+			if (fail-- > 0) throw Object.assign(new Error("x"), { code: "EEXIST" });
+			made.push(p);
+		},
+	};
+	const join = (...p: string[]) => p.join("/");
+	assert.equal(callDir("r", fsx, join), "r/3");
+	assert.throws(() => callDir("r", { ...fsx, mkdirSync: () => { throw Object.assign(new Error("no"), { code: "EACCES" }); } }, join), /no/);
+	assert.equal(callDir("r", { ...fsx, mkdirSync: (p: string) => made.push(p) }, join), "r/2");
+});
+
+test("runnerGate: waiting runners start in order", async () => {
+	const gate = runnerGate(() => 1);
+	const order: string[] = [];
+	await Promise.all(["A", "B", "C"].map((n) => gate("none", async () => { order.push(n); await sleep(5); })));
+	assert.deepEqual(order, ["A", "B", "C"]);
 });

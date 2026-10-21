@@ -60,6 +60,66 @@ export async function scheduleTasks<T extends { resource: string }, R>(tasks: T[
 	return out;
 }
 
+/**
+ * A new numbered folder under `roundDir` for one test_run call: the next number after the numeric
+ * folders there, skipping any that already exist.
+ */
+export function callDir(roundDir: string, fsx: { mkdirSync(p: string): unknown; readdirSync(p: string): string[] }, join: (...p: string[]) => string): string {
+	let n = 1 + fsx.readdirSync(roundDir).filter((e) => /^\d+$/.test(e)).length;
+	for (;;) {
+		const dir = join(roundDir, String(n));
+		try {
+			fsx.mkdirSync(dir);
+			return dir;
+		} catch (e) {
+			if ((e as { code?: string }).code !== "EEXIST") throw e;
+			n++;
+		}
+	}
+}
+
+/**
+ * Shared by all test_run calls of a session: one runner at a time per resource, and at most
+ * `limit()` runners in all. The resource lock is taken before the slot, so a task that waits for
+ * its resource never holds a slot.
+ */
+export function runnerGate(limit: () => number): <R>(resource: string, fn: () => Promise<R>) => Promise<R> {
+	const locks = new Map<string, Promise<void>>();
+	const waiting: (() => void)[] = [];
+	let running = 0;
+	return async function hold<R>(resource: string, fn: () => Promise<R>): Promise<R> {
+		const k = resourceKey(resource);
+		let release = () => {};
+		let prev: Promise<void> = Promise.resolve();
+		if (k && k !== "none") {
+			prev = locks.get(k) ?? Promise.resolve();
+			const mine = new Promise<void>((r) => (release = r));
+			const tail = prev.then(() => mine);
+			locks.set(k, tail);
+			void tail.then(() => {
+				if (locks.get(k) === tail) locks.delete(k);
+			});
+		}
+		await prev;
+		try {
+			if (running >= Math.max(1, limit())) await new Promise<void>((r) => waiting.push(r)); // the slot is handed over
+			else running++;
+			try {
+				return await fn();
+			} finally {
+				if (running > Math.max(1, limit()) || !waiting.length) running--;
+				else waiting.shift()!();
+				while (waiting.length && running < Math.max(1, limit())) {
+					running++;
+					waiting.shift()!();
+				}
+			}
+		} finally {
+			release();
+		}
+	};
+}
+
 export type RunnerResult = "PASS" | "FAIL" | "ERROR";
 export const OBSERVED_LINES = 40;
 

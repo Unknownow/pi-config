@@ -62,7 +62,7 @@ import { COMMIT_GUARD_ENV, type CommitGuardSpec } from "./commit-guard.ts";
 import { RUNNER_GUARD_ENV, type RunnerGuardSpec } from "./runner-guard.ts";
 import { parseTestReport } from "./test-report.ts";
 import { amendmentTail, answerItem, askOptions, bodyField, newTestFlow, nextAction, normalize, openBugs, pendingFromFlaws, recordReport, skipItem, testOutcome, testPlan, type TestFlow } from "./test-flow.ts";
-import { formatTaskResult, parseRunnerReply, sanitizeIds, scheduleTasks, taskCard, taskRecord, type TestTask, verifyRun } from "./test-run.ts";
+import { callDir, formatTaskResult, parseRunnerReply, runnerGate, sanitizeIds, scheduleTasks, taskCard, taskRecord, type TestTask, verifyRun } from "./test-run.ts";
 import { commitPlan, type Finished, mergeChecklist, newFlowId, openStepsReminder, parseChecklist, type PlanStatus, planCard, pruneIds, renderPlanFile, splitPlanFile, type ChecklistItem } from "./plan-doc.ts";
 import { adoptHigher, claimLive, commitRef, dropClaim, pidAlive, readClaim, writeClaim, deleteLocal, deleteRef, fetchMirror, type Git, listRefs, plansDir, pushRef, readLocalStatuses, readPlanMd, refRev, remoteOf, repoInfo, type RefEntry, writeLocal } from "./plan-store.ts";
 import { type FlowFinding, recordFindings, reportFindings, type ReportStep } from "./flow-report.ts";
@@ -1554,6 +1554,9 @@ export default function workflow(pi: ExtensionAPI) {
 		return true;
 	}
 
+	/** One gate for all test_run calls of this session: a resource is used by one runner at a time, and at most test.concurrency run at once. */
+	const runnerSlots = runnerGate(() => cfg.test.concurrency);
+
 	/** The folder for one round's runner logs and records: next to the plan file, else in the temp folder. */
 	function runsDir(round: number): string {
 		const plan = planFilePath();
@@ -1849,17 +1852,25 @@ export default function workflow(pi: ExtensionAPI) {
 				const sections = tasks.map((t) => `### ${t.id} · ${t.resource} · ERROR: runner guard extension not found at ${RUNNER_GUARD_EXTENSION}`);
 				return { content: [{ type: "text", text: [...sections, ...notes].join("\n\n") }], details: { runs: [] as RunView[] }, usage };
 			}
-			const dir = runsDir(state.testFlow?.round ?? 1);
+			const roundDir = runsDir(state.testFlow?.round ?? 1);
+			let dir = roundDir;
+			try {
+				dir = callDir(roundDir, fs, path.join);
+			} catch {
+				// keep the round folder
+			}
 			const roots = uniqueRoots([...(await flowRepos(ctx)).map((r) => r.root), ...existingFolders(), ctx.cwd]);
 			const spec: RunnerGuardSpec = { roots, deny: cfg.test.runnerDeny, pathFlags: cfg.test.runnerPathFlags, pathEnv: cfg.test.runnerPathEnv };
 			const runnerTools = cfg.test.runnerTools.filter((t) => !/^(edit|write)$/.test(t));
 			const sections = await scheduleTasks(tasks, cfg.test.concurrency, async (task) => {
 				const card = taskCard(task, ctx.cwd, dir);
-				const { result, run } = await runRole(
+				const { result, run } = await runnerSlots(task.resource, () =>
+					runRole(
 					"runner",
 					`[${task.resource}] ${task.id}`,
 					{ systemPrompts: [prompts.RUNNER], tools: runnerTools, task: card, cwd: ctx.cwd, signal, env: { [RUNNER_GUARD_ENV]: JSON.stringify(spec) }, extensions: [RUNNER_GUARD_EXTENSION], timeoutMs: cfg.test.runnerTimeoutMs },
 					progress.track,
+					),
 				);
 				addUsage(usage, result.usage);
 				const reply = parseRunnerReply(result.ok ? result.text : "");
@@ -3301,6 +3312,7 @@ ${judged.text}`, instruction, chosen);
 		publishFolders(ctx);
 		if (start !== "off") await setPhase(ctx, start);
 		else updateStatus(ctx);
+		if (start === "test" && ctx.hasUI) ctx.ui.notify(`workflow: test phase on ${describeRole(cfg.roles.test)}; describe what to test`, "info");
 		void planHousekeeping(ctx);
 	});
 
