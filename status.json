@@ -1,0 +1,16 @@
+{
+  "v": 1,
+  "flowId": "20261021-1405-runnergate-test-covers-a-newcomer-arrivi-bf0a",
+  "rev": 1,
+  "updated": "2026-10-21T07:05:23.854Z",
+  "title": "runnerGate test covers a newcomer arriving at the slot hand-over",
+  "delivery": "merge",
+  "done": [],
+  "repos": [
+    {
+      "branch": "master",
+      "remote": "github-personal/Unknownow/pi-config",
+      "primary": true
+    }
+  ]
+}
