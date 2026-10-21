@@ -1,10 +1,9 @@
 {
   "v": 1,
   "flowId": "20261021-0910-close-the-open-worktree-findings-k5-cont-44bb",
-  "rev": 2,
-  "updated": "2026-10-21T02:14:29.742Z",
+  "rev": 3,
+  "updated": "2026-10-21T02:17:44.524Z",
   "title": "Close the open worktree findings (K5 contract, parent-of-link guard, plain remote delete, clean/done messages)",
-  "delivery": "push",
   "done": [
     "S1",
     "S2",
@@ -13,6 +12,11 @@
     "S5",
     "S6"
   ],
+  "finished": {
+    "at": "2026-10-21T02:17:44.127Z",
+    "ok": true,
+    "text": "committed (2 commits), push skipped: master is protected"
+  },
   "repos": [
     {
       "branch": "master",

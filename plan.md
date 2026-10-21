@@ -190,3 +190,5 @@ Run the plan's same test commands; both must report `fail 0`.
 - [x] S4 `worktree/index.ts:458-459`, `cleanCmd`.
 - [x] S5 `worktree/index.ts:743`, `doneCmd` `after` callback. Compute `kept = r.error || r.text === "Cancelled."`.
 - [x] S6 `worktree/README.md` text updates:
+## Outcome
+2026-10-21T02:17:44.127Z — ok: committed (2 commits), push skipped: master is protected
