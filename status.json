@@ -1,0 +1,16 @@
+{
+  "v": 1,
+  "flowId": "20261022-1638-slow-suite-rule-without-finalize-and-an-3356",
+  "rev": 1,
+  "updated": "2026-10-22T09:38:06.727Z",
+  "title": "Slow-suite rule without finalize, and an unambiguous final test run",
+  "delivery": "merge",
+  "done": [],
+  "repos": [
+    {
+      "branch": "master",
+      "remote": "github-personal/Unknownow/pi-config",
+      "primary": true
+    }
+  ]
+}
