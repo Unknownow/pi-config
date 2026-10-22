@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { ADVISOR, ARBITER, COMMIT, EXECUTE_PHASE, EXPLORE, FIX_ROUND, JUDGE, JUDGE_KNOWLEDGE_ONLY, NO_SLEEP, PACE, finalize, phaseSection, planPhase, RUNNER, TEST_PHASE, workspaceSection } from "./prompts.ts";
 
-const BATCH = `- Batch tool calls. Each call re-sends the whole conversation, so ten small calls at 150k context re-send 1.5M tokens. Put independent reads and commands in one call (a codemode script, ctx_batch_execute, or one bash command joined with && or ;) and print only what you need. Don't spend a call on something you could have added to the previous one.`;
-const PLAN_BATCH = `- Batch tool calls. Each call re-sends the whole conversation, so ten small calls at 150k context re-send 1.5M tokens. Put independent reads and commands in one call (a codemode script, ctx_execute for read-only analysis, or one bash command joined with && or ;) and print only what you need. Don't spend a call on something you could have added to the previous one.`;
+const BATCH = `- Batch tool calls. Each call re-sends the whole conversation, so ten small calls at 150k context re-send 1.5M tokens. Put independent reads and commands in one call (a codemode script, run_code, or one bash command joined with && or ;) and print only what you need. Don't spend a call on something you could have added to the previous one.`;
+const PLAN_BATCH = `- Batch tool calls. Each call re-sends the whole conversation, so ten small calls at 150k context re-send 1.5M tokens. Put independent reads and commands in one call (a codemode script, run_code for read-only analysis, or one bash command joined with && or ;) and print only what you need. Don't spend a call on something you could have added to the previous one.`;
 
 test("plan phase keeps its batch line", () => {
 	assert.ok(planPhase(true).includes(PLAN_BATCH));

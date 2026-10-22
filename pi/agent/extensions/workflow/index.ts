@@ -61,7 +61,7 @@ import { citeNames, collectRepoDiff as collectRepoDiffImpl, needsFinalFullReview
 import { mergePublish, movedText, publishDecision, refuseText, type PublishEntry, type PublishFacts } from "./publish.ts";
 import { combineRepoTexts, followFolders, parseAddDir, parseWorktreeList, repoKey, uniqueRoots } from "./repos.ts";
 import { askFolderAdd } from "./folder-add.ts";
-import { codeCommitProblem, shellProblem } from "./push-guard.ts";
+import { codePublishProblem, shellProblem } from "./push-guard.ts";
 import { COMMIT_GUARD_ENV, type CommitGuardSpec } from "./commit-guard.ts";
 import { RUNNER_GUARD_ENV, type RunnerGuardSpec } from "./runner-guard.ts";
 import { parseTestReport } from "./test-report.ts";
@@ -77,6 +77,7 @@ import { pushArgs, tagDecision } from "./tags.ts";
 import { type CheckVerdict, autopilotAmendment, autopilotReply, checkTitle, checkVerdict, type HumanCheck, humanChecks, parseVerifyStep, parseWaitStep, pollDecision, resumePrefix, verifyAmendment, waitAmendment } from "./waits.ts";
 import { nextStage, parseStages, stageDelivery, stageLine, stageNote, stageStart, stagesOutcome } from "./stages.ts";
 import { planToolProblem, planToolRefused } from "./readonly-tools.ts";
+import { refilterPlanTools } from "./plan-tools.ts";
 import { MetricsQueue, type MetricEvent, subagentMetric } from "./metrics.ts";
 import { addUsage, emptyUsage, mapLimit, noContextFilesFor, type RunResult, runSubagent } from "./subagent.ts";
 import {
@@ -507,9 +508,24 @@ export default function workflow(pi: ExtensionAPI) {
 	/** The read-only tool set of plan phase; the test phase adds test_run and drops judge and plan_check. */
 	function blockPlanTools(phase: "plan" | "test" = "plan"): void {
 		state.toolsBeforePlan ??= pi.getActiveTools();
+		pi.setActiveTools(state.toolsBeforePlan.filter((t) => !planToolRefusedIn(phase, t)));
+	}
+
+	function planToolRefusedIn(phase: "plan" | "test", name: string): boolean {
 		const allowed = phase === "test" ? testAllowedTools() : planAllowedTools();
 		const blocked = phase === "test" ? testBlockedTools() : cfg.planBlockedTools;
-		pi.setActiveTools(state.toolsBeforePlan.filter((t) => !planToolRefused(t, allowed, blocked)));
+		return planToolRefused(name, allowed, blocked) !== null;
+	}
+
+	/** Tools that registered after the phase began (an MCP server that connected late) get the same filter. */
+	function refilterTools(): void {
+		if ((state.phase !== "plan" && state.phase !== "test") || !state.toolsBeforePlan) return;
+		const phase = state.phase;
+		try {
+			refilterPlanTools(pi, state.toolsBeforePlan, (t) => planToolRefusedIn(phase, t));
+		} catch {
+			// the turn goes on with the tools it has
+		}
 	}
 
 	function testAllowedTools(): RegExp[] {
@@ -2694,7 +2710,12 @@ Nothing was delivered.`);
 	// Events
 	// ----------------------------------------------------------------------
 
+	pi.on("turn_start", async () => {
+		refilterTools();
+	});
+
 	pi.on("before_agent_start", async (event, ctx) => {
+		refilterTools();
 		const folders = existingFolders();
 		const touched = state.touchedRepos ?? [];
 		if (folders.length || touched.length) {
@@ -2735,22 +2756,10 @@ Nothing was delivered.`);
 			// Pushing is the workflow's job after the judge passes; the executor may not publish or skip hooks.
 			const input = (event.input ?? {}) as Record<string, unknown>;
 			const texts: { text: string; powershell: boolean }[] = [];
-			const win = process.platform === "win32";
 			if (/(^|__)bash$/.test(event.toolName)) texts.push({ text: String(input.command ?? ""), powershell: false });
-			else if (/(^|__)ctx_execute(_file)?$/.test(event.toolName)) {
-				const language = String(input.language ?? "").toLowerCase();
-				const code = String(input.code ?? "");
-				if (["shell", "bash", "sh", "zsh", "powershell", "pwsh", "ps1"].includes(language)) texts.push({ text: code, powershell: ["powershell", "pwsh", "ps1"].includes(language) || (language === "shell" && win) });
-				else if (/\bgit\b/.test(code) && /\bpush\b|(?<!-)\bcommit\b|--no-verify|hooksPath|GIT_CONFIG/i.test(code)) {
-					return { block: true, reason: publishRefuse("code that runs git push, skips hooks or changes hooks") };
-				} else if (codeCommitProblem(code)) {
-					return { block: true, reason: publishRefuse(`code that runs ${codeCommitProblem(code)}`) };
-				} else if (/\bgh\b/.test(code) && /\b(pr|api)\b/.test(code)) {
-					return { block: true, reason: publishRefuse("code that runs gh pr or gh api") };
-				}
-			}
-			else if (/(^|__)ctx_batch_execute$/.test(event.toolName) && Array.isArray(input.commands)) {
-				for (const c of input.commands) texts.push({ text: String((c as { command?: unknown })?.command ?? ""), powershell: win });
+			else if (/(^|__)run_code$/.test(event.toolName)) {
+				const reason = codePublishProblem(String(input.code ?? ""));
+				if (reason) return { block: true, reason: publishRefuse(reason) };
 			}
 			const gitTexts = texts.filter((t) => /\bgit\b|\bgh\b/i.test(t.text));
 			if (gitTexts.length === 0) return;

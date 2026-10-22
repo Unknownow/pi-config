@@ -84,7 +84,8 @@
   ],
   "planAllowedTools": [
     "^(read|grep|find|ls|bash|codemode|explore|advisor|judge)$",
-    "(^|__)ctx_(search|execute|execute_file|batch_execute|fetch_and_index|index|stats|doctor)$",
+    "(^|__)run_code$",
+    "(^|__)fetch_url$",
     "^mcp__.+__(search|get|list|read|view|status|fetch|find|query|describe|show|lookup)(_\\w+)?$"
   ],
   "planReadOnlyBash": true,

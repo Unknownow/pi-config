@@ -189,8 +189,8 @@ A session shows a desktop notification (Windows toast, `osascript` on macOS, `no
 ## Plan phase is read-only
 
 Only tools matching `planAllowedTools` (regexes over the tool name) can be called: read, grep, find,
-ls, bash, codemode, explore, advisor, judge, read-only ctx_* tools and MCP tools named search/get/list/...
-Everything else (AskClaude, `propose_entry`, `ctx_purge`, edit, write) is hidden and refused.
+ls, bash, codemode, explore, advisor, judge, `run_code`, `fetch_url` and MCP tools named search/get/list/...
+Everything else (AskClaude, `propose_entry`, edit, write) is hidden and refused.
 MCP tools whose name has a write word (create, update, delete, set, add, run, save, post, ...) are refused even when they start with a read verb
 (`get_or_create`, `get_post`); `planAllowedTools` cannot override this.
 
@@ -208,28 +208,22 @@ its plan and hand over, even when you said "fix it" or "do it for me".
   (`node -e`, `python`), and any command not on the list.
 - **More commands:** add regexes over the command's words to `planBashAllow` (default: `unity cmd
   editor_status` / `console_status`). `"planReadOnlyBash": false` turns the check off.
-- Also allowed on purpose: `git fetch` (it only updates remote-tracking refs), and the knowledge-base tools
-  `ctx_index` / `ctx_fetch_and_index`. `git help <topic>` is refused (it opens a viewer), as are `rg --pre`,
+- Also allowed on purpose: `git fetch` (it only updates remote-tracking refs). `git help <topic>` is refused (it opens a viewer), as are `rg --pre`,
   `ag --pager`, `less -o`, `date -s`, `hostname <name>`, `git diff --ext-diff` / `--textconv`.
 - A repository's own git config (`core.fsmonitor`, `diff.external`, textconv) can still run programs on a
   plain `git status` / `git diff`: plan an untrusted repo in a throwaway clone.
-- **context-mode tools** (`readonly-tools.ts`) are checked too. `ctx_execute` and
-  `ctx_execute_file` with `shell` language get the shell check. With `javascript` or `python`
-  they are refused when the code writes, deletes, runs programs, `eval`s, or sends a POST, PUT,
-  PATCH or DELETE request, or build names at runtime (`fs['wri'+'te']`, `require(x)`, `getattr`, a
-  `open()` mode that is not a plain read literal). Other languages are refused. `ctx_batch_execute`
-  checks each command. MCP tools are also refused when an argument holds a statement that changes data
-  (`INSERT`, `UPDATE ... SET`, `DELETE FROM`, `DROP`, a GraphQL `mutation`, ...).
-  `ctx_purge` is refused.
-- Shell text on Windows: `ctx_execute` and `ctx_batch_execute` run PowerShell, so a command is
-  checked as a shell command, and PowerShell-only cmdlets (`Set-Content`, `Remove-Item`, ...) are
-  refused because they are not on the list. With only the working folder's repo, the push
-  guard checks a PowerShell text twice: with `\` read as a path separator, and as written (a `bash -c`
-  script keeps bash escapes).
+- **`run_code`** (the sandbox extension, `readonly-tools.ts`) is checked too: its JavaScript is refused
+  when the code writes, deletes, runs programs, `eval`s, or sends a POST, PUT, PATCH or DELETE
+  request, or builds names at runtime (`fs['wri'+'te']`, `require(x)`). `fetch_url` only reads. MCP tools
+  are also refused when an argument holds a statement that changes data (`INSERT`, `UPDATE ... SET`,
+  `DELETE FROM`, `DROP`, a GraphQL `mutation`, ...).
+- **Tools that register later** (an MCP server that connects after the phase began) get the same filter:
+  it runs again before each prompt and at each turn start (`plan-tools.ts`) and calls `setActiveTools`
+  only when the set changes.
 - It is a guard against the planner drifting into execution, not a sandbox. The code checks are
   regexes: a determined disguise (a computed lookup on an alias of `require('fs')`, say) can still get
   past them.
-- Tests: `node --experimental-strip-types --test agent-end.test.ts folder-add.test.ts readonly-bash.test.ts readonly-tools.test.ts tokens.test.ts push-guard.test.ts knowledge.test.ts mcp-forward.test.ts subagent.test.ts delivery.test.ts notify.test.ts repos.test.ts stages.test.ts commit-guard.test.ts repo-diff.test.ts prompts.test.ts config.test.ts metrics.test.ts plan-store.test.ts boundary.test.ts plan-doc.test.ts runner-guard.test.ts test-report.test.ts test-run.test.ts test-flow.test.ts flow-report.test.ts view.test.ts waits.test.ts checkpoints.test.ts tags.test.ts`.
+- Tests: `node --experimental-strip-types --test agent-end.test.ts folder-add.test.ts readonly-bash.test.ts readonly-tools.test.ts plan-tools.test.ts tokens.test.ts push-guard.test.ts knowledge.test.ts mcp-forward.test.ts subagent.test.ts delivery.test.ts notify.test.ts repos.test.ts stages.test.ts commit-guard.test.ts repo-diff.test.ts prompts.test.ts config.test.ts metrics.test.ts plan-store.test.ts boundary.test.ts plan-doc.test.ts runner-guard.test.ts test-report.test.ts test-run.test.ts test-flow.test.ts flow-report.test.ts view.test.ts waits.test.ts checkpoints.test.ts tags.test.ts`.
 
 ## Test and fix
 
@@ -401,9 +395,7 @@ and any repo where the executor changed a file with `edit` or `write`.
 
 Limits: `cd` does not move the guard when the command text has `$(…)`, backticks, or parentheses
 outside quotes (such commands are checked against the working folder's branch); changes made
-only through `bash` in an unlisted repo are not noticed (add the folder); when a flow spans several
-repos, PowerShell texts are checked only with `\` read as a path separator, so a bash script passed on
-such a text is not seen with its escapes;
+only through `bash` in an unlisted repo are not noticed (add the folder);
 extensions in the added folders' `.pi/extensions` are not loaded; after `/resume`, run `/reload`
 to pick up that session's folder skills.
 

@@ -2,7 +2,7 @@
 
 Reference list for `pi/agent/extensions/workflow/`. Goal: less time, fewer tokens, more parallelism.
 
-Status: A2, A3, A5, A7, B1, B7, B9, C2, C3, C4, D2, D3, D4, D5, D6, D7, D8, D9, D10, D11, D12, D13, D14, D15, D16 and D17 are implemented; A13, A14, A15, A16, A17, A18, A20 and A21 are implemented; A22 is implemented; A23, A24 and A25 are implemented; A26, A27 and A28 are implemented; A12 is implemented; A1 is rejected; the rest are ideas only. Found by reading the code on 2026-10-16. Nothing was measured, so every benefit below is an estimate. Line numbers are from commit `3fdc69a` and will drift.
+Status: A2, A3, A5, A7, B1, B7, B9, C2, C3, C4, D2, D3, D4, D5, D6, D7, D8, D9, D10, D11, D12, D13, D14, D15, D16 and D17 are implemented; A13, A14, A15, A16, A17, A18, A20 and A21 are implemented; A22 is implemented; A23, A24 and A25 are implemented; A26, A27, A28, A32 and D18 are implemented; A12 is implemented; A1 is rejected; the rest are ideas only. Found by reading the code on 2026-10-16. Nothing was measured, so every benefit below is an estimate. Line numbers are from commit `3fdc69a` and will drift.
 
 ## Keeping this file current
 
@@ -59,6 +59,8 @@ Plan (Opus) -> approve -> execute (Sonnet) -> judge (Opus, separate `pi` process
 | A29 | Idea: `/flow tokens --sessions [N]`, a token report over the last N sessions. | Medium (K) | M | Low. | Report matches session logs. |
 | A30 | Idea: a 1-hour prompt cache through the bridge (`PI_CACHE_RETENTION=long`). | Medium (K) | S | Medium. Cache writes cost more. | Cache read share per flow. |
 | A31 | Idea: a fresh context per flow, so a new flow does not carry the previous one. | Medium (K) | M | Medium. Loses context the user relied on. | First-call input tokens of the second flow. |
+| A32 | Problem: context-mode costs prompt blocks and long tool descriptions on every call. **Done:** the own extension `pi/agent/extensions/sandbox/` with `run_code` (JavaScript in a child process, 8,000-character cap, process-tree kill) and `fetch_url` (page to a cached markdown/json/text file); the plan phase allows both and checks `run_code` with the JS checks (`readonly-tools.ts`); the execute-phase push guard (`push-guard.ts`, `index.ts`) and the worktree guards (`shared-guard.ts`, `unity-guard.ts`) check `run_code`; context-mode left `settings.json` and `npm/package.json`. Lost on purpose: its session memory and `/ctx-stats`. | High (K) | M | Medium. Less tooling than context-mode. | First-call cache write. |
+| A33 | Idea: a bytes-saved report for `run_code`, like `/ctx-stats`. | Low (K) | S | Low. | Report matches the output sizes. |
 
 ## B. Tokens
 
@@ -110,6 +112,7 @@ Plan (Opus) -> approve -> execute (Sonnet) -> judge (Opus, separate `pi` process
 | D15 | Commits a commit checkpoint made were never published by a later `push`, `pr` or `merge` `deliver` or by the flow end: both looked only at the diff against `HEAD`, found it empty and said "no changes to deliver", so the executor asked the user to push. **Done:** `publish.ts` (decision and refusal text), `judgedHeads` in the flow state and `status.json`, `publishJudged`/`publishAtEnd` in `index.ts`. Commits the commit step did not make and that are on no remote are refused with a `git reset --soft` hint. | High (T) | M | Medium: a recorded head is trusted without a new review. | A repo rewritten outside the commit step is refused until reset. |
 | D16 | `git merge`, `cherry-pick`, `revert`, `pull`, `rebase` and `am` could create commits no judge saw during execution. **Done:** `commitCreatingOnly` in `push-guard.ts`, and the non-shell pre-check in `index.ts`; allowed only with `--no-commit`/`-n`/`--squash`/`--ff-only` or to abort. | Medium (T) | S | Low: the refusal names the allowed flag. | `git pull` without `--ff-only` is refused. |
 | D17 | The executor handed pushes to the user; plans spelled out raw publish commands and Deliver steps named no mode. **Done:** `deliverStepSpec`, `deliverHint`, `deliverHintsBlock`, `publishRefusal` and `deliverStepWarnings` in `checkpoints.ts`; the prompts in `prompts.ts`; annotations, refusal texts and the accept-time warnings in `index.ts`. | Medium (T) | S | Low: hints only, warnings never block. | The executor sees `→ call deliver {…}` for each open Deliver step. |
+| D18 | A tool that registered after the plan or test phase began (an MCP server that connected late) stayed active, even when the allow list refuses it. **Done:** `plan-tools.ts` (`refilterPlanTools`), called from `before_agent_start` and a new `turn_start` handler in `index.ts`; the snapshot `toolsBeforePlan` is extended in place so a restore brings the tool back. | Medium (T) | S | Low: one cache rewrite per change. | Plan-phase tool list after a late MCP connect. |
 
 ## Effect measurement
 
@@ -165,6 +168,7 @@ Method for every item:
 | D15 | Flows with a commit checkpoint whose later push, PR or merge delivery completed | Count flows ending "no changes to deliver" or with a hand-over to the user after a checkpoint. Implemented, not measured yet. | Zero hand-overs |
 | D16 | Guard refusals of commit-creating subcommands per flow | Count refusals containing "creates a commit no judge has seen". Implemented, not measured yet. | Few; each followed by a retry with the flag |
 | D17 | Executor turns asking the user to push or open/merge a PR | Count such turns in flow transcripts. Implemented, not measured yet. | None |
+| D18 | Tools the plan phase should refuse that were active | Check the plan-phase tool list after an MCP server connects late. Implemented, not measured yet. | None |
 | A10 | Flow steps failed by `cannot lock ref` | Count in session logs | Idea only, not measured |
 | A11 | Plans started in a second workspace | n/a | Idea only |
 | A12 | User prompts per test flow; supervisor vs runner tokens (D3 metrics); bugs verified fixed per flow | Count the questions asked per flow, compare `test` and `runner` tokens in the flow card, count `[fixed]` items. Not measured yet. | Most flows end without prompts beyond the crucial cases; runner tokens are the larger share; no fix is committed that the retest shows broken |
@@ -187,6 +191,8 @@ Method for every item:
 | A29 | Session token report | Idea only. | Report matches session logs |
 | A30 | Cache read share | Idea only. | Higher share |
 | A31 | First-call input tokens of a second flow | Idea only. | Lower |
+| A32 | Tokens of the first call (tool descriptions and prompt blocks) | Compare the first-call cache write before and after. Implemented, not measured yet. | Smaller cache write |
+| A33 | Bytes kept out of the context by run_code | Idea only. | Report shows bytes saved |
 | B12 | Final-plan reply duration and output tokens | Session logs. Idea only. | Replies under 3 min |
 | B13 | Judge minutes per flow | Sum judge call times per flow. Idea only. | Rechecks under 1 min |
 
