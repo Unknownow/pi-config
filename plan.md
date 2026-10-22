@@ -301,15 +301,15 @@ In `entries/eng/guideline/sdk-wrapper-packages.md:32`, add the same iterate-narr
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 In `D:/projects/unity-packages`, check that `main` is clean and up to date (`git status -sb`, `git fetch`, `git merge --
-- [ ] S2 In `scripts/test-packages.mjs`, add `parseArgs` and `cacheFolder` as specified in section 4, replacing the inline loop a
-- [ ] S3 Add `mirrorPlan` (pure) and a non-exported mirror routine that applies it as described in section 4.
-- [ ] S4 Add `collectInputs` and `inputsHash` as specified, plus non-exported helpers that read and write `passes.json` (missing 
-- [ ] S5 Rewrite `runVariant` as async:
-- [ ] S6 Rewrite `main` as async:
-- [ ] S7 Update the header comment (`:1-14`):
-- [ ] S8 Add the tests in section 6 to `scripts/scripts.test.mjs`, then run `node scripts/package.mjs check`. It must pass.
-- [ ] S9 Verify in Unity yourself (D5). Run each command from `D:/projects/unity-packages` in Git Bash and note the wall time of 
+- [x] S1 In `D:/projects/unity-packages`, check that `main` is clean and up to date (`git status -sb`, `git fetch`, `git merge --
+- [x] S2 In `scripts/test-packages.mjs`, add `parseArgs` and `cacheFolder` as specified in section 4, replacing the inline loop a
+- [x] S3 Add `mirrorPlan` (pure) and a non-exported mirror routine that applies it as described in section 4.
+- [x] S4 Add `collectInputs` and `inputsHash` as specified, plus non-exported helpers that read and write `passes.json` (missing 
+- [x] S5 Rewrite `runVariant` as async:
+- [x] S6 Rewrite `main` as async:
+- [x] S7 Update the header comment (`:1-14`):
+- [x] S8 Add the tests in section 6 to `scripts/scripts.test.mjs`, then run `node scripts/package.mjs check`. It must pass.
+- [x] S9 Verify in Unity yourself (D5). Run each command from `D:/projects/unity-packages` in Git Bash and note the wall time of 
 - [ ] S10 In `D:/projects/pi-config/pi/agent/extensions/workflow/prompts.ts:97`, replace "When done, run the plan's tests, then ca
 - [ ] S11 In the planner item at `prompts.ts:75`, append exactly "Mark each suite slower than about 2 minutes as slow and give its
 - [ ] S12 In `docs/workflow-improvements.md`, add two rows to section A, after A22 (`:52`), in the existing row format:
