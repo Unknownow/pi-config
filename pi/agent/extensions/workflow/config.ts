@@ -61,6 +61,13 @@ export type StagedPlans = "auto" | "onRequest";
 /** "changes": after a plan is proposed, planner replies repeat only what changed; "always": every reply ends with the full plan. */
 export type PlanRecap = "changes" | "always";
 
+/** Desktop notifications when a session needs the user. */
+export interface NotifyConfig {
+	enabled: boolean;
+	/** A session idle this long after a turn notifies; a new turn cancels it. */
+	idleMs: number;
+}
+
 /** Where approved plans are kept (inside each repo's .git folder) and how long. */
 export interface WaitConfig {
 	/** How often a waiting flow runs its check while the session is idle. */
@@ -145,6 +152,8 @@ export interface WorkflowConfig {
 	plans: PlansConfig;
 	/** Wait points: how a flow waits for a person and checks that the wait is over. */
 	wait: WaitConfig;
+	/** Desktop notification when a session needs you. */
+	notify: NotifyConfig;
 	/** In plan phase, a message matching this (case-insensitive, whole message) approves the plan. */
 	approvePattern: string;
 	/** Pop up an Approve / Keep planning menu whenever a plan is ready (otherwise just a hint). */
@@ -222,6 +231,7 @@ export const DEFAULTS: WorkflowConfig = {
 	protectedBranches: ["main", "master"],
 	plans: { sync: "remote", localOnly: [], keepDays: 14, keepCount: 50 },
 	wait: { pollMs: 120_000, maxMs: 3_600_000, checkTimeoutMs: 30_000, autoResume: true },
+	notify: { enabled: true, idleMs: 10_000 },
 	approvePattern:
 		"^((ok(ay)?|yes|yeah|yep|sure|alright|fine|great|good)[,.! ]+)?(then[, ]+)?(go|go ahead|go for it|do it|do that|do this|do them|do (it )?all( of (it|that|them))?|approved?|lgtm|ship it|execute( it| that| this| the plan)?|proceed|start|let'?s go|let'?s do it|run it|implement( it| that| this| the plan)?|build it|make it so)( for me)?( now)?( please)?[.! ]*$",
 	planPrompt: true,
@@ -326,6 +336,9 @@ function parseConfig(file: string): Loaded {
 		if (!isObject(config.wait)) config.wait = DEFAULTS.wait;
 		for (const k of ["pollMs", "maxMs", "checkTimeoutMs"] as const) if (typeof config.wait[k] !== "number" || !Number.isFinite(config.wait[k]) || config.wait[k] <= 0) config.wait[k] = DEFAULTS.wait[k];
 		if (typeof config.wait.autoResume !== "boolean") config.wait.autoResume = DEFAULTS.wait.autoResume;
+		if (!isObject(config.notify)) config.notify = DEFAULTS.notify;
+		if (typeof config.notify.enabled !== "boolean") config.notify.enabled = DEFAULTS.notify.enabled;
+		if (typeof config.notify.idleMs !== "number" || !Number.isFinite(config.notify.idleMs) || config.notify.idleMs <= 0) config.notify.idleMs = DEFAULTS.notify.idleMs;
 		if (config.stagedPlans !== "auto" && config.stagedPlans !== "onRequest") config.stagedPlans = DEFAULTS.stagedPlans;
 		if (config.stageAdvance !== "auto" && config.stageAdvance !== "ask") config.stageAdvance = DEFAULTS.stageAdvance;
 		if (config.planRecap !== "changes" && config.planRecap !== "always") config.planRecap = DEFAULTS.planRecap;

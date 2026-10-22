@@ -112,3 +112,14 @@ test("wait defaults and validation", () => {
 	assert.equal(w.autoResume, true);
 	assert.equal(w.checkTimeoutMs, 5000);
 });
+
+test("notify defaults and validation", () => {
+	assert.deepEqual(DEFAULTS.notify, { enabled: true, idleMs: 10_000 });
+	const g = tmp();
+	fs.writeFileSync(g, JSON.stringify({ notify: { enabled: "x", idleMs: -1 } }));
+	assert.deepEqual(loadConfig(g).config.notify, { enabled: true, idleMs: 10_000 });
+	fs.writeFileSync(g, JSON.stringify({ notify: 5 }));
+	assert.deepEqual(loadConfig(g).config.notify, { enabled: true, idleMs: 10_000 });
+	fs.writeFileSync(g, JSON.stringify({ notify: { enabled: false, idleMs: 500 } }));
+	assert.deepEqual(loadConfig(g).config.notify, { enabled: false, idleMs: 500 });
+});

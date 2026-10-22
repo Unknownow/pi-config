@@ -74,6 +74,7 @@ after approval runs on its own:
   uses `--admin` or `--auto`: a merge GitHub blocks (review required, conflict, failed check) stops and is
   reported. `/flow delivery <commit|push|pr|merge|off>` changes it for the current flow.
   `mergeMethod` (`merge`), `deleteBranch` (`true`), `ask` (`true`) and `default` (`commit`) are configurable.
+  With several repositories, the commit step opens their pull requests and waits for their checks in parallel, then merges them in order and stops at the first failure.
   `runner` (`subagent`) says where the commit step runs: a fresh `commit`-role subagent that does not carry the session's context, or `main` (the main session, compacted first at the handover).
 - **Push guard:** it never pushes `protectedBranches` (`main`, `master`) or a detached HEAD. It
   commits there and tells you. It never force-pushes or uses `--no-verify`, and stops if a hook fails.
@@ -169,6 +170,10 @@ These let one plan deliver or pause partway through, without replanning and with
 - **Target:** defaults to the tip of the remote default branch and must be on it. `--no-verify` and a bare `--force` are never used.
 - **Several sessions:** a lost race, a refused move or a failed push waits for a person instead of overwriting.
 
+## Desktop notifications
+
+A session shows a desktop notification (Windows toast, `osascript` on macOS, `notify-send` on Linux) when it needs you: a workflow menu opens (the plan is waiting for approval, a question, a failure), the session stays idle for `idleMs` after a turn, a wait's check passes without `autoResume` or its polling stops, or a flow finishes. Turns the workflow continues by itself (judge, commit step, next stage, auto-resume) never notify, and one session notifies at most every 15 s. There is no focus check. Config: `notify: { enabled: true, idleMs: 10000 }`; `enabled: false` turns it off.
+
 ## Plan phase is read-only
 
 Only tools matching `planAllowedTools` (regexes over the tool name) can be called: read, grep, find,
@@ -212,7 +217,7 @@ its plan and hand over, even when you said "fix it" or "do it for me".
 - It is a guard against the planner drifting into execution, not a sandbox. The code checks are
   regexes: a determined disguise (a computed lookup on an alias of `require('fs')`, say) can still get
   past them.
-- Tests: `node --experimental-strip-types --test agent-end.test.ts folder-add.test.ts readonly-bash.test.ts readonly-tools.test.ts tokens.test.ts push-guard.test.ts knowledge.test.ts mcp-forward.test.ts subagent.test.ts delivery.test.ts repos.test.ts stages.test.ts commit-guard.test.ts repo-diff.test.ts prompts.test.ts config.test.ts metrics.test.ts plan-store.test.ts boundary.test.ts plan-doc.test.ts runner-guard.test.ts test-report.test.ts test-run.test.ts test-flow.test.ts view.test.ts waits.test.ts checkpoints.test.ts tags.test.ts`.
+- Tests: `node --experimental-strip-types --test agent-end.test.ts folder-add.test.ts readonly-bash.test.ts readonly-tools.test.ts tokens.test.ts push-guard.test.ts knowledge.test.ts mcp-forward.test.ts subagent.test.ts delivery.test.ts notify.test.ts repos.test.ts stages.test.ts commit-guard.test.ts repo-diff.test.ts prompts.test.ts config.test.ts metrics.test.ts plan-store.test.ts boundary.test.ts plan-doc.test.ts runner-guard.test.ts test-report.test.ts test-run.test.ts test-flow.test.ts view.test.ts waits.test.ts checkpoints.test.ts tags.test.ts`.
 
 ## Test and fix
 

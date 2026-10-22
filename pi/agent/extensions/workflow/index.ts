@@ -17,7 +17,7 @@
  * and its model, plus a row per running subagent with what it is doing now.
  */
 
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -51,6 +51,7 @@ import {
 } from "./config.ts";
 import { handoverAction, afterPass, noChangeStage, arbiterFirst, fixableFindings, canApprove, hasPlanFlaw, planFlawLines, planFlawOnPass, hasPlanLine, isPlanReady, judgeCapReached, minorFixOpen, selfCommitted, parseArbiter, phaseAfterFlow, shouldResume, skipJudge } from "./agent-end.ts";
 import { countTokens, type Tok } from "./tokens.ts";
+import { idleReason, notifyCommand, notifyDue } from "./notify.ts";
 import * as prompts from "./prompts.ts";
 import { branchName, combineOutcomes, type Delivery, type DeliveryOptions, DELIVERIES, DELIVERY_LABELS, deliveryChoices, deliveryInstruction, deliveryMenuLabel, deliveryOutcome, freshPr, isDelivery, landedBranch, planTitle, pushSkipReason, type PrState, repoDeliveryInstruction } from "./delivery.ts";
 import { modelChoices, pathCompletions } from "./pickers.ts";
@@ -301,6 +302,42 @@ export default function workflow(pi: ExtensionAPI) {
 	/** A handover message (execute, fix round, next stage) sent from agent_end; it goes out when the run settles, after an optional compaction. */
 	let pendingHandover: { customType: string; content: string } | undefined;
 	let inAgentEnd = 0; // nesting depth: a run can end while a handler still waits on the commit subagent
+	let lastNotifyAt: number | undefined;
+	let notifiedSinceStart = false; // a notification already went out for this turn
+	let idleTimer: ReturnType<typeof setTimeout> | undefined;
+	/** A desktop notification that this session needs the user. Never throws; rate-limited. */
+	function notifyUser(ctx: ExtensionContext, why: string): void {
+		try {
+			const now = Date.now();
+			if (!notifyDue({ enabled: cfg.notify.enabled, hasUI: ctx.hasUI, now, last: lastNotifyAt })) return;
+			lastNotifyAt = now;
+			notifiedSinceStart = true;
+			const c = notifyCommand(process.platform, "pi", `${path.basename(ctx.cwd)}: ${why}`);
+			if (!c) return;
+			const child = spawn(c.command, c.args, { detached: true, stdio: "ignore", windowsHide: true });
+			child.on("error", () => {});
+			child.unref();
+		} catch {}
+	}
+	/** A menu that waits for the user: notify, then ask. */
+	function askUser(ctx: ExtensionContext, title: string, options: string[]): Promise<string | undefined> {
+		notifyUser(ctx, title);
+		return ctx.ui.select(title, options);
+	}
+	/** After a run settles, notify when the session stays idle; a new turn cancels it. */
+	function scheduleIdleNotice(ctx: ExtensionContext): void {
+		if (idleTimer) clearTimeout(idleTimer);
+		if (!cfg.notify.enabled || !ctx.hasUI) return;
+		idleTimer = setTimeout(() => {
+			idleTimer = undefined;
+			try {
+				if (notifiedSinceStart || !ctx.isIdle()) return;
+				if (compacting || compactPending || pendingHandover || commitHandoverInFlight || commitSubagentRunning) return scheduleIdleNotice(ctx);
+				notifyUser(ctx, idleReason({ phase: state.phase, waiting: state.waiting?.reason }));
+			} catch {}
+		}, cfg.notify.idleMs);
+		idleTimer.unref?.();
+	}
 	let commitSubagentRunning = false; // a run ending meanwhile must not close the commit
 	/** An overflow compaction is retrying the turn; the bridge may answer that retry with an empty reply. */
 	let overflowRetry = false;
@@ -373,6 +410,7 @@ export default function workflow(pi: ExtensionAPI) {
 
 	/** A flow has ended: back to the plan phase when returnToPlan says so. */
 	async function endFlow(ctx: ExtensionContext): Promise<void> {
+		notifyUser(ctx, "flow finished");
 		state.waiting = undefined;
 		stopWaitTimer();
 		if (state.testFlow) {
@@ -1642,7 +1680,7 @@ export default function workflow(pi: ExtensionAPI) {
 		const tf = state.testFlow;
 		if (!tf || turnAborted) return;
 		if (skipJudge(last)) {
-			const choice = await ctx.ui.select("The test supervisor's last reply ended in an error", ["Retry", "Stop"]);
+			const choice = await askUser(ctx, "The test supervisor's last reply ended in an error", ["Retry", "Stop"]);
 			if (choice === "Retry") {
 				pi.sendMessage({ customType: "workflow-retry", content: "Your last reply ended in an error. Continue the test round where you stopped.", display: true }, { triggerTurn: true, deliverAs: "followUp" });
 			} else {
@@ -1663,7 +1701,7 @@ export default function workflow(pi: ExtensionAPI) {
 				pi.sendMessage({ customType: "workflow-test-report", content: reportRequest(problems), display: true }, { triggerTurn: true, deliverAs: "followUp" });
 				return;
 			}
-			const choice = await ctx.ui.select(`The test report is still not valid (${problems[0]})`, ["Retry", "Stop"]);
+			const choice = await askUser(ctx, `The test report is still not valid (${problems[0]})`, ["Retry", "Stop"]);
 			if (choice === "Retry") {
 				pi.sendMessage({ customType: "workflow-test-report", content: reportRequest(problems), display: true }, { triggerTurn: true, deliverAs: "followUp" });
 			} else {
@@ -1690,7 +1728,7 @@ export default function workflow(pi: ExtensionAPI) {
 		if (next === "ask") return askBatch(ctx);
 		if (next === "limit") {
 			const more = `Run ${cfg.test.maxRounds} more fix rounds`;
-			const choice = await ctx.ui.select(`Fix round limit reached with ${openBugs(flow).length} open bug(s)`, [more, "Stop"]);
+			const choice = await askUser(ctx, `Fix round limit reached with ${openBugs(flow).length} open bug(s)`, [more, "Stop"]);
 			if (choice === more) {
 				state.testFlow = { ...normalize(flow), fixBudget: normalize(flow).fixBudget + cfg.test.maxRounds };
 				return startFixRound(ctx);
@@ -1783,25 +1821,25 @@ export default function workflow(pi: ExtensionAPI) {
 			const body = flow.items[p.id]?.body ?? "";
 			if (p.kind === "ask") {
 				const other = "Other (type it)";
-				const choice = await ctx.ui.select(`${p.id}: ${bodyField(body, "Question") || p.text}`, [...askOptions(body), other, "Skip"]);
+				const choice = await askUser(ctx, `${p.id}: ${bodyField(body, "Question") || p.text}`, [...askOptions(body), other, "Skip"]);
 				if (choice === other) take(p.id, await ctx.ui.input(`${p.id}: your answer`, ""));
 				else take(p.id, choice === "Skip" ? undefined : choice);
 			} else if (p.kind === "manual") {
 				take(p.id, await ctx.ui.input(`Do: ${bodyField(body, "Steps")}. Look for: ${bodyField(body, "Look for")}. What did you see? (empty skips)`, ""));
 			} else if (p.kind === "blocked") {
-				const choice = await ctx.ui.select(`${p.id} was blocked: ${bodyField(body, "Needs") || p.text}`, ["It's available now", "Skip", "Stop the flow"]);
+				const choice = await askUser(ctx, `${p.id} was blocked: ${bodyField(body, "Needs") || p.text}`, ["It's available now", "Skip", "Stop the flow"]);
 				if (choice === "Stop the flow") stop = true;
 				else take(p.id, choice === "It's available now" ? choice : undefined);
 			} else if (p.kind === "refail") {
 				const n = flow.refails[p.id] ?? 0;
 				const keep = "Keep trying (escalated)";
-				const choice = await ctx.ui.select(`${p.id} still fails after ${n} fix${n === 1 ? "" : "es"}: ${p.text}`, [keep, "Skip this bug", "Stop the flow"]);
+				const choice = await askUser(ctx, `${p.id} still fails after ${n} fix${n === 1 ? "" : "es"}: ${p.text}`, [keep, "Skip this bug", "Stop the flow"]);
 				if (choice === keep) flow = { ...flow, refails: { ...flow.refails, [p.id]: Math.max(0, n - 1) }, escalateNext: true };
 				else if (choice === "Stop the flow") stop = true;
 				else flow = skipItem(flow, p.id);
 			} else {
 				const right = "The test's Expected is right";
-				const choice = await ctx.ui.select(`Plan question: ${p.text}`, [right, "The fix is right; the Expected is wrong", "Skip"]);
+				const choice = await askUser(ctx, `Plan question: ${p.text}`, [right, "The fix is right; the Expected is wrong", "Skip"]);
 				take(p.id, choice === "Skip" ? undefined : choice);
 			}
 		}
@@ -2015,7 +2053,10 @@ export default function workflow(pi: ExtensionAPI) {
 		if (d === "hold") return;
 		if (d === "stop") {
 			stopWaitTimer();
-			if (w.check && elapsedMs >= cfg.wait.maxMs) ctx.ui.notify(`workflow: stopped polling "${w.check}" after ${Math.round(elapsedMs / 60_000)} min; your next message checks again`, "warning");
+			if (w.check && elapsedMs >= cfg.wait.maxMs) {
+				ctx.ui.notify(`workflow: stopped polling "${w.check}" after ${Math.round(elapsedMs / 60_000)} min; your next message checks again`, "warning");
+				notifyUser(ctx, `stopped waiting for "${w.check}" after ${Math.round(elapsedMs / 60_000)} min`);
+			}
 			return;
 		}
 		waitChecking = true;
@@ -2030,6 +2071,7 @@ export default function workflow(pi: ExtensionAPI) {
 				w.checkPassed = true;
 				persist();
 				ctx.ui.notify(`workflow: "${w.check}" passed; send any message to continue`, "info");
+				notifyUser(ctx, `"${w.check}" passed; send any message to continue`);
 			}
 		} finally {
 			waitChecking = false;
@@ -2328,7 +2370,7 @@ export default function workflow(pi: ExtensionAPI) {
 					if (!fs.existsSync(COMMIT_GUARD_EXTENSION)) return reply(`Not delivered: commit guard extension not found at ${COMMIT_GUARD_EXTENSION}.`);
 					const knowledge = state.lastKnowledge?.hash === diff.hash ? state.lastKnowledge : undefined;
 					if (knowledge?.status === "unavailable" && ctx.hasUI) {
-						const choice = await ctx.ui.select(`Judge passed, knowledge not checked: ${knowledge.reason}`, ["Commit anyway", "Stop"]);
+						const choice = await askUser(ctx, `Judge passed, knowledge not checked: ${knowledge.reason}`, ["Commit anyway", "Stop"]);
 						if (choice !== "Commit anyway") return reply("Not delivered: stopped at the knowledge check.");
 					}
 					const seed = branchName(cfg.delivery.branchPrefix, stage?.title || planTitle(plan), new Date());
@@ -2662,6 +2704,9 @@ export default function workflow(pi: ExtensionAPI) {
 
 	// Rows from the previous run stay visible a little while, then make room.
 	pi.on("agent_start", async () => {
+		if (idleTimer) clearTimeout(idleTimer);
+		idleTimer = undefined;
+		notifiedSinceStart = false;
 		view.clearFinished(15_000);
 	});
 
@@ -2773,6 +2818,7 @@ export default function workflow(pi: ExtensionAPI) {
 		} finally {
 			turnAborted = prevAborted;
 			inAgentEnd--;
+			if (inAgentEnd === 0) scheduleIdleNotice(ctx);
 		}
 	});
 
@@ -2833,7 +2879,7 @@ export default function workflow(pi: ExtensionAPI) {
 			const labels = options.map((d) => `Approve → ${deliveryMenuLabel(d, def)}`);
 			const arbiterLabel = "Approve, arbiter solves plan flaws →";
 			const showLabel = "Show the full plan";
-			const choice = await ctx.ui.select(`Plan phase · execute on ${describeRole(cfg.roles.execute)}`, [...labels, ...(cfg.planFlaw === "ask" ? [arbiterLabel] : []), ...(recapChanges ? [showLabel] : []), "Keep discussing"]);
+			const choice = await askUser(ctx, `Plan phase · execute on ${describeRole(cfg.roles.execute)}`, [...labels, ...(cfg.planFlaw === "ask" ? [arbiterLabel] : []), ...(recapChanges ? [showLabel] : []), "Keep discussing"]);
 			if (recapChanges && choice === showLabel) {
 				pi.sendMessage({ customType: "workflow-show-plan", content: prompts.SHOW_PLAN, display: true }, { triggerTurn: true, deliverAs: "followUp" });
 				return;
@@ -2855,7 +2901,7 @@ export default function workflow(pi: ExtensionAPI) {
 		// Waiting for a person: no judge, no delivery, no stage advance until the wait is over.
 		if (state.waiting) return;
 		if (skipJudge(last)) {
-			const choice = await ctx.ui.select("The executor's last reply ended in an error", ["Retry", "Back to planning", "Stop"]);
+			const choice = await askUser(ctx, "The executor's last reply ended in an error", ["Retry", "Back to planning", "Stop"]);
 			if (choice === "Retry") {
 				pi.sendMessage(
 					{ customType: "workflow-retry", content: "Your last reply ended in an error. Continue with the open steps of the approved plan.", display: true },
@@ -2943,7 +2989,7 @@ export default function workflow(pi: ExtensionAPI) {
 		if (what === "advance" && auto && !state.stageJudged) ctx.ui.notify(`workflow: stage ${staged.current} ended with no changes; continuing (stageAdvance: auto)`, "info");
 		if (what === "ask") {
 			const yes = "Mark done and continue";
-			if ((await ctx.ui.select(`Stage ${staged.current} ended with no changes`, [yes, "Wait"])) !== yes) return;
+			if ((await askUser(ctx, `Stage ${staged.current} ended with no changes`, [yes, "Wait"])) !== yes) return;
 		}
 		await stageWithoutChanges(ctx, staged);
 	}
@@ -2955,7 +3001,7 @@ export default function workflow(pi: ExtensionAPI) {
 		if ((state.checklist ?? []).some((i) => !i.done)) {
 			if (!ctx.hasUI) return;
 			const yes = "Mark done and finish";
-			if ((await ctx.ui.select("All changes were delivered at checkpoints, but plan steps are still open", [yes, "Wait"])) !== yes) return;
+			if ((await askUser(ctx, "All changes were delivered at checkpoints, but plan steps are still open", [yes, "Wait"])) !== yes) return;
 		}
 		state.minorRounds = 0;
 		state.minorSentFor = undefined;
@@ -3030,7 +3076,7 @@ export default function workflow(pi: ExtensionAPI) {
 					go = true;
 				} else if (!go && ctx.hasUI) {
 					const more = `Continue with stage ${staged.current + 1}`;
-					go = (await ctx.ui.select(`Stage ${staged.current} delivery incomplete: ${outcome.text}`, [more, "Stop"])) === more;
+					go = (await askUser(ctx, `Stage ${staged.current} delivery incomplete: ${outcome.text}`, [more, "Stop"])) === more;
 				}
 				if (go) {
 					startNextStage(ctx, staged.stages, outcome.text);
@@ -3149,6 +3195,7 @@ export default function workflow(pi: ExtensionAPI) {
 		}
 		if (!manual && (cfg.autoJudge === "off" || seenDiffs.has(diff.hash))) return;
 		if (!manual && cfg.autoJudge === "ask") {
+			notifyUser(ctx, "diff ready for the judge");
 			const run = await ctx.ui.confirm("Diff ready", `Run the judge (${describeRole(cfg.roles.judge)}) on ${diff.files} changed file(s)?`);
 			if (!run) {
 				seenDiffs.add(diff.hash);
@@ -3166,7 +3213,7 @@ export default function workflow(pi: ExtensionAPI) {
 		if (r.verdict === "ERROR") {
 			ctx.ui.notify(r.text, "error");
 			if (!ctx.hasUI || state.phase !== "execute") return;
-			const choice = await ctx.ui.select("The judge failed to run", ["Retry the judge", "Back to planning", "Stop"]);
+			const choice = await askUser(ctx, "The judge failed to run", ["Retry the judge", "Back to planning", "Stop"]);
 			if (choice === "Retry the judge") {
 				await reviewDiff(ctx, true);
 			} else if (choice === "Back to planning") {
@@ -3204,7 +3251,7 @@ export default function workflow(pi: ExtensionAPI) {
 	async function fixOrAsk(ctx: ExtensionContext, report: string | undefined): Promise<void> {
 		if (judgeCapReached(state.judgeRounds, cfg.maxJudgeRounds)) {
 			if (report) pi.sendMessage({ customType: "workflow-judge", content: report, display: true }, { triggerTurn: false });
-			const choice = await ctx.ui.select(`Judge failed ${state.judgeRounds} rounds in a row`, ["Keep fixing", "Escalate and keep fixing", "Stop"]);
+			const choice = await askUser(ctx, `Judge failed ${state.judgeRounds} rounds in a row`, ["Keep fixing", "Escalate and keep fixing", "Stop"]);
 			if (choice === "Keep fixing" || choice === "Escalate and keep fixing") {
 				if (choice !== "Keep fixing") await escalate(ctx);
 				state.judgeRounds = 0;
@@ -3251,7 +3298,7 @@ export default function workflow(pi: ExtensionAPI) {
 				return "stop";
 			}
 			const options = ["Back to planning", ...(canAsk ? ["Let the arbiter decide"] : []), "Ignore and continue", "Stop"];
-			const choice = await ctx.ui.select("Judge questions the plan", options);
+			const choice = await askUser(ctx, "Judge questions the plan", options);
 			if (choice === "Back to planning") {
 				await setPhase(ctx, "plan");
 				pi.sendMessage({ customType: "workflow-judge", content: report, display: true }, { triggerTurn: false });
@@ -3508,7 +3555,7 @@ export default function workflow(pi: ExtensionAPI) {
 		const knowledge = state.lastKnowledge?.hash === hash ? state.lastKnowledge : undefined;
 		// D5: a pass without a knowledge check commits only when you say so.
 		if (knowledge?.status === "unavailable" && ctx.hasUI) {
-			const choice = await ctx.ui.select(`Judge passed, knowledge not checked: ${knowledge.reason}`, ["Commit anyway", "Stop"]);
+			const choice = await askUser(ctx, `Judge passed, knowledge not checked: ${knowledge.reason}`, ["Commit anyway", "Stop"]);
 			if (choice !== "Commit anyway") {
 				passStopped = true;
 				return false;
@@ -3792,6 +3839,8 @@ ${judged.text}`, instruction, chosen);
 	});
 
 	pi.on("session_shutdown", async () => {
+		if (idleTimer) clearTimeout(idleTimer);
+		idleTimer = undefined;
 		stopWaitTimer();
 		const dir = claimedFlow ? planDirs.get(claimedFlow) : undefined;
 		if (dir && claimedFlow) dropClaim(dir, claimedFlow);
