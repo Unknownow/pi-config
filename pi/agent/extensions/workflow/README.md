@@ -153,6 +153,7 @@ These let one plan deliver or pause partway through, without replanning and with
 **Wait points.** Some steps need a person (publish a package with `updates.bat`, open the Unity Editor).
 - **Plan syntax:** a step `**S7.** Wait: <what> (check: <read-only command>)`, or a stage heading ending in `(after: <what>; check: <command>)` that holds the stage back until the wait is over.
 - **Tool:** `wait_for_user {reason, check?, step?}` (execute phase only). The check must pass the read-only bash filter. An unplanned wait adds `## Amendment N (executor: wait)` to the plan.
+- **Shell:** the check runs in pi's own bash, the one the bash tool uses (Git Bash on Windows), not whatever `bash` is on PATH. `wait_for_user` runs it once at once: if it passes there is nothing to wait for. A broken check (no bash, exit 126/127, `command not found`) stops polling with a warning, and the typed-message menu shows why.
 - **Polling:** with a `check`, the workflow runs it every 2 minutes for up to 1 hour. When it exits 0 and the session is idle, the flow resumes by itself with a message naming the wait; `wait.autoResume: false` only notifies. Without a check, or after the hour, your next typed message ends the wait ("Continue anyway" / "Keep waiting" when you type while a check still fails).
 - **State:** the plan card, the status bar (`workflow-wait`) and the plan file show the wait; plan, stage and ticks stay. It survives `/flow resume`.
 - **Config:** `wait: { pollMs: 120000, maxMs: 3600000, checkTimeoutMs: 30000, autoResume: true }`.

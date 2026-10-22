@@ -1,7 +1,7 @@
 // node --test waits.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { parseWaitStep, pollDecision, resumePrefix, waitAmendment } from "./waits.ts";
+import { checkTitle, checkVerdict, parseWaitStep, pollDecision, resumePrefix, waitAmendment } from "./waits.ts";
 
 const CHECK = "git ls-remote --exit-code --tags origin com.iecgames.core/v0.17.0";
 const plan = `## 5. Steps\n\n**S6.** Edit the code\n**S7.** Wait: publish core 0.17.0 (check: ${CHECK})\n- **S8.** Wait: open the Editor\n**S9.** Do it and write a long line that is more than one hundred and twenty characters long so the checklist text would cut it short, see?\n`;
@@ -41,4 +41,33 @@ test("pollDecision", () => {
 	assert.equal(pollDecision({ ...base, elapsedMs: 100, idle: false }), "stop");
 	assert.equal(pollDecision({ ...base, hasCheck: false }), "stop");
 	assert.equal(pollDecision({ ...base, waiting: false }), "stop");
+});
+
+test("checkVerdict pass, fail and timeout", () => {
+	assert.deepEqual(checkVerdict({ code: 0, stderr: "", killed: false }, 30000), { status: "pass" });
+	assert.deepEqual(checkVerdict({ code: 1, stderr: "", killed: false }, 30000), { status: "fail", detail: "exit 1" });
+	assert.deepEqual(checkVerdict({ code: 1, stderr: "a\nlast line\n\n", killed: false }, 30000), { status: "fail", detail: "exit 1: last line" });
+	assert.deepEqual(checkVerdict({ code: 1, stderr: "", killed: true }, 30000), { status: "fail", detail: "timed out after 30 s" });
+});
+
+test("checkVerdict broken", () => {
+	assert.deepEqual(checkVerdict({ error: "no usable bash: x" }, 30000), { status: "broken", detail: "no usable bash: x" });
+	assert.deepEqual(checkVerdict({ code: 127, stderr: "bash: gh: command not found", killed: false }, 30000), { status: "broken", detail: "exit 127: bash: gh: command not found" });
+	assert.equal(checkVerdict({ code: 126, stderr: "", killed: false }, 30000).status, "broken");
+	assert.equal(checkVerdict({ code: 1, stderr: "foo: command not found", killed: false }, 30000).status, "broken");
+});
+
+test("checkVerdict keeps \"No such file\" as not yet", () => {
+	assert.equal(checkVerdict({ code: 2, stderr: "ls: cannot access 'x': No such file or directory", killed: false }, 30000).status, "fail");
+});
+
+test("checkVerdict cuts the stderr line to 200 characters", () => {
+	const v = checkVerdict({ code: 1, stderr: "x".repeat(300), killed: false }, 30000);
+	assert.equal((v.detail as string).slice("exit 1: ".length).length, 200);
+});
+
+test("checkTitle", () => {
+	assert.ok(checkTitle({ status: "broken", detail: "d" }, "c").startsWith("Check can't run ("));
+	assert.equal(checkTitle({ status: "fail", detail: "exit 1" }, "c"), "Check not passing (exit 1): c");
+	assert.equal(checkTitle({ status: "fail" }, "c"), "Check not passing: c");
 });

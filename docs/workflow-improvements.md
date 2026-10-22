@@ -2,7 +2,7 @@
 
 Reference list for `pi/agent/extensions/workflow/`. Goal: less time, fewer tokens, more parallelism.
 
-Status: A2, A3, A5, A7, B1, B7, B9, C2, C3, C4, D2, D3, D4, D5, D6, D7, D8, D9, D10, D11, D12, D13 and D14 are implemented; A13, A14, A15, A16, A17 and A18 are implemented; A12 is implemented; A1 is rejected; the rest are ideas only. Found by reading the code on 2026-10-16. Nothing was measured, so every benefit below is an estimate. Line numbers are from commit `3fdc69a` and will drift.
+Status: A2, A3, A5, A7, B1, B7, B9, C2, C3, C4, D2, D3, D4, D5, D6, D7, D8, D9, D10, D11, D12, D13 and D14 are implemented; A13, A14, A15, A16, A17, A18 and A20 are implemented; A12 is implemented; A1 is rejected; the rest are ideas only. Found by reading the code on 2026-10-16. Nothing was measured, so every benefit below is an estimate. Line numbers are from commit `3fdc69a` and will drift.
 
 ## Keeping this file current
 
@@ -47,6 +47,7 @@ Plan (Opus) -> approve -> execute (Sonnet) -> judge (Opus, separate `pi` process
 | A17 | Executors slept for fixed minutes after a background test run (`sleep 270-285`, about 34 min in one session). **Done:** a no-long-sleep rule in the execute and test prompts and `pi/agent/AGENTS.md` (`NO_SLEEP` in `prompts.ts`). | Medium (T) | S | Low. | Total `sleep` seconds per session. |
 | A18 | A delivery over several repositories handled one repository after another, including the CI wait. **Done:** the repositories open their pull requests and wait for checks in parallel, then merge in order and stop at the first failure; checks use `--interval 5` (`delivery.ts`). | Medium (T) | S | Medium. Several `gh` calls at once; merges stay serial. | Commit-step duration on multi-repo merge stages. |
 | A19 | Idea: deliver a pull request in the middle of a plan and merge once at the end, so CI is waited for once. | Medium (T) | M | Medium. A merge at the end hides an early break. | CI waits per flow. |
+| A20 | Problem: on Windows a wait check ran `bash` from PATH. Without Git Bash on PATH it always failed silently, so no wait ever resumed and a typed message offered only "Continue anyway". **Done:** checks run with pi's `getShellConfig()`; `checkVerdict` separates broken from not-yet; first check at `wait_for_user` (`waits.ts`, `index.ts`). | High (T) | S | Low. | Waits ended by "Continue anyway". |
 
 ## B. Tokens
 
@@ -157,6 +158,7 @@ Method for every item:
 | A17 | Total `sleep` seconds per session | Grep `sleep` commands in session logs. Implemented, not measured yet. | No sleep over 30 s |
 | A18 | Commit-step duration on multi-repo merge stages | Commit-step times in session logs. Implemented, not measured yet. | Shorter than the sum of the repositories' times |
 | A19 | CI waits per flow | Count `gh pr checks --watch` calls per flow. Idea only. | One wait per flow |
+| A20 | Waits ended with "Continue anyway" vs by a passing check | Count `resumePrefix` "forced" vs "passed" texts in session logs. Implemented, not measured yet. | No forced resume while the check would pass |
 | B12 | Final-plan reply duration and output tokens | Session logs. Idea only. | Replies under 3 min |
 | B13 | Judge minutes per flow | Sum judge call times per flow. Idea only. | Rechecks under 1 min |
 

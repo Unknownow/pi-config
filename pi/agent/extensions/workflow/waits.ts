@@ -43,3 +43,24 @@ export function pollDecision(o: { waiting: boolean; hasCheck: boolean; idle: boo
 	if (!o.waiting || !o.hasCheck || o.elapsedMs >= o.maxMs) return "stop";
 	return o.idle ? "run" : "hold";
 }
+
+/** What a check run gave: the exit data, or an error when the check could not start at all. */
+export type CheckRun = { code: number; stderr: string; killed: boolean } | { error: string };
+export interface CheckVerdict { status: "pass" | "fail" | "broken"; detail?: string }
+
+/** Classifies a check run: pass (exit 0), fail ("not yet") or broken (no shell, exit 126/127, "command not found"). */
+export function checkVerdict(r: CheckRun, timeoutMs: number): CheckVerdict {
+	if ("error" in r) return { status: "broken", detail: r.error };
+	if (r.killed) return { status: "fail", detail: `timed out after ${timeoutMs / 1000} s` };
+	if (r.code === 0) return { status: "pass" };
+	const last = r.stderr.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).pop()?.slice(0, 200);
+	const tail = last ? `: ${last}` : "";
+	if (r.code === 126 || r.code === 127 || /command not found/i.test(r.stderr)) return { status: "broken", detail: `exit ${r.code}${tail}` };
+	return { status: "fail", detail: `exit ${r.code}${tail}` };
+}
+
+/** The title of the menu shown when a typed message meets a check that is not passing. */
+export function checkTitle(v: CheckVerdict, check: string): string {
+	if (v.status === "broken") return `Check can't run (${v.detail}): ${check}`;
+	return v.detail ? `Check not passing (${v.detail}): ${check}` : `Check not passing: ${check}`;
+}

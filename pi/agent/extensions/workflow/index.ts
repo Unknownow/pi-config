@@ -30,6 +30,7 @@ import {
 	type ExtensionAPI,
 	type ExtensionContext,
 	getAgentDir,
+	getShellConfig,
 	loadProjectContextFiles,
 	serializeConversation,
 	type Theme,
@@ -71,7 +72,7 @@ import { type FlowFinding, recordFindings, reportFindings, type ReportStep } fro
 import { readOnlyProblem } from "./readonly-bash.ts";
 import { checkpointAmendment, checkpointNote, checkpointOutcome, hasCheckpointAmendment, checkpointText, isPlannedTag, modeAllowed, parseDeliverStep, withCheckpoints } from "./checkpoints.ts";
 import { pushArgs, tagDecision } from "./tags.ts";
-import { parseWaitStep, pollDecision, resumePrefix, waitAmendment } from "./waits.ts";
+import { type CheckVerdict, checkTitle, checkVerdict, parseWaitStep, pollDecision, resumePrefix, waitAmendment } from "./waits.ts";
 import { nextStage, parseStages, stageDelivery, stageLine, stageNote, stageStart, stagesOutcome } from "./stages.ts";
 import { planToolProblem, planToolRefused } from "./readonly-tools.ts";
 import { MetricsQueue, type MetricEvent, subagentMetric } from "./metrics.ts";
@@ -2025,12 +2026,28 @@ export default function workflow(pi: ExtensionAPI) {
 		(waitTimer as { unref?: () => void }).unref?.();
 	}
 
-	/** A check passes only on exit code 0; a failure, an error or a timeout counts as "not yet". */
-	async function runWaitCheck(check: string): Promise<boolean> {
+	/** pi's own bash (Git Bash on Windows), looked up once; a failed lookup is cached too. */
+	let waitShell: { shell: string; args: string[] } | { error: string } | undefined;
+	function resolveWaitShell(): { shell: string; args: string[] } | { error: string } {
+		if (waitShell) return waitShell;
 		try {
-			return (await pi.exec("bash", ["-c", check], { cwd: lastCtx?.cwd, timeout: cfg.wait.checkTimeoutMs })).code === 0;
-		} catch {
-			return false;
+			const c = getShellConfig();
+			waitShell = c.commandTransport === "stdin" ? { error: "no usable bash: only a WSL bash that needs stdin was found" } : { shell: c.shell, args: c.args };
+		} catch (e) {
+			waitShell = { error: `no usable bash: ${e instanceof Error ? e.message : String(e)}` };
+		}
+		return waitShell;
+	}
+
+	/** Runs a wait's check in pi's bash. Exit 0 passes; a failure or timeout is "not yet"; a check that cannot run is broken. */
+	async function runWaitCheck(check: string): Promise<CheckVerdict> {
+		const sh = resolveWaitShell();
+		if ("error" in sh) return checkVerdict(sh, cfg.wait.checkTimeoutMs);
+		try {
+			const r = await pi.exec(sh.shell, [...sh.args, check], { cwd: lastCtx?.cwd, timeout: cfg.wait.checkTimeoutMs });
+			return checkVerdict({ code: r.code, stderr: r.stderr ?? "", killed: !!r.killed }, cfg.wait.checkTimeoutMs);
+		} catch (e) {
+			return checkVerdict({ error: e instanceof Error ? e.message : String(e) }, cfg.wait.checkTimeoutMs);
 		}
 	}
 
@@ -2061,7 +2078,15 @@ export default function workflow(pi: ExtensionAPI) {
 		}
 		waitChecking = true;
 		try {
-			if (!(await runWaitCheck(w.check as string)) || state.waiting !== w) return;
+			const verdict = await runWaitCheck(w.check as string);
+			if (state.waiting !== w) return;
+			if (verdict.status === "broken") {
+				stopWaitTimer();
+				ctx.ui.notify(`workflow: wait check can't run (${verdict.detail}): ${w.check}; fix it or send a message to continue`, "warning");
+				notifyUser(ctx, `wait check can't run: ${verdict.detail}`);
+				return;
+			}
+			if (verdict.status !== "pass") return;
 			stopWaitTimer();
 			if (cfg.wait.autoResume) {
 				clearWait(ctx);
@@ -2082,11 +2107,11 @@ export default function workflow(pi: ExtensionAPI) {
 		name: "wait_for_user",
 		label: "Wait for user",
 		description:
-			"Pause the flow until a person has done something you cannot (publish a package, open the Unity Editor). Optional `check` is a read-only command that exits 0 once it is done; the workflow runs it every few minutes and resumes you by itself. Then end your turn. Name the plan step as `step` when the plan has a `Wait:` step; otherwise the wait is added to the plan as an amendment.",
+			"Pause the flow until a person has done something you cannot (publish a package, open the Unity Editor). Optional `check` is a read-only command that exits 0 once it is done; the workflow runs it once at once, then every few minutes, and resumes you by itself. Then end your turn. Name the plan step as `step` when the plan has a `Wait:` step; otherwise the wait is added to the plan as an amendment.",
 		promptSnippet: "wait_for_user: pause the flow until a person did something; resumes by check or by their reply",
 		parameters: Type.Object({
 			reason: Type.String({ description: "What the person must do, in one line" }),
-			check: Type.Optional(Type.String({ description: "A read-only command that exits 0 once it is done, e.g. git ls-remote --exit-code --tags origin <tag>" })),
+			check: Type.Optional(Type.String({ description: "A read-only command that exits 0 once it is done, e.g. git ls-remote --exit-code --tags origin <tag>. It runs once at once, then every few minutes" })),
 			step: Type.Optional(Type.String({ description: "The plan's Wait step, e.g. S7" })),
 		}),
 		async execute(_id, params, _signal, _onUpdate, ctx) {
@@ -2099,6 +2124,11 @@ export default function workflow(pi: ExtensionAPI) {
 			if (check) {
 				const problem = readOnlyProblem(check);
 				if (problem) return reply(`The check must be read-only (${problem}). Nothing changed.`);
+			}
+			if (check) {
+				const first = await runWaitCheck(check);
+				if (first.status === "pass") return reply(`The check passes already: "${reason}" is done. Tick the step with plan_check and continue in this turn. Nothing to wait for.`);
+				if (first.status === "broken") return reply(`The check can't run (${first.detail}). Fix the check (it runs in bash from ${ctx.cwd}) and call wait_for_user again. Nothing changed.`);
 			}
 			const step = params.step?.trim().toUpperCase() || undefined;
 			const planned = !!step && !!parseWaitStep(plan, step);
@@ -2730,13 +2760,14 @@ export default function workflow(pi: ExtensionAPI) {
 			stopWaitTimer();
 			waitChecking = true;
 			try {
-				if (w.check && !w.checkPassed && !(await runWaitCheck(w.check))) {
+				const verdict = w.check && !w.checkPassed ? await runWaitCheck(w.check) : undefined;
+				if (w.check && verdict && verdict.status !== "pass") {
 					if (state.waiting !== w) return { action: "continue" };
 					if (!ctx.hasUI) {
 						startWaitTimer();
 						return { action: "handled" };
 					}
-					const choice = await ctx.ui.select(`Check not passing: ${w.check}`, ["Continue anyway", "Keep waiting"]);
+					const choice = await ctx.ui.select(checkTitle(verdict, w.check), ["Continue anyway", "Keep waiting"]);
 					if (state.waiting !== w) return { action: "continue" };
 					if (choice !== "Continue anyway") {
 						ctx.ui.notify(`workflow: still waiting for "${w.reason}"`, "info");
