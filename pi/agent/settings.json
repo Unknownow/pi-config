@@ -16,8 +16,7 @@
       "extensions": [
         "+src\\index.ts"
       ]
-    },
-    "npm:context-mode"
+    }
   ],
   "tuiMode": "regular",
   "hideThinkingBlock": false,
