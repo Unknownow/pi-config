@@ -64,7 +64,7 @@ test("pull request from a protected branch", () => {
 test("merge deletes the branch by default", () => {
 	const m = { ...base, mode: "merge" as const };
 	const t = deliveryInstruction(m);
-	assert.ok(t.includes("gh pr checks <number> --watch --fail-fast"));
+	assert.ok(t.includes("gh pr checks <number> --watch --fail-fast --interval 5"));
 	assert.ok(t.includes("gh pr merge <number> --merge --delete-branch"));
 	const keep = deliveryInstruction({ ...m, deleteBranch: false });
 	assert.ok(keep.includes("gh pr merge <number> --merge`"));
@@ -266,4 +266,14 @@ test("landedBranch keeps the recorded branch when it moved", async () => {
 
 test("landedBranch keeps the recorded branch when it was deleted after a merge", async () => {
 	assert.equal(await landedBranch(fakeGit({ recorded: "b1", recordedSha: "", current: "master", currentSha: "m", ancestor: true }), "b1", "a"), undefined);
+});
+
+test("repoDeliveryInstruction runs repos in parallel then merges in order", () => {
+	const m = { ...base, mode: "merge" as const };
+	const t = repoDeliveryInstruction([
+		{ root: "D:/a", options: m },
+		{ root: "D:/b", options: m },
+	]);
+	for (const part of ["in the same reply", "--interval 5", "in the order listed", "stop at the first repository whose checks failed", "Report each repository's result"]) assert.ok(t.includes(part), part);
+	assert.ok(!t.includes("one after the other"));
 });

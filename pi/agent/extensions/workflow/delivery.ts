@@ -108,7 +108,7 @@ export function deliveryInstruction(o: DeliveryOptions): string {
 	}
 	if (o.mode === "merge") {
 		parts.push(
-			`Then merge it: wait for its checks with \`gh pr checks <number> --watch --fail-fast\` (a pull request without checks is fine). If a check fails, stop and report it; don't merge. Then run \`gh pr merge <number> --${method}${o.deleteBranch ? " --delete-branch" : ""}\`. If GitHub refuses the merge (a required review, a conflict, a branch rule), stop and report why; don't approve it yourself.`,
+			`Then merge it: wait for its checks with \`gh pr checks <number> --watch --fail-fast --interval 5\` (a pull request without checks is fine). If a check fails, stop and report it; don't merge. Then run \`gh pr merge <number> --${method}${o.deleteBranch ? " --delete-branch" : ""}\`. If GitHub refuses the merge (a required review, a conflict, a branch rule), stop and report why; don't approve it yourself.`,
 		);
 	}
 	if (o.mode === "commit") parts.push(NO_PUSH);
@@ -168,7 +168,7 @@ export function deliveryOutcome(mode: Exclude<Delivery, "off">, commits: number 
 
 /** One instruction for a change that spans several repositories: each repo's own delivery steps, run in that repo. */
 export function repoDeliveryInstruction(parts: { root: string; options: DeliveryOptions }[]): string {
-	const head = `The judge passed. The change spans ${parts.length} repositories; deliver each one below, one after the other.`;
+	const head = `The judge passed. The change spans ${parts.length} repositories; deliver them in three phases. (1) In every repository, run its steps up to and including the pull request (or up to its last step if it has no pull request), sending one bash call per repository in the same reply so they run in parallel. (2) For the repositories that merge, wait for their checks with one \`gh pr checks <number> --watch --fail-fast --interval 5\` bash call per repository, all in the same reply. (3) Merge them one at a time in the order listed below, and stop at the first repository whose checks failed or whose merge failed: don't merge the ones after it. Report each repository's result.`;
 	const sections = parts.map((p) => {
 		const body = deliveryInstruction(p.options).replace(/^The judge passed\.\s*/, "");
 		const dir = /\s/.test(p.root) ? `"${p.root}"` : p.root;
