@@ -1,10 +1,10 @@
 {
   "v": 1,
   "flowId": "20261023-0004-the-workflow-extension-publishes-judged-3c38",
-  "rev": 2,
-  "updated": "2026-10-22T17:11:24.749Z",
+  "rev": 3,
+  "updated": "2026-10-22T17:22:45.683Z",
   "title": "The workflow extension publishes judged checkpoint commits, refuses commits no judge saw, and points the executor at `deliver`",
-  "stage": 1,
+  "stage": 2,
   "delivery": "merge",
   "done": [
     "S1",
@@ -18,7 +18,7 @@
   ],
   "repos": [
     {
-      "branch": "master",
+      "branch": "flow/publish-judged-checkpoint-commits-and-re",
       "remote": "github.com/Unknownow/pi-config",
       "primary": true
     }
