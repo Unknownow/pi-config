@@ -1,0 +1,16 @@
+{
+  "v": 1,
+  "flowId": "20261023-0250-skip-a-repeated-final-full-review-after-3223",
+  "rev": 1,
+  "updated": "2026-10-22T19:50:49.540Z",
+  "title": "Skip a repeated final full review after a passing one",
+  "delivery": "merge",
+  "done": [],
+  "repos": [
+    {
+      "branch": "wt/reduce-context",
+      "remote": "github.com/Unknownow/pi-config",
+      "primary": true
+    }
+  ]
+}
