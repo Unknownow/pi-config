@@ -1,7 +1,7 @@
 // node --experimental-strip-types --test prompts.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { EXECUTE_PHASE, phaseSection, planPhase, RUNNER } from "./prompts.ts";
+import { ADVISOR, ARBITER, COMMIT, EXECUTE_PHASE, EXPLORE, JUDGE, JUDGE_KNOWLEDGE_ONLY, NO_SLEEP, PACE, phaseSection, planPhase, RUNNER, TEST_PHASE } from "./prompts.ts";
 
 const BATCH = `- Batch tool calls. Each call re-sends the whole conversation, so ten small calls at 150k context re-send 1.5M tokens. Put independent reads and commands in one call (a codemode script, ctx_batch_execute, or one bash command joined with && or ;) and print only what you need. Don't spend a call on something you could have added to the previous one.`;
 const PLAN_BATCH = `- Batch tool calls. Each call re-sends the whole conversation, so ten small calls at 150k context re-send 1.5M tokens. Put independent reads and commands in one call (a codemode script, ctx_execute for read-only analysis, or one bash command joined with && or ;) and print only what you need. Don't spend a call on something you could have added to the previous one.`;
@@ -78,4 +78,14 @@ test("planner prompts teach Deliver and Wait steps", async () => {
 		assert.ok(text.includes("Wait:"));
 		assert.ok(text.includes("(after:"));
 	}
+});
+
+test("every role carries the keep-working and parallel rule", () => {
+	for (const [name, text] of Object.entries({ plan: planPhase(true), execute: EXECUTE_PHASE, test: TEST_PHASE, JUDGE, ARBITER, EXPLORE, ADVISOR, RUNNER, JUDGE_KNOWLEDGE_ONLY })) assert.ok(text.includes(PACE), name);
+	assert.ok(!COMMIT.includes(PACE));
+});
+
+test("execute and test prompts forbid fixed long sleeps", () => {
+	assert.ok(EXECUTE_PHASE.includes(NO_SLEEP));
+	assert.ok(TEST_PHASE.includes(NO_SLEEP));
 });

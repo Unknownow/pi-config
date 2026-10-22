@@ -18,6 +18,8 @@ not raw data.
 - **Read raw text only for the lines you are about to edit**, with offset/limit or a targeted
   `grep -n`. Don't dump whole files, long diffs or full logs "to have a look".
 - **Too little?** Narrow the next query; don't fall back to printing everything.
+- **Keep working, in parallel.** Don't stop between steps: keep going until you need the user's input, a tool's result or an explorer's answer. Put independent tool calls in the same reply so they run in parallel (several reads, a test run next to an explore, several explore queries or test tasks in one call); wait only for results the next step needs.
+- **No long fixed sleeps.** Run long commands in the foreground with a timeout. To wait for a background job or the Unity Editor, poll in the same call every few seconds until it is done; never sleep for minutes.
 - On Windows `ctx_batch_execute` and `ctx_execute` with `language: shell` run PowerShell; for bash
   use the `bash` tool, or `tools.bash` from a `codemode` script.
 
