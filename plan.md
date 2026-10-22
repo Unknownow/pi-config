@@ -207,10 +207,10 @@ All paths are relative to `pi/agent/extensions/workflow/`.
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 Config, in `config.ts:192-204` and `:276-284`.
-- [ ] S2 Add `shouldSkipRepeatFullReview(sinceChars, diffChars, maxShare)` to `repo-diff.ts`, right after `needsFinalFullReview` 
-- [ ] S3 In `index.ts`:
-- [ ] S4 In `judge()` (`index.ts:1008-1012`):
-- [ ] S5 Docs:
-- [ ] S6 Run the tests in §6. Then call `judge` with the focus "Skip a repeated final full review after a passing one". Fix any b
+- [x] S1 Config, in `config.ts:192-204` and `:276-284`.
+- [x] S2 Add `shouldSkipRepeatFullReview(sinceChars, diffChars, maxShare)` to `repo-diff.ts`, right after `needsFinalFullReview` 
+- [x] S3 In `index.ts`:
+- [x] S4 In `judge()` (`index.ts:1008-1012`):
+- [x] S5 Docs:
+- [x] S6 Run the tests in §6. Then call `judge` with the focus "Skip a repeated final full review after a passing one". Fix any b
 - [ ] S7 Deliver: commit — the files in §9, no push.

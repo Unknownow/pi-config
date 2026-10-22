@@ -1,11 +1,32 @@
 {
   "v": 1,
   "flowId": "20261023-0250-skip-a-repeated-final-full-review-after-3223",
-  "rev": 1,
-  "updated": "2026-10-22T19:50:49.540Z",
+  "rev": 2,
+  "updated": "2026-10-22T19:53:08.610Z",
   "title": "Skip a repeated final full review after a passing one",
   "delivery": "merge",
-  "done": [],
+  "done": [
+    "S1",
+    "S2",
+    "S3",
+    "S4",
+    "S5",
+    "S6"
+  ],
+  "checkpoints": [
+    {
+      "step": "S7",
+      "text": "checkpoint S7: committed (3 commits)",
+      "ok": true
+    }
+  ],
+  "judgedHeads": {
+    "d:/works/wt/reduce-context/pi-config": {
+      "base": "0cfcc6f65d6c1dd6ae79e19785483e997ce617ea",
+      "head": "4d64d2c4af67ff041f75c887bf04db03228b96e7",
+      "branch": "wt/reduce-context"
+    }
+  },
   "repos": [
     {
       "branch": "wt/reduce-context",
