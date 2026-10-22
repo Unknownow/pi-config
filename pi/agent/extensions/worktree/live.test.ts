@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { test } from "node:test";
-import { footerText, readLive, removeLive, setInUse, writeLive, type LiveEntry } from "./live.ts";
+import { sessionLines, readLive, removeLive, setInUse, writeLive, type LiveEntry } from "./live.ts";
 
 const NOW = Date.parse("2026-10-21T10:00:00Z");
 const entry = (o: Partial<LiveEntry>): LiveEntry => ({
@@ -35,16 +35,19 @@ test("setInUse finds another session in the set by cwd or folder, not itself", (
 	assert.equal(setInUse([a, b], "D:/wt/w", 9), null);
 });
 
-test("footerText", () => {
-	assert.equal(footerText([entry({ pid: 1 })], 1), undefined);
+test("sessionLines", () => {
+	assert.deepEqual(sessionLines([entry({ pid: 1 })], 1), []);
 	const list = [
 		entry({ pid: 1 }),
 		entry({ pid: 2, set: "D:/wt/w1", busy: true, flow: { phase: "execute", stage: 2, stages: 5 } }),
 		entry({ pid: 3, cwd: "D:/p/game", flow: { phase: "plan" } }),
 		entry({ pid: 4, set: "D:/wt/w3" }),
 	];
-	assert.equal(footerText([entry({ pid: 2, cwd: "D:/p/game/src", repo: "D:/p/game" })], 1), "game: idle");
-	assert.equal(footerText(list, 1), "w1: working execute 2/5 · game: needs you · w3: idle");
-	const many = [1, 2, 3, 4, 5, 6].map((n) => entry({ pid: n + 10, set: `D:/wt/s${n}` }));
-	assert.equal(footerText(many, 1), "s1: idle · s2: idle · s3: idle · s4: idle +2");
+	assert.deepEqual(sessionLines([entry({ pid: 2, cwd: "D:/p/game/src", repo: "D:/p/game" })], 1), ["game: idle"]);
+	assert.deepEqual(sessionLines(list, 1), ["w1: working execute 2/5", "game: needs you", "w3: idle"]);
+	const mk = (n: number) => Array.from({ length: n }, (_, i) => entry({ pid: i + 10, set: `D:/wt/s${i + 1}` }));
+	assert.equal(sessionLines(mk(6), 1).length, 6);
+	const ten = sessionLines(mk(10), 1);
+	assert.equal(ten.length, 8);
+	assert.equal(ten[7], "+3 more");
 });

@@ -12,7 +12,7 @@ import { CURRENT_SESSION_VERSION, getAgentDir, SessionManager, type ExtensionAPI
 import { DEFAULT_LINK, loadConfig, type WtConfig } from "./config.ts";
 import { isLink, unlinkLink } from "./files.ts";
 import { foldersFromEntries } from "./folders.ts";
-import { footerText, pidAlive, readLive, removeLive, setInUse, writeLive, type LiveEntry } from "./live.ts";
+import { sessionLines, pidAlive, readLive, removeLive, setInUse, writeLive, type LiveEntry } from "./live.ts";
 import { readMeta, writeMeta } from "./meta.ts";
 import { latestSession, newSessionFile } from "./sessions.ts";
 import { sharedProblem } from "./shared-guard.ts";
@@ -768,7 +768,8 @@ export default function worktree(pi: ExtensionAPI) {
 	};
 	const pollFooter = () => {
 		try {
-			liveCtx?.ui.setStatus("wt-sessions", footerText(sessionsInUse(), process.pid));
+			const lines = sessionLines(sessionsInUse(), process.pid);
+			liveCtx?.ui.setWidget("wt-sessions", lines.length ? lines : undefined, { placement: "belowEditor" });
 		} catch {}
 	};
 	const stopLive = () => {
@@ -785,6 +786,9 @@ export default function worktree(pi: ExtensionAPI) {
 		unsubStatus?.();
 		liveCtx = ctx;
 		busy = false;
+		try {
+			ctx.ui.setStatus("wt-sessions", undefined);
+		} catch {}
 		publishLive();
 		pollFooter();
 		liveTimers = [setInterval(publishLive, 30000), setInterval(pollFooter, 5000)];

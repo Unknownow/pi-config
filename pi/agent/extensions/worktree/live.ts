@@ -71,10 +71,9 @@ export function setInUse(entries: LiveEntry[], setRoot: string, ownPid: number):
 	return entries.find((e) => e.pid !== ownPid && [e.cwd, ...(e.folders ?? [])].some((f) => inside(f, setRoot))) ?? null;
 }
 
-/** The footer line about the other sessions, or undefined when there are none. */
-export function footerText(entries: LiveEntry[], ownPid: number): string | undefined {
+/** One line per other session, `label: state`; at most 8 (the last `+N more` when there are more). Empty when there are none. */
+export function sessionLines(entries: LiveEntry[], ownPid: number): string[] {
 	const others = entries.filter((e) => e.pid !== ownPid);
-	if (!others.length) return undefined;
 	const one = (e: LiveEntry) => {
 		const label = base(e.set ?? e.repo ?? e.cwd) || String(e.pid);
 		const exec = e.flow?.phase === "execute";
@@ -83,8 +82,8 @@ export function footerText(entries: LiveEntry[], ownPid: number): string | undef
 		else state = e.flow && (e.flow.phase === "plan" || exec) ? "needs you" : "idle";
 		return `${label}: ${state}`;
 	};
-	const shown = others.slice(0, 4).map(one).join(" · ");
-	return others.length > 4 ? `${shown} +${others.length - 4}` : shown;
+	if (others.length <= 8) return others.map(one);
+	return [...others.slice(0, 7).map(one), `+${others.length - 7} more`];
 }
 
 export function pidAlive(pid: number): boolean {
