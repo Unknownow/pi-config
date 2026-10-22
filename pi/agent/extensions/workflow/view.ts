@@ -22,6 +22,7 @@ import { type Component, type TUI, truncateToWidth } from "@earendil-works/pi-tu
 import { DEFAULTS, describeRole, type Role, type RoleSpec } from "./config.ts";
 import { countTokens, type Tok, type TokenWeights } from "./tokens.ts";
 import type { SubagentEvent } from "./subagent.ts";
+import { progressBar } from "./board.ts";
 import { reportLines, type ReportFinding, type ReportStep } from "./flow-report.ts";
 
 export type Stage = "plan" | "test" | "execute" | "judge" | "commit";
@@ -226,6 +227,29 @@ export function summaryLines(s: FlowSummary, theme: Theme): string[] {
 	return lines;
 }
 
+export interface FlowProgress {
+	stage?: number;
+	stages?: number;
+	done: number;
+	total: number;
+	/** `<id> <text>` of the first open step. */
+	current?: string;
+	judgeRound: number;
+	waiting?: string;
+}
+
+/** The one-line progress of the executing plan: stage, step bar, current step, judge round, wait. */
+export function progressLine(p: FlowProgress, theme: Theme): string {
+	const parts: string[] = [];
+	if (p.stage !== undefined && p.stages !== undefined) parts.push(theme.fg("muted", `stage ${p.stage}/${p.stages}`));
+	parts.push(`${theme.fg("accent", progressBar(p.done, p.total, 10))} ${theme.fg("muted", `${p.done}/${p.total}`)}`);
+	if (p.total > 0 && p.done >= p.total) parts.push(theme.fg("muted", "all steps done"));
+	else if (p.current) parts.push(theme.fg("muted", `now ${p.current.slice(0, 50)}`));
+	if (p.judgeRound > 0) parts.push(theme.fg("muted", `judge round ${p.judgeRound}`));
+	if (p.waiting) parts.push(theme.fg("warning", `waiting: ${p.waiting.slice(0, 40)}`));
+	return `  ${parts.join(theme.fg("dim", " · "))}`;
+}
+
 export class FlowView {
 	phase: "off" | "plan" | "execute" | "test" = "off";
 	escalated = false;
@@ -234,6 +258,8 @@ export class FlowView {
 	/** How much each kind of token counts; see WorkflowConfig.tokenWeights. */
 	weights: TokenWeights = DEFAULTS.tokenWeights;
 	runs: RunView[] = [];
+	/** Progress of the executing plan; the widget shows it under the pipeline line. */
+	progress: FlowProgress | undefined;
 	/** Tokens of finished messages per stage this session, main session and subagents together. */
 	used: Record<Stage, Tok> = emptyStageTokens();
 	/** The same, broken down, since the current flow started; the widget shows these. */
@@ -450,6 +476,7 @@ export class FlowView {
 			lines.push(
 				`${theme.fg("muted", "flow ")} ${node("plan", "plan")}${sep}${testNode}${node("execute", "execute")}${sep}${node("judge", "judge")}${sep}${node("commit", null)}${isZero(total) ? "" : theme.fg("dim", ` · Σ ${fmtTok(total)}`)}`,
 			);
+			if (this.progress) lines.push(progressLine(this.progress, theme));
 		}
 
 		this.runs.forEach((run, i) => {

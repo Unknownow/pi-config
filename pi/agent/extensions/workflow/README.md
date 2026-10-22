@@ -301,6 +301,19 @@ flow  plan opus-5-5·high 48,120 (9,800) ▸ ● EXECUTE sonnet-5-5·medium 1,20
   └ ⠇ advisor  opus-5-5   [error] NullReferenceException in SaveM…  read Scripts/SaveManager.cs:40-80 · 0s
 ```
 
+While a plan executes, one more line sits under the pipeline: the stage, a step bar, the current step,
+the judge round and the wait reason. Parts with nothing to show are left out.
+
+```
+  stage 2/3 · ███████░░░ 7/10 · now S8 Add the board · judge round 1 · waiting: approval
+```
+
+The session also writes `live.json` into the flow's plan folder (next to `status.json`, local only,
+never committed): phase, stage, steps, judge round, wait reason, running subagents and the last 20
+events. It is written when something changes and at least every 60 s. The plan folders sessions have
+written to are listed in `<agent dir>/workflow/board.json` (50 newest), so a board can find flows
+across repos. Sessions started before this existed write neither file.
+
 Token counts update in real time, including the message still streaming. A stage counts the main
 session's messages sent while it was active plus the subagents run during it (explore and advisor
 count toward the stage that called them, judge runs toward `judge`). Each count is the **exact raw

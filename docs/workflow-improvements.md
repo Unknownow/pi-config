@@ -2,7 +2,7 @@
 
 Reference list for `pi/agent/extensions/workflow/`. Goal: less time, fewer tokens, more parallelism.
 
-Status: A2, A3, A5, A7, B1, B7, B9, C2, C3, C4, D2, D3, D4, D5, D6, D7, D8, D9, D10, D11, D12, D13 and D14 are implemented; A13, A14, A15, A16, A17, A18, A20 and A21 are implemented; A12 is implemented; A1 is rejected; the rest are ideas only. Found by reading the code on 2026-10-16. Nothing was measured, so every benefit below is an estimate. Line numbers are from commit `3fdc69a` and will drift.
+Status: A2, A3, A5, A7, B1, B7, B9, C2, C3, C4, D2, D3, D4, D5, D6, D7, D8, D9, D10, D11, D12, D13 and D14 are implemented; A13, A14, A15, A16, A17, A18, A20 and A21 are implemented; A22 is implemented in part (progress line and live.json; the /flow board overlay is pending); A12 is implemented; A1 is rejected; the rest are ideas only. Found by reading the code on 2026-10-16. Nothing was measured, so every benefit below is an estimate. Line numbers are from commit `3fdc69a` and will drift.
 
 ## Keeping this file current
 
@@ -49,6 +49,7 @@ Plan (Opus) -> approve -> execute (Sonnet) -> judge (Opus, separate `pi` process
 | A19 | Idea: deliver a pull request in the middle of a plan and merge once at the end, so CI is waited for once. | Medium (T) | M | Medium. A merge at the end hides an early break. | CI waits per flow. |
 | A20 | Problem: on Windows a wait check ran `bash` from PATH. Without Git Bash on PATH it always failed silently, so no wait ever resumed and a typed message offered only "Continue anyway". **Done:** checks run with pi's `getShellConfig()`; `checkVerdict` separates broken from not-yet; first check at `wait_for_user` (`waits.ts`, `index.ts`). | High (T) | S | Low. | Waits ended by "Continue anyway". |
 | A21 | Problem: every approval wait and routine menu needed the user, even when they would only say yes. **Done:** autopilot (`config.ts`, `waits.ts`, `index.ts`, `prompts.ts`): the agent approves with a comment or acts itself, and the delivery, autoJudge, plan-flaw, stage-advance and knowledge menus are skipped. | Medium (T) | M | Medium. The agent approves its own work; the judge still reviews, and the amendment and comment record it. | User prompts per flow. |
+| A22 | Problem: there is no way to follow what flows are doing or how far they are. **Done (stage 1):** a progress line in the widget and a `live.json` snapshot per flow (`board.ts`, `view.ts`, `index.ts`). **Pending:** `/flow board` overlay across repos. | Medium (T) | M | Low. Local files only; best-effort writes. | Time to find a stuck flow. |
 
 ## B. Tokens
 
@@ -161,6 +162,7 @@ Method for every item:
 | A19 | CI waits per flow | Count `gh pr checks --watch` calls per flow. Idea only. | One wait per flow |
 | A20 | Waits ended with "Continue anyway" vs by a passing check | Count `resumePrefix` "forced" vs "passed" texts in session logs. Implemented, not measured yet. | No forced resume while the check would pass |
 | A21 | Autopilot amendments per flow; user prompts per flow with autopilot on vs off | Count `executor: autopilot` amendments and `askUser` menus in session logs. Implemented, not measured yet. | Fewer prompts, and no judge FAIL caused by a self-approval |
+| A22 | Time from "is it stuck?" to an answer | Not measured yet. | Seconds instead of reading logs |
 | B12 | Final-plan reply duration and output tokens | Session logs. Idea only. | Replies under 3 min |
 | B13 | Judge minutes per flow | Sum judge call times per flow. Idea only. | Rechecks under 1 min |
 

@@ -67,6 +67,7 @@ import { parseTestReport } from "./test-report.ts";
 import { amendmentTail, answerItem, askOptions, bodyField, newTestFlow, nextAction, normalize, openBugs, pendingFromFlaws, recordReport, skipItem, testOutcome, testPlan, type TestFlow } from "./test-flow.ts";
 import { callDir, formatTaskResult, parseRunnerReply, runnerGate, sanitizeIds, scheduleTasks, taskCard, taskRecord, type TestTask, verifyRun } from "./test-run.ts";
 import { commitPlan, type Finished, mergeChecklist, newFlowId, openStepsReminder, parseChecklist, type PlanStatus, planCard, pruneIds, renderPlanFile, splitPlanFile, type ChecklistItem } from "./plan-doc.ts";
+import { addToRegistry, liveEvents, type LiveInfo, readLive } from "./board.ts";
 import { adoptHigher, claimLive, commitRef, dropClaim, pidAlive, readClaim, writeClaim, deleteLocal, deleteRef, fetchMirror, type Git, listRefs, plansDir, pushRef, readLocalStatuses, readPlanMd, refRev, remoteOf, repoInfo, type RefEntry, writeLocal } from "./plan-store.ts";
 import { type FlowFinding, recordFindings, reportFindings, type ReportStep } from "./flow-report.ts";
 import { readOnlyProblem } from "./readonly-bash.ts";
@@ -445,7 +446,20 @@ export default function workflow(pi: ExtensionAPI) {
 		if (ctx.hasUI) ctx.ui.setStatus("workflow-wait", state.waiting && state.phase === "execute" ? `waiting: ${state.waiting.reason.slice(0, 40)}` : undefined);
 		if (ctx.hasUI) ctx.ui.setStatus("workflow-autopilot", autopilotOn() ? "autopilot" : undefined);
 		if (ctx.hasUI) ctx.ui.setStatus("workflow-folders", n ? `+${n} folder${n === 1 ? "" : "s"}` : undefined);
+		if (state.approvedPlan && cl?.length && (state.phase === "execute" || state.phase === "test")) {
+			const st = currentStages();
+			const open = cl.find((i) => !i.done);
+			view.progress = {
+				...(st ? { stage: st.current, stages: st.stages.length } : {}),
+				done: cl.filter((i) => i.done).length,
+				total: cl.length,
+				...(open ? { current: `${open.id} ${open.text}` } : {}),
+				judgeRound: state.judgeRounds,
+				...(state.waiting ? { waiting: state.waiting.reason } : {}),
+			};
+		} else view.progress = undefined;
 		emitStatus();
+		liveTick();
 	}
 
 	let lastStatusEvent = "";
@@ -1069,6 +1083,97 @@ export default function workflow(pi: ExtensionAPI) {
 		claimedFlow = undefined;
 	}
 
+	/** The flow's `live.json`: what the board shows of this session. Written on change and every 60 s. */
+	let liveLast: LiveInfo | undefined;
+	let liveLastJson = "";
+	let liveLastWrite = 0;
+	let liveEventLog: { at: string; text: string }[] = [];
+	let liveTimer: ReturnType<typeof setInterval> | undefined;
+	let liveFlow: string | undefined;
+	const liveRegistered = new Set<string>();
+	function liveSnapshot(): LiveInfo | undefined {
+		const flowId = state.planDoc?.flowId;
+		if (!flowId || !planDirs.get(flowId)) return undefined;
+		const st = currentStages();
+		return {
+			v: 1,
+			flowId,
+			title: state.approvedPlan ? planTitle(state.approvedPlan) : flowId,
+			pid: process.pid,
+			host: os.hostname(),
+			cwd: claimCwd || process.cwd(),
+			updated: new Date().toISOString(),
+			phase: state.phase,
+			...(st ? { stage: st.current, stages: st.stages.length } : {}),
+			steps: (state.checklist ?? []).map((i) => ({ id: i.id, text: i.text.slice(0, 80), done: i.done })),
+			judgeRound: state.judgeRounds,
+			autopilot: autopilotOn(),
+			...(state.waiting ? { waiting: state.waiting.reason.slice(0, 120) } : {}),
+			runs: view.runs.filter((r) => r.status === "running").slice(0, 6).map((r) => ({ role: r.role, label: r.label.slice(0, 80), activity: (r.activity ?? "").slice(0, 80) })),
+			events: [],
+		};
+	}
+	function stopLiveTimer(): void {
+		if (liveTimer) clearInterval(liveTimer);
+		liveTimer = undefined;
+	}
+	/** Ends the snapshot of a flow this session no longer holds in `state`: no wait, no runs, a final event. */
+	function liveFinish(dir: string, flowId: string, text: string): void {
+		try {
+			const cur = readLive(dir, flowId);
+			if (!cur) return;
+			cur.waiting = undefined;
+			cur.runs = [];
+			cur.updated = new Date().toISOString();
+			cur.events = [...cur.events, { at: cur.updated, text: `finished: ${text}` }].slice(-20);
+			fs.writeFileSync(path.join(dir, flowId, "live.json"), `${JSON.stringify(cur, null, 2)}
+`);
+		} catch {}
+	}
+	function liveTick(extra?: string): void {
+		// Once the flow is finished only the final write (with `extra`) goes through.
+		if (state.planDoc?.finished && !extra) {
+			stopLiveTimer();
+			return;
+		}
+		try {
+			const snap = liveSnapshot();
+			if (!snap) {
+				stopLiveTimer();
+				return;
+			}
+			if (liveFlow !== snap.flowId) {
+				liveFlow = snap.flowId;
+				liveLast = undefined;
+				liveLastJson = "";
+				liveEventLog = [];
+			}
+			const now = Date.now();
+			const at = new Date(now).toISOString();
+			const texts = [...liveEvents(liveLast, snap), ...(extra ? [extra] : [])];
+			const log = [...liveEventLog, ...texts.map((text) => ({ at, text }))].slice(-20);
+			snap.events = log;
+			const key = JSON.stringify({ ...snap, updated: "" });
+			if (key === liveLastJson && now - liveLastWrite < 60_000) return;
+			const dir = planDirs.get(snap.flowId)!;
+			const folder = path.join(dir, snap.flowId);
+			fs.mkdirSync(folder, { recursive: true });
+			fs.writeFileSync(path.join(folder, "live.json"), `${JSON.stringify(snap, null, 2)}\n`);
+			liveLast = snap;
+			liveLastJson = key;
+			liveLastWrite = now;
+			liveEventLog = log;
+			if (!liveRegistered.has(dir)) {
+				liveRegistered.add(dir);
+				addToRegistry(path.join(getAgentDir(), "workflow", "board.json"), dir, new Date());
+			}
+			if (!liveTimer && !state.planDoc?.finished) {
+				liveTimer = setInterval(() => liveTick(), 5_000);
+				liveTimer.unref?.();
+			}
+		} catch {}
+	}
+
 	async function writePlan(ctx: ExtensionContext, snap: PlanSnap): Promise<void> {
 		claimCwd = ctx.cwd.replace(/\\/g, "/");
 		const found = [...(await flowRepos(ctx)).map((r) => r.root), ...(await Promise.all(snap.touched.map((t) => gitRoot(t))))];
@@ -1097,6 +1202,10 @@ export default function workflow(pi: ExtensionAPI) {
 		if (snap.finished) {
 			dropClaim(dir, snap.flowId);
 			if (claimedFlow === snap.flowId) stopClaimTimer();
+			if (state.planDoc?.flowId === snap.flowId) {
+				liveTick(`finished: ${snap.finished.text}`);
+				stopLiveTimer();
+			} else liveFinish(dir, snap.flowId, snap.finished.text);
 		} else if (state.planDoc?.flowId === snap.flowId) {
 			claimedFlow = snap.flowId;
 			refreshClaim();
@@ -3894,6 +4003,7 @@ ${judged.text}`, instruction, chosen);
 		const dir = claimedFlow ? planDirs.get(claimedFlow) : undefined;
 		if (dir && claimedFlow) dropClaim(dir, claimedFlow);
 		stopClaimTimer();
+		stopLiveTimer();
 	});
 
 	// ----------------------------------------------------------------------
