@@ -2,7 +2,7 @@
 
 Reference list for `pi/agent/extensions/workflow/`. Goal: less time, fewer tokens, more parallelism.
 
-Status: A2, A3, A5, A7, B1, B7, B9, C2, C3, C4, D2, D3, D4, D5, D6, D7, D8, D9, D10, D11, D12, D13, D14, D15 and D16 are implemented; A13, A14, A15, A16, A17, A18, A20 and A21 are implemented; A22 is implemented; A23, A24 and A25 are implemented; A12 is implemented; A1 is rejected; the rest are ideas only. Found by reading the code on 2026-10-16. Nothing was measured, so every benefit below is an estimate. Line numbers are from commit `3fdc69a` and will drift.
+Status: A2, A3, A5, A7, B1, B7, B9, C2, C3, C4, D2, D3, D4, D5, D6, D7, D8, D9, D10, D11, D12, D13, D14, D15, D16 and D17 are implemented; A13, A14, A15, A16, A17, A18, A20 and A21 are implemented; A22 is implemented; A23, A24 and A25 are implemented; A12 is implemented; A1 is rejected; the rest are ideas only. Found by reading the code on 2026-10-16. Nothing was measured, so every benefit below is an estimate. Line numbers are from commit `3fdc69a` and will drift.
 
 ## Keeping this file current
 
@@ -103,6 +103,7 @@ Plan (Opus) -> approve -> execute (Sonnet) -> judge (Opus, separate `pi` process
 | D14 | A commit step that committed on a new branch (pr/merge delivery) was reported as "ended without a commit", and a commit-only instruction did not forbid a chained `git push`. **Done:** `outcomeRef`/`landedBranch` in `delivery.ts`, delivery split into prepare, commit step and outcome in `index.ts`, `NO_PUSH` in the commit-only instruction. | Medium (T) | S | Low. | "Commit step ended without a commit" outcomes where commits exist. |
 | D15 | Commits a commit checkpoint made were never published by a later `push`, `pr` or `merge` `deliver` or by the flow end: both looked only at the diff against `HEAD`, found it empty and said "no changes to deliver", so the executor asked the user to push. **Done:** `publish.ts` (decision and refusal text), `judgedHeads` in the flow state and `status.json`, `publishJudged`/`publishAtEnd` in `index.ts`. Commits the commit step did not make and that are on no remote are refused with a `git reset --soft` hint. | High (T) | M | Medium: a recorded head is trusted without a new review. | A repo rewritten outside the commit step is refused until reset. |
 | D16 | `git merge`, `cherry-pick`, `revert`, `pull`, `rebase` and `am` could create commits no judge saw during execution. **Done:** `commitCreatingOnly` in `push-guard.ts`, and the non-shell pre-check in `index.ts`; allowed only with `--no-commit`/`-n`/`--squash`/`--ff-only` or to abort. | Medium (T) | S | Low: the refusal names the allowed flag. | `git pull` without `--ff-only` is refused. |
+| D17 | The executor handed pushes to the user; plans spelled out raw publish commands and Deliver steps named no mode. **Done:** `deliverStepSpec`, `deliverHint`, `deliverHintsBlock`, `publishRefusal` and `deliverStepWarnings` in `checkpoints.ts`; the prompts in `prompts.ts`; annotations, refusal texts and the accept-time warnings in `index.ts`. | Medium (T) | S | Low: hints only, warnings never block. | The executor sees `→ call deliver {…}` for each open Deliver step. |
 
 ## Effect measurement
 
@@ -157,6 +158,7 @@ Method for every item:
 | D14 | "Commit step ended without a commit" outcomes where commits exist | Count in flow outcomes. Implemented, not measured yet. | Zero such outcomes |
 | D15 | Flows with a commit checkpoint whose later push, PR or merge delivery completed | Count flows ending "no changes to deliver" or with a hand-over to the user after a checkpoint. Implemented, not measured yet. | Zero hand-overs |
 | D16 | Guard refusals of commit-creating subcommands per flow | Count refusals containing "creates a commit no judge has seen". Implemented, not measured yet. | Few; each followed by a retry with the flag |
+| D17 | Executor turns asking the user to push or open/merge a PR | Count such turns in flow transcripts. Implemented, not measured yet. | None |
 | A10 | Flow steps failed by `cannot lock ref` | Count in session logs | Idea only, not measured |
 | A11 | Plans started in a second workspace | n/a | Idea only |
 | A12 | User prompts per test flow; supervisor vs runner tokens (D3 metrics); bugs verified fixed per flow | Count the questions asked per flow, compare `test` and `runner` tokens in the flow card, count `[fixed]` items. Not measured yet. | Most flows end without prompts beyond the crucial cases; runner tokens are the larger share; no fix is committed that the retest shows broken |
