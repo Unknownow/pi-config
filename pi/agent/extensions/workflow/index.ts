@@ -58,9 +58,10 @@ import { branchName, combineOutcomes, type Delivery, type DeliveryOptions, DELIV
 import { modelChoices, pathCompletions } from "./pickers.ts";
 import { ghCandidates, withPathDir } from "./gh-path.ts";
 import { citeNames, collectRepoDiff as collectRepoDiffImpl, needsFinalFullReview, type RepoDiff } from "./repo-diff.ts";
+import { mergePublish, movedText, publishDecision, refuseText, type PublishEntry, type PublishFacts } from "./publish.ts";
 import { combineRepoTexts, followFolders, parseAddDir, parseWorktreeList, repoKey, uniqueRoots } from "./repos.ts";
 import { askFolderAdd } from "./folder-add.ts";
-import { shellProblem } from "./push-guard.ts";
+import { codeCommitProblem, shellProblem } from "./push-guard.ts";
 import { COMMIT_GUARD_ENV, type CommitGuardSpec } from "./commit-guard.ts";
 import { RUNNER_GUARD_ENV, type RunnerGuardSpec } from "./runner-guard.ts";
 import { parseTestReport } from "./test-report.ts";
@@ -71,7 +72,7 @@ import { addToRegistry, type BoardEntry, boardLines, boardRows, detailLines, liv
 import { adoptHigher, claimLive, commitRef, dropClaim, pidAlive, readClaim, writeClaim, deleteLocal, deleteRef, fetchMirror, type Git, listRefs, plansDir, pushRef, readLocalStatuses, readPlanMd, refRev, remoteOf, repoInfo, type RefEntry, writeLocal } from "./plan-store.ts";
 import { type FlowFinding, recordFindings, reportFindings, type ReportStep } from "./flow-report.ts";
 import { readOnlyProblem } from "./readonly-bash.ts";
-import { checkpointAmendment, checkpointNote, checkpointOutcome, hasCheckpointAmendment, checkpointText, isPlannedTag, modeAllowed, parseDeliverStep, withCheckpoints } from "./checkpoints.ts";
+import { checkpointAmendment, checkpointNote, checkpointOutcome, deliverHint, deliverHintsBlock, deliverStepSpec, deliverStepWarnings, hasCheckpointAmendment, checkpointText, isPlannedTag, modeAllowed, parseDeliverStep, publishRefusal, withCheckpoints } from "./checkpoints.ts";
 import { pushArgs, tagDecision } from "./tags.ts";
 import { type CheckVerdict, autopilotAmendment, autopilotReply, checkTitle, checkVerdict, type HumanCheck, humanChecks, parseVerifyStep, parseWaitStep, pollDecision, resumePrefix, verifyAmendment, waitAmendment } from "./waits.ts";
 import { nextStage, parseStages, stageDelivery, stageLine, stageNote, stageStart, stagesOutcome } from "./stages.ts";
@@ -131,7 +132,7 @@ interface FlowState {
 	flow?: FlowUsage;
 	flowStarted?: number;
 	/** Set when the commit step's instruction goes out; the run after it ends the flow. `branch`: the branch the commits go on. `prBefore`: a closed or merged PR gh already showed for the branch before the step ran; it is not this flow's. */
-	commitPending?: { mode: Exclude<Delivery, "off">; head: string; branch?: string; prBefore?: number; pushSkipped?: string; repos?: { root: string; mode: Exclude<Delivery, "off">; head: string; branch?: string; prBefore?: number; pushSkipped?: string }[] };
+	commitPending?: { self?: boolean; notes?: string[]; mode: Exclude<Delivery, "off">; head: string; branch?: string; prBefore?: number; pushSkipped?: string; repos?: { root: string; mode: Exclude<Delivery, "off">; head: string; branch?: string; prBefore?: number; pushSkipped?: string }[] };
 	/** What happens after the judge passes in this flow, chosen at approval; unset means `delivery.default`. */
 	delivery?: Delivery;
 	/** Plan flaws go straight to the arbiter in this flow, chosen at approval; unset means `cfg.planFlaw`. */
@@ -174,6 +175,8 @@ interface FlowState {
 	waiting?: { reason: string; check?: string; step?: string; stage?: number; since: string; planned: boolean; atStageStart?: boolean; checkPassed?: boolean; held?: string };
 	/** Deliveries made inside the plan, before the end of a stage or flow. */
 	checkpoints?: { step?: string; stage?: number; text: string; ok: boolean }[];
+	/** Per repo key: the head the workflow's commit step produced (base = HEAD before this flow's first commit there). */
+	judgedHeads?: Record<string, { base: string; head: string; branch: string }>;
 }
 
 interface LastJudge {
@@ -550,6 +553,7 @@ export default function workflow(pi: ExtensionAPI) {
 		state.commitPending = undefined;
 		state.waiting = undefined;
 		state.checkpoints = undefined;
+		state.judgedHeads = undefined;
 		stopWaitTimer();
 		state.finalizing = undefined;
 		state.planRevisions = undefined;
@@ -592,17 +596,51 @@ export default function workflow(pi: ExtensionAPI) {
 		const stages = parseStages(plan);
 		state.stage = stages.length ? 1 : undefined;
 		planMilestone(ctx);
-		if (!stages.length) return "";
+		for (const w of deliverStepWarnings(plan ?? "", (id) => stageCapFor(state.checklist?.find((i) => i.id === id)?.stage))) ctx.ui.notify(`workflow: ${w}`, "warning");
+		if (!stages.length) return deliverHintsText(undefined);
 		ctx.ui.notify(`workflow: staged plan, ${stages.length} stages; stage 1: ${stages[0].title}`, "info");
 		const first = stageStart(stages, 1, state.delivery ?? defaultDelivery());
 		if (holdForStageWait(ctx, stages[0], first)) return `\n\nStage 1 waits for: ${stages[0].after?.reason}. Don't start it; end your turn now. The workflow sends you the stage when the wait is over.`;
-		return `\n\n${first}`;
+		return `\n\n${first}${deliverHintsText(1)}`;
 	}
 
 	/** The stages of the approved plan and the current one, or null when the plan is not staged. */
 	function currentStages() {
 		const stages = state.stage ? parseStages(state.approvedPlan) : [];
 		return stages.length && state.stage ? { stages, current: state.stage } : null;
+	}
+
+	/** The delivery that caps the Deliver steps of `stage` (or of the whole flow when unstaged). */
+	function stageCapFor(stage: number | undefined): Delivery {
+		const stages = stage ? parseStages(state.approvedPlan) : [];
+		return stageDelivery(state.delivery ?? defaultDelivery(), stage ? stages[stage - 1] : undefined);
+	}
+
+	/** The open Deliver steps of `stage` with the call each one makes, as text to append to a message ("" when there are none). */
+	function deliverHintsText(stage: number | undefined): string {
+		const block = deliverHintsBlock(state.approvedPlan ?? "", state.checklist, stage, stageCapFor(stage));
+		return block ? `\n\n${block}` : "";
+	}
+
+	/** ` → call deliver …` for a Deliver step, or "". */
+	function deliverLine(id: string, stage: number | undefined): string {
+		const spec = deliverStepSpec(state.approvedPlan ?? "", id);
+		return spec ? ` ${deliverHint(id, spec, stageCapFor(stage))}` : "";
+	}
+
+	/** A refusal of a publish the executor may not run itself, naming the next Deliver call. */
+	function publishRefuse(problem: string): string {
+		const stage = currentStages()?.current;
+		const cap = stageCapFor(stage);
+		const plan = state.approvedPlan ?? "";
+		let next: { id: string; hint: string } | null = null;
+		for (const i of state.checklist ?? []) {
+			if (i.done || isHuman(i) || (stage !== undefined && i.stage !== undefined && i.stage !== stage)) continue;
+			const spec = deliverStepSpec(plan, i.id);
+			if (spec?.mode && spec.mode !== "commit") { next = { id: i.id, hint: deliverHint(i.id, spec, cap) }; break; }
+		}
+		if (next && /^→ (delivery is off|beyond)/.test(next.hint)) next = null;
+		return publishRefusal(problem, next, DELIVERY_LABELS[cap]);
 	}
 
 	async function approve(ctx: ExtensionContext, delivery?: Delivery, arbiterOnFlaw = false): Promise<void> {
@@ -1080,6 +1118,7 @@ export default function workflow(pi: ExtensionAPI) {
 		finished?: Finished;
 		waiting?: NonNullable<PlanStatus["waiting"]>;
 		checkpoints?: { step?: string; stage?: number; text: string; ok: boolean }[];
+		judgedHeads?: Record<string, { base: string; head: string; branch: string }>;
 		/** A restore of the file (no new rev): never commits over a newer ref. */
 		retry?: boolean;
 	}
@@ -1211,6 +1250,7 @@ export default function workflow(pi: ExtensionAPI) {
 			...(snap.finished ? { finished: snap.finished } : {}),
 			...(snap.waiting ? { waiting: snap.waiting } : {}),
 			...(snap.checkpoints?.length ? { checkpoints: snap.checkpoints } : {}),
+			...(snap.judgedHeads && Object.keys(snap.judgedHeads).length ? { judgedHeads: snap.judgedHeads } : {}),
 			repos: infos.map((info, i) => ({ ...info, primary: i === 0 })),
 		};
 		const planMd = renderPlanFile(snap.flowId, snap.plan, snap.checklist, snap.finished, snap.waiting?.reason);
@@ -1305,11 +1345,12 @@ export default function workflow(pi: ExtensionAPI) {
 
 	/** A point where the plan file is rewritten: approval, an amendment, a stage end, the flow's end. Runs in the background, in order; `bump: false` only restores the file. */
 	/** The wait and checkpoints as they go into the plan's status. */
-	function waitSnapshot(): Pick<PlanSnap, "waiting" | "checkpoints"> {
+	function waitSnapshot(): Pick<PlanSnap, "waiting" | "checkpoints" | "judgedHeads"> {
 		const w = state.waiting;
 		return {
 			...(w ? { waiting: { reason: w.reason, ...(w.check ? { check: w.check } : {}), since: w.since, planned: w.planned, ...(w.atStageStart ? { atStageStart: true } : {}), ...(w.held ? { held: w.held } : {}) } } : {}),
 			...(state.checkpoints?.length ? { checkpoints: state.checkpoints.map((c) => ({ ...(c.step ? { step: c.step } : {}), ...(c.stage ? { stage: c.stage } : {}), text: c.text, ok: c.ok })) } : {}),
+			...(state.judgedHeads && Object.keys(state.judgedHeads).length ? { judgedHeads: { ...state.judgedHeads } } : {}),
 		};
 	}
 
@@ -1353,6 +1394,7 @@ export default function workflow(pi: ExtensionAPI) {
 			const status: PlanStatus = { ...last.status, updated: new Date().toISOString(), done: (state.checklist ?? []).filter((i) => i.done).map((i) => i.id) };
 			delete status.waiting;
 			delete status.checkpoints;
+			delete status.judgedHeads;
 			Object.assign(status, waitSnapshot());
 			const file = writeLocal(last.dir, doc.flowId, renderPlanFile(doc.flowId, state.approvedPlan, state.checklist, doc.finished, state.waiting?.reason), status);
 			last.status = status;
@@ -1583,6 +1625,7 @@ export default function workflow(pi: ExtensionAPI) {
 		state.checklist = parseChecklist(plan).map((i) => ({ ...i, done: status.done.includes(i.id) }));
 		if (!state.checklist.length) state.checklist = undefined;
 		state.checkpoints = status.checkpoints?.map((c) => ({ ...c }));
+		state.judgedHeads = status.judgedHeads ? { ...status.judgedHeads } : undefined;
 		state.waiting = undefined;
 		if (status.waiting) {
 			// Older status files lack the held text and the flags: rebuild the plain stage start for a stage that declares this wait.
@@ -2331,7 +2374,7 @@ export default function workflow(pi: ExtensionAPI) {
 			const open = list.filter((i) => !isHuman(i) && !i.done && (!staged || i.stage === undefined || i.stage === staged.current));
 			const done = list.filter((i) => !isHuman(i) && i.done).length;
 			const head = `${done} of ${list.filter((i) => !isHuman(i)).length} steps done${unknown.length ? `; unknown IDs: ${unknown.join(", ")}` : ""}.`;
-			const rest = open.length ? `Open${staged ? ` in stage ${staged.current}` : ""}:\n${open.map((i) => `- ${i.id} ${i.text}`).join("\n")}` : `No open steps${staged ? " in this stage" : ""}.`;
+			const rest = open.length ? `Open${staged ? ` in stage ${staged.current}` : ""}:\n${open.map((i) => `- ${i.id} ${i.text}${deliverLine(i.id, staged?.current)}`).join("\n")}` : `No open steps${staged ? " in this stage" : ""}.`;
 			return reply(`${head}\n${rest}`);
 		},
 		renderCall(args, theme) {
@@ -2407,7 +2450,7 @@ export default function workflow(pi: ExtensionAPI) {
 			if (r.verdict === "FAIL") state.judgeRounds++;
 			let text = r.text;
 			const reminder = state.phase === "execute" ? openStepsReminder(state.checklist, currentStages()?.current) : undefined;
-			if (reminder) text += `\n\n${reminder}`;
+			if (reminder) text += `\n\n${reminder}${state.phase === "execute" ? deliverHintsText(currentStages()?.current) : ""}`;
 			// Every call replaces the pending report, so a stale one never outlives a clean review.
 			state.pendingPlanFlaw = hasPlanFlaw(r.text) ? r.text : undefined;
 			if (state.pendingPlanFlaw) {
@@ -2483,7 +2526,7 @@ export default function workflow(pi: ExtensionAPI) {
 		name: "deliver",
 		label: "Deliver",
 		description:
-			"Deliver inside the plan, then carry on in the same turn: commit, push, open a pull request or merge (`mode`), and/or create or move a tag on the remote default branch (`tag`). Within this stage's approved delivery only. The diff must pass the judge first (an unchanged passed diff is reused). Name the plan's `Deliver:` step as `step`; a call without one is added to the plan as an amendment. Tags are created or moved only for a named plan step or when you need them to continue; a move needs a plan step that names the tag and the word move.",
+			"Deliver inside the plan, then carry on in the same turn: commit, push, open a pull request or merge (`mode`), and/or create or move a tag on the remote default branch (`tag`). Within this stage's approved delivery only. The diff must pass the judge first (an unchanged passed diff is reused). Name the plan's `Deliver:` step as `step`; a call without one is added to the plan as an amendment. Already-committed judged work is published by a later push, pr or merge call. Tags are created or moved only for a named plan step or when you need them to continue; a move needs a plan step that names the tag and the word move.",
 		promptSnippet: "deliver: commit/push/PR/merge and tags inside the plan (judge-gated), then continue",
 		parameters: Type.Object({
 			mode: Type.Optional(Type.String({ description: "commit, push, pr or merge. Omit to only handle a tag." })),
@@ -2534,8 +2577,36 @@ export default function workflow(pi: ExtensionAPI) {
 			if (mode) {
 				const diff = await collectFlowDiff(ctx);
 				if (!diff) throw new Error("no git work tree in this flow (working folder, /folders, or repos edited this flow); deliver commits git diffs");
-				if (!diff.text || (diff.multi && !diff.repos.some((r) => r.changed))) parts.push("no changes to deliver");
-				else {
+				if (!diff.text || (diff.multi && !diff.repos.some((r) => r.changed))) {
+					const pub = mode === "commit" ? undefined : await publishJudged(ctx, mode as "push" | "pr" | "merge");
+					if (!pub) parts.push("no changes to deliver");
+					else if (pub.refusal) return reply(`${pub.refusal}\n\nNothing was delivered.`);
+					else if (!pub.run) parts.push(pub.none ?? "no changes to deliver");
+					else {
+						if (!fs.existsSync(COMMIT_GUARD_EXTENSION)) return reply(`Not delivered: commit guard extension not found at ${COMMIT_GUARD_EXTENSION}.`);
+						view.stage = "commit";
+						view.changed();
+						let report: string;
+						let outcome: { text: string; ok: boolean };
+						try {
+							report = await runCommitSubagent(ctx, pub.run.instruction, mode as Delivery, pub.run.pending, signal);
+							outcome = await readOutcome(ctx, pub.run.pending);
+							await recordJudgedHeads(ctx, pub.run.pending);
+						} finally {
+							view.stage = "execute";
+							view.changed();
+						}
+						acted = true;
+						ok = outcome.ok;
+						parts.push(outcome.text);
+						if (!outcome.ok && report) parts.push(`commit step: ${report.slice(0, 500)}`);
+					}
+				} else {
+					// Judged commits in repos with no uncommitted changes go out in the same commit step.
+					const extra = mode === "commit" ? undefined : await publishJudged(ctx, mode as "push" | "pr" | "merge", new Set(diff.repos.filter((r) => r.changed).map((r) => repoKey(r.root))));
+					if (extra?.refusal) return reply(`${extra.refusal}
+
+Nothing was delivered.`);
 					const reuse = state.passedDiff === diff.hash && state.lastJudge?.hash === diff.hash && state.lastJudge.verdict === "PASS";
 					if (!reuse) {
 						if (staged) state.stageJudged = true;
@@ -2545,7 +2616,7 @@ export default function workflow(pi: ExtensionAPI) {
 						if (r.verdict === "FAIL") state.judgeRounds++;
 						let text = r.text;
 						const reminder = openStepsReminder(state.checklist, staged?.current);
-						if (reminder) text += `\n\n${reminder}`;
+						if (reminder) text += `\n\n${reminder}${deliverHintsText(staged?.current)}`;
 						state.pendingPlanFlaw = hasPlanFlaw(r.text) ? r.text : undefined;
 						persist();
 						if (r.verdict === "FAIL") return reply(`${text}\n\nNot delivered: fix the findings and call deliver again.`, { runs: progress.snapshot(), verdict: r.verdict });
@@ -2560,7 +2631,7 @@ export default function workflow(pi: ExtensionAPI) {
 						if (choice !== "Commit anyway") return reply("Not delivered: stopped at the knowledge check.");
 					}
 					const seed = branchName(cfg.delivery.branchPrefix, stage?.title || planTitle(plan), new Date());
-					const { pending, instruction } = await prepareAllRepos(ctx, diff, mode as Exclude<Delivery, "off">, seed, knowledge ? deviationBlock(knowledge.deviations) : "");
+					const { pending, instruction } = await prepareAllRepos(ctx, diff, mode as Exclude<Delivery, "off">, seed, knowledge ? deviationBlock(knowledge.deviations) : "", extra?.run?.entries);
 					view.stage = "commit";
 					view.changed();
 					let report: string;
@@ -2568,6 +2639,7 @@ export default function workflow(pi: ExtensionAPI) {
 					try {
 						report = await runCommitSubagent(ctx, instruction, mode as Delivery, pending, signal);
 						outcome = await readOutcome(ctx, pending);
+						await recordJudgedHeads(ctx, pending);
 					} finally {
 						view.stage = "execute";
 						view.changed();
@@ -2666,10 +2738,12 @@ export default function workflow(pi: ExtensionAPI) {
 				const language = String(input.language ?? "").toLowerCase();
 				const code = String(input.code ?? "");
 				if (["shell", "bash", "sh", "zsh", "powershell", "pwsh", "ps1"].includes(language)) texts.push({ text: code, powershell: ["powershell", "pwsh", "ps1"].includes(language) || (language === "shell" && win) });
-				else if (/\bgit\b/.test(code) && /\bpush\b|\bcommit\b|--no-verify|hooksPath|GIT_CONFIG/i.test(code)) {
-					return { block: true, reason: "Refused: code that runs git push, skips hooks or changes hooks. The workflow commits and pushes after the judge passes." };
+				else if (/\bgit\b/.test(code) && /\bpush\b|(?<!-)\bcommit\b|--no-verify|hooksPath|GIT_CONFIG/i.test(code)) {
+					return { block: true, reason: publishRefuse("code that runs git push, skips hooks or changes hooks") };
+				} else if (codeCommitProblem(code)) {
+					return { block: true, reason: publishRefuse(`code that runs ${codeCommitProblem(code)}`) };
 				} else if (/\bgh\b/.test(code) && /\b(pr|api)\b/.test(code)) {
-					return { block: true, reason: "Refused: code that runs gh pr or gh api. The workflow opens and merges pull requests after the judge passes." };
+					return { block: true, reason: publishRefuse("code that runs gh pr or gh api") };
 				}
 			}
 			else if (/(^|__)ctx_batch_execute$/.test(event.toolName) && Array.isArray(input.commands)) {
@@ -2688,7 +2762,7 @@ export default function workflow(pi: ExtensionAPI) {
 			const modeOf = (root: string | undefined) => (root ? state.commitPending?.repos?.find((r) => repoKey(r.root) === repoKey(root))?.mode : undefined) ?? state.commitPending?.mode;
 			for (const { text, powershell } of gitTexts) {
 				const problem = await shellProblem(text, powershell, { roots: multi ? roots : undefined, cwd: ctx.cwd, protectedBranches: cfg.protectedBranches, branchOf, modeOf });
-				if (problem) return { block: true, reason: `Refused: ${problem}. Do not commit, push, open or merge pull requests, or skip hooks yourself: finish the code, get the judge's pass and end your turn; the workflow commits and delivers it as this flow's delivery says.` };
+				if (problem) return { block: true, reason: publishRefuse(problem) };
 			}
 			return;
 		}
@@ -3164,7 +3238,7 @@ export default function workflow(pi: ExtensionAPI) {
 		planMilestone(ctx);
 		persist();
 		ctx.ui.notify(`workflow: stage ${next} of ${stages.length}: ${stages[next - 1].title}`, "info");
-		const text = nextStage(stages, next, state.delivery ?? defaultDelivery(), outcome);
+		const text = nextStage(stages, next, state.delivery ?? defaultDelivery(), outcome) + deliverHintsText(next);
 		if (holdForStageWait(ctx, stages[next - 1], text)) return;
 		handover("workflow-stage", text);
 	}
@@ -3185,13 +3259,16 @@ export default function workflow(pi: ExtensionAPI) {
 
 	/** An unstaged flow whose remaining changes were all delivered by checkpoints: ends it with their outcome. Open steps ask first (and do nothing without a UI). */
 	async function flowWithoutChanges(ctx: ExtensionContext): Promise<void> {
-		const outcome = checkpointOutcome(state.checkpoints ?? []);
+		let outcome = checkpointOutcome(state.checkpoints ?? []);
 		if (!outcome || state.phase !== "execute" || turnAborted) return;
 		if ((state.checklist ?? []).some((i) => !isHuman(i) && !i.done)) {
 			if (!ctx.hasUI) return;
 			const yes = "Mark done and finish";
 			if ((await askUser(ctx, "All changes were delivered at checkpoints, but plan steps are still open", [yes, "Wait"])) !== yes) return;
 		}
+		const pub = await publishAtEnd(ctx, undefined);
+		if (pub && "sent" in pub) return;
+		if (pub) outcome = { text: `${outcome.text}; not delivered: ${pub.refused}`, ok: false };
 		state.minorRounds = 0;
 		state.minorSentFor = undefined;
 		state.delivery = undefined;
@@ -3203,7 +3280,10 @@ export default function workflow(pi: ExtensionAPI) {
 
 	/** A staged plan's stage ended with nothing to review: records it and starts the next stage, or ends the flow after the last one. */
 	async function stageWithoutChanges(ctx: ExtensionContext, staged: { stages: ReturnType<typeof parseStages>; current: number }): Promise<void> {
-		const outcome = checkpointOutcome(stageCheckpoints()) ?? { text: "no changes", ok: true };
+		let outcome = checkpointOutcome(stageCheckpoints()) ?? { text: "no changes", ok: true };
+		const pub = await publishAtEnd(ctx, staged.stages[staged.current - 1]);
+		if (pub && "sent" in pub) return;
+		if (pub) outcome = { text: `${outcome.text}; not delivered: ${pub.refused}`, ok: false };
 		state.stageOutcomes = [...(state.stageOutcomes ?? []), outcome];
 		if (staged.current < staged.stages.length) {
 			startNextStage(ctx, staged.stages, outcome.text);
@@ -3248,6 +3328,8 @@ export default function workflow(pi: ExtensionAPI) {
 		state.minorRounds = 0;
 		state.minorSentFor = undefined;
 		let outcome = await readOutcome(ctx, pending);
+		if (!pending.self) await recordJudgedHeads(ctx, pending);
+		if (pending.notes?.length) outcome = { text: `${outcome.text}; not delivered: ${pending.notes.join(" ")}`, ok: false };
 		const cps = stageCheckpoints();
 		if (cps.length && !state.testFlow) outcome = { text: withCheckpoints(cps.map((c) => c.text), outcome.text), ok: outcome.ok && cps.every((c) => c.ok) };
 		if (state.testFlow) {
@@ -3696,7 +3778,7 @@ export default function workflow(pi: ExtensionAPI) {
 	}
 
 	/** Prepares every changed repo of `diff` for the commit step: the pending record (not stored in state) and the instruction. Only reads. */
-	async function prepareAllRepos(ctx: ExtensionContext, diff: Diff, chosen: Exclude<Delivery, "off">, seed: string, deviations: string): Promise<{ pending: NonNullable<FlowState["commitPending"]>; instruction: string }> {
+	async function prepareAllRepos(ctx: ExtensionContext, diff: Diff, chosen: Exclude<Delivery, "off">, seed: string, deviations: string, extras: PublishEntry[] = []): Promise<{ pending: NonNullable<FlowState["commitPending"]>; instruction: string }> {
 		const options = (p: Awaited<ReturnType<typeof prepareDelivery>>): DeliveryOptions => ({
 			mode: p.mode,
 			branch: p.branch,
@@ -3717,6 +3799,11 @@ export default function workflow(pi: ExtensionAPI) {
 		// Per-repo preparation only reads (git rev-parse, gh pr view), so the repos run at once; the order of `changed` is kept.
 		const prepared = await Promise.all(changed.map(async (ref) => ({ root: ref.root, p: await prepareDelivery(ctx, ref.dir, chosen, seed, ` [${ref.root}]`) })));
 		const first = prepared[0].p;
+		const merged = mergePublish(
+			prepared.map(({ root, p }) => ({ root, options: options(p) })),
+			prepared.map(({ root, p }) => ({ root, mode: p.mode, head: p.head, branch: p.branch, prBefore: p.prBefore, pushSkipped: p.pushSkipped })),
+			extras,
+		);
 		return {
 			pending: {
 				mode: first.mode,
@@ -3724,9 +3811,9 @@ export default function workflow(pi: ExtensionAPI) {
 				branch: first.branch,
 				prBefore: first.prBefore,
 				pushSkipped: first.pushSkipped,
-				repos: prepared.map(({ root, p }) => ({ root, mode: p.mode, head: p.head, branch: p.branch, prBefore: p.prBefore, pushSkipped: p.pushSkipped })),
+				repos: merged.repos,
 			},
-			instruction: repoDeliveryInstruction(prepared.map(({ root, p }) => ({ root, options: options(p) }))),
+			instruction: repoDeliveryInstruction(merged.parts),
 		};
 	}
 
@@ -3755,8 +3842,10 @@ export default function workflow(pi: ExtensionAPI) {
 
 		const seed = branchName(cfg.delivery.branchPrefix, stage?.title || planTitle(state.approvedPlan), new Date());
 		const deviations = knowledge ? deviationBlock(knowledge.deviations) : "";
-		const { pending, instruction } = await prepareAllRepos(ctx, diff, chosen, seed, deviations);
-		state.commitPending = pending;
+		const extra = chosen === "push" || chosen === "pr" || chosen === "merge" ? await publishJudged(ctx, chosen, new Set(diff.repos.filter((r) => r.changed).map((r) => repoKey(r.root)))) : undefined;
+		const { pending, instruction } = await prepareAllRepos(ctx, diff, chosen, seed, deviations, extra?.run?.entries);
+		// Judged commits that could not be published beside this commit step are reported in its outcome.
+		state.commitPending = extra?.refusal ? { ...pending, notes: [extra.refusal] } : pending;
 
 		await sendCommitStep(ctx, hash, report, instruction, chosen);
 		return true;
@@ -3778,6 +3867,97 @@ ${instruction}` : instruction);
 	}
 
 	/** The executor committed the judged change itself: carry on with the flow's delivery from that commit. False when this is not that case. */
+	/** Records the heads the commit step produced in the repos of `pending`. Only a commit step's own heads are ever recorded; `base` is kept from the first one. */
+	async function recordJudgedHeads(ctx: ExtensionContext, pending: NonNullable<FlowState["commitPending"]>): Promise<void> {
+		const targets = pending.repos?.length
+			? pending.repos.map((r) => ({ root: r.root, head: r.head, branch: r.branch, mode: r.mode }))
+			: [{ root: (await gitRoot(ctx.cwd)) ?? ctx.cwd, head: pending.head, branch: pending.branch, mode: pending.mode }];
+		for (const t of targets) {
+			let branch = t.branch;
+			if (!branch || branch === "HEAD") continue;
+			if ((await git(t.root, "rev-parse", "--verify", "--quiet", `refs/heads/${branch}`)).code !== 0) {
+				// A merge that deleted the branch: its work is on the base branch, nothing is left to publish.
+				if (t.mode === "merge" && state.judgedHeads?.[repoKey(t.root)]) delete state.judgedHeads[repoKey(t.root)];
+				continue;
+			}
+			const landed = await landedBranch((...a) => git(t.root, ...a), branch, t.head);
+			if (landed) branch = landed;
+			const now = (await git(t.root, "rev-parse", branch)).stdout.trim();
+			if (!now || now === t.head) continue;
+			const key = repoKey(t.root);
+			const prev = state.judgedHeads?.[key];
+			// Once the earlier judged work is on a remote, the next publish counts from here.
+			const prevPublished = !!prev && (await git(t.root, "branch", "-r", "--contains", prev.head)).stdout.trim() !== "";
+			state.judgedHeads = { ...(state.judgedHeads ?? {}), [key]: { base: prev && !prevPublished ? prev.base : t.head, head: now, branch } };
+		}
+	}
+
+	/** What a push, pr or merge delivery would publish of the commits earlier commit steps made: per-repo decisions, then the commit step's pending record and instruction. Only reads. */
+	async function publishJudged(ctx: ExtensionContext, mode: "push" | "pr" | "merge", skip?: Set<string>): Promise<{ refusal?: string; none?: string; run?: { pending: NonNullable<FlowState["commitPending"]>; instruction: string; entries: PublishEntry[] } }> {
+		const refs = (await flowRepos(ctx)).filter((r) => state.judgedHeads?.[repoKey(r.root)] && !skip?.has(repoKey(r.root)));
+		const wantsPr = mode === "pr" || mode === "merge";
+		const gathered = await Promise.all(refs.map(async (ref) => {
+			const judgedRaw = state.judgedHeads![repoKey(ref.root)];
+			const alive = (await git(ref.dir, "rev-parse", "--verify", "--quiet", `${judgedRaw.head}^{commit}`)).code === 0;
+			const branch = (await git(ref.dir, "rev-parse", "--abbrev-ref", "HEAD")).stdout.trim();
+			const head = (await git(ref.dir, "rev-parse", "HEAD")).stdout.trim();
+			const descends = alive && (await git(ref.dir, "merge-base", "--is-ancestor", judgedRaw.head, "HEAD")).code === 0;
+			const onRemote = alive && (await git(ref.dir, "branch", "-r", "--contains", judgedRaw.head)).stdout.trim() !== "";
+			const log = alive ? await git(ref.dir, "log", "-n", "20", "--format=%h %s", "HEAD", "--not", judgedRaw.head, "--remotes") : undefined;
+			const foreign = log?.code === 0 ? log.stdout.split("\n").map((l) => l.trim()).filter(Boolean) : [];
+			const up = await git(ref.dir, "rev-parse", "--abbrev-ref", "@{u}");
+			const hasUpstream = up.code === 0;
+			const count = hasUpstream ? await git(ref.dir, "rev-list", "--count", "@{u}..HEAD") : undefined;
+			const ahead = count?.code === 0 ? Number(count.stdout.trim()) || 0 : 0;
+			const named = !!branch && branch !== "HEAD";
+			const pr = wantsPr && named ? await prState(ref.dir, branch) : null;
+			const facts: PublishFacts = { repo: ref.root, branch, head, judged: alive ? judgedRaw : undefined, foreign, descends, judgedOnRemote: onRemote, judgedBranchExists: (await git(ref.dir, "rev-parse", "--verify", "--quiet", `refs/heads/${judgedRaw.branch}`)).code === 0, hasUpstream, ahead, pr, protectedBranch: cfg.protectedBranches.includes(branch) };
+			return { ref, facts, decision: publishDecision(facts, mode) };
+		}));
+		const refusals = gathered.flatMap((g) => (g.decision.kind === "refuse" ? [refuseText(g.ref.root, g.decision)] : g.decision.kind === "moved" ? [movedText(g.ref.root, g.decision)] : []));
+		if (refusals.length) return { refusal: refusals.join("\n") };
+		const todo = gathered.flatMap((g) => (g.decision.kind === "publish" ? [{ g, d: g.decision }] : []));
+		if (!todo.length) {
+			const why = gathered.flatMap((g) => (g.decision.kind === "nothing" ? [`${path.basename(g.ref.root)}: ${g.decision.reason}`] : []));
+			return { none: why.length ? `no changes to deliver (${why.join("; ")})` : "no changes to deliver" };
+		}
+		const multi = !(refs.length === 1 && refs[0].dir === ctx.cwd);
+		const moved = todo.map(({ g, d }) => {
+			const old = g.facts.pr && g.facts.pr.state !== "OPEN" ? g.facts.pr.number : undefined;
+			return { root: g.ref.root, mode, head: d.base, branch: d.branch, prBefore: old, pushSkipped: undefined as string | undefined };
+		});
+		const first = moved[0];
+		const pending: NonNullable<FlowState["commitPending"]> = multi
+			? { mode, head: first.head, branch: first.branch, prBefore: first.prBefore, repos: moved.map((m) => ({ root: m.root, mode: m.mode, head: m.head, branch: m.branch, prBefore: m.prBefore })) }
+			: { mode, head: first.head, branch: first.branch, prBefore: first.prBefore };
+		const options = (m: (typeof moved)[number]): DeliveryOptions => ({
+			mode: m.mode,
+			branch: m.branch,
+			base: cfg.delivery.base,
+			split: false,
+			mergeMethod: cfg.delivery.mergeMethod,
+			deleteBranch: cfg.delivery.deleteBranch,
+			deviations: "",
+			committed: true,
+		});
+		const instruction = multi ? repoDeliveryInstruction(moved.map((m) => ({ root: m.root, options: options(m) }))) : deliveryInstruction(options(first));
+		return { run: { pending, instruction, entries: moved.map((m) => ({ root: m.root, mode: m.mode, head: m.head, branch: m.branch, prBefore: m.prBefore, options: options(m) })) } };
+	}
+
+	/** At the end of a flow or stage with nothing to review: publishes judged commits that are still unpublished, per the stage's delivery. "sent": the commit step took over and ends or advances the flow; "refused": the text to report. */
+	async function publishAtEnd(ctx: ExtensionContext, stage: ReturnType<typeof parseStages>[number] | undefined): Promise<{ sent: true } | { refused: string } | undefined> {
+		if (!state.judgedHeads || Object.keys(state.judgedHeads).length === 0) return undefined;
+		const cap = stageDelivery(state.delivery ?? defaultDelivery(), stage);
+		if (cap !== "push" && cap !== "pr" && cap !== "merge") return undefined;
+		const pub = await publishJudged(ctx, cap);
+		if (pub.refusal) return { refused: pub.refusal };
+		if (!pub.run) return undefined;
+		if (!fs.existsSync(COMMIT_GUARD_EXTENSION)) return { refused: `commit guard extension not found at ${COMMIT_GUARD_EXTENSION}` };
+		state.commitPending = pub.run.pending;
+		await sendCommitStep(ctx, `publish:${Object.values(state.judgedHeads).map((h) => h.head).join(",")}`, undefined, pub.run.instruction, cap);
+		return { sent: true };
+	}
+
 	async function deliverSelfCommit(ctx: ExtensionContext): Promise<boolean> {
 		const judged = state.lastJudge;
 		const hash = state.passedDiff;
@@ -3824,9 +4004,10 @@ ${instruction}` : instruction);
 		}
 		if (moved.length === 0) return false;
 		const first = moved[0];
+		// self: an executor commit is not a head the commit step produced, so it is never recorded as judged.
 		state.commitPending = multi
-			? { mode: first.mode, head: first.head, branch: first.branch, prBefore: first.prBefore, pushSkipped: first.pushSkipped, repos: moved.map((m) => ({ root: m.root, mode: m.mode, head: m.head, branch: m.branch, prBefore: m.prBefore, pushSkipped: m.pushSkipped })) }
-			: { mode: first.mode, head: first.head, branch: first.branch, prBefore: first.prBefore, pushSkipped: first.pushSkipped };
+			? { self: true, mode: first.mode, head: first.head, branch: first.branch, prBefore: first.prBefore, pushSkipped: first.pushSkipped, repos: moved.map((m) => ({ root: m.root, mode: m.mode, head: m.head, branch: m.branch, prBefore: m.prBefore, pushSkipped: m.pushSkipped })) }
+			: { self: true, mode: first.mode, head: first.head, branch: first.branch, prBefore: first.prBefore, pushSkipped: first.pushSkipped };
 		if (moved.every((m) => m.mode === "commit")) {
 			markPassSummarized(hash);
 			persist();

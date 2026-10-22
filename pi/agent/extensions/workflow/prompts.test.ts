@@ -1,7 +1,7 @@
 // node --experimental-strip-types --test prompts.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { ADVISOR, ARBITER, COMMIT, EXECUTE_PHASE, EXPLORE, FIX_ROUND, JUDGE, JUDGE_KNOWLEDGE_ONLY, NO_SLEEP, PACE, phaseSection, planPhase, RUNNER, TEST_PHASE } from "./prompts.ts";
+import { ADVISOR, ARBITER, COMMIT, EXECUTE_PHASE, EXPLORE, FIX_ROUND, JUDGE, JUDGE_KNOWLEDGE_ONLY, NO_SLEEP, PACE, finalize, phaseSection, planPhase, RUNNER, TEST_PHASE } from "./prompts.ts";
 
 const BATCH = `- Batch tool calls. Each call re-sends the whole conversation, so ten small calls at 150k context re-send 1.5M tokens. Put independent reads and commands in one call (a codemode script, ctx_batch_execute, or one bash command joined with && or ;) and print only what you need. Don't spend a call on something you could have added to the previous one.`;
 const PLAN_BATCH = `- Batch tool calls. Each call re-sends the whole conversation, so ten small calls at 150k context re-send 1.5M tokens. Put independent reads and commands in one call (a codemode script, ctx_execute for read-only analysis, or one bash command joined with && or ;) and print only what you need. Don't spend a call on something you could have added to the previous one.`;
@@ -104,4 +104,12 @@ test("human checks are Verify steps, never Wait", () => {
 	assert.ok(planPhase(true).includes("Verify:") && planPhase(true).includes("Wait:"));
 	assert.ok(EXECUTE_PHASE.includes('kind: "verify"'));
 	assert.ok(TEST_PHASE.includes("after the flow"));
+});
+
+test("stage 2 guidance in the prompts", () => {
+	assert.match(finalize(false), /Deliver: <mode> — <what>/);
+	assert.match(finalize(false), /never contains .*git push/);
+	assert.match(finalize(false), /git merge --no-commit/);
+	assert.match(planPhase(false), /Deliver: <mode> — <what>/);
+	assert.match(EXECUTE_PHASE, /Never ask the user to push, open or merge a pull request/);
 });
