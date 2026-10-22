@@ -3,7 +3,7 @@
   "roles": {
     "plan": {
       "model": "claude-bridge/claude-opus-5-5",
-      "thinking": "high"
+      "thinking": "medium"
     },
     "execute": {
       "model": "claude-bridge/claude-sonnet-5-5",
@@ -104,7 +104,13 @@
     "maxRounds": 3,
     "refails": 2,
     "delivery": "commit",
-    "runnerTools": ["bash", "read", "grep", "find", "ls"],
+    "runnerTools": [
+      "bash",
+      "read",
+      "grep",
+      "find",
+      "ls"
+    ],
     "supervisorBashAllow": [
       "^adb( -[sdetHP] \\S+)* (devices|shell getprop)\\b",
       "^unity (cmd )?(status|editor_status|console_status)\\b"
@@ -114,8 +120,13 @@
       "^adb\\b.*\\bshell\\b.*(\\brm\\s+-[a-z]*r|\\bwipe\\b|\\brecovery\\b|\\bfactory\\b|\\bformat\\b|\\breboot\\b)",
       "^fastboot\\b"
     ],
-    "runnerPathFlags": ["--project-path", "-projectPath"],
-    "runnerPathEnv": ["UNITY_PROJECT_PATH"]
+    "runnerPathFlags": [
+      "--project-path",
+      "-projectPath"
+    ],
+    "runnerPathEnv": [
+      "UNITY_PROJECT_PATH"
+    ]
   },
   "explore": {
     "maxQueries": 8,
