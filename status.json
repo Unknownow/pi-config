@@ -1,14 +1,27 @@
 {
   "v": 1,
   "flowId": "20261022-1746-human-checks-wait-until-the-flow-has-fin-3761",
-  "rev": 1,
-  "updated": "2026-10-22T10:46:17.808Z",
+  "rev": 2,
+  "updated": "2026-10-22T10:54:37.227Z",
   "title": "human checks wait until the flow has finished",
-  "delivery": "merge",
-  "done": [],
+  "done": [
+    "S1",
+    "S2",
+    "S3",
+    "S4",
+    "S5",
+    "S6",
+    "S7",
+    "S8"
+  ],
+  "finished": {
+    "at": "2026-10-22T10:54:36.830Z",
+    "ok": false,
+    "text": "committed (1 commit), pushed, no open pull request"
+  },
   "repos": [
     {
-      "branch": "master",
+      "branch": "flow/human-checks-wait-until-the-flow-has-fin",
       "remote": "github-personal/Unknownow/pi-config",
       "primary": true
     }

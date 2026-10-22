@@ -260,11 +260,13 @@ One commit:
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 In `waits.ts`, add `VerifySpec`, `parseVerifyStep`, `verifyAmendment`, `HumanCheck` and `humanChecks`, exactly as in §4.
-- [ ] S2 In `plan-doc.ts`:
-- [ ] S3 In `flow-report.ts`, extend `ReportLine.tone` with `"human"`, and give `reportLines` the optional third parameter and hu
-- [ ] S4 In `index.ts`:
-- [ ] S5 In `test-flow.ts`:
-- [ ] S6 In `prompts.ts`:
-- [ ] S7 In `pi/agent/extensions/workflow/README.md`:
-- [ ] S8 In `docs/workflow-improvements.md`:
+- [x] S1 In `waits.ts`, add `VerifySpec`, `parseVerifyStep`, `verifyAmendment`, `HumanCheck` and `humanChecks`, exactly as in §4.
+- [x] S2 In `plan-doc.ts`:
+- [x] S3 In `flow-report.ts`, extend `ReportLine.tone` with `"human"`, and give `reportLines` the optional third parameter and hu
+- [x] S4 In `index.ts`:
+- [x] S5 In `test-flow.ts`:
+- [x] S6 In `prompts.ts`:
+- [x] S7 In `pi/agent/extensions/workflow/README.md`:
+- [x] S8 In `docs/workflow-improvements.md`:
+## Outcome
+2026-10-22T10:54:36.830Z — failed: committed (1 commit), pushed, no open pull request
