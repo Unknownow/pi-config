@@ -207,3 +207,11 @@ test("Verify steps are human and never open", () => {
 	const card = planCard("## Plan: x\n1. Goal and non-goals.\ngoal\n7. Done when:\nok", [{ ...cl[0], done: true }, cl[1]]);
 	assert.ok(card.includes("1 of 1 done") && card.includes("(none open)"));
 });
+
+test("parseStatus validates judgedHeads", () => {
+	const ok = { v: 1, flowId: "20260101-1200-demo-abcd", rev: 1, updated: "2026-01-01T00:00:00Z", title: "t", done: [], repos: [] };
+	assert.ok(parseStatus(JSON.stringify(ok)));
+	const jh = { "d:/r": { base: "a", head: "b", branch: "feat" } };
+	assert.deepEqual(parseStatus(JSON.stringify({ ...ok, judgedHeads: jh }))?.judgedHeads, jh);
+	assert.equal(parseStatus(JSON.stringify({ ...ok, judgedHeads: { "d:/r": { base: "a", head: 1, branch: "f" } } })), null);
+});

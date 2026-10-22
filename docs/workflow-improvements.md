@@ -2,7 +2,7 @@
 
 Reference list for `pi/agent/extensions/workflow/`. Goal: less time, fewer tokens, more parallelism.
 
-Status: A2, A3, A5, A7, B1, B7, B9, C2, C3, C4, D2, D3, D4, D5, D6, D7, D8, D9, D10, D11, D12, D13 and D14 are implemented; A13, A14, A15, A16, A17, A18, A20 and A21 are implemented; A22 is implemented; A23, A24 and A25 are implemented; A12 is implemented; A1 is rejected; the rest are ideas only. Found by reading the code on 2026-10-16. Nothing was measured, so every benefit below is an estimate. Line numbers are from commit `3fdc69a` and will drift.
+Status: A2, A3, A5, A7, B1, B7, B9, C2, C3, C4, D2, D3, D4, D5, D6, D7, D8, D9, D10, D11, D12, D13, D14, D15 and D16 are implemented; A13, A14, A15, A16, A17, A18, A20 and A21 are implemented; A22 is implemented; A23, A24 and A25 are implemented; A12 is implemented; A1 is rejected; the rest are ideas only. Found by reading the code on 2026-10-16. Nothing was measured, so every benefit below is an estimate. Line numbers are from commit `3fdc69a` and will drift.
 
 ## Keeping this file current
 
@@ -101,6 +101,8 @@ Plan (Opus) -> approve -> execute (Sonnet) -> judge (Opus, separate `pi` process
 | D12 | After `ctx.switchSession()` the `--add-dir` launch flag was applied again, so the folders of the set a session just left came back. **Done:** the flag is applied only at `startup`. | Low (T) | S | None. | None. |
 | D13 | `/folders add` inside a worktree set attached the original checkout, so edits went outside the set. **Done:** K6 hook `workflow:folder-add` (`folder-add.ts`, `/folders add` in `index.ts`); the worktree extension answers it. | Medium (T) | M | Low. No listener: unchanged. | None. |
 | D14 | A commit step that committed on a new branch (pr/merge delivery) was reported as "ended without a commit", and a commit-only instruction did not forbid a chained `git push`. **Done:** `outcomeRef`/`landedBranch` in `delivery.ts`, delivery split into prepare, commit step and outcome in `index.ts`, `NO_PUSH` in the commit-only instruction. | Medium (T) | S | Low. | "Commit step ended without a commit" outcomes where commits exist. |
+| D15 | Commits a commit checkpoint made were never published by a later `push`, `pr` or `merge` `deliver` or by the flow end: both looked only at the diff against `HEAD`, found it empty and said "no changes to deliver", so the executor asked the user to push. **Done:** `publish.ts` (decision and refusal text), `judgedHeads` in the flow state and `status.json`, `publishJudged`/`publishAtEnd` in `index.ts`. Commits the commit step did not make and that are on no remote are refused with a `git reset --soft` hint. | High (T) | M | Medium: a recorded head is trusted without a new review. | A repo rewritten outside the commit step is refused until reset. |
+| D16 | `git merge`, `cherry-pick`, `revert`, `pull`, `rebase` and `am` could create commits no judge saw during execution. **Done:** `commitCreatingOnly` in `push-guard.ts`, and the non-shell pre-check in `index.ts`; allowed only with `--no-commit`/`-n`/`--squash`/`--ff-only` or to abort. | Medium (T) | S | Low: the refusal names the allowed flag. | `git pull` without `--ff-only` is refused. |
 
 ## Effect measurement
 
@@ -153,6 +155,8 @@ Method for every item:
 | D12 | n/a | Folders stay as moved | n/a |
 | D13 | n/a | Added folders inside a set are worktrees | n/a |
 | D14 | "Commit step ended without a commit" outcomes where commits exist | Count in flow outcomes. Implemented, not measured yet. | Zero such outcomes |
+| D15 | Flows with a commit checkpoint whose later push, PR or merge delivery completed | Count flows ending "no changes to deliver" or with a hand-over to the user after a checkpoint. Implemented, not measured yet. | Zero hand-overs |
+| D16 | Guard refusals of commit-creating subcommands per flow | Count refusals containing "creates a commit no judge has seen". Implemented, not measured yet. | Few; each followed by a retry with the flag |
 | A10 | Flow steps failed by `cannot lock ref` | Count in session logs | Idea only, not measured |
 | A11 | Plans started in a second workspace | n/a | Idea only |
 | A12 | User prompts per test flow; supervisor vs runner tokens (D3 metrics); bugs verified fixed per flow | Count the questions asked per flow, compare `test` and `runner` tokens in the flow card, count `[fixed]` items. Not measured yet. | Most flows end without prompts beyond the crucial cases; runner tokens are the larger share; no fix is committed that the retest shows broken |

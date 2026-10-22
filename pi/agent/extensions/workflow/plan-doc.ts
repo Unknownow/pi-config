@@ -166,6 +166,8 @@ export interface PlanStatus {
 	waiting?: { reason: string; check?: string; since: string; planned?: boolean; atStageStart?: boolean; held?: string };
 	/** Checkpoints delivered mid-plan. */
 	checkpoints?: { step?: string; stage?: number; text: string; ok: boolean }[];
+	/** Heads the workflow's commit step produced, per repo key: what a later push, pr or merge may publish. */
+	judgedHeads?: Record<string, { base: string; head: string; branch: string }>;
 	repos: { remote?: string; branch?: string; primary: boolean }[];
 }
 
@@ -226,6 +228,8 @@ export function parseStatus(json: string): PlanStatus | null {
 	if (w !== undefined && !(w && isStr(w.reason) && isStr(w.since) && (w.check === undefined || isStr(w.check)) && (w.held === undefined || isStr(w.held)) && (w.planned === undefined || typeof w.planned === "boolean") && (w.atStageStart === undefined || typeof w.atStageStart === "boolean"))) return null;
 	const cps = o.checkpoints;
 	if (cps !== undefined && !(Array.isArray(cps) && cps.every((c: any) => c && isStr(c.text) && typeof c.ok === "boolean" && (c.step === undefined || isStr(c.step)) && (c.stage === undefined || Number.isInteger(c.stage))))) return null;
+	const jh = o.judgedHeads;
+	if (jh !== undefined && !(jh && typeof jh === "object" && !Array.isArray(jh) && Object.values(jh).every((h: any) => h && isStr(h.base) && isStr(h.head) && isStr(h.branch)))) return null;
 	for (const r of o.repos) {
 		if (!r || typeof r.primary !== "boolean" || (r.remote !== undefined && !isStr(r.remote)) || (r.branch !== undefined && !isStr(r.branch))) return null;
 	}

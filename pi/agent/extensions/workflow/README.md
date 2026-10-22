@@ -84,6 +84,8 @@ after approval runs on its own:
   `gh pr create` and `gh pr merge` (and `gh api` calls that open or merge one) are refused unless the flow's
   delivery includes them and its commit step is running; `gh pr merge --admin` / `--auto` and `gh pr review --approve`
   are always refused.
+  `git merge`, `cherry-pick`, `revert`, `pull`, `rebase` and `am` create commits no judge has seen, so they are refused too
+  unless told not to commit (`merge --no-commit`/`--squash`, `cherry-pick -n`, `revert -n`, `pull --ff-only`, or `--abort`); `rebase` and `am` only to abort. The workflow's commit step may use them, never with `--no-verify`.
   Like the plan-phase checks it reads the command text: a guard against a drifting executor, not a sandbox.
 - **Minor findings:** a passed review with fixable minor findings goes back to the executor for up to `maxMinorRounds`
   (default 1, `0` commits at once) fix rounds, then commits anyway. Fix them, or dispute a wrong one. `[knowledge ...]` and
@@ -171,6 +173,7 @@ These let one plan deliver or pause partway through, without replanning and with
 - **Limit:** `mode` (`commit`, `push`, `pr`, `merge`) may not go beyond the stage's delivery (the flow's, or the heading's `(delivery: …)`); `off` allows none.
 - **Gate:** the diff must pass the judge first (an unchanged passed diff is reused). The commit subagent does the delivery; the executor's own shell still cannot commit or push.
 - **Plan:** a step `**S4.** Deliver: push` is a planned checkpoint. A call without one adds `## Amendment N (executor: checkpoint)`; a retried call adds no second amendment.
+- **Publishing:** a later `deliver` with `push`, `pr` or `merge` publishes commits an earlier commit step made (recorded per repo, kept over `/flow resume`), without a new judge run; so does the end of a flow or stage with nothing left to review. A repo whose HEAD no longer descends from the recorded head, or is on another branch, is refused with a `git switch` hint. Judged commits in repos with no uncommitted changes go out in the same commit step as the changed repos. Commits after the recorded head that the commit step did not make and that are on no remote are refused, with the `git reset --soft <head>` that sends them through the judge.
 - **Outcomes:** each checkpoint is recorded (kept over `/flow resume`) and listed in the stage and flow outcome (`checkpoint S4: …`); the judge is told which checkpoints were delivered earlier. An unstaged flow whose remaining changes were all delivered at checkpoints ends with that outcome.
 
 **Tags.** Tags are made only when the plan has a `Deliver:` step for them or the executor asks through `deliver {tag}`; the workflow never tags on its own, and never publishes packages.
