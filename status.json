@@ -1,19 +1,27 @@
 {
   "v": 1,
   "flowId": "20261022-1402-flow-visualizer-a-progress-line-in-the-w-d9cf",
-  "rev": 2,
-  "updated": "2026-10-22T07:11:01.625Z",
+  "rev": 3,
+  "updated": "2026-10-22T07:16:02.843Z",
   "title": "Flow visualizer: a progress line in the widget and a `/flow board` overlay for all flows",
-  "stage": 2,
-  "delivery": "merge",
   "done": [
     "S1",
     "S2",
     "S3",
     "S4",
     "S5",
-    "S6"
+    "S6",
+    "S7",
+    "S8",
+    "S9",
+    "S10",
+    "S11"
   ],
+  "finished": {
+    "at": "2026-10-22T07:16:02.648Z",
+    "ok": false,
+    "text": "stage 1: committed (1 commit), pushed, no open pull request; stage 2: committed (1 commit), pushed, no open pull request"
+  },
   "repos": [
     {
       "branch": "flow/live-snapshot-and-widget-progress-line",

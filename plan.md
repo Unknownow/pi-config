@@ -448,8 +448,10 @@ Don't `/reload` any session.
 - [x] S4 `W/index.ts`: add the live writer next to the claim code (`:1055-1070`).
 - [x] S5 Tests: create `W/board.test.ts` and extend `W/view.test.ts`, as in §6. Run the full suite and expect `fail 0`.
 - [x] S6 Docs:
-- [ ] S7 `W/board.ts`: add `BoardEntry`, `BoardRow`, `boardRows`, `boardLines` and `detailLines` exactly as specified. Import `CL
-- [ ] S8 `W/index.ts`:
-- [ ] S9 Tests: extend `W/board.test.ts` as in §6. Run the full suite and expect `fail 0`.
-- [ ] S10 Docs:
-- [ ] S11 Deploy:
+- [x] S7 `W/board.ts`: add `BoardEntry`, `BoardRow`, `boardRows`, `boardLines` and `detailLines` exactly as specified. Import `CL
+- [x] S8 `W/index.ts`:
+- [x] S9 Tests: extend `W/board.test.ts` as in §6. Run the full suite and expect `fail 0`.
+- [x] S10 Docs:
+- [x] S11 Deploy:
+## Outcome
+2026-10-22T07:16:02.648Z — failed: stage 1: committed (1 commit), pushed, no open pull request; stage 2: committed (1 commit), pushed, no open pull request
