@@ -71,3 +71,5 @@ Deliver pr — User asked to open a PR from the flow branch to master and merge 
 - [x] S1 Check before merging:
 - [ ] S2 Deliver: fast-forward merge of `flow/runnergate-test-covers-a-newcomer-arrivi` into `master` on `origin`.
 - [ ] S3 Check the result, read-only:
+## Outcome
+2026-10-22T05:32:35.956Z — failed: abandoned
