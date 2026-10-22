@@ -89,3 +89,72 @@ test("registry keeps newest first, dedupes, caps at 50, survives a broken file",
 	fs.writeFileSync(file, "x");
 	assert.deepEqual(readRegistry(file), []);
 });
+
+// ---- stage 2: board rows
+
+import { boardLines, boardRows, type BoardEntry, detailLines } from "./board.ts";
+import type { PlanStatus } from "./plan-doc.ts";
+
+const NOW = Date.parse("2026-10-22T12:00:00.000Z");
+const iso = (agoMs: number) => new Date(NOW - agoMs).toISOString();
+const st = (title: string, o: Partial<PlanStatus> = {}): PlanStatus => ({ v: 1, flowId: "20261022-1402-x-d9cf", rev: 1, updated: iso(0), title, done: [], ...o }) as PlanStatus;
+const ent = (title: string, o: Partial<BoardEntry> = {}): BoardEntry => ({ flowId: "20261022-1402-x-d9cf", dir: "/r/.git/pi/plans", status: st(title), live: null, mtime: 0, ...o });
+const alive = () => true;
+
+test("boardRows classifies and sorts", () => {
+	const old = (ms: number) => st("o", { updated: iso(ms) });
+	const entries: BoardEntry[] = [
+		ent("finished-old", { status: st("fo", { updated: iso(2 * 86_400_000), finished: { at: iso(2 * 86_400_000), ok: true, text: "x" } }) }),
+		ent("stalled-status", { status: old(86_400_000) }),
+		ent("dropped", { status: old(8 * 86_400_000) }),
+		ent("finished", { status: st("f", { updated: iso(3_600_000), finished: { at: iso(3_600_000), ok: true, text: "x" } }) }),
+		ent("other-host", { status: old(60_000), live: live({ host: "x", updated: iso(1000), title: "oh" }) }),
+		ent("dead", { status: old(60_000), live: live({ pid: 99, updated: iso(1000), title: "dead", host: "h" }) }),
+		ent("stale", { status: old(600_000), live: live({ updated: iso(600_000), host: "h", title: "stale" }) }),
+		ent("waiting", { live: live({ updated: iso(1000), host: "h", waiting: "w", title: "waiting" }) }),
+		ent("running", { live: live({ updated: iso(1000), host: "h", title: "running" }) }),
+	];
+	const rows = boardRows(entries, NOW, "h", (pid) => pid !== 99);
+	assert.deepEqual(rows.map((r) => r.cls), ["running", "waiting", "stalled", "stalled", "stalled", "stalled", "finished"]);
+	const stalled = rows.filter((r) => r.cls === "stalled");
+	for (let i = 1; i < stalled.length; i++) assert.ok(stalled[i - 1].at >= stalled[i].at);
+});
+
+test("boardRows caps at 30", () => {
+	const entries = Array.from({ length: 40 }, () => ent("r", { live: live({ updated: iso(1000), host: "h" }) }));
+	assert.equal(boardRows(entries, NOW, "h", alive).length, 30);
+});
+
+test("boardLines marks the selection and shows progress", () => {
+	const steps = Array.from({ length: 10 }, (_, i) => ({ id: `S${i + 1}`, text: "t", done: i < 7 }));
+	const rows = boardRows([ent("a", { live: live({ updated: iso(1000), host: "h", steps }) }), ent("b", { status: st("b", { updated: iso(1000) }) })], NOW, "h", alive);
+	const lines = boardLines(rows, 0, 200, NOW);
+	assert.ok(lines[0].startsWith("▶ "));
+	assert.ok(lines[1].startsWith("  "));
+	assert.ok(lines[0].includes("7/10"));
+	assert.ok(lines[1].includes("no live data"));
+	assert.deepEqual(boardLines([], 0, 80, NOW), ["No flows in the last 7 days."]);
+});
+
+test("detailLines lists the checklist with the current step and the last 10 events", () => {
+	const events = Array.from({ length: 15 }, (_, i) => ({ at: iso(i * 1000), text: `e${i}` }));
+	const l = live({
+		updated: iso(1000),
+		host: "h",
+		steps: [
+			{ id: "S1", text: "one", done: true },
+			{ id: "S2", text: "two", done: false },
+			{ id: "S3", text: "three", done: false },
+		],
+		waiting: "review",
+		runs: [{ role: "judge", label: "r1", activity: "reading" }],
+		events,
+	});
+	const [row] = boardRows([ent("a", { live: l })], NOW, "h", alive);
+	const lines = detailLines(row, 200, NOW);
+	assert.ok(lines.find((x) => x.includes("S2"))?.includes("▶"));
+	assert.ok(!lines.find((x) => x.includes("S3"))?.includes("▶"));
+	assert.ok(lines.some((x) => x.startsWith("waiting:")));
+	assert.ok(lines.some((x) => x.startsWith("running:")));
+	assert.equal(lines.length - lines.indexOf("recent:") - 1, 10);
+});

@@ -35,7 +35,7 @@ import {
 	serializeConversation,
 	type Theme,
 } from "@earendil-works/pi-coding-agent";
-import { type Component, Text } from "@earendil-works/pi-tui";
+import { type Component, Text, truncateToWidth } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import {
 	CONFIG_PATH,
@@ -67,7 +67,7 @@ import { parseTestReport } from "./test-report.ts";
 import { amendmentTail, answerItem, askOptions, bodyField, newTestFlow, nextAction, normalize, openBugs, pendingFromFlaws, recordReport, skipItem, testOutcome, testPlan, type TestFlow } from "./test-flow.ts";
 import { callDir, formatTaskResult, parseRunnerReply, runnerGate, sanitizeIds, scheduleTasks, taskCard, taskRecord, type TestTask, verifyRun } from "./test-run.ts";
 import { commitPlan, type Finished, mergeChecklist, newFlowId, openStepsReminder, parseChecklist, type PlanStatus, planCard, pruneIds, renderPlanFile, splitPlanFile, type ChecklistItem } from "./plan-doc.ts";
-import { addToRegistry, liveEvents, type LiveInfo, readLive } from "./board.ts";
+import { addToRegistry, type BoardEntry, boardLines, boardRows, detailLines, liveEvents, type LiveInfo, readLive, readRegistry } from "./board.ts";
 import { adoptHigher, claimLive, commitRef, dropClaim, pidAlive, readClaim, writeClaim, deleteLocal, deleteRef, fetchMirror, type Git, listRefs, plansDir, pushRef, readLocalStatuses, readPlanMd, refRev, remoteOf, repoInfo, type RefEntry, writeLocal } from "./plan-store.ts";
 import { type FlowFinding, recordFindings, reportFindings, type ReportStep } from "./flow-report.ts";
 import { readOnlyProblem } from "./readonly-bash.ts";
@@ -770,6 +770,21 @@ export default function workflow(pi: ExtensionAPI) {
 				return false;
 			}
 		});
+	}
+
+	/** Every flow this machine's sessions have recently touched: registry dirs plus this session's repos. */
+	async function collectBoard(ctx: ExtensionContext) {
+		const dirs = new Set<string>(readRegistry(path.join(getAgentDir(), "workflow", "board.json")));
+		try {
+			dirs.add(await planDirFor(null));
+			for (const r of await flowRepos(ctx)) dirs.add(await planDirFor(r.root));
+		} catch {}
+		const entries: BoardEntry[] = [];
+		for (const dir of dirs) {
+			if (!fs.existsSync(dir)) continue;
+			for (const it of readLocalStatuses(dir)) entries.push({ flowId: it.flowId, dir, status: it.status, live: readLive(dir, it.flowId), mtime: it.mtime });
+		}
+		return boardRows(entries, Date.now(), os.hostname(), pidAlive);
 	}
 
 	/** The repos of this flow: the working folder's, the added folders', then those edited in the flow; git work trees only, no repeats. */
@@ -4012,6 +4027,7 @@ ${judged.text}`, instruction, chosen);
 
 	const SUBCOMMANDS = [
 		{ value: "status", label: "status - phase, models, config path" },
+		{ value: "board", label: "board - live view of every flow on this machine" },
 		{ value: "plan", label: "plan - plan phase (read-only, planner model)" },
 		{ value: "approve", label: "approve - approve the plan, switch to execute and start" },
 		{ value: "delivery", label: "delivery <commit|push|pr|merge|off> - what happens after the judge passes, this flow" },
@@ -4235,6 +4251,71 @@ ${judged.text}`, instruction, chosen);
 				case "resume":
 					await resumeFlow(ctx, rest[0]);
 					return;
+				case "board": {
+					let rows = await collectBoard(ctx);
+					if ((ctx as { mode?: string }).mode !== "tui" || !ctx.hasUI) {
+						ctx.ui.notify(boardLines(rows, -1, 200, Date.now()).join("\n"), "info");
+						return;
+					}
+					let stop = () => {};
+					try {
+					await ctx.ui.custom<undefined>((tui, theme, keybindings, done) => {
+						let selected = 0;
+						let detail = false;
+						let busy = false;
+						let closed = false;
+						const timer = setInterval(() => {
+							if (busy || closed) return;
+							busy = true;
+							collectBoard(ctx)
+								.then((r) => {
+									if (closed) return;
+									rows = r;
+									selected = Math.min(selected, Math.max(0, rows.length - 1));
+									tui.requestRender();
+								})
+								.catch(() => {})
+								.finally(() => {
+									busy = false;
+								});
+						}, 2_000);
+						timer.unref?.();
+						stop = () => {
+							closed = true;
+							clearInterval(timer);
+						};
+						const close = () => {
+							stop();
+							done(undefined);
+						};
+						return {
+							render(width: number): string[] {
+								const now = Date.now();
+								const body = detail && rows[selected] ? detailLines(rows[selected], width, now) : boardLines(rows, selected, width, now);
+								return [theme.fg("accent", `flow board · ${rows.length} flows`), ...body, theme.fg("dim", "↑↓ select · enter details · esc back/close · refreshes every 2s")].map((l) => truncateToWidth(l, width));
+							},
+							handleInput(data: string): void {
+								if (keybindings.matches(data, "tui.select.up")) selected = Math.max(0, selected - 1);
+								else if (keybindings.matches(data, "tui.select.down")) selected = Math.min(Math.max(0, rows.length - 1), selected + 1);
+								else if (keybindings.matches(data, "tui.select.confirm")) {
+									if (rows.length) detail = true;
+								} else if (keybindings.matches(data, "tui.select.cancel")) {
+									if (detail) detail = false;
+									else {
+										close();
+										return;
+									}
+								} else return;
+								tui.requestRender();
+							},
+							invalidate() {},
+						};
+					}, { overlay: true });
+					} finally {
+						stop();
+					}
+					return;
+				}
 				case "autopilot": {
 					const arg = rest[0]?.toLowerCase();
 					if (arg !== undefined && arg !== "on" && arg !== "off") {

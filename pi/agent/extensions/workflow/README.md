@@ -314,6 +314,13 @@ events. It is written when something changes and at least every 60 s. The plan f
 written to are listed in `<agent dir>/workflow/board.json` (50 newest), so a board can find flows
 across repos. Sessions started before this existed write neither file.
 
+`/flow board` opens an overlay of every flow on this machine (the registry plus this session's repos),
+refreshed every 2 s. Classes, in this order: `●` running, `⏸` waiting, `○` stalled (unfinished, no live
+session, changed within 7 days), `✓`/`✗` finished within 24 h; at most 30 rows. Each row shows title,
+repo, phase, stage, a step bar, the current step or wait, and the age. Flows from sessions without
+`live.json` show `no live data`. Keys: ↑↓ select, enter for the checklist, running subagents and the last
+10 events, esc back or close. Without a TUI the list is sent as a notification. The board is read-only.
+
 Token counts update in real time, including the message still streaming. A stage counts the main
 session's messages sent while it was active plus the subagents run during it (explore and advisor
 count toward the stage that called them, judge runs toward `judge`). Each count is the **exact raw
@@ -357,6 +364,7 @@ next run starts.
 | Command | Does |
 |---|---|
 | `/flow` | status: phase, the model for each role, config path |
+| `/flow board` | live view of every flow on this machine (overlay, read-only) |
 | `/flow plan` / `execute` / `off` | switch phase (`off` leaves the model alone) |
 | `/flow test [scope]` | test phase: a strong supervisor plans tests, cheap runners run them, the report lists the bugs (without a scope, type it as the next message) |
 | `/flow approve` | approve the plan: switch to execute and start (also offered when a plan ends) |

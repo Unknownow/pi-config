@@ -6,7 +6,8 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { isFlowId } from "./plan-doc.ts";
+import { isFlowId, type PlanStatus } from "./plan-doc.ts";
+import { CLAIM_LIVE_MS } from "./plan-store.ts";
 
 export interface LiveInfo {
 	v: 1;
@@ -131,4 +132,114 @@ export function addToRegistry(file: string, dir: string, now: Date): void {
 		fs.writeFileSync(tmp, `${JSON.stringify({ v: 1, dirs } satisfies RegistryFile, null, 2)}\n`);
 		fs.renameSync(tmp, file);
 	} catch {}
+}
+
+export interface BoardEntry {
+	flowId: string;
+	dir: string;
+	status: PlanStatus | null;
+	live: LiveInfo | null;
+	mtime: number;
+}
+
+export type BoardClass = "running" | "waiting" | "stalled" | "finished";
+export type BoardRow = BoardEntry & { cls: BoardClass; at: number };
+
+const DAY = 86_400_000;
+const BOARD_MAX = 30;
+const CLASS_ORDER: BoardClass[] = ["running", "waiting", "stalled", "finished"];
+
+function ms(iso: string | undefined): number {
+	const t = iso ? Date.parse(iso) : Number.NaN;
+	return Number.isFinite(t) ? t : 0;
+}
+
+/** Classifies the entries, drops old ones and sorts running, waiting, stalled, finished; newest first within a class. */
+export function boardRows(entries: BoardEntry[], now: number, host: string, isAlive: (pid: number) => boolean): BoardRow[] {
+	const rows: BoardRow[] = [];
+	for (const e of entries) {
+		if (!e.status && !e.live) continue;
+		const at = Math.max(ms(e.live?.updated), ms(e.status?.updated), e.mtime);
+		const finished = e.status?.finished;
+		const live = !!e.live && now - ms(e.live.updated) < CLAIM_LIVE_MS && e.live.host === host && isAlive(e.live.pid);
+		let cls: BoardClass | undefined;
+		if (finished) {
+			if (now - ms(finished.at) <= DAY) cls = "finished";
+		} else if (live) cls = e.live?.waiting ? "waiting" : "running";
+		else if (now - at <= 7 * DAY) cls = "stalled";
+		if (cls) rows.push({ ...e, cls, at });
+	}
+	rows.sort((a, b) => CLASS_ORDER.indexOf(a.cls) - CLASS_ORDER.indexOf(b.cls) || b.at - a.at);
+	return rows.slice(0, BOARD_MAX);
+}
+
+function cut(s: string, width: number): string {
+	return s.length > width ? `${s.slice(0, Math.max(0, width - 1))}…` : s;
+}
+
+function repoName(r: BoardRow): string {
+	const norm = (x: string) => x.replace(/\\/g, "/").replace(/\/+$/, "").split("/").filter(Boolean);
+	if (r.live?.cwd) return norm(r.live.cwd).pop() ?? "?";
+	// A plan dir lives in <repo>/.git/...; show the folder before `.git`.
+	const parts = norm(r.dir);
+	const g = parts.indexOf(".git");
+	return (g > 0 ? parts[g - 1] : parts[parts.length - 1]) ?? "?";
+}
+
+function marker(r: BoardRow): string {
+	if (r.cls === "finished") return r.status?.finished?.ok ? "✓" : "✗";
+	return r.cls === "running" ? "●" : r.cls === "waiting" ? "⏸" : "○";
+}
+
+export function boardLines(rows: BoardRow[], selected: number, width: number, now: number): string[] {
+	if (!rows.length) return ["No flows in the last 7 days."];
+	return rows.map((r, i) => {
+		const l = r.live;
+		const parts = [marker(r), cut(l?.title ?? r.status?.title ?? r.flowId, 40), repoName(r), l?.phase ?? (r.status?.finished ? "done" : "?")];
+		const stage = l?.stage ?? r.status?.stage;
+		if (l?.stage !== undefined && l.stages !== undefined) parts.push(`stage ${l.stage}/${l.stages}`);
+		else if (stage !== undefined) parts.push(`stage ${stage}`);
+		if (l) {
+			const done = l.steps.filter((s) => s.done).length;
+			parts.push(`${progressBar(done, l.steps.length, 10)} ${done}/${l.steps.length}`);
+			const open = l.steps.find((s) => !s.done);
+			if (r.status?.finished) parts.push(cut(r.status.finished.text, 30));
+			else if (l.waiting) parts.push(`waiting: ${cut(l.waiting, 30)}`);
+			else if (open) parts.push(`now ${open.id}`);
+		} else {
+			parts.push(`${r.status?.done.length ?? 0}/?`);
+			parts.push(r.status?.finished ? cut(r.status.finished.text, 30) : "no live data");
+		}
+		parts.push(ago(now - r.at));
+		return cut(`${i === selected ? "▶ " : "  "}${parts.join("  ")}`, width);
+	});
+}
+
+export function detailLines(row: BoardRow, width: number, now: number): string[] {
+	const out: string[] = [];
+	const l = row.live;
+	out.push(l?.title ?? row.status?.title ?? row.flowId, row.flowId);
+	if (!l) {
+		out.push(`done: ${row.status?.done.join(", ") || "-"}`);
+		if (row.status?.waiting) out.push(`waiting: ${row.status.waiting.reason}`);
+		out.push("no live data");
+		return out.map((s) => cut(s, width));
+	}
+	out.push(l.cwd);
+	out.push([l.phase, l.stage !== undefined && l.stages !== undefined ? `stage ${l.stage}/${l.stages}` : undefined, `judge round ${l.judgeRound}`, `autopilot ${l.autopilot ? "on" : "off"}`].filter(Boolean).join(" · "));
+	const open = l.steps.find((s) => !s.done);
+	for (const s of l.steps) out.push(`${s === open ? "▶" : " "} [${s.done ? "x" : " "}] ${s.id} ${s.text}`);
+	if (l.waiting) out.push(`waiting: ${l.waiting}`);
+	if (l.runs.length) {
+		out.push("running:");
+		for (const r of l.runs) out.push(`  ${r.role} ${r.label} — ${r.activity}`);
+	}
+	out.push("recent:");
+	for (const e of l.events.slice(-10)) {
+		const d = new Date(e.at);
+		const hm = Number.isNaN(d.getTime()) ? "--:--" : `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+		out.push(`  ${hm} ${e.text}`);
+	}
+	void now;
+	return out.map((s) => cut(s, width));
 }
