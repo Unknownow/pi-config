@@ -1,10 +1,9 @@
 {
   "v": 1,
   "flowId": "20261022-1557-faster-unity-test-runs-reuse-library-ski-e6f4",
-  "rev": 2,
-  "updated": "2026-10-22T09:12:44.727Z",
+  "rev": 3,
+  "updated": "2026-10-22T09:17:29.400Z",
   "title": "Faster Unity test runs: reuse Library, skip unchanged inputs, run variants in parallel, and rerun slow suites only when needed",
-  "stage": 2,
   "delivery": "merge",
   "done": [
     "S1",
@@ -17,6 +16,11 @@
     "S8",
     "S9"
   ],
+  "finished": {
+    "at": "2026-10-22T09:17:29.288Z",
+    "ok": false,
+    "text": "stage 1: unity-packages: committed, PR #264 merged; back to planning"
+  },
   "repos": [
     {
       "branch": "master",

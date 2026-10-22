@@ -317,3 +317,5 @@ In `entries/eng/guideline/sdk-wrapper-packages.md:32`, add the same iterate-narr
 - [ ] S14 In `D:/projects/knowledge`, fast-forward `main` (`git fetch`, then `git merge --ff-only origin/main`). If that fails, st
 - [ ] S15 In `entries/eng/playbook/release-code-packages.md:29`, keep the existing commands and add that:
 - [ ] S16 Run `npm ci` if `node_modules` is missing, then `npm run check`. It must pass.
+## Outcome
+2026-10-22T09:17:29.288Z — failed: stage 1: unity-packages: committed, PR #264 merged; back to planning
