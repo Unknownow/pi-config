@@ -2,7 +2,9 @@
  * Execute phase: refuses git commands that publish or skip the hooks. Pushing is the
  * workflow's job, after the judge passes; the executor may not push, force-push, push
  * to a protected branch, or commit (committing is the workflow's job too, and --no-verify never). Checked on the command text, so it
- * is a guardrail against a drifting executor, not a sandbox. It also refuses `gh` commands that
+ * is a guardrail against a drifting executor, not a sandbox. Git commands that create a commit on their own
+ * (merge, cherry-pick, revert, pull, rebase, am) are refused too unless they are told not to commit,
+ * so no commit exists that the judge has not seen. It also refuses `gh` commands that
  * open or merge pull requests unless the flow's delivery allows them, and `gh pr merge --admin`
  * / `--auto` and `gh pr review --approve` always.
  */
@@ -107,10 +109,40 @@ function wordsProblem(input: string[], o: PushContext): string | null {
 	if (!g) return null;
 	if (/^@|[$`]/.test(g.sub)) return "runs a git subcommand built at runtime";
 	if (g.sub === "config" && g.rest.some((a) => /hookspath|include(if)?\./i.test(a))) return "changes where git looks for hooks";
+	if (g.sub in COMMIT_CREATING) return commitCreatingOnly(g.sub, g.rest, o);
 	if (g.sub !== "push" && g.sub !== "commit") return null;
 	// Only the options before the subcommand: a commit message may mention hooksPath.
 	if (args.slice(0, args.length - g.rest.length - 1).some((a) => /hookspath/i.test(a))) return "changes where git looks for hooks";
 	return g.sub === "push" ? pushOnly(g.rest, o) : commitOnly(g.rest, o);
+}
+
+/** The subcommands that can create a commit without `git commit`, and the flag hint the refusal gives. */
+const COMMIT_CREATING: Record<string, string> = {
+	merge: "use --no-commit",
+	"cherry-pick": "use -n",
+	revert: "use -n",
+	pull: "use --ff-only",
+	rebase: "none is allowed during execution; ask for it in the plan",
+	am: "none is allowed during execution; ask for it in the plan",
+};
+
+function commitCreatingOnly(sub: string, rest: string[], o: PushContext): string | null {
+	if (rest.some((a) => isLong(a, "--no-verify"))) return `git ${sub} --no-verify skips the hooks`;
+	if (o.commitAllowed) return null;
+	const has = (full: string) => rest.some((a) => isLong(a, full));
+	const stop = has("--abort") || has("--quit");
+	let safe = false;
+	if (sub === "merge") safe = stop || has("--no-commit") || has("--squash");
+	else if (sub === "cherry-pick" || sub === "revert") safe = stop || has("--skip") || has("--no-commit") || rest.some((a) => shortHas(a, "n"));
+	else if (sub === "pull") safe = has("--ff-only") || (has("--no-commit") && has("--no-rebase"));
+	else safe = stop;
+	if (safe && !has("--continue")) return null;
+	return commitCreatingText(sub);
+}
+
+/** The refusal for a git subcommand that creates a commit no judge has seen. */
+export function commitCreatingText(sub: string): string {
+	return `git ${sub} creates a commit no judge has seen; ${COMMIT_CREATING[sub]}, and the workflow's commit step concludes it after the judge passes`;
 }
 
 function commitOnly(rest: string[], o: PushContext): string | null {
@@ -180,5 +212,19 @@ function ghApi(rest: string[], o: PushContext): string | null {
 	if (effective === "GET") return null;
 	if (/(^|\/)pulls\/[^/\s]+\/merge\b/.test(text) && !o.mergeAllowed) return "merging a pull request through gh api is the workflow's job";
 	if (/(^|\/)pulls\/?(?=\s|\?|$)/.test(text) && effective === "POST" && !o.prAllowed) return "opening a pull request through gh api is the workflow's job";
+	return null;
+}
+
+const SEP = "[\\s,\"'`\\[\\]()]+";
+const CODE_GIT = new RegExp("\\bgit\\b" + SEP + "(?:-[Cc]" + SEP + "[^\\s,\"'`\\[\\]()]+" + SEP + ")*(merge|cherry-pick|revert|rebase|pull|am)\\b(?!-)", "g");
+
+/** Why non-shell code (a script run through ctx_execute) may not run, or null: it spawns a git subcommand that creates a commit, without a flag that stops that. */
+export function codeCommitProblem(code: string): string | null {
+	for (const m of code.matchAll(CODE_GIT)) {
+		const tail = code.slice(m.index + m[0].length, m.index + m[0].length + 200);
+		const cut = tail.search(/[);\n&|]|\bgit\b/);
+		const rest = (cut < 0 ? tail : tail.slice(0, cut)).split(/[\s,"'`\[\]();]+/).filter(Boolean);
+		if (commitCreatingOnly(m[1], rest, { branch: "", protectedBranches: [], pushAllowed: false, prAllowed: false, mergeAllowed: false, commitAllowed: false })) return commitCreatingText(m[1]);
+	}
 	return null;
 }

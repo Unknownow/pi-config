@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import * as path from "node:path";
-import { pushProblem, shellProblem } from "./push-guard.ts";
+import { codeCommitProblem, pushProblem, shellProblem } from "./push-guard.ts";
 import { repoKey } from "./repos.ts";
 
 const feature = { branch: "feat", protectedBranches: ["main", "master"], pushAllowed: false, prAllowed: false, mergeAllowed: false, commitAllowed: false };
@@ -67,6 +67,17 @@ const refused: [string, typeof feature][] = [
 	["gh pr -R o/r merge 1", prOk],
 	["gh pr --repo o/r create --fill", allowed],
 	["gh pr merge 1 --auto --merge", mergeOk],
+	["git merge origin/main", feature],
+	["git -C ../x merge main", feature],
+	["git cherry-pick abc", feature],
+	["git revert abc", feature],
+	["git pull", feature],
+	["git pull --rebase", feature],
+	["git rebase main", feature],
+	["git am p.patch", feature],
+	["git merge --continue", feature],
+	["bash -c \"git merge main\"", feature],
+	["git merge --no-verify x", committing],
 ];
 for (const [cmd, ctx] of refused) test(`refuses: ${cmd}`, () => assert.notEqual(pushProblem(cmd, ctx), null));
 
@@ -89,6 +100,17 @@ const fine: [string, typeof feature][] = [
 	["gh pr review 12 --comment -b ok", feature],
 	["gh pr -R o/r view 1 --json state", feature],
 	["gh pr merge 12 --merge --delete-branch -R o/r", mergeOk],
+	["git merge --no-commit origin/main", feature],
+	["git merge --squash x", feature],
+	["git merge --abort", feature],
+	["git cherry-pick -n abc", feature],
+	["git revert --no-commit abc", feature],
+	["git pull --ff-only", feature],
+	["git pull --no-commit --no-rebase", feature],
+	["git rebase --abort", feature],
+	["git commit -m \"merge main\"", committing],
+	["git merge --continue", committing],
+	["git rebase main", committing],
 ];
 for (const [cmd, ctx] of fine) test(`allows: ${cmd}`, () => assert.equal(pushProblem(cmd, ctx), null));
 
@@ -118,4 +140,24 @@ test("shellProblem: commit needs the commit step", async () => {
 	assert.match((await shellProblem("git commit -m x", false, single())) ?? "", /workflow's job; it commits/);
 	assert.equal(await shellProblem("git commit -m x", false, single("commit")), null);
 	assert.equal(await shellProblem("git commit -m x", false, single("push")), null);
+});
+
+test("commit-creating refusal text", () => {
+	const p = pushProblem("git merge main", feature) ?? "";
+	assert.match(p, /creates a commit no judge has seen/);
+	assert.match(p, /--no-commit/);
+});
+
+test("codeCommitProblem", () => {
+	for (const code of ['execFileSync("git", ["merge", "main"])', 'spawnSync("git", ["cherry-pick", sha])', "run('git -c a=b merge x')", 'sh("git -C ../x pull")', "git rebase main"]) assert.match(codeCommitProblem(code) ?? "", /creates a commit no judge has seen/, code);
+	for (const code of ['execFileSync("git", ["merge", "--no-commit", "x"])', 'run("git pull --ff-only")', 'const logs = run("git log --oneline"); logs.filter((l) => /merge/.test(l))', 'run("git merge-base a b")']) assert.equal(codeCommitProblem(code), null, code);
+});
+
+test("codeCommitProblem: a later safe call does not clear an earlier merge", () => {
+	assert.notEqual(codeCommitProblem('execFileSync("git", ["merge", "main"]); execFileSync("git", ["merge", "--abort"])'), null);
+});
+
+test("codeCommitProblem: chained and listed calls", () => {
+	assert.notEqual(codeCommitProblem('run("git merge main && git merge --abort")'), null);
+	assert.notEqual(codeCommitProblem('["git merge main", "git merge --abort"].forEach(run)'), null);
 });
