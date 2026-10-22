@@ -40,10 +40,9 @@ test("unity guard: several paths and Windows shells", () => {
 test("guardProblem dispatches by tool", () => {
 	const g = (tool: string, input: Record<string, unknown>) => guardProblem(tool, input, { cwd: o.cwd, setRoot: o.setRoot });
 	assert.match(g("bash", { command: "unity cmd x" }) ?? "", /Refused/);
-	assert.match(g("mcp__x__ctx_execute", { language: "python", code: "run('unity recompile')" }) ?? "", /Refused/);
-	assert.match(g("ctx_execute", { language: "shell", code: "unity recompile" }) ?? "", /Refused/);
-	assert.match(g("ctx_batch_execute", { commands: [{ command: "ls" }, { command: "unity cmd x" }] }) ?? "", /Refused/);
-	assert.equal(g("ctx_batch_execute", { commands: [{ command: "ls" }] }), null);
+	assert.match(g("run_code", { code: "run('unity recompile')" }) ?? "", /Refused/);
+	assert.match(g("mcp__x__run_code", { code: "run('unity cmd x')" }) ?? "", /Refused/);
+	assert.equal(g("run_code", { code: "console.log(1)" }), null);
 	assert.equal(g("read", { path: "x" }), null);
 });
 
@@ -57,7 +56,7 @@ test("unity guard: launcher spelling, shell options, global options", () => {
 test("unity guard: Windows backslashes and unresolved paths", () => {
 	const B = String.fromCharCode(92);
 	const main = `D:${B}projects${B}game-template${B}unity`;
-	assert.match(guardProblem("ctx_execute", { language: "powershell", code: `unity cmd x --project-path ${main}` }, { cwd: o.cwd, setRoot: o.setRoot, platform: "win32" }) ?? "", /Refused/);
+	assert.match(guardProblem("bash", { command: `unity cmd x --project-path ${main}` }, { cwd: o.cwd, setRoot: o.setRoot, platform: "win32" }) ?? "", /Refused/);
 	refused(`cmd /c unity cmd x --project-path ${main}`);
 	passes(`unity cmd x --project-path D:${B}projects${B}wt${B}x${B}game-template${B}unity`);
 	refused("export P=D:/projects/game-template/unity; unity cmd x --project-path $P");
