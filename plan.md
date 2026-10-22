@@ -471,6 +471,9 @@ None of these is expected to take over 2 minutes. While fixing, run the single c
   - `worktree/shared-guard.ts`, `worktree/unity-guard.ts`, their tests, `worktree/README.md`;
   - `pi/agent/AGENTS.md`, `pi/agent/settings.json`, `pi/agent/npm/package.json`, `pi/agent/workflow.json`, `docs/workflow-improvements.md`.
 
+## Plan choices upheld by the arbiter
+The judge's scenario needs something to switch a tool off while the plan or test phase is running. Nothing in the repo does that. The only `setActiveTools` callers are `workflow/index.ts:511` (`blockPlanTools`, which builds the same `before.filter(!refused)` set the refilter computes), `workflow/index.ts:547` (restore) and `plan-tools.ts:16`. No other extension under `pi/agent/extensions/` calls it, so the refilter never undoes another component's choice, and its `same` check (`plan-tools.ts:14`) means it costs no cache rewrite in normal use. The plan's target is: "The plan phase never declares a tool that its allow-list refuses, including tools registered later." The refilter only ever turns on tools the allow-list permits (`plan-tools.ts:13`), so even the hypothetical case doesn't break the target. S11 step 3 is followed as written, and the judge's alternative is a preference, not a fix for a failure.
+
 <!-- pi-workflow:status -->
 ## Checklist
 - [x] S1 Explore without context files.
@@ -481,13 +484,13 @@ None of these is expected to take over 2 minutes. While fixing, run the single c
 - [x] S6 Backlog, `docs/workflow-improvements.md`, per "Keeping this file current":
 - [x] S7 `W/README.md`: describe `explore.contextFiles`, thinking low and the budget of tool calls, the per-model flow card, and 
 - [x] S8 Run the stage 1 tests (§6) and the judge. The flow then delivers the commit.
-- [ ] S9 Create `pi/agent/extensions/sandbox/`:
-- [ ] S10 Plan-phase checks, `W/readonly-tools.ts`:
-- [ ] S11 Tool filter for tools registered later.
-- [ ] S12 Worktree guards:
-- [ ] S13 Prompts and rules:
-- [ ] S14 Remove context-mode:
-- [ ] S15 Backlog:
+- [x] S9 Create `pi/agent/extensions/sandbox/`:
+- [x] S10 Plan-phase checks, `W/readonly-tools.ts`:
+- [x] S11 Tool filter for tools registered later.
+- [x] S12 Worktree guards:
+- [x] S13 Prompts and rules:
+- [x] S14 Remove context-mode:
+- [x] S15 Backlog:
 - [ ] S16 Run all tests (§6) and the judge. The flow then delivers the commit.
 ## For you after the flow
 - S17 Verify:
