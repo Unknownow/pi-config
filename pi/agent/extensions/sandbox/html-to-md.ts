@@ -40,7 +40,7 @@ export function htmlToMarkdown(html: string): { markdown: string; title?: string
 	});
 	s = s.replace(/<table\b[^>]*>([\s\S]*?)<\/table>/gi, (_m, body: string) => {
 		const rows = [...body.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)].map((r) =>
-			[...r[1].matchAll(/<t[hd]\b[^>]*>([\s\S]*?)<\/t[hd]>/gi)].map((c) => stripTags(inline(c[1])).replace(/\s+/g, " ").trim().replace(/\|/g, "\\|")),
+			[...r[1].matchAll(/<t[hd]\b[^>]*>([\s\S]*?)<\/t[hd]>/gi)].map((c) => decodeEntities(stripTags(inline(c[1]))).replace(/\s+/g, " ").trim().replace(/\|/g, "\\|")),
 		);
 		const kept = rows.filter((r) => r.length);
 		const lines = kept.map((r) => `| ${r.join(" | ")} |`);

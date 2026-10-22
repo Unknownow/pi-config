@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
+import * as path from "node:path";
 import { test } from "node:test";
 import { capOutput, runCode } from "./run-code.ts";
 
@@ -85,4 +86,16 @@ test("a missing cwd is reported as such", async () => {
 	const r = await runCode({ code: "1", cwd: "no-such-folder-xyz" }, { cwd });
 	assert.match(r.text, /^cwd not found:/);
 	assert.equal(r.exitCode, -1);
+});
+
+test("require resolves relative paths from cwd", async () => {
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-req-"));
+	try {
+		fs.writeFileSync(path.join(dir, "x.js"), "module.exports = 42;");
+		const r = await runCode({ code: "console.log(require('./x.js'))", cwd: dir }, { cwd });
+		assert.equal(r.exitCode, 0);
+		assert.equal(r.text.trim(), "42");
+	} finally {
+		fs.rmSync(dir, { recursive: true, force: true });
+	}
 });

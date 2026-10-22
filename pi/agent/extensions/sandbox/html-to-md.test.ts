@@ -32,3 +32,9 @@ test("a NUL entity does not collide with block placeholders", () => {
 	assert.ok(!out.includes("\u0000"));
 	assert.match(out, /code/);
 });
+
+test("entities in table cells are decoded", () => {
+	const out = htmlToMarkdown("<table><tr><th>h</th></tr><tr><td>a &amp; b</td></tr></table>").markdown;
+	assert.match(out, /\| a & b \|/);
+	assert.ok(!out.includes("&amp;"));
+});

@@ -78,7 +78,8 @@ export async function runCode(
 	const cwd = params.cwd ? path.resolve(opts.cwd, params.cwd) : opts.cwd;
 	if (!fs.existsSync(cwd)) return { text: `cwd not found: ${cwd}`, exitCode: -1, timedOut: false };
 	const file = path.join(os.tmpdir(), `pi-run-${randomBytes(6).toString("hex")}.cjs`);
-	fs.writeFileSync(file, `(async () => {\n${params.code}\n})().catch((e) => { console.error(e && e.stack ? e.stack : String(e)); process.exitCode = 1; });\n`);
+	// require resolves from cwd, not from the temp folder the script lives in
+	fs.writeFileSync(file, `((require) => (async () => {\n${params.code}\n})())(require("node:module").createRequire(process.cwd() + "/")).catch((e) => { console.error(e && e.stack ? e.stack : String(e)); process.exitCode = 1; });\n`);
 	try {
 		return await new Promise<RunResult>((resolve) => {
 			const out = new Bounded();
