@@ -1,7 +1,7 @@
 // node --experimental-strip-types --test prompts.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { ADVISOR, ARBITER, COMMIT, EXECUTE_PHASE, EXPLORE, JUDGE, JUDGE_KNOWLEDGE_ONLY, NO_SLEEP, PACE, phaseSection, planPhase, RUNNER, TEST_PHASE } from "./prompts.ts";
+import { ADVISOR, ARBITER, COMMIT, EXECUTE_PHASE, EXPLORE, FIX_ROUND, JUDGE, JUDGE_KNOWLEDGE_ONLY, NO_SLEEP, PACE, phaseSection, planPhase, RUNNER, TEST_PHASE } from "./prompts.ts";
 
 const BATCH = `- Batch tool calls. Each call re-sends the whole conversation, so ten small calls at 150k context re-send 1.5M tokens. Put independent reads and commands in one call (a codemode script, ctx_batch_execute, or one bash command joined with && or ;) and print only what you need. Don't spend a call on something you could have added to the previous one.`;
 const PLAN_BATCH = `- Batch tool calls. Each call re-sends the whole conversation, so ten small calls at 150k context re-send 1.5M tokens. Put independent reads and commands in one call (a codemode script, ctx_execute for read-only analysis, or one bash command joined with && or ;) and print only what you need. Don't spend a call on something you could have added to the previous one.`;
@@ -88,4 +88,12 @@ test("every role carries the keep-working and parallel rule", () => {
 test("execute and test prompts forbid fixed long sleeps", () => {
 	assert.ok(EXECUTE_PHASE.includes(NO_SLEEP));
 	assert.ok(TEST_PHASE.includes(NO_SLEEP));
+});
+
+test("slow suites run once and rerun only when touched", async () => {
+	const { finalize } = await import("./prompts.ts");
+	for (const x of ["While fixing, run the narrowest check that covers the change", "Run each slow suite in full once, before your first judge call", "After a judge round, rerun a slow suite only if the fix changed files it builds or reads; otherwise cite its last passing run", "then call `judge`"])
+		assert.ok(EXECUTE_PHASE.includes(x), x);
+	assert.ok(finalize(false).includes("Mark each suite slower than about 2 minutes as slow"));
+	assert.ok(FIX_ROUND.includes("rerun a slow suite only if the fix changed files it builds or reads"));
 });
