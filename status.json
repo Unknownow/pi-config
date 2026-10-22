@@ -1,11 +1,18 @@
 {
   "v": 1,
   "flowId": "20261023-0032-make-the-deliverhintsblock-test-check-do-345a",
-  "rev": 1,
-  "updated": "2026-10-22T17:32:58.036Z",
+  "rev": 2,
+  "updated": "2026-10-22T17:35:38.704Z",
   "title": "Make the deliverHintsBlock test check done and human items",
-  "delivery": "merge",
-  "done": [],
+  "done": [
+    "S1",
+    "S2"
+  ],
+  "finished": {
+    "at": "2026-10-22T17:35:38.591Z",
+    "ok": false,
+    "text": "committed (1 commit), pushed, no open pull request"
+  },
   "repos": [
     {
       "branch": "flow/publish-judged-checkpoint-commits-and-re",

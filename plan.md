@@ -57,5 +57,7 @@ None. This is a test-only change.
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 In `checkpoints.test.ts:103-110`, test "deliverHintsBlock filters by stage and skips human items":
-- [ ] S2 Run `node --test checkpoints.test.ts`, then `node --test *.test.ts`. Both must report 0 failures. Then call `judge`.
+- [x] S1 In `checkpoints.test.ts:103-110`, test "deliverHintsBlock filters by stage and skips human items":
+- [x] S2 Run `node --test checkpoints.test.ts`, then `node --test *.test.ts`. Both must report 0 failures. Then call `judge`.
+## Outcome
+2026-10-22T17:35:38.591Z — failed: committed (1 commit), pushed, no open pull request
