@@ -4,6 +4,7 @@
  */
 
 import type { TestReport, TestTag } from "./test-report.ts";
+import type { HumanCheck } from "./waits.ts";
 
 export interface StoredItem {
 	tag: TestTag;
@@ -13,7 +14,7 @@ export interface StoredItem {
 	round: number;
 }
 
-/** A question for the user, asked in a batch at the end of a round. */
+/** A question for the user, asked in a batch at the end of a round. `manual` is only kept for saved state: manual items are listed at the end, not asked. */
 export interface Pending {
 	kind: "ask" | "manual" | "blocked" | "refail" | "dispute";
 	/** The item's ID, or "plan" for a plan flaw without one. */
@@ -134,7 +135,7 @@ export function recordReport(flow: TestFlow, report: Pick<TestReport, "items" | 
 		if (refails[id] >= refailsLimit) queue({ kind: "refail", id, text: it.title });
 	}
 	for (const it of report.items) {
-		if ((it.tag === "ask" || it.tag === "blocked" || it.tag === "manual") && !f.skipped.includes(it.id) && !answered(f, it.id)) queue({ kind: it.tag, id: it.id, text: it.title });
+		if ((it.tag === "ask" || it.tag === "blocked") && !f.skipped.includes(it.id) && !answered(f, it.id)) queue({ kind: it.tag, id: it.id, text: it.title });
 	}
 	// An item that no longer needs an answer drops its question.
 	pending = pending.filter((p) => p.kind === "dispute" || p.kind === "refail" || items[p.id]?.tag === p.kind);
@@ -164,15 +165,29 @@ export function fixSteps(flow: TestFlow): string[] {
 	return openBugs(flow);
 }
 
+/** The `[manual]` items nobody skipped, in ID order: checks only a person can do, listed on the end card instead of asked. */
+export function manualChecks(flow: TestFlow): HumanCheck[] {
+	const f = normalize(flow);
+	return Object.entries(f.items)
+		.filter(([id, i]) => i.tag === "manual" && !f.skipped.includes(id))
+		.sort(([a], [b]) => byId(a, b))
+		.map(([id, i]) => {
+			const steps = bodyField(i.body, "Steps");
+			const look = bodyField(i.body, "Look for");
+			return { id, text: [i.title, steps && `do: ${steps}`, look && `look for: ${look}`].filter(Boolean).join(" — ") };
+		});
+}
+
 /** The outcome line of a finished flow and whether it is ok (no [bug] item remains). */
 export function testOutcome(flow: TestFlow): { text: string; ok: boolean } {
 	const f = normalize(flow);
 	const open = Object.entries(f.items)
-		.filter(([id, i]) => i.tag !== "fixed" && !f.skipped.includes(id) && (i.tag === "bug" || !answered(f, id)))
+		.filter(([id, i]) => i.tag !== "fixed" && i.tag !== "manual" && !f.skipped.includes(id) && (i.tag === "bug" || !answered(f, id)))
 		.sort(([a], [b]) => byId(a, b))
 		.map(([id, i]) => `${id} ${i.tag}`);
+	const manual = manualChecks(f);
 	const fixed = f.fixed.filter((id) => f.items[id]?.tag === "fixed").length;
-	const text = [`test: ${fixed} fixed in ${f.fixRounds} fix round${f.fixRounds === 1 ? "" : "s"}`, open.length && `open: ${open.join(", ")}`, f.skipped.length && `skipped: ${f.skipped.join(", ")}`].filter(Boolean).join("; ");
+	const text = [`test: ${fixed} fixed in ${f.fixRounds} fix round${f.fixRounds === 1 ? "" : "s"}`, open.length && `open: ${open.join(", ")}`, manual.length && `human checks: ${manual.map((m) => m.id).join(", ")}`, f.skipped.length && `skipped: ${f.skipped.join(", ")}`].filter(Boolean).join("; ");
 	const ok = !Object.values(f.items).some((i) => i.tag === "bug");
 	return { text, ok };
 }

@@ -69,3 +69,13 @@ test("reportLines caps findings at 30 and is empty with nothing to show", () => 
 	const long = reportLines(undefined, [{ line: "x".repeat(150), status: "open" }]);
 	assert.equal(long[1].text, `  open  ${"x".repeat(119)}…`);
 });
+
+test("reportLines adds the human checks", () => {
+	const lines = reportLines(undefined, undefined, [{ id: "S5", text: "play it" }, { text: "look" }]);
+	assert.deepEqual(lines, [
+		{ text: "Human checks (after the flow): 2", tone: "head" },
+		{ text: "  ☐ S5 play it", tone: "human" },
+		{ text: "  ☐ look", tone: "human" },
+	]);
+	assert.deepEqual(reportLines(undefined, undefined), []);
+});

@@ -64,16 +64,16 @@ import { shellProblem } from "./push-guard.ts";
 import { COMMIT_GUARD_ENV, type CommitGuardSpec } from "./commit-guard.ts";
 import { RUNNER_GUARD_ENV, type RunnerGuardSpec } from "./runner-guard.ts";
 import { parseTestReport } from "./test-report.ts";
-import { amendmentTail, answerItem, askOptions, bodyField, newTestFlow, nextAction, normalize, openBugs, pendingFromFlaws, recordReport, skipItem, testOutcome, testPlan, type TestFlow } from "./test-flow.ts";
+import { amendmentTail, answerItem, askOptions, bodyField, manualChecks, newTestFlow, nextAction, normalize, openBugs, pendingFromFlaws, recordReport, skipItem, testOutcome, testPlan, type TestFlow } from "./test-flow.ts";
 import { callDir, formatTaskResult, parseRunnerReply, runnerGate, sanitizeIds, scheduleTasks, taskCard, taskRecord, type TestTask, verifyRun } from "./test-run.ts";
-import { commitPlan, type Finished, mergeChecklist, newFlowId, openStepsReminder, parseChecklist, type PlanStatus, planCard, pruneIds, renderPlanFile, splitPlanFile, type ChecklistItem } from "./plan-doc.ts";
+import { commitPlan, type Finished, mergeChecklist, newFlowId, isHuman, openStepsReminder, parseChecklist, type PlanStatus, planCard, pruneIds, renderPlanFile, splitPlanFile, type ChecklistItem } from "./plan-doc.ts";
 import { addToRegistry, type BoardEntry, boardLines, boardRows, detailLines, liveEvents, type LiveInfo, readLive, readRegistry } from "./board.ts";
 import { adoptHigher, claimLive, commitRef, dropClaim, pidAlive, readClaim, writeClaim, deleteLocal, deleteRef, fetchMirror, type Git, listRefs, plansDir, pushRef, readLocalStatuses, readPlanMd, refRev, remoteOf, repoInfo, type RefEntry, writeLocal } from "./plan-store.ts";
 import { type FlowFinding, recordFindings, reportFindings, type ReportStep } from "./flow-report.ts";
 import { readOnlyProblem } from "./readonly-bash.ts";
 import { checkpointAmendment, checkpointNote, checkpointOutcome, hasCheckpointAmendment, checkpointText, isPlannedTag, modeAllowed, parseDeliverStep, withCheckpoints } from "./checkpoints.ts";
 import { pushArgs, tagDecision } from "./tags.ts";
-import { type CheckVerdict, autopilotAmendment, autopilotReply, checkTitle, checkVerdict, parseWaitStep, pollDecision, resumePrefix, waitAmendment } from "./waits.ts";
+import { type CheckVerdict, autopilotAmendment, autopilotReply, checkTitle, checkVerdict, type HumanCheck, humanChecks, parseVerifyStep, parseWaitStep, pollDecision, resumePrefix, verifyAmendment, waitAmendment } from "./waits.ts";
 import { nextStage, parseStages, stageDelivery, stageLine, stageNote, stageStart, stagesOutcome } from "./stages.ts";
 import { planToolProblem, planToolRefused } from "./readonly-tools.ts";
 import { MetricsQueue, type MetricEvent, subagentMetric } from "./metrics.ts";
@@ -386,10 +386,13 @@ export default function workflow(pi: ExtensionAPI) {
 	}
 
 	/** Ends the current flow: shows its token breakdown and starts counting the next one. False if it had none. */
-	function summarizeFlow(outcome: string, ok: boolean): boolean {
+	function summarizeFlow(outcome: string, ok: boolean, extra?: HumanCheck[]): boolean {
+		const fromPlan = humanChecks(state.approvedPlan, state.checklist);
+		const human = [...fromPlan, ...(extra ?? [])];
+		if (fromPlan.length) outcome += ` · ${fromPlan.length} human check(s) for you (see the card)`;
 		if ((state.unresolvedPlanFlaws ?? 0) > 0) outcome += ` · ${state.unresolvedPlanFlaws} plan flaw(s) not settled (see the plan)`;
 		state.unresolvedPlanFlaws = undefined;
-		const steps: ReportStep[] | undefined = state.checklist?.length ? state.checklist.map((c) => ({ id: c.id, text: c.text, done: c.done })) : undefined;
+		const steps: ReportStep[] | undefined = state.checklist?.some((c) => !isHuman(c)) ? state.checklist.filter((c) => !isHuman(c)).map((c) => ({ id: c.id, text: c.text, done: c.done })) : undefined;
 		const found = reportFindings(state.flowFindings, state.approvedPlan);
 		const findings = found.length ? found : undefined;
 		const flowId = state.planDoc?.flowId;
@@ -398,7 +401,7 @@ export default function workflow(pi: ExtensionAPI) {
 		if (state.planDoc && !state.planDoc.finished) planMilestone(undefined, { at: new Date().toISOString(), ok, text: outcome });
 		state.touchedRepos = undefined;
 		view.settleMain();
-		if (!view.hasFlowUsage() && !steps && !findings) {
+		if (!view.hasFlowUsage() && !steps && !findings && !human.length) {
 			if (flowId) {
 				const empty = view.peekFlow(outcome, ok);
 				recordMetric({ kind: "flow", at: new Date().toISOString(), flowId, outcome, ok, started: empty.started, ended: empty.ended, stages: empty.stages });
@@ -407,7 +410,7 @@ export default function workflow(pi: ExtensionAPI) {
 			return false;
 		}
 		const summary = view.endFlow(outcome, ok);
-		pi.appendEntry(SUMMARY_ENTRY, { ...summary, steps, findings });
+		pi.appendEntry(SUMMARY_ENTRY, { ...summary, steps, findings, ...(human.length ? { humanChecks: human } : {}) });
 		if (flowId) recordMetric({ kind: "flow", at: new Date().toISOString(), flowId, outcome, ok, started: summary.started, ended: summary.ended, stages: summary.stages });
 		persist();
 		return true;
@@ -442,17 +445,17 @@ export default function workflow(pi: ExtensionAPI) {
 		if (ctx.hasUI) view.mount(ctx.ui);
 		const n = existingFolders().length + (state.touchedRepos?.length ?? 0);
 		const cl = state.checklist;
-		if (ctx.hasUI) ctx.ui.setStatus("workflow-plan", cl?.length && state.phase === "execute" ? `plan ${cl.filter((i) => i.done).length}/${cl.length}` : undefined);
+		if (ctx.hasUI) ctx.ui.setStatus("workflow-plan", cl?.length && state.phase === "execute" ? `plan ${cl.filter((i) => !isHuman(i) && i.done).length}/${cl.filter((i) => !isHuman(i)).length}` : undefined);
 		if (ctx.hasUI) ctx.ui.setStatus("workflow-wait", state.waiting && state.phase === "execute" ? `waiting: ${state.waiting.reason.slice(0, 40)}` : undefined);
 		if (ctx.hasUI) ctx.ui.setStatus("workflow-autopilot", autopilotOn() ? "autopilot" : undefined);
 		if (ctx.hasUI) ctx.ui.setStatus("workflow-folders", n ? `+${n} folder${n === 1 ? "" : "s"}` : undefined);
 		if (state.approvedPlan && cl?.length && (state.phase === "execute" || state.phase === "test")) {
 			const st = currentStages();
-			const open = cl.find((i) => !i.done);
+			const open = cl.find((i) => !i.done && !isHuman(i));
 			view.progress = {
 				...(st ? { stage: st.current, stages: st.stages.length } : {}),
-				done: cl.filter((i) => i.done).length,
-				total: cl.length,
+				done: cl.filter((i) => !isHuman(i) && i.done).length,
+				total: cl.filter((i) => !isHuman(i)).length,
 				...(open ? { current: `${open.id} ${open.text}` } : {}),
 				judgeRound: state.judgeRounds,
 				...(state.waiting ? { waiting: state.waiting.reason } : {}),
@@ -1874,7 +1877,7 @@ export default function workflow(pi: ExtensionAPI) {
 		state.approvedPlan = testPlan(flow, amendmentTail(state.approvedPlan));
 		refreshChecklist();
 		planMilestone(ctx);
-		summarizeFlow(outcome.text, outcome.ok);
+		summarizeFlow(outcome.text, outcome.ok, manualChecks(flow));
 		await endFlow(ctx);
 	}
 
@@ -1954,7 +1957,7 @@ export default function workflow(pi: ExtensionAPI) {
 				if (choice === other) take(p.id, await ctx.ui.input(`${p.id}: your answer`, ""));
 				else take(p.id, choice === "Skip" ? undefined : choice);
 			} else if (p.kind === "manual") {
-				take(p.id, await ctx.ui.input(`Do: ${bodyField(body, "Steps")}. Look for: ${bodyField(body, "Look for")}. What did you see? (empty skips)`, ""));
+				continue; // listed on the end card instead of asked
 			} else if (p.kind === "blocked") {
 				const choice = await askUser(ctx, `${p.id} was blocked: ${bodyField(body, "Needs") || p.text}`, ["It's available now", "Skip", "Stop the flow"]);
 				if (choice === "Stop the flow") stop = true;
@@ -2235,13 +2238,13 @@ export default function workflow(pi: ExtensionAPI) {
 		name: "wait_for_user",
 		label: "Wait for user",
 		description:
-			"Pause the flow until a person has done something you cannot (publish a package, open the Unity Editor). Optional `check` is a read-only command that exits 0 once it is done; the workflow runs it once at once, then every few minutes, and resumes you by itself. Then end your turn. With autopilot on, the tool tells you what to do instead of pausing, unless `manual: true`. Name the plan step as `step` when the plan has a `Wait:` step; otherwise the wait is added to the plan as an amendment.",
+			"Pause the flow until a person has done something a later step needs (publish a package, open the Unity Editor so the unity CLI can run). For a check only a person can do (play it in the Editor, look at visuals) use kind \"verify\": nothing pauses, the check is listed for the user after the flow. Optional `check` is a read-only command that exits 0 once it is done; the workflow runs it once at once, then every few minutes, and resumes you by itself. Then end your turn. With autopilot on, the tool tells you what to do instead of pausing, unless `manual: true`. Name the plan step as `step` when the plan has a `Wait:` step; otherwise the wait is added to the plan as an amendment.",
 		promptSnippet: "wait_for_user: pause the flow until a person did something; resumes by check or by their reply",
 		parameters: Type.Object({
 			reason: Type.String({ description: "What the person must do, in one line" }),
 			check: Type.Optional(Type.String({ description: "A read-only command that exits 0 once it is done, e.g. git ls-remote --exit-code --tags origin <tag>. It runs once at once, then every few minutes" })),
 			step: Type.Optional(Type.String({ description: "The plan's Wait step, e.g. S7" })),
-			kind: Type.Optional(Type.Union([Type.Literal("approve"), Type.Literal("act")], { description: "approve: a person only reviews and agrees; act (default): a person must do something" })),
+			kind: Type.Optional(Type.Union([Type.Literal("approve"), Type.Literal("act"), Type.Literal("verify")], { description: "approve: a person only reviews and agrees; act (default): a person must do something; verify: a person must test or look at the result; nothing waits, it is listed for them after the flow" })),
 			manual: Type.Optional(Type.Boolean({ description: "Pause even when autopilot is on" })),
 		}),
 		async execute(_id, params, _signal, _onUpdate, ctx) {
@@ -2250,6 +2253,19 @@ export default function workflow(pi: ExtensionAPI) {
 			if (state.phase !== "execute" || !plan) return reply("wait_for_user works only while executing an approved plan. Nothing changed.");
 			const reason = params.reason.trim();
 			if (!reason) return reply("Give a reason: what the person must do. Nothing changed.");
+			if (params.kind === "verify") {
+				const vstep = params.step?.trim().toUpperCase() || undefined;
+				if (!(vstep && parseVerifyStep(plan, vstep))) {
+					state.approvedPlan = `${plan.replace(/\s+$/, "")}\n\n${verifyAmendment(nextAmendmentNumber(), { steps: reason, step: vstep })}\n`;
+					const item = vstep ? state.checklist?.find((i) => i.id === vstep) : undefined;
+					if (item && !isHuman(item)) item.done = true;
+					refreshChecklist();
+				}
+				persist();
+				updateStatus(ctx);
+				planMilestone(ctx);
+				return reply(`Recorded as a human check for after the flow: ${reason}. Don't wait; continue in this turn.`);
+			}
 			const check = params.check?.trim() || undefined;
 			if (check) {
 				const problem = readOnlyProblem(check);
@@ -2312,9 +2328,9 @@ export default function workflow(pi: ExtensionAPI) {
 			updateStatus(ctx);
 			rewritePlanFile();
 			const staged = currentStages();
-			const open = list.filter((i) => !i.done && (!staged || i.stage === undefined || i.stage === staged.current));
-			const done = list.filter((i) => i.done).length;
-			const head = `${done} of ${list.length} steps done${unknown.length ? `; unknown IDs: ${unknown.join(", ")}` : ""}.`;
+			const open = list.filter((i) => !isHuman(i) && !i.done && (!staged || i.stage === undefined || i.stage === staged.current));
+			const done = list.filter((i) => !isHuman(i) && i.done).length;
+			const head = `${done} of ${list.filter((i) => !isHuman(i)).length} steps done${unknown.length ? `; unknown IDs: ${unknown.join(", ")}` : ""}.`;
 			const rest = open.length ? `Open${staged ? ` in stage ${staged.current}` : ""}:\n${open.map((i) => `- ${i.id} ${i.text}`).join("\n")}` : `No open steps${staged ? " in this stage" : ""}.`;
 			return reply(`${head}\n${rest}`);
 		},
@@ -3156,7 +3172,7 @@ export default function workflow(pi: ExtensionAPI) {
 	/** A staged plan's turn ended with nothing new to review: it ends the stage only if the executor handed it over (judge called) or the user confirms. */
 	async function noChangeTurn(ctx: ExtensionContext, staged: { stages: ReturnType<typeof parseStages>; current: number }): Promise<void> {
 		const auto = (cfg.stageAdvance === "auto" || autopilotOn()) && !turnAborted;
-		const open = (state.checklist ?? []).filter((i) => !i.done && (i.stage === undefined || i.stage === staged.current)).length;
+		const open = (state.checklist ?? []).filter((i) => !isHuman(i) && !i.done && (i.stage === undefined || i.stage === staged.current)).length;
 		const what = noChangeStage(!!state.stageJudged, ctx.hasUI, auto, open);
 		if (what === "wait") return;
 		if (what === "advance" && auto && !state.stageJudged) ctx.ui.notify(`workflow: stage ${staged.current} ended with no changes; continuing (${cfg.stageAdvance === "auto" ? "stageAdvance: auto" : "autopilot"})`, "info");
@@ -3171,7 +3187,7 @@ export default function workflow(pi: ExtensionAPI) {
 	async function flowWithoutChanges(ctx: ExtensionContext): Promise<void> {
 		const outcome = checkpointOutcome(state.checkpoints ?? []);
 		if (!outcome || state.phase !== "execute" || turnAborted) return;
-		if ((state.checklist ?? []).some((i) => !i.done)) {
+		if ((state.checklist ?? []).some((i) => !isHuman(i) && !i.done)) {
 			if (!ctx.hasUI) return;
 			const yes = "Mark done and finish";
 			if ((await askUser(ctx, "All changes were delivered at checkpoints, but plan steps are still open", [yes, "Wait"])) !== yes) return;

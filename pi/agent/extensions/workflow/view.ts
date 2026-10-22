@@ -96,6 +96,8 @@ export interface FlowSummary {
 	steps?: ReportStep[];
 	/** Every finding raised in the flow. */
 	findings?: ReportFinding[];
+	/** Checks only a person can do, listed after the flow. */
+	humanChecks?: { id?: string; text: string }[];
 	/** The card was posted again after a compaction hid it. */
 	reposted?: boolean;
 }
@@ -222,8 +224,8 @@ export function summaryLines(s: FlowSummary, theme: Theme): string[] {
 			`  ${theme.fg(color, stage.padEnd(8))} ${bar} ${theme.fg(color, fmtTok(t).padStart(labelWidth))} ${theme.fg("muted", `${Math.round(share * 100)}%`.padStart(4))}  ${theme.fg("dim", parts.join(" · "))}`,
 		);
 	}
-	const tone = { head: "text", done: "success", open: "warning", fixed: "dim", noted: "muted" } as const;
-	for (const l of reportLines(s.steps, s.findings)) lines.push(l.tone === "head" ? theme.bold(l.text) : theme.fg(tone[l.tone], l.text));
+	const tone = { head: "text", done: "success", open: "warning", fixed: "dim", noted: "muted", human: "accent" } as const;
+	for (const l of reportLines(s.steps, s.findings, s.humanChecks)) lines.push(l.tone === "head" ? theme.bold(l.text) : theme.fg(tone[l.tone], l.text));
 	return lines;
 }
 

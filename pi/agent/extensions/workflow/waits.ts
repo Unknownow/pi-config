@@ -1,4 +1,6 @@
-/** Wait points: a flow pauses for a person (publish a package, open an Editor) and then continues the same plan. Pure text and decisions, kept apart so node tests can reach them. */
+/** Wait points: a flow pauses for a person (publish a package, open an Editor) and then continues the same plan. Human checks (test in the Editor, look at visuals) never pause: they are listed after the flow. Pure text and decisions, kept apart so node tests can reach them. */
+
+import type { ChecklistItem } from "./plan-doc.ts";
 
 export interface WaitSpec {
 	reason: string;
@@ -29,6 +31,70 @@ export function parseWaitStep(plan: string, id: string): WaitSpec | null {
 /** The amendment an unplanned wait adds to the approved plan. `n` is the number of amendments so far + 1. */
 export function waitAmendment(n: number, w: { reason: string; step?: string; check?: string }): string {
 	return `## Amendment ${n} (executor: wait)\n${w.reason}${w.step ? ` (step ${w.step})` : ""}${w.check ? ` (check: ${w.check})` : ""}`;
+}
+
+export interface VerifySpec {
+	steps: string;
+	lookFor?: string;
+}
+
+/** The human check a plan step declares: `**S<n>.** Verify: <steps> [— look for: <what>]` or `(look for: <what>)`. */
+export function parseVerifyStep(plan: string, id: string): VerifySpec | null {
+	const escaped = id.replace(/[^A-Za-z0-9_-]/g, (c) => `\\${c}`);
+	const line = new RegExp(`^[ \\t]*(?:[-*][ \\t]+)?(?:\\[[ xX]\\][ \\t]*)?\\*\\*${escaped}\\.?\\*\\*[ \\t]*(.*)$`, "m").exec(plan);
+	if (!line) return null;
+	const m = /^verify\s*:\s*(.*)$/i.exec(line[1].trim());
+	if (!m) return null;
+	let text = m[1].trim();
+	let lookFor: string | undefined;
+	const paren = /\s*\(\s*look for\s*:\s*([^)]*)\)\s*\.?\s*$/i.exec(text);
+	const dash = /\s+[—-]\s*look for\s*:\s*(.*)$/i.exec(text);
+	const c = paren ?? dash;
+	if (c) {
+		text = text.slice(0, c.index).trim();
+		lookFor = c[1].trim() || undefined;
+	}
+	if (!text) return null;
+	return { steps: text, ...(lookFor ? { lookFor } : {}) };
+}
+
+/** The amendment an unplanned human check adds to the approved plan. */
+export function verifyAmendment(n: number, v: { steps: string; lookFor?: string; step?: string }): string {
+	return `## Amendment ${n} (executor: verify)\n${v.steps}${v.lookFor ? ` — look for: ${v.lookFor}` : ""}${v.step ? ` (step ${v.step})` : ""}`;
+}
+
+export interface HumanCheck {
+	id?: string;
+	text: string;
+}
+
+/** The human checks of a flow: the Verify steps in plan order, then the verify amendments (not those of a step already listed). */
+export function humanChecks(plan: string | undefined, checklist: ChecklistItem[] | undefined): HumanCheck[] {
+	const out: HumanCheck[] = [];
+	const ids = new Set<string>();
+	for (const i of checklist ?? []) {
+		if (!i.human && !/^verify\s*:/i.test(i.text)) continue;
+		ids.add(i.id);
+		out.push({ id: i.id, text: i.text.replace(/^verify\s*:\s*/i, "").trim() });
+	}
+	const blocks = (plan ?? "").split(/\r?\n/);
+	for (let k = 0; k < blocks.length; k++) {
+		if (!/^## Amendment \d+ \(executor: verify\)/.test(blocks[k])) continue;
+		const body: string[] = [];
+		for (k++; k < blocks.length && !/^## /.test(blocks[k]); k++) if (blocks[k].trim()) body.push(blocks[k].trim());
+		k--;
+		let text = body.join(" ").trim();
+		const s = /\s*\(step (S\d+)\)\s*$/.exec(text);
+		let id: string | undefined;
+		if (s) {
+			id = s[1];
+			text = text.slice(0, s.index).trim();
+		}
+		if (id && ids.has(id)) continue;
+		if (id) ids.add(id);
+		if (text) out.push({ ...(id ? { id } : {}), text });
+	}
+	return out;
 }
 
 /** The start of the message that resumes a flow after its wait. */
