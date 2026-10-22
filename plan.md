@@ -70,9 +70,11 @@ Keep the column count. Don't touch the Status line or the Effect rows; both item
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 In `D:/projects/pi-config`, run `git status -sb`. It must be clean on `master` and level with `origin/master`. If it is 
-- [ ] S2 In `prompts.ts:41` (the non-finalize `ending`), append one space and then the exact sentence from Facts (`Mark each suit
-- [ ] S3 In `prompts.ts:97`, replace `When done, run the plan's tests, then call` with `When done, run the plan's tests as above,
-- [ ] S4 In `prompts.test.ts`, inside the test at `:93`, add two assertions after `:97`. Their content is given in section 6.
-- [ ] S5 In `docs/workflow-improvements.md`, append one sentence to the end of the Done: text in each row:
-- [ ] S6 Run the tests (section 6). Check that `git diff --stat` lists exactly `prompts.ts`, `prompts.test.ts` and `docs/workflow
+- [x] S1 In `D:/projects/pi-config`, run `git status -sb`. It must be clean on `master` and level with `origin/master`. If it is 
+- [x] S2 In `prompts.ts:41` (the non-finalize `ending`), append one space and then the exact sentence from Facts (`Mark each suit
+- [x] S3 In `prompts.ts:97`, replace `When done, run the plan's tests, then call` with `When done, run the plan's tests as above,
+- [x] S4 In `prompts.test.ts`, inside the test at `:93`, add two assertions after `:97`. Their content is given in section 6.
+- [x] S5 In `docs/workflow-improvements.md`, append one sentence to the end of the Done: text in each row:
+- [x] S6 Run the tests (section 6). Check that `git diff --stat` lists exactly `prompts.ts`, `prompts.test.ts` and `docs/workflow
+## Outcome
+2026-10-22T09:39:52.130Z — failed: committed (1 commit), pushed, no open pull request

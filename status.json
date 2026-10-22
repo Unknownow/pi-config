@@ -1,14 +1,25 @@
 {
   "v": 1,
   "flowId": "20261022-1638-slow-suite-rule-without-finalize-and-an-3356",
-  "rev": 1,
-  "updated": "2026-10-22T09:38:06.727Z",
+  "rev": 2,
+  "updated": "2026-10-22T09:39:52.224Z",
   "title": "Slow-suite rule without finalize, and an unambiguous final test run",
-  "delivery": "merge",
-  "done": [],
+  "done": [
+    "S1",
+    "S2",
+    "S3",
+    "S4",
+    "S5",
+    "S6"
+  ],
+  "finished": {
+    "at": "2026-10-22T09:39:52.130Z",
+    "ok": false,
+    "text": "committed (1 commit), pushed, no open pull request"
+  },
   "repos": [
     {
-      "branch": "master",
+      "branch": "flow/slow-suite-rule-without-finalize-and-an",
       "remote": "github-personal/Unknownow/pi-config",
       "primary": true
     }
