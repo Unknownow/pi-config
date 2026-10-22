@@ -372,13 +372,13 @@ Stage 2:
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 Add the pure helpers to `waits.ts`, next to `pollDecision` (`waits.ts:42`):
-- [ ] S2 In `index.ts`, rewrite `runWaitCheck` (`index.ts:2029-2035`) to return a `CheckVerdict`:
-- [ ] S3 Update `waitTick` (`index.ts:2047-2079`):
-- [ ] S4 In the typed-message path (`index.ts:2731-2745`), branch on `status !== "pass"` instead of the boolean:
-- [ ] S5 In `wait_for_user` (`index.ts:2094-2114`), after the read-only validation and before any amendment or state change, run 
-- [ ] S6 Tests for the Stage 1 helpers in `waits.ts`; the cases are in section 6.
-- [ ] S7 Docs:
+- [x] S1 Add the pure helpers to `waits.ts`, next to `pollDecision` (`waits.ts:42`):
+- [x] S2 In `index.ts`, rewrite `runWaitCheck` (`index.ts:2029-2035`) to return a `CheckVerdict`:
+- [x] S3 Update `waitTick` (`index.ts:2047-2079`):
+- [x] S4 In the typed-message path (`index.ts:2731-2745`), branch on `status !== "pass"` instead of the boolean:
+- [x] S5 In `wait_for_user` (`index.ts:2094-2114`), after the read-only validation and before any amendment or state change, run 
+- [x] S6 Tests for the Stage 1 helpers in `waits.ts`; the cases are in section 6.
+- [x] S7 Docs:
 - [ ] S8 In `config.ts`:
 - [ ] S9 Add `autopilotAmendment` and `autopilotReply` to `waits.ts`, as in section 4. Model them on `waitAmendment` (`waits.ts:2
 - [ ] S10 In `index.ts`, add the session override and the switches:
