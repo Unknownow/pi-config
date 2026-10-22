@@ -64,6 +64,6 @@ None. The merge publishes the existing commits `ca46f8d`, `a4cc6f5`, `b0a92e8` a
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 Check before merging:
+- [x] S1 Check before merging:
 - [ ] S2 Deliver: fast-forward merge of `flow/runnergate-test-covers-a-newcomer-arrivi` into `master` on `origin`.
 - [ ] S3 Check the result, read-only:
