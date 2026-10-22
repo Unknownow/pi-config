@@ -50,6 +50,7 @@
   "finalizePlan": true,
   "returnToPlan": true,
   "planFlaw": "ask",
+  "autopilot": true,
   "stagedPlans": "auto",
   "stageAdvance": "auto",
   "planRecap": "changes",
