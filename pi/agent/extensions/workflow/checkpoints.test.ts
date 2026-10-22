@@ -104,8 +104,10 @@ test("deliverHintsBlock filters by stage and skips human items", () => {
 	const list = [
 		{ id: "S2", text: "Deliver: push — a", done: false, stage: 1 },
 		{ id: "S3", text: "Deliver: pr — b", done: false, stage: 2 },
+		{ id: "S4", text: "Deliver: push — c", done: true, stage: 2 },
+		{ id: "S5", text: "Deliver: merge — d", done: false, stage: 2, human: true as const },
 	];
-	const p = "**S2.** Deliver: push — a\n**S3.** Deliver: pr — b";
+	const p = "**S2.** Deliver: push — a\n**S3.** Deliver: pr — b\n**S4.** Deliver: push — c\n**S5.** Deliver: merge — d";
 	assert.equal(deliverHintsBlock(p, list, 2, "pr"), 'Deliver steps:\n- S3 → call deliver {mode: "pr", step: "S3"}');
 });
 
