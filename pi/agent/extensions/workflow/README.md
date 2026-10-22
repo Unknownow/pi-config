@@ -107,7 +107,7 @@ after approval runs on its own:
   the code, and drops the finding only if the code shows the executor is right.
 - **Turning steps back to manual:** set `"autoJudge": "ask"`, `"delivery": { "default": "off" }`
   (nothing is committed unless you pick it at approval), and `"planPrompt": false` for a "say go" hint instead of the Approve menu.
-  `"handoverCompactTokens": 0` turns off compaction at handovers. `"returnToPlan": false` stays in execute after a flow ends. `"planRecap": "always"` makes every planner reply repeat the plan. `"stageAdvance": "auto"` (default) starts the next stage at once, even after an incomplete delivery or a stage with no changes, with a warning (not after a run you aborted, and never while the stage has open steps, no changes and no judge call); `"ask"` asks first. When `gh` is not on PATH, the workflow looks in the standard GitHub CLI install folders and adds the one it finds to pi's PATH; when there is none, outcomes say the PR state is unknown. `"stagedPlans": "onRequest"` makes the planner use stages only when you ask for delivery in parts.
+  `"autopilot": true` skips the routine menus and lets the agent resolve waits itself (see "Autopilot"). `"handoverCompactTokens": 0` turns off compaction at handovers. `"returnToPlan": false` stays in execute after a flow ends. `"planRecap": "always"` makes every planner reply repeat the plan. `"stageAdvance": "auto"` (default) starts the next stage at once, even after an incomplete delivery or a stage with no changes, with a warning (not after a run you aborted, and never while the stage has open steps, no changes and no judge call); `"ask"` asks first. When `gh` is not on PATH, the workflow looks in the standard GitHub CLI install folders and adds the one it finds to pi's PATH; when there is none, outcomes say the PR state is unknown. `"stagedPlans": "onRequest"` makes the planner use stages only when you ask for delivery in parts.
 
 ## The plan, the judge and the arbiter
 
@@ -158,6 +158,13 @@ These let one plan deliver or pause partway through, without replanning and with
 - **State:** the plan card, the status bar (`workflow-wait`) and the plan file show the wait; plan, stage and ticks stay. It survives `/flow resume`.
 - **Config:** `wait: { pollMs: 120000, maxMs: 3600000, checkTimeoutMs: 30000, autoResume: true }`.
 - **No-change stages:** a stage that ends with no changes, no judge call and open steps waits instead of counting as "delivered: no changes".
+
+**Autopilot.** `"autopilot": true` (default `false`) or `/flow autopilot [on|off]` for the session (no argument toggles; `/flow status` and the `workflow-autopilot` status show it; a restart falls back to the config).
+- **Approve waits:** `wait_for_user {kind: "approve"}` doesn't pause. The tool tells the agent to review the item and, if it holds, post a comment where approval was asked (`gh issue comment <n> -R <repo> --body "approved (workflow autopilot): <reason>"`), run the check, and continue. The plan gets an `## Amendment N (executor: autopilot)`.
+- **Act waits:** the agent does the step when a non-interactive command can and the repo's `AGENTS.md`/`CLAUDE.md` allow it; otherwise it calls `wait_for_user` with `manual: true`, which pauses and polls as usual.
+- **Menus skipped:** the delivery menu (the config's `delivery.default` applies), the plan-end approval's delivery choices, `autoJudge: "ask"` (runs the judge), the plan-flaw menu (the arbiter decides), the stage-advance questions, and the "knowledge not checked" question (a warning, then commit).
+- **Still asks:** plan approval, judge failure, the judge round cap, an arbiter result of "ask", open plan steps, the test-phase menus and stage-start `(after: …)` waits.
+- **Limits:** it never scripts around a confirmation a person must type and never overrides a repo's `AGENTS.md`/`CLAUDE.md`. It pushes or opens a PR only if `delivery.default` says `push`, `pr` or `merge`.
 
 **Checkpoints.** `deliver {mode?, tag?, step?, reason?}` delivers inside the executor's turn and then continues the same stage.
 - **Limit:** `mode` (`commit`, `push`, `pr`, `merge`) may not go beyond the stage's delivery (the flow's, or the heading's `(delivery: …)`); `off` allows none.

@@ -123,3 +123,15 @@ test("notify defaults and validation", () => {
 	fs.writeFileSync(g, JSON.stringify({ notify: { enabled: false, idleMs: 500 } }));
 	assert.deepEqual(loadConfig(g).config.notify, { enabled: false, idleMs: 500 });
 });
+
+test("autopilot defaults to false", () => {
+	assert.equal(loadConfig(tmp()).config.autopilot, false);
+});
+
+test("invalid autopilot falls back to false", () => {
+	const f = tmp();
+	fs.writeFileSync(f, '{"autopilot":"yes"}');
+	assert.equal(loadConfig(f).config.autopilot, false);
+	fs.writeFileSync(f, '{"autopilot":true}');
+	assert.equal(loadConfig(f).config.autopilot, true);
+});

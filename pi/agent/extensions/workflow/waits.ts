@@ -64,3 +64,32 @@ export function checkTitle(v: CheckVerdict, check: string): string {
 	if (v.status === "broken") return `Check can't run (${v.detail}): ${check}`;
 	return v.detail ? `Check not passing (${v.detail}): ${check}` : `Check not passing: ${check}`;
 }
+
+/** The amendment a self-resolved (autopilot) wait adds to the approved plan. */
+export function autopilotAmendment(n: number, w: { reason: string; step?: string; kind: "approve" | "act" }): string {
+	return `## Amendment ${n} (executor: autopilot)\n${w.reason} (${w.step ? `step ${w.step}, ` : ""}${w.kind})`;
+}
+
+/** What wait_for_user tells the agent to do instead of pausing, when autopilot is on. */
+export function autopilotReply(kind: "approve" | "act", reason: string, check?: string): string {
+	const checkLine = check ? `Then run the check and make sure it passes: ${check}\n` : "";
+	if (kind === "approve") {
+		return (
+			`Autopilot is on: do not wait for "${reason}". Resolve it yourself.\n` +
+			"Review the item against the plan and your findings. If it holds, post the approval as a comment where the person was asked to reply. Use the word the check looks for, and mark it as the autopilot's, for example:\n" +
+			'gh issue comment <n> -R <owner/repo> --body "approved (workflow autopilot): <one-line reason>"\n' +
+			"Without a check, post a comment only if the plan or the reason names an issue or PR.\n" +
+			checkLine +
+			"Tick the step with plan_check and continue in this turn.\n" +
+			"If the review finds something the user must decide, call wait_for_user again with manual: true and say why."
+		);
+	}
+	return (
+		`Autopilot is on: do not wait for "${reason}". Resolve it yourself.\n` +
+		"If a non-interactive command can do it and the repo's AGENTS.md/CLAUDE.md allow the agent to run it, do it now.\n" +
+		checkLine +
+		"Tick the step with plan_check and continue in this turn.\n" +
+		"Otherwise call wait_for_user again with manual: true; the workflow polls the check and resumes you.\n" +
+		"Never script around a confirmation that a person must type."
+	);
+}

@@ -1,7 +1,7 @@
 // node --test waits.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { checkTitle, checkVerdict, parseWaitStep, pollDecision, resumePrefix, waitAmendment } from "./waits.ts";
+import { autopilotAmendment, autopilotReply, checkTitle, checkVerdict, parseWaitStep, pollDecision, resumePrefix, waitAmendment } from "./waits.ts";
 
 const CHECK = "git ls-remote --exit-code --tags origin com.iecgames.core/v0.17.0";
 const plan = `## 5. Steps\n\n**S6.** Edit the code\n**S7.** Wait: publish core 0.17.0 (check: ${CHECK})\n- **S8.** Wait: open the Editor\n**S9.** Do it and write a long line that is more than one hundred and twenty characters long so the checklist text would cut it short, see?\n`;
@@ -70,4 +70,17 @@ test("checkTitle", () => {
 	assert.ok(checkTitle({ status: "broken", detail: "d" }, "c").startsWith("Check can't run ("));
 	assert.equal(checkTitle({ status: "fail", detail: "exit 1" }, "c"), "Check not passing (exit 1): c");
 	assert.equal(checkTitle({ status: "fail" }, "c"), "Check not passing: c");
+});
+
+test("autopilotAmendment text", () => {
+	assert.equal(autopilotAmendment(2, { reason: "R", step: "S3", kind: "approve" }), "## Amendment 2 (executor: autopilot)\nR (step S3, approve)");
+	assert.equal(autopilotAmendment(2, { reason: "R", kind: "act" }), "## Amendment 2 (executor: autopilot)\nR (act)");
+});
+
+test("autopilotReply", () => {
+	const a = autopilotReply("approve", "R", "gh x");
+	assert.ok(a.startsWith("Autopilot is on: "));
+	for (const s of ["(workflow autopilot)", "manual: true", "plan_check", "gh x"]) assert.ok(a.includes(s), s);
+	const b = autopilotReply("act", "R");
+	for (const s of ["AGENTS.md", "manual: true", "Never script around a confirmation"]) assert.ok(b.includes(s), s);
 });

@@ -72,7 +72,7 @@ import { type FlowFinding, recordFindings, reportFindings, type ReportStep } fro
 import { readOnlyProblem } from "./readonly-bash.ts";
 import { checkpointAmendment, checkpointNote, checkpointOutcome, hasCheckpointAmendment, checkpointText, isPlannedTag, modeAllowed, parseDeliverStep, withCheckpoints } from "./checkpoints.ts";
 import { pushArgs, tagDecision } from "./tags.ts";
-import { type CheckVerdict, checkTitle, checkVerdict, parseWaitStep, pollDecision, resumePrefix, waitAmendment } from "./waits.ts";
+import { type CheckVerdict, autopilotAmendment, autopilotReply, checkTitle, checkVerdict, parseWaitStep, pollDecision, resumePrefix, waitAmendment } from "./waits.ts";
 import { nextStage, parseStages, stageDelivery, stageLine, stageNote, stageStart, stagesOutcome } from "./stages.ts";
 import { planToolProblem, planToolRefused } from "./readonly-tools.ts";
 import { MetricsQueue, type MetricEvent, subagentMetric } from "./metrics.ts";
@@ -344,6 +344,9 @@ export default function workflow(pi: ExtensionAPI) {
 	let overflowRetry = false;
 	/** Automatic resumes since the user's last prompt. */
 	let resumes = 0;
+	/** /flow autopilot sets this for the session; it is not persisted, so a restart falls back to the config. */
+	let autopilotOverride: boolean | undefined;
+	const autopilotOn = (): boolean => autopilotOverride ?? cfg.autopilot;
 	const view = new FlowView(cfg.roles);
 
 	pi.registerFlag("add-dir", {
@@ -440,6 +443,7 @@ export default function workflow(pi: ExtensionAPI) {
 		const cl = state.checklist;
 		if (ctx.hasUI) ctx.ui.setStatus("workflow-plan", cl?.length && state.phase === "execute" ? `plan ${cl.filter((i) => i.done).length}/${cl.length}` : undefined);
 		if (ctx.hasUI) ctx.ui.setStatus("workflow-wait", state.waiting && state.phase === "execute" ? `waiting: ${state.waiting.reason.slice(0, 40)}` : undefined);
+		if (ctx.hasUI) ctx.ui.setStatus("workflow-autopilot", autopilotOn() ? "autopilot" : undefined);
 		if (ctx.hasUI) ctx.ui.setStatus("workflow-folders", n ? `+${n} folder${n === 1 ? "" : "s"}` : undefined);
 		emitStatus();
 	}
@@ -630,7 +634,7 @@ export default function workflow(pi: ExtensionAPI) {
 	/** Asks what happens after the judge passes (default first); Escape, no UI or `ask: false` gives the default. */
 	async function chooseDelivery(ctx: ExtensionContext): Promise<Delivery> {
 		const def = menuDefault();
-		if (!cfg.delivery.ask || !ctx.hasUI) return def;
+		if (!cfg.delivery.ask || !ctx.hasUI || autopilotOn()) return def;
 		const options = deliveryChoices(def);
 		const labels = options.map((d) => deliveryMenuLabel(d, def));
 		const choice = await ctx.ui.select("After the judge passes", labels);
@@ -2107,12 +2111,14 @@ export default function workflow(pi: ExtensionAPI) {
 		name: "wait_for_user",
 		label: "Wait for user",
 		description:
-			"Pause the flow until a person has done something you cannot (publish a package, open the Unity Editor). Optional `check` is a read-only command that exits 0 once it is done; the workflow runs it once at once, then every few minutes, and resumes you by itself. Then end your turn. Name the plan step as `step` when the plan has a `Wait:` step; otherwise the wait is added to the plan as an amendment.",
+			"Pause the flow until a person has done something you cannot (publish a package, open the Unity Editor). Optional `check` is a read-only command that exits 0 once it is done; the workflow runs it once at once, then every few minutes, and resumes you by itself. Then end your turn. With autopilot on, the tool tells you what to do instead of pausing, unless `manual: true`. Name the plan step as `step` when the plan has a `Wait:` step; otherwise the wait is added to the plan as an amendment.",
 		promptSnippet: "wait_for_user: pause the flow until a person did something; resumes by check or by their reply",
 		parameters: Type.Object({
 			reason: Type.String({ description: "What the person must do, in one line" }),
 			check: Type.Optional(Type.String({ description: "A read-only command that exits 0 once it is done, e.g. git ls-remote --exit-code --tags origin <tag>. It runs once at once, then every few minutes" })),
 			step: Type.Optional(Type.String({ description: "The plan's Wait step, e.g. S7" })),
+			kind: Type.Optional(Type.Union([Type.Literal("approve"), Type.Literal("act")], { description: "approve: a person only reviews and agrees; act (default): a person must do something" })),
+			manual: Type.Optional(Type.Boolean({ description: "Pause even when autopilot is on" })),
 		}),
 		async execute(_id, params, _signal, _onUpdate, ctx) {
 			const reply = (text: string) => ({ content: [{ type: "text" as const, text }], details: {} });
@@ -2132,6 +2138,14 @@ export default function workflow(pi: ExtensionAPI) {
 			}
 			const step = params.step?.trim().toUpperCase() || undefined;
 			const planned = !!step && !!parseWaitStep(plan, step);
+			if (autopilotOn() && !params.manual) {
+				const kind = params.kind === "approve" ? "approve" : "act";
+				state.approvedPlan = `${plan.replace(/\s+$/, "")}\n\n${autopilotAmendment(nextAmendmentNumber(), { reason, step, kind })}\n`;
+				refreshChecklist();
+				persist();
+				planMilestone(ctx);
+				return reply(autopilotReply(kind, reason, check));
+			}
 			if (!planned) {
 				state.approvedPlan = `${plan.replace(/\s+$/, "")}\n\n${waitAmendment(nextAmendmentNumber(), { reason, step, check })}\n`;
 				refreshChecklist();
@@ -2399,7 +2413,9 @@ export default function workflow(pi: ExtensionAPI) {
 					}
 					if (!fs.existsSync(COMMIT_GUARD_EXTENSION)) return reply(`Not delivered: commit guard extension not found at ${COMMIT_GUARD_EXTENSION}.`);
 					const knowledge = state.lastKnowledge?.hash === diff.hash ? state.lastKnowledge : undefined;
-					if (knowledge?.status === "unavailable" && ctx.hasUI) {
+					if (knowledge?.status === "unavailable" && ctx.hasUI && autopilotOn()) {
+						ctx.ui.notify(`workflow: autopilot commits without the knowledge check: ${knowledge.reason}`, "warning");
+					} else if (knowledge?.status === "unavailable" && ctx.hasUI) {
 						const choice = await askUser(ctx, `Judge passed, knowledge not checked: ${knowledge.reason}`, ["Commit anyway", "Stop"]);
 						if (choice !== "Commit anyway") return reply("Not delivered: stopped at the knowledge check.");
 					}
@@ -2906,7 +2922,7 @@ export default function workflow(pi: ExtensionAPI) {
 				return;
 			}
 			const def = menuDefault();
-			const options = cfg.delivery.ask ? deliveryChoices(def) : [def];
+			const options = cfg.delivery.ask && !autopilotOn() ? deliveryChoices(def) : [def];
 			const labels = options.map((d) => `Approve → ${deliveryMenuLabel(d, def)}`);
 			const arbiterLabel = "Approve, arbiter solves plan flaws →";
 			const showLabel = "Show the full plan";
@@ -3013,11 +3029,11 @@ export default function workflow(pi: ExtensionAPI) {
 
 	/** A staged plan's turn ended with nothing new to review: it ends the stage only if the executor handed it over (judge called) or the user confirms. */
 	async function noChangeTurn(ctx: ExtensionContext, staged: { stages: ReturnType<typeof parseStages>; current: number }): Promise<void> {
-		const auto = cfg.stageAdvance === "auto" && !turnAborted;
+		const auto = (cfg.stageAdvance === "auto" || autopilotOn()) && !turnAborted;
 		const open = (state.checklist ?? []).filter((i) => !i.done && (i.stage === undefined || i.stage === staged.current)).length;
 		const what = noChangeStage(!!state.stageJudged, ctx.hasUI, auto, open);
 		if (what === "wait") return;
-		if (what === "advance" && auto && !state.stageJudged) ctx.ui.notify(`workflow: stage ${staged.current} ended with no changes; continuing (stageAdvance: auto)`, "info");
+		if (what === "advance" && auto && !state.stageJudged) ctx.ui.notify(`workflow: stage ${staged.current} ended with no changes; continuing (${cfg.stageAdvance === "auto" ? "stageAdvance: auto" : "autopilot"})`, "info");
 		if (what === "ask") {
 			const yes = "Mark done and continue";
 			if ((await askUser(ctx, `Stage ${staged.current} ended with no changes`, [yes, "Wait"])) !== yes) return;
@@ -3102,8 +3118,8 @@ export default function workflow(pi: ExtensionAPI) {
 			state.stageOutcomes = [...(state.stageOutcomes ?? []), outcome];
 			if (staged.current < staged.stages.length) {
 				let go = outcome.ok;
-				if (!go && cfg.stageAdvance === "auto" && !turnAborted) {
-					ctx.ui.notify(`workflow: stage ${staged.current} delivery incomplete (${outcome.text}); continuing with stage ${staged.current + 1} (stageAdvance: auto)`, "warning");
+				if (!go && (cfg.stageAdvance === "auto" || autopilotOn()) && !turnAborted) {
+					ctx.ui.notify(`workflow: stage ${staged.current} delivery incomplete (${outcome.text}); continuing with stage ${staged.current + 1} (${cfg.stageAdvance === "auto" ? "stageAdvance: auto" : "autopilot"})`, "warning");
 					go = true;
 				} else if (!go && ctx.hasUI) {
 					const more = `Continue with stage ${staged.current + 1}`;
@@ -3225,7 +3241,7 @@ export default function workflow(pi: ExtensionAPI) {
 			return;
 		}
 		if (!manual && (cfg.autoJudge === "off" || seenDiffs.has(diff.hash))) return;
-		if (!manual && cfg.autoJudge === "ask") {
+		if (!manual && cfg.autoJudge === "ask" && !autopilotOn()) {
 			notifyUser(ctx, "diff ready for the judge");
 			const run = await ctx.ui.confirm("Diff ready", `Run the judge (${describeRole(cfg.roles.judge)}) on ${diff.files} changed file(s)?`);
 			if (!run) {
@@ -3308,7 +3324,7 @@ export default function workflow(pi: ExtensionAPI) {
 	 * "stop": back to planning, or the flow ended.
 	 */
 	async function resolvePlanFlaw(ctx: ExtensionContext, report: string, diff: Diff): Promise<"continue" | "amended" | "stop"> {
-		let arbiter = arbiterFirst(state.planFlaw, cfg.planFlaw);
+		let arbiter = arbiterFirst(autopilotOn() ? "auto" : state.planFlaw, cfg.planFlaw);
 		let canAsk = true;
 		for (;;) {
 			if (arbiter) {
@@ -3585,7 +3601,9 @@ export default function workflow(pi: ExtensionAPI) {
 		committedDiffs.add(hash);
 		const knowledge = state.lastKnowledge?.hash === hash ? state.lastKnowledge : undefined;
 		// D5: a pass without a knowledge check commits only when you say so.
-		if (knowledge?.status === "unavailable" && ctx.hasUI) {
+		if (knowledge?.status === "unavailable" && ctx.hasUI && autopilotOn()) {
+			ctx.ui.notify(`workflow: autopilot commits without the knowledge check: ${knowledge.reason}`, "warning");
+		} else if (knowledge?.status === "unavailable" && ctx.hasUI) {
 			const choice = await askUser(ctx, `Judge passed, knowledge not checked: ${knowledge.reason}`, ["Commit anyway", "Stop"]);
 			if (choice !== "Commit anyway") {
 				passStopped = true;
@@ -3895,6 +3913,7 @@ ${judged.text}`, instruction, chosen);
 		{ value: "judge", label: "judge - review the current diff now" },
 		{ value: "tokens", label: "tokens - token breakdown of the current flow so far" },
 		{ value: "model", label: "model [role] [provider/id[:thinking]] - set a role's model (lists when left out)" },
+		{ value: "autopilot", label: "autopilot [on|off] - resolve waits and routine menus without asking (no argument toggles)" },
 		{ value: "reload", label: "reload - re-read workflow.json" },
 		{ value: "resume", label: "resume [flowId] - pick up an unfinished flow from its plan ref (e.g. on another device)" },
 	];
@@ -3906,6 +3925,7 @@ ${judged.text}`, instruction, chosen);
 			...(state.testFlow ? [`test flow  round ${state.testFlow.round}, fix rounds ${normalize(state.testFlow).fixRounds}, fixed ${normalize(state.testFlow).fixed.length}, open ${openBugs(state.testFlow).length}, pending questions ${normalize(state.testFlow).pending.length}`] : []),
 			...(currentStages() ? [`stage     ${currentStages()!.current} of ${currentStages()!.stages.length}: ${currentStages()!.stages[currentStages()!.current - 1].title}`] : []),
 			state.planFlaw === "auto" ? "flaws     arbiter (this flow)" : `flaws     ${cfg.planFlaw === "auto" ? "arbiter" : "ask"} (config)`,
+			`autopilot ${autopilotOn() ? "on" : "off"} (${autopilotOverride === undefined ? "config" : "session"})`,
 			`guard     compact at ${cfg.contextGuardTokens || "off"} tokens`,
 			`tokens    ${STAGES.map((s) => `${s} ${fmtTok(view.sessionTokens(s))}`).join(" · ")} · session total ${fmtTok(STAGES.reduce((n, s) => ({ raw: n.raw + view.sessionTokens(s).raw, cost: n.cost + view.sessionTokens(s).cost }), { raw: 0, cost: 0 }))}`,
 			"",
@@ -4105,6 +4125,17 @@ ${judged.text}`, instruction, chosen);
 				case "resume":
 					await resumeFlow(ctx, rest[0]);
 					return;
+				case "autopilot": {
+					const arg = rest[0]?.toLowerCase();
+					if (arg !== undefined && arg !== "on" && arg !== "off") {
+						ctx.ui.notify("usage: /flow autopilot [on|off]", "warning");
+						return;
+					}
+					autopilotOverride = arg === undefined ? !autopilotOn() : arg === "on";
+					updateStatus(ctx);
+					ctx.ui.notify(`workflow: autopilot ${autopilotOn() ? "on" : "off"} (session)`, "info");
+					return;
+				}
 				case "delivery": {
 					const want = rest[0]?.toLowerCase();
 					if (!want) {

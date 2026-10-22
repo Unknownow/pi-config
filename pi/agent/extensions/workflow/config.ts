@@ -135,6 +135,8 @@ export interface WorkflowConfig {
 	returnToPlan: boolean;
 	/** The judge says the approved plan itself is flawed: "ask" you, or let the "auto" arbiter decide. */
 	planFlaw: "ask" | "auto";
+	/** The agent resolves waits itself (approves with a comment, acts when a non-interactive command may) and the workflow skips its routine menus; see README "Autopilot". */
+	autopilot: boolean;
 	/** When the planner splits a plan into stages, each executed, judged and delivered on its own. */
 	stagedPlans: StagedPlans;
 	/** Staged plans: "auto" starts the next stage at once, even after an incomplete delivery or a stage with no changes; "ask" asks you first. */
@@ -223,6 +225,7 @@ export const DEFAULTS: WorkflowConfig = {
 	finalizePlan: true,
 	returnToPlan: true,
 	planFlaw: "ask",
+	autopilot: false,
 	stagedPlans: "auto",
 	stageAdvance: "auto",
 	planRecap: "changes",
@@ -333,6 +336,7 @@ function parseConfig(file: string): Loaded {
 		if (config.plans.sync !== "remote" && config.plans.sync !== "local") config.plans.sync = DEFAULTS.plans.sync;
 		if (!Array.isArray(config.plans.localOnly) || config.plans.localOnly.some((s) => typeof s !== "string")) config.plans.localOnly = DEFAULTS.plans.localOnly;
 		for (const k of ["keepDays", "keepCount"] as const) if (typeof config.plans[k] !== "number" || !Number.isFinite(config.plans[k]) || config.plans[k] < 0) config.plans[k] = DEFAULTS.plans[k];
+		if (typeof config.autopilot !== "boolean") config.autopilot = DEFAULTS.autopilot;
 		if (!isObject(config.wait)) config.wait = DEFAULTS.wait;
 		for (const k of ["pollMs", "maxMs", "checkTimeoutMs"] as const) if (typeof config.wait[k] !== "number" || !Number.isFinite(config.wait[k]) || config.wait[k] <= 0) config.wait[k] = DEFAULTS.wait[k];
 		if (typeof config.wait.autoResume !== "boolean") config.wait.autoResume = DEFAULTS.wait.autoResume;
