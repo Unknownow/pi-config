@@ -1,7 +1,7 @@
 // node --test delivery.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { branchName, combineOutcomes, repoDeliveryInstruction, deliveryChoices, freshPr, deliveryInstruction, deliveryMenuLabel, deliveryOutcome, isDelivery, landedBranch, outcomeRef, planTitle, pushSkipReason, type DeliveryOptions } from "./delivery.ts";
+import { branchName, combineOutcomes, repoDeliveryInstruction, deliveryChoices, freshPr, deliveryInstruction, deliveryMenuLabel, fixedDeliveryLabel, deliveryOutcome, isDelivery, landedBranch, outcomeRef, planTitle, pushSkipReason, type DeliveryOptions } from "./delivery.ts";
 import { finalize, planPhase, SHOW_PLAN } from "./prompts.ts";
 
 const d = new Date(2026, 9, 14, 9, 5);
@@ -20,6 +20,12 @@ test("isDelivery", () => {
 test("menu label marks the default", () => {
 	assert.equal(deliveryMenuLabel("commit", "commit"), "commit only (default)");
 	assert.equal(deliveryMenuLabel("push", "commit"), "commit + push");
+});
+
+test("fixed label explains the single option", () => {
+	assert.equal(fixedDeliveryLabel("commit", "autopilot"), "commit only (autopilot · /flow delivery to change)");
+	assert.equal(fixedDeliveryLabel("commit", "ask-off"), "commit only (delivery.ask off · /flow delivery to change)");
+	assert.equal(fixedDeliveryLabel("merge", "flow"), "commit + push + pull request + merge (set for this flow · /flow delivery to change)");
 });
 
 test("planTitle", () => {

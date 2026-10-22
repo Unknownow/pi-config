@@ -54,7 +54,7 @@ import { handoverAction, afterPass, noChangeStage, arbiterFirst, fixableFindings
 import { countTokens, type Tok } from "./tokens.ts";
 import { idleReason, notifyCommand, notifyDue } from "./notify.ts";
 import * as prompts from "./prompts.ts";
-import { branchName, combineOutcomes, type Delivery, type DeliveryOptions, DELIVERIES, DELIVERY_LABELS, deliveryChoices, deliveryInstruction, deliveryMenuLabel, deliveryOutcome, freshPr, isDelivery, landedBranch, planTitle, pushSkipReason, type PrState, repoDeliveryInstruction } from "./delivery.ts";
+import { branchName, combineOutcomes, type Delivery, type DeliveryOptions, DELIVERIES, DELIVERY_LABELS, deliveryChoices, deliveryInstruction, deliveryMenuLabel, fixedDeliveryLabel, deliveryOutcome, freshPr, isDelivery, landedBranch, planTitle, pushSkipReason, type PrState, repoDeliveryInstruction } from "./delivery.ts";
 import { modelChoices, pathCompletions } from "./pickers.ts";
 import { ghCandidates, withPathDir } from "./gh-path.ts";
 import { citeNames, collectRepoDiff as collectRepoDiffImpl, needsFinalFullReview, type RepoDiff } from "./repo-diff.ts";
@@ -3046,8 +3046,10 @@ export default function workflow(pi: ExtensionAPI) {
 				return;
 			}
 			const def = menuDefault();
-			const options = cfg.delivery.ask && !autopilotOn() ? deliveryChoices(def) : [def];
-			const labels = options.map((d) => `Approve → ${deliveryMenuLabel(d, def)}`);
+			const single = !cfg.delivery.ask || autopilotOn();
+			const options = single ? [def] : deliveryChoices(def);
+			const fixedReason = state.delivery ? "flow" : autopilotOn() ? "autopilot" : "ask-off";
+			const labels = options.map((d) => `Approve → ${single ? fixedDeliveryLabel(d, fixedReason) : deliveryMenuLabel(d, def)}`);
 			const arbiterLabel = "Approve, arbiter solves plan flaws →";
 			const showLabel = "Show the full plan";
 			const choice = await askUser(ctx, `Plan phase · execute on ${describeRole(cfg.roles.execute)}`, [...labels, ...(cfg.planFlaw === "ask" ? [arbiterLabel] : []), ...(recapChanges ? [showLabel] : []), "Keep discussing"]);
@@ -4047,7 +4049,7 @@ ${judged.text}`, instruction, chosen);
 	function statusText(): string {
 		const lines = [
 			`phase      ${state.phase}${state.escalated ? " (escalated)" : ""}`,
-			`judge     ${state.judgeRounds} failed round(s); auto=${cfg.autoJudge}; then ${DELIVERY_LABELS[state.delivery ?? defaultDelivery()]}${state.delivery ? "" : " (default)"}`,
+			`judge     ${state.judgeRounds} failed round(s); auto=${cfg.autoJudge}; then ${DELIVERY_LABELS[state.delivery ?? defaultDelivery()]}${state.delivery ? " (set for this flow)" : " (default)"}`,
 			...(state.testFlow ? [`test flow  round ${state.testFlow.round}, fix rounds ${normalize(state.testFlow).fixRounds}, fixed ${normalize(state.testFlow).fixed.length}, open ${openBugs(state.testFlow).length}, pending questions ${normalize(state.testFlow).pending.length}`] : []),
 			...(currentStages() ? [`stage     ${currentStages()!.current} of ${currentStages()!.stages.length}: ${currentStages()!.stages[currentStages()!.current - 1].title}`] : []),
 			state.planFlaw === "auto" ? "flaws     arbiter (this flow)" : `flaws     ${cfg.planFlaw === "auto" ? "arbiter" : "ask"} (config)`,

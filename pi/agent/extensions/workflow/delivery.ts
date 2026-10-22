@@ -25,6 +25,14 @@ export function deliveryMenuLabel(d: Delivery, def: Delivery): string {
 	return `${DELIVERY_LABELS[d]}${d === def ? " (default)" : ""}`;
 }
 
+export type FixedDeliveryReason = "autopilot" | "ask-off" | "flow";
+const FIXED_REASONS: Record<FixedDeliveryReason, string> = { autopilot: "autopilot", "ask-off": "delivery.ask off", flow: "set for this flow" };
+
+/** The menu label when the menu collapses to one option: says why and how to change it. */
+export function fixedDeliveryLabel(d: Delivery, reason: FixedDeliveryReason): string {
+	return `${DELIVERY_LABELS[d]} (${FIXED_REASONS[reason]} · /flow delivery to change)`;
+}
+
 /** The plan's title: the text after the first "## Plan:" heading, or "". */
 export function planTitle(plan: string | undefined): string {
 	const m = /^#+\s*Plan:?\s*(.*)$/m.exec(plan ?? "");
