@@ -1,11 +1,29 @@
 {
   "v": 1,
   "flowId": "20261023-0237-sandbox-fixes-for-table-cell-entities-an-4ed8",
-  "rev": 1,
-  "updated": "2026-10-22T19:37:20.577Z",
+  "rev": 2,
+  "updated": "2026-10-22T19:38:48.837Z",
   "title": "Sandbox fixes for table-cell entities and require from cwd",
   "delivery": "merge",
-  "done": [],
+  "done": [
+    "S1",
+    "S2",
+    "S3"
+  ],
+  "checkpoints": [
+    {
+      "step": "S4",
+      "text": "checkpoint S4: committed (1 commit)",
+      "ok": true
+    }
+  ],
+  "judgedHeads": {
+    "d:/works/wt/reduce-context/pi-config": {
+      "base": "33f8b466790cda423923ad1777a30013c12ee7db",
+      "head": "0cfcc6f65d6c1dd6ae79e19785483e997ce617ea",
+      "branch": "wt/reduce-context"
+    }
+  },
   "repos": [
     {
       "branch": "wt/reduce-context",

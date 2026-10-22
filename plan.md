@@ -101,7 +101,7 @@ Not needed. These are two local fixes with no new component or interface. The on
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 Decode entities in table cells (`html-to-md.ts:43`).
-- [ ] S2 Make `require` resolve from `cwd` (`run-code.ts:81`).
-- [ ] S3 Run the sandbox tests (§6). Then call `judge` with the focus "Sandbox fixes for table-cell entities and require from cwd
+- [x] S1 Decode entities in table cells (`html-to-md.ts:43`).
+- [x] S2 Make `require` resolve from `cwd` (`run-code.ts:81`).
+- [x] S3 Run the sandbox tests (§6). Then call `judge` with the focus "Sandbox fixes for table-cell entities and require from cwd
 - [ ] S4 Deliver: commit — the four sandbox files from §9, with no push.
