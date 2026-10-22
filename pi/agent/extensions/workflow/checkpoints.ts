@@ -55,3 +55,62 @@ export function checkpointNote(cps: { text: string }[]): string {
 	if (!cps.length) return "";
 	return `## Checkpoints already delivered\n\n${cps.map((c) => c.text).join("; ")}. Their code is committed and is not in this diff; its absence is not a finding.`;
 }
+
+type DeliverMode = "commit" | "push" | "pr" | "merge";
+
+/** The mode and tag a Deliver step names: explicit (`push — …`) or inferred by keyword (merge > pr > push > commit). Null when the step is not a Deliver step. */
+export function deliverStepSpec(plan: string, id: string): { mode?: DeliverMode; tag: boolean } | null {
+	const text = parseDeliverStep(plan, id);
+	if (text === null) return null;
+	const tag = /\btag\b/i.test(text);
+	const explicit = /^(commit|push|pr|merge)\s*(?:—|–|-|:|$)/i.exec(text);
+	if (explicit) return { mode: explicit[1].toLowerCase() as DeliverMode, tag };
+	const mode: DeliverMode | undefined = /\bmerge\b/i.test(text) ? "merge" : /\bpr\b|pull request/i.test(text) ? "pr" : /\bpush\b/i.test(text) ? "push" : /\bcommit\b/i.test(text) ? "commit" : undefined;
+	return { mode, tag };
+}
+
+/** The call the executor makes at a Deliver step, within the delivery `cap`. */
+export function deliverHint(id: string, spec: { mode?: string; tag: boolean }, cap: string): string {
+	if (cap === "off") return "→ delivery is off for this flow: skip it and say so";
+	if (spec.mode && !modeAllowed(spec.mode, cap)) return `→ beyond this flow's delivery (${cap}): call deliver {mode: "${cap}", step: "${id}"} or ask the user`;
+	if (!spec.mode) return `→ call deliver {tag: …, step: "${id}"} as the step names it`;
+	return `→ call deliver {mode: "${spec.mode}", step: "${id}"${spec.tag ? ", tag: …" : ""}}`;
+}
+
+/** The open Deliver steps of the current stage with their calls, as a block; undefined when there are none. */
+export function deliverHintsBlock(plan: string, checklist: { id: string; text: string; done: boolean; stage?: number; human?: true }[] | undefined, stage: number | undefined, cap: string): string | undefined {
+	const lines: string[] = [];
+	for (const i of checklist ?? []) {
+		if (i.done || i.human || /^verify\s*:/i.test(i.text)) continue;
+		if (stage !== undefined && i.stage !== undefined && i.stage !== stage) continue;
+		const spec = deliverStepSpec(plan, i.id);
+		if (spec) lines.push(`- ${i.id} ${deliverHint(i.id, spec, cap)}`);
+	}
+	return lines.length ? `Deliver steps:\n${lines.join("\n")}` : undefined;
+}
+
+/** The refusal text for a publish the executor may not run itself. */
+export function publishRefusal(problem: string, next: { id: string; hint: string } | null, delivery: string): string {
+	const route = delivery === "don't commit"
+		? "Delivery is off for this flow: end your turn when the work is done."
+		: next
+		? `To publish now, call ${next.hint.replace(/^→\s*(call\s+)?/, "")} (the workflow's commit step pushes, opens and merges).`
+		: `When the work is done, end your turn: the workflow delivers it as ${delivery} after the judge passes.`;
+	return `Refused: ${problem}. ${route} Never ask the user to run it for you.`;
+}
+
+const RAW_PUBLISH = /git\s+push|gh\s+pr\s+(?:create|merge)|push\s+--delete/i;
+
+/** Warnings for Deliver steps that name a mode beyond the delivery `cap` or spell out a raw publish command. */
+export function deliverStepWarnings(plan: string, capOf: string | ((id: string) => string)): string[] {
+	const out: string[] = [];
+	for (const m of plan.matchAll(/^[ \t]*(?:[-*][ \t]+)?(?:\[[ xX]\][ \t]*)?\*\*(S[A-Za-z0-9_-]*?)\.?\*\*/gm)) {
+		const text = parseDeliverStep(plan, m[1]);
+		if (text === null) continue;
+		const spec = deliverStepSpec(plan, m[1])!;
+		const cap = typeof capOf === "string" ? capOf : capOf(m[1]);
+		if (spec.mode && !modeAllowed(spec.mode, cap)) out.push(`${m[1]}: Deliver ${spec.mode} is beyond the delivery (${cap}).`);
+		if (RAW_PUBLISH.test(text)) out.push(`${m[1]}: the step spells out a raw publish command; write "Deliver: <mode> — <what>" and let deliver publish.`);
+	}
+	return out;
+}

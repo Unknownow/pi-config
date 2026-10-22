@@ -72,7 +72,7 @@ import { addToRegistry, type BoardEntry, boardLines, boardRows, detailLines, liv
 import { adoptHigher, claimLive, commitRef, dropClaim, pidAlive, readClaim, writeClaim, deleteLocal, deleteRef, fetchMirror, type Git, listRefs, plansDir, pushRef, readLocalStatuses, readPlanMd, refRev, remoteOf, repoInfo, type RefEntry, writeLocal } from "./plan-store.ts";
 import { type FlowFinding, recordFindings, reportFindings, type ReportStep } from "./flow-report.ts";
 import { readOnlyProblem } from "./readonly-bash.ts";
-import { checkpointAmendment, checkpointNote, checkpointOutcome, hasCheckpointAmendment, checkpointText, isPlannedTag, modeAllowed, parseDeliverStep, withCheckpoints } from "./checkpoints.ts";
+import { checkpointAmendment, checkpointNote, checkpointOutcome, deliverHint, deliverHintsBlock, deliverStepSpec, deliverStepWarnings, hasCheckpointAmendment, checkpointText, isPlannedTag, modeAllowed, parseDeliverStep, publishRefusal, withCheckpoints } from "./checkpoints.ts";
 import { pushArgs, tagDecision } from "./tags.ts";
 import { type CheckVerdict, autopilotAmendment, autopilotReply, checkTitle, checkVerdict, type HumanCheck, humanChecks, parseVerifyStep, parseWaitStep, pollDecision, resumePrefix, verifyAmendment, waitAmendment } from "./waits.ts";
 import { nextStage, parseStages, stageDelivery, stageLine, stageNote, stageStart, stagesOutcome } from "./stages.ts";
@@ -596,17 +596,51 @@ export default function workflow(pi: ExtensionAPI) {
 		const stages = parseStages(plan);
 		state.stage = stages.length ? 1 : undefined;
 		planMilestone(ctx);
-		if (!stages.length) return "";
+		for (const w of deliverStepWarnings(plan ?? "", (id) => stageCapFor(state.checklist?.find((i) => i.id === id)?.stage))) ctx.ui.notify(`workflow: ${w}`, "warning");
+		if (!stages.length) return deliverHintsText(undefined);
 		ctx.ui.notify(`workflow: staged plan, ${stages.length} stages; stage 1: ${stages[0].title}`, "info");
 		const first = stageStart(stages, 1, state.delivery ?? defaultDelivery());
 		if (holdForStageWait(ctx, stages[0], first)) return `\n\nStage 1 waits for: ${stages[0].after?.reason}. Don't start it; end your turn now. The workflow sends you the stage when the wait is over.`;
-		return `\n\n${first}`;
+		return `\n\n${first}${deliverHintsText(1)}`;
 	}
 
 	/** The stages of the approved plan and the current one, or null when the plan is not staged. */
 	function currentStages() {
 		const stages = state.stage ? parseStages(state.approvedPlan) : [];
 		return stages.length && state.stage ? { stages, current: state.stage } : null;
+	}
+
+	/** The delivery that caps the Deliver steps of `stage` (or of the whole flow when unstaged). */
+	function stageCapFor(stage: number | undefined): Delivery {
+		const stages = stage ? parseStages(state.approvedPlan) : [];
+		return stageDelivery(state.delivery ?? defaultDelivery(), stage ? stages[stage - 1] : undefined);
+	}
+
+	/** The open Deliver steps of `stage` with the call each one makes, as text to append to a message ("" when there are none). */
+	function deliverHintsText(stage: number | undefined): string {
+		const block = deliverHintsBlock(state.approvedPlan ?? "", state.checklist, stage, stageCapFor(stage));
+		return block ? `\n\n${block}` : "";
+	}
+
+	/** ` → call deliver …` for a Deliver step, or "". */
+	function deliverLine(id: string, stage: number | undefined): string {
+		const spec = deliverStepSpec(state.approvedPlan ?? "", id);
+		return spec ? ` ${deliverHint(id, spec, stageCapFor(stage))}` : "";
+	}
+
+	/** A refusal of a publish the executor may not run itself, naming the next Deliver call. */
+	function publishRefuse(problem: string): string {
+		const stage = currentStages()?.current;
+		const cap = stageCapFor(stage);
+		const plan = state.approvedPlan ?? "";
+		let next: { id: string; hint: string } | null = null;
+		for (const i of state.checklist ?? []) {
+			if (i.done || isHuman(i) || (stage !== undefined && i.stage !== undefined && i.stage !== stage)) continue;
+			const spec = deliverStepSpec(plan, i.id);
+			if (spec?.mode && spec.mode !== "commit") { next = { id: i.id, hint: deliverHint(i.id, spec, cap) }; break; }
+		}
+		if (next && /^→ (delivery is off|beyond)/.test(next.hint)) next = null;
+		return publishRefusal(problem, next, DELIVERY_LABELS[cap]);
 	}
 
 	async function approve(ctx: ExtensionContext, delivery?: Delivery, arbiterOnFlaw = false): Promise<void> {
@@ -2340,7 +2374,7 @@ export default function workflow(pi: ExtensionAPI) {
 			const open = list.filter((i) => !isHuman(i) && !i.done && (!staged || i.stage === undefined || i.stage === staged.current));
 			const done = list.filter((i) => !isHuman(i) && i.done).length;
 			const head = `${done} of ${list.filter((i) => !isHuman(i)).length} steps done${unknown.length ? `; unknown IDs: ${unknown.join(", ")}` : ""}.`;
-			const rest = open.length ? `Open${staged ? ` in stage ${staged.current}` : ""}:\n${open.map((i) => `- ${i.id} ${i.text}`).join("\n")}` : `No open steps${staged ? " in this stage" : ""}.`;
+			const rest = open.length ? `Open${staged ? ` in stage ${staged.current}` : ""}:\n${open.map((i) => `- ${i.id} ${i.text}${deliverLine(i.id, staged?.current)}`).join("\n")}` : `No open steps${staged ? " in this stage" : ""}.`;
 			return reply(`${head}\n${rest}`);
 		},
 		renderCall(args, theme) {
@@ -2416,7 +2450,7 @@ export default function workflow(pi: ExtensionAPI) {
 			if (r.verdict === "FAIL") state.judgeRounds++;
 			let text = r.text;
 			const reminder = state.phase === "execute" ? openStepsReminder(state.checklist, currentStages()?.current) : undefined;
-			if (reminder) text += `\n\n${reminder}`;
+			if (reminder) text += `\n\n${reminder}${state.phase === "execute" ? deliverHintsText(currentStages()?.current) : ""}`;
 			// Every call replaces the pending report, so a stale one never outlives a clean review.
 			state.pendingPlanFlaw = hasPlanFlaw(r.text) ? r.text : undefined;
 			if (state.pendingPlanFlaw) {
@@ -2492,7 +2526,7 @@ export default function workflow(pi: ExtensionAPI) {
 		name: "deliver",
 		label: "Deliver",
 		description:
-			"Deliver inside the plan, then carry on in the same turn: commit, push, open a pull request or merge (`mode`), and/or create or move a tag on the remote default branch (`tag`). Within this stage's approved delivery only. The diff must pass the judge first (an unchanged passed diff is reused). Name the plan's `Deliver:` step as `step`; a call without one is added to the plan as an amendment. Tags are created or moved only for a named plan step or when you need them to continue; a move needs a plan step that names the tag and the word move.",
+			"Deliver inside the plan, then carry on in the same turn: commit, push, open a pull request or merge (`mode`), and/or create or move a tag on the remote default branch (`tag`). Within this stage's approved delivery only. The diff must pass the judge first (an unchanged passed diff is reused). Name the plan's `Deliver:` step as `step`; a call without one is added to the plan as an amendment. Already-committed judged work is published by a later push, pr or merge call. Tags are created or moved only for a named plan step or when you need them to continue; a move needs a plan step that names the tag and the word move.",
 		promptSnippet: "deliver: commit/push/PR/merge and tags inside the plan (judge-gated), then continue",
 		parameters: Type.Object({
 			mode: Type.Optional(Type.String({ description: "commit, push, pr or merge. Omit to only handle a tag." })),
@@ -2582,7 +2616,7 @@ Nothing was delivered.`);
 						if (r.verdict === "FAIL") state.judgeRounds++;
 						let text = r.text;
 						const reminder = openStepsReminder(state.checklist, staged?.current);
-						if (reminder) text += `\n\n${reminder}`;
+						if (reminder) text += `\n\n${reminder}${deliverHintsText(staged?.current)}`;
 						state.pendingPlanFlaw = hasPlanFlaw(r.text) ? r.text : undefined;
 						persist();
 						if (r.verdict === "FAIL") return reply(`${text}\n\nNot delivered: fix the findings and call deliver again.`, { runs: progress.snapshot(), verdict: r.verdict });
@@ -2705,11 +2739,11 @@ Nothing was delivered.`);
 				const code = String(input.code ?? "");
 				if (["shell", "bash", "sh", "zsh", "powershell", "pwsh", "ps1"].includes(language)) texts.push({ text: code, powershell: ["powershell", "pwsh", "ps1"].includes(language) || (language === "shell" && win) });
 				else if (/\bgit\b/.test(code) && /\bpush\b|(?<!-)\bcommit\b|--no-verify|hooksPath|GIT_CONFIG/i.test(code)) {
-					return { block: true, reason: "Refused: code that runs git push, skips hooks or changes hooks. The workflow commits and pushes after the judge passes." };
+					return { block: true, reason: publishRefuse("code that runs git push, skips hooks or changes hooks") };
 				} else if (codeCommitProblem(code)) {
-					return { block: true, reason: `Refused: code that runs ${codeCommitProblem(code)}.` };
+					return { block: true, reason: publishRefuse(`code that runs ${codeCommitProblem(code)}`) };
 				} else if (/\bgh\b/.test(code) && /\b(pr|api)\b/.test(code)) {
-					return { block: true, reason: "Refused: code that runs gh pr or gh api. The workflow opens and merges pull requests after the judge passes." };
+					return { block: true, reason: publishRefuse("code that runs gh pr or gh api") };
 				}
 			}
 			else if (/(^|__)ctx_batch_execute$/.test(event.toolName) && Array.isArray(input.commands)) {
@@ -2728,7 +2762,7 @@ Nothing was delivered.`);
 			const modeOf = (root: string | undefined) => (root ? state.commitPending?.repos?.find((r) => repoKey(r.root) === repoKey(root))?.mode : undefined) ?? state.commitPending?.mode;
 			for (const { text, powershell } of gitTexts) {
 				const problem = await shellProblem(text, powershell, { roots: multi ? roots : undefined, cwd: ctx.cwd, protectedBranches: cfg.protectedBranches, branchOf, modeOf });
-				if (problem) return { block: true, reason: `Refused: ${problem}. Do not commit, push, open or merge pull requests, or skip hooks yourself: finish the code, get the judge's pass and end your turn; the workflow commits and delivers it as this flow's delivery says.` };
+				if (problem) return { block: true, reason: publishRefuse(problem) };
 			}
 			return;
 		}
@@ -3204,7 +3238,7 @@ Nothing was delivered.`);
 		planMilestone(ctx);
 		persist();
 		ctx.ui.notify(`workflow: stage ${next} of ${stages.length}: ${stages[next - 1].title}`, "info");
-		const text = nextStage(stages, next, state.delivery ?? defaultDelivery(), outcome);
+		const text = nextStage(stages, next, state.delivery ?? defaultDelivery(), outcome) + deliverHintsText(next);
 		if (holdForStageWait(ctx, stages[next - 1], text)) return;
 		handover("workflow-stage", text);
 	}
