@@ -65,7 +65,9 @@ It returns `${DELIVERY_LABELS[d]} (<reason text> · /flow delivery to change)`. 
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 In `delivery.ts`, after `deliveryMenuLabel` (line 24), add an exported pure function and a type, modelled on `deliveryMe
-- [ ] S2 In `index.ts`, plan-end menu (around 3048-3050), when the menu has only one option (autopilot on or `cfg.delivery.ask` f
-- [ ] S3 In `index.ts:4050` (`statusText`), change the suffix to `" (set for this flow)"` when `state.delivery` is set and `" (de
-- [ ] S4 In `README.md:165`, edit the "Menus skipped" bullet: the plan-end approval shows only the delivery mode that applies, wi
+- [x] S1 In `delivery.ts`, after `deliveryMenuLabel` (line 24), add an exported pure function and a type, modelled on `deliveryMe
+- [x] S2 In `index.ts`, plan-end menu (around 3048-3050), when the menu has only one option (autopilot on or `cfg.delivery.ask` f
+- [x] S3 In `index.ts:4050` (`statusText`), change the suffix to `" (set for this flow)"` when `state.delivery` is set and `" (de
+- [x] S4 In `README.md:165`, edit the "Menus skipped" bullet: the plan-end approval shows only the delivery mode that applies, wi
+## Outcome
+2026-10-22T08:19:49.687Z — ok: committed (1 commit)

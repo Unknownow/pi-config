@@ -1,11 +1,20 @@
 {
   "v": 1,
   "flowId": "20261022-1518-explain-the-single-delivery-option-in-th-58a2",
-  "rev": 1,
-  "updated": "2026-10-22T08:18:36.428Z",
+  "rev": 2,
+  "updated": "2026-10-22T08:19:49.783Z",
   "title": "Explain the single delivery option in the plan-end approval menu",
-  "delivery": "commit",
-  "done": [],
+  "done": [
+    "S1",
+    "S2",
+    "S3",
+    "S4"
+  ],
+  "finished": {
+    "at": "2026-10-22T08:19:49.687Z",
+    "ok": true,
+    "text": "committed (1 commit)"
+  },
   "repos": [
     {
       "branch": "master",
