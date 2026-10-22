@@ -1,11 +1,9 @@
 {
   "v": 1,
   "flowId": "20261022-1202-wait-checks-that-run-on-windows-plus-a-w-a840",
-  "rev": 2,
-  "updated": "2026-10-22T05:05:33.547Z",
+  "rev": 3,
+  "updated": "2026-10-22T05:09:26.785Z",
   "title": "Wait checks that run on Windows, plus a workflow autopilot",
-  "stage": 2,
-  "delivery": "push",
   "done": [
     "S1",
     "S2",
@@ -13,8 +11,23 @@
     "S4",
     "S5",
     "S6",
-    "S7"
+    "S7",
+    "S8",
+    "S9",
+    "S10",
+    "S11",
+    "S12",
+    "S13",
+    "S14",
+    "S15",
+    "S16",
+    "S17"
   ],
+  "finished": {
+    "at": "2026-10-22T05:09:26.189Z",
+    "ok": true,
+    "text": "stage 1: committed (1 commit), pushed; stage 2: committed (2 commits), pushed"
+  },
   "repos": [
     {
       "branch": "flow/runnergate-test-covers-a-newcomer-arrivi",

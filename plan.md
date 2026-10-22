@@ -379,13 +379,15 @@ Stage 2:
 - [x] S5 In `wait_for_user` (`index.ts:2094-2114`), after the read-only validation and before any amendment or state change, run 
 - [x] S6 Tests for the Stage 1 helpers in `waits.ts`; the cases are in section 6.
 - [x] S7 Docs:
-- [ ] S8 In `config.ts`:
-- [ ] S9 Add `autopilotAmendment` and `autopilotReply` to `waits.ts`, as in section 4. Model them on `waitAmendment` (`waits.ts:2
-- [ ] S10 In `index.ts`, add the session override and the switches:
-- [ ] S11 In `wait_for_user`:
-- [ ] S12 Skip the routine prompts when `autopilotOn()`:
-- [ ] S13 Extend the wait sentence in the executor rule in `prompts.ts:100`:
-- [ ] S14 Tests for S8 and S9, as in section 6.
-- [ ] S15 Docs:
-- [ ] S16 In `pi/agent/workflow.json`, add `"autopilot": true` after `"planFlaw": "ask",` (:52). Keep 2-space formatting and chang
-- [ ] S17 Deploy to this machine:
+- [x] S8 In `config.ts`:
+- [x] S9 Add `autopilotAmendment` and `autopilotReply` to `waits.ts`, as in section 4. Model them on `waitAmendment` (`waits.ts:2
+- [x] S10 In `index.ts`, add the session override and the switches:
+- [x] S11 In `wait_for_user`:
+- [x] S12 Skip the routine prompts when `autopilotOn()`:
+- [x] S13 Extend the wait sentence in the executor rule in `prompts.ts:100`:
+- [x] S14 Tests for S8 and S9, as in section 6.
+- [x] S15 Docs:
+- [x] S16 In `pi/agent/workflow.json`, add `"autopilot": true` after `"planFlaw": "ask",` (:52). Keep 2-space formatting and chang
+- [x] S17 Deploy to this machine:
+## Outcome
+2026-10-22T05:09:26.189Z — ok: stage 1: committed (1 commit), pushed; stage 2: committed (2 commits), pushed
