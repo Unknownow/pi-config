@@ -473,14 +473,14 @@ None of these is expected to take over 2 minutes. While fixing, run the single c
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 Explore without context files.
-- [ ] S2 In `pi/agent/workflow.json:14`, change explore `"thinking": "medium"` to `"low"`. Leave `config.ts:210` unchanged.
-- [ ] S3 Add one rule to `prompts.EXPLORE` (`W/prompts.ts:169-178`). It must contain the phrase `about 10 tool calls`:
-- [ ] S4 Added folders' rules files as paths.
-- [ ] S5 Per-model token breakdown (Design §4).
-- [ ] S6 Backlog, `docs/workflow-improvements.md`, per "Keeping this file current":
-- [ ] S7 `W/README.md`: describe `explore.contextFiles`, thinking low and the budget of tool calls, the per-model flow card, and 
-- [ ] S8 Run the stage 1 tests (§6) and the judge. The flow then delivers the commit.
+- [x] S1 Explore without context files.
+- [x] S2 In `pi/agent/workflow.json:14`, change explore `"thinking": "medium"` to `"low"`. Leave `config.ts:210` unchanged.
+- [x] S3 Add one rule to `prompts.EXPLORE` (`W/prompts.ts:169-178`). It must contain the phrase `about 10 tool calls`:
+- [x] S4 Added folders' rules files as paths.
+- [x] S5 Per-model token breakdown (Design §4).
+- [x] S6 Backlog, `docs/workflow-improvements.md`, per "Keeping this file current":
+- [x] S7 `W/README.md`: describe `explore.contextFiles`, thinking low and the budget of tool calls, the per-model flow card, and 
+- [x] S8 Run the stage 1 tests (§6) and the judge. The flow then delivers the commit.
 - [ ] S9 Create `pi/agent/extensions/sandbox/`:
 - [ ] S10 Plan-phase checks, `W/readonly-tools.ts`:
 - [ ] S11 Tool filter for tools registered later.
