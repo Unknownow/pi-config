@@ -201,6 +201,8 @@ export interface WorkflowConfig {
 		finalFullReviewOverChars: number;
 		/** The final full review runs only when the changes since the last round touched a file its findings did not cite. */
 		finalFullReviewNewFilesOnly: boolean;
+		/** The final full review is skipped when the changes since the last passing full review of this stage are at most this share of the whole diff. 0 never skips. */
+		finalFullReviewRepeatMaxShare: number;
 	};
 	knowledge: KnowledgeConfig;
 	subagent: {
@@ -281,6 +283,7 @@ export const DEFAULTS: WorkflowConfig = {
 		recheckMaxShare: 0.5,
 		finalFullReviewOverChars: 80_000,
 		finalFullReviewNewFilesOnly: true,
+		finalFullReviewRepeatMaxShare: 0.1,
 	},
 	knowledge: {
 		server: "knowledge",

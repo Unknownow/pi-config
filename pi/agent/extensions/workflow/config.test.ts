@@ -153,3 +153,7 @@ test("addedFolderRules defaults to paths; full is kept, anything else falls back
 		assert.equal(loadConfig(f).config.addedFolderRules, want);
 	}
 });
+
+test("finalFullReviewRepeatMaxShare defaults to 0.1", () => {
+	assert.equal(DEFAULTS.judge.finalFullReviewRepeatMaxShare, 0.1);
+});
