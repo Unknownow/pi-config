@@ -95,5 +95,7 @@ test("slow suites run once and rerun only when touched", async () => {
 	for (const x of ["While fixing, run the narrowest check that covers the change", "Run each slow suite in full once, before your first judge call", "After a judge round, rerun a slow suite only if the fix changed files it builds or reads; otherwise cite its last passing run", "then call `judge`"])
 		assert.ok(EXECUTE_PHASE.includes(x), x);
 	assert.ok(finalize(false).includes("Mark each suite slower than about 2 minutes as slow"));
+	assert.ok(planPhase(false, "onRequest", "always").includes("Mark each suite slower than about 2 minutes as slow"));
+	assert.ok(EXECUTE_PHASE.includes("When done, run the plan's tests as above"));
 	assert.ok(FIX_ROUND.includes("rerun a slow suite only if the fix changed files it builds or reads"));
 });
