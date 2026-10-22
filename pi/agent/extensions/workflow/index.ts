@@ -35,7 +35,7 @@ import {
 	serializeConversation,
 	type Theme,
 } from "@earendil-works/pi-coding-agent";
-import { type Component, Text } from "@earendil-works/pi-tui";
+import { type Component, Text, truncateToWidth } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import {
 	CONFIG_PATH,
@@ -67,6 +67,7 @@ import { parseTestReport } from "./test-report.ts";
 import { amendmentTail, answerItem, askOptions, bodyField, newTestFlow, nextAction, normalize, openBugs, pendingFromFlaws, recordReport, skipItem, testOutcome, testPlan, type TestFlow } from "./test-flow.ts";
 import { callDir, formatTaskResult, parseRunnerReply, runnerGate, sanitizeIds, scheduleTasks, taskCard, taskRecord, type TestTask, verifyRun } from "./test-run.ts";
 import { commitPlan, type Finished, mergeChecklist, newFlowId, openStepsReminder, parseChecklist, type PlanStatus, planCard, pruneIds, renderPlanFile, splitPlanFile, type ChecklistItem } from "./plan-doc.ts";
+import { addToRegistry, type BoardEntry, boardLines, boardRows, detailLines, liveEvents, type LiveInfo, readLive, readRegistry } from "./board.ts";
 import { adoptHigher, claimLive, commitRef, dropClaim, pidAlive, readClaim, writeClaim, deleteLocal, deleteRef, fetchMirror, type Git, listRefs, plansDir, pushRef, readLocalStatuses, readPlanMd, refRev, remoteOf, repoInfo, type RefEntry, writeLocal } from "./plan-store.ts";
 import { type FlowFinding, recordFindings, reportFindings, type ReportStep } from "./flow-report.ts";
 import { readOnlyProblem } from "./readonly-bash.ts";
@@ -445,7 +446,20 @@ export default function workflow(pi: ExtensionAPI) {
 		if (ctx.hasUI) ctx.ui.setStatus("workflow-wait", state.waiting && state.phase === "execute" ? `waiting: ${state.waiting.reason.slice(0, 40)}` : undefined);
 		if (ctx.hasUI) ctx.ui.setStatus("workflow-autopilot", autopilotOn() ? "autopilot" : undefined);
 		if (ctx.hasUI) ctx.ui.setStatus("workflow-folders", n ? `+${n} folder${n === 1 ? "" : "s"}` : undefined);
+		if (state.approvedPlan && cl?.length && (state.phase === "execute" || state.phase === "test")) {
+			const st = currentStages();
+			const open = cl.find((i) => !i.done);
+			view.progress = {
+				...(st ? { stage: st.current, stages: st.stages.length } : {}),
+				done: cl.filter((i) => i.done).length,
+				total: cl.length,
+				...(open ? { current: `${open.id} ${open.text}` } : {}),
+				judgeRound: state.judgeRounds,
+				...(state.waiting ? { waiting: state.waiting.reason } : {}),
+			};
+		} else view.progress = undefined;
 		emitStatus();
+		liveTick();
 	}
 
 	let lastStatusEvent = "";
@@ -756,6 +770,21 @@ export default function workflow(pi: ExtensionAPI) {
 				return false;
 			}
 		});
+	}
+
+	/** Every flow this machine's sessions have recently touched: registry dirs plus this session's repos. */
+	async function collectBoard(ctx: ExtensionContext) {
+		const dirs = new Set<string>(readRegistry(path.join(getAgentDir(), "workflow", "board.json")));
+		try {
+			dirs.add(await planDirFor(null));
+			for (const r of await flowRepos(ctx)) dirs.add(await planDirFor(r.root));
+		} catch {}
+		const entries: BoardEntry[] = [];
+		for (const dir of dirs) {
+			if (!fs.existsSync(dir)) continue;
+			for (const it of readLocalStatuses(dir)) entries.push({ flowId: it.flowId, dir, status: it.status, live: readLive(dir, it.flowId), mtime: it.mtime });
+		}
+		return boardRows(entries, Date.now(), os.hostname(), pidAlive);
 	}
 
 	/** The repos of this flow: the working folder's, the added folders', then those edited in the flow; git work trees only, no repeats. */
@@ -1069,6 +1098,97 @@ export default function workflow(pi: ExtensionAPI) {
 		claimedFlow = undefined;
 	}
 
+	/** The flow's `live.json`: what the board shows of this session. Written on change and every 60 s. */
+	let liveLast: LiveInfo | undefined;
+	let liveLastJson = "";
+	let liveLastWrite = 0;
+	let liveEventLog: { at: string; text: string }[] = [];
+	let liveTimer: ReturnType<typeof setInterval> | undefined;
+	let liveFlow: string | undefined;
+	const liveRegistered = new Set<string>();
+	function liveSnapshot(): LiveInfo | undefined {
+		const flowId = state.planDoc?.flowId;
+		if (!flowId || !planDirs.get(flowId)) return undefined;
+		const st = currentStages();
+		return {
+			v: 1,
+			flowId,
+			title: state.approvedPlan ? planTitle(state.approvedPlan) : flowId,
+			pid: process.pid,
+			host: os.hostname(),
+			cwd: claimCwd || process.cwd(),
+			updated: new Date().toISOString(),
+			phase: state.phase,
+			...(st ? { stage: st.current, stages: st.stages.length } : {}),
+			steps: (state.checklist ?? []).map((i) => ({ id: i.id, text: i.text.slice(0, 80), done: i.done })),
+			judgeRound: state.judgeRounds,
+			autopilot: autopilotOn(),
+			...(state.waiting ? { waiting: state.waiting.reason.slice(0, 120) } : {}),
+			runs: view.runs.filter((r) => r.status === "running").slice(0, 6).map((r) => ({ role: r.role, label: r.label.slice(0, 80), activity: (r.activity ?? "").slice(0, 80) })),
+			events: [],
+		};
+	}
+	function stopLiveTimer(): void {
+		if (liveTimer) clearInterval(liveTimer);
+		liveTimer = undefined;
+	}
+	/** Ends the snapshot of a flow this session no longer holds in `state`: no wait, no runs, a final event. */
+	function liveFinish(dir: string, flowId: string, text: string): void {
+		try {
+			const cur = readLive(dir, flowId);
+			if (!cur) return;
+			cur.waiting = undefined;
+			cur.runs = [];
+			cur.updated = new Date().toISOString();
+			cur.events = [...cur.events, { at: cur.updated, text: `finished: ${text}` }].slice(-20);
+			fs.writeFileSync(path.join(dir, flowId, "live.json"), `${JSON.stringify(cur, null, 2)}
+`);
+		} catch {}
+	}
+	function liveTick(extra?: string): void {
+		// Once the flow is finished only the final write (with `extra`) goes through.
+		if (state.planDoc?.finished && !extra) {
+			stopLiveTimer();
+			return;
+		}
+		try {
+			const snap = liveSnapshot();
+			if (!snap) {
+				stopLiveTimer();
+				return;
+			}
+			if (liveFlow !== snap.flowId) {
+				liveFlow = snap.flowId;
+				liveLast = undefined;
+				liveLastJson = "";
+				liveEventLog = [];
+			}
+			const now = Date.now();
+			const at = new Date(now).toISOString();
+			const texts = [...liveEvents(liveLast, snap), ...(extra ? [extra] : [])];
+			const log = [...liveEventLog, ...texts.map((text) => ({ at, text }))].slice(-20);
+			snap.events = log;
+			const key = JSON.stringify({ ...snap, updated: "" });
+			if (key === liveLastJson && now - liveLastWrite < 60_000) return;
+			const dir = planDirs.get(snap.flowId)!;
+			const folder = path.join(dir, snap.flowId);
+			fs.mkdirSync(folder, { recursive: true });
+			fs.writeFileSync(path.join(folder, "live.json"), `${JSON.stringify(snap, null, 2)}\n`);
+			liveLast = snap;
+			liveLastJson = key;
+			liveLastWrite = now;
+			liveEventLog = log;
+			if (!liveRegistered.has(dir)) {
+				liveRegistered.add(dir);
+				addToRegistry(path.join(getAgentDir(), "workflow", "board.json"), dir, new Date());
+			}
+			if (!liveTimer && !state.planDoc?.finished) {
+				liveTimer = setInterval(() => liveTick(), 5_000);
+				liveTimer.unref?.();
+			}
+		} catch {}
+	}
+
 	async function writePlan(ctx: ExtensionContext, snap: PlanSnap): Promise<void> {
 		claimCwd = ctx.cwd.replace(/\\/g, "/");
 		const found = [...(await flowRepos(ctx)).map((r) => r.root), ...(await Promise.all(snap.touched.map((t) => gitRoot(t))))];
@@ -1097,6 +1217,10 @@ export default function workflow(pi: ExtensionAPI) {
 		if (snap.finished) {
 			dropClaim(dir, snap.flowId);
 			if (claimedFlow === snap.flowId) stopClaimTimer();
+			if (state.planDoc?.flowId === snap.flowId) {
+				liveTick(`finished: ${snap.finished.text}`);
+				stopLiveTimer();
+			} else liveFinish(dir, snap.flowId, snap.finished.text);
 		} else if (state.planDoc?.flowId === snap.flowId) {
 			claimedFlow = snap.flowId;
 			refreshClaim();
@@ -3894,6 +4018,7 @@ ${judged.text}`, instruction, chosen);
 		const dir = claimedFlow ? planDirs.get(claimedFlow) : undefined;
 		if (dir && claimedFlow) dropClaim(dir, claimedFlow);
 		stopClaimTimer();
+		stopLiveTimer();
 	});
 
 	// ----------------------------------------------------------------------
@@ -3902,6 +4027,7 @@ ${judged.text}`, instruction, chosen);
 
 	const SUBCOMMANDS = [
 		{ value: "status", label: "status - phase, models, config path" },
+		{ value: "board", label: "board - live view of every flow on this machine" },
 		{ value: "plan", label: "plan - plan phase (read-only, planner model)" },
 		{ value: "approve", label: "approve - approve the plan, switch to execute and start" },
 		{ value: "delivery", label: "delivery <commit|push|pr|merge|off> - what happens after the judge passes, this flow" },
@@ -4125,6 +4251,71 @@ ${judged.text}`, instruction, chosen);
 				case "resume":
 					await resumeFlow(ctx, rest[0]);
 					return;
+				case "board": {
+					let rows = await collectBoard(ctx);
+					if ((ctx as { mode?: string }).mode !== "tui" || !ctx.hasUI) {
+						ctx.ui.notify(boardLines(rows, -1, 200, Date.now()).join("\n"), "info");
+						return;
+					}
+					let stop = () => {};
+					try {
+					await ctx.ui.custom<undefined>((tui, theme, keybindings, done) => {
+						let selected = 0;
+						let detail = false;
+						let busy = false;
+						let closed = false;
+						const timer = setInterval(() => {
+							if (busy || closed) return;
+							busy = true;
+							collectBoard(ctx)
+								.then((r) => {
+									if (closed) return;
+									rows = r;
+									selected = Math.min(selected, Math.max(0, rows.length - 1));
+									tui.requestRender();
+								})
+								.catch(() => {})
+								.finally(() => {
+									busy = false;
+								});
+						}, 2_000);
+						timer.unref?.();
+						stop = () => {
+							closed = true;
+							clearInterval(timer);
+						};
+						const close = () => {
+							stop();
+							done(undefined);
+						};
+						return {
+							render(width: number): string[] {
+								const now = Date.now();
+								const body = detail && rows[selected] ? detailLines(rows[selected], width, now) : boardLines(rows, selected, width, now);
+								return [theme.fg("accent", `flow board · ${rows.length} flows`), ...body, theme.fg("dim", "↑↓ select · enter details · esc back/close · refreshes every 2s")].map((l) => truncateToWidth(l, width));
+							},
+							handleInput(data: string): void {
+								if (keybindings.matches(data, "tui.select.up")) selected = Math.max(0, selected - 1);
+								else if (keybindings.matches(data, "tui.select.down")) selected = Math.min(Math.max(0, rows.length - 1), selected + 1);
+								else if (keybindings.matches(data, "tui.select.confirm")) {
+									if (rows.length) detail = true;
+								} else if (keybindings.matches(data, "tui.select.cancel")) {
+									if (detail) detail = false;
+									else {
+										close();
+										return;
+									}
+								} else return;
+								tui.requestRender();
+							},
+							invalidate() {},
+						};
+					}, { overlay: true });
+					} finally {
+						stop();
+					}
+					return;
+				}
 				case "autopilot": {
 					const arg = rest[0]?.toLowerCase();
 					if (arg !== undefined && arg !== "on" && arg !== "off") {
