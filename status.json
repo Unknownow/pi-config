@@ -1,0 +1,17 @@
+{
+  "v": 1,
+  "flowId": "20261023-0054-cheaper-workflow-tokens-and-an-own-sandb-97be",
+  "rev": 1,
+  "updated": "2026-10-22T17:55:00.085Z",
+  "title": "Cheaper workflow tokens, and an own sandbox extension in place of context-mode",
+  "stage": 1,
+  "delivery": "merge",
+  "done": [],
+  "repos": [
+    {
+      "branch": "wt/reduce-context",
+      "remote": "github.com/Unknownow/pi-config",
+      "primary": true
+    }
+  ]
+}
