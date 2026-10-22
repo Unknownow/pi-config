@@ -57,7 +57,7 @@ import * as prompts from "./prompts.ts";
 import { branchName, combineOutcomes, type Delivery, type DeliveryOptions, DELIVERIES, DELIVERY_LABELS, deliveryChoices, deliveryInstruction, deliveryMenuLabel, fixedDeliveryLabel, deliveryOutcome, freshPr, isDelivery, landedBranch, planTitle, pushSkipReason, type PrState, repoDeliveryInstruction } from "./delivery.ts";
 import { modelChoices, pathCompletions } from "./pickers.ts";
 import { ghCandidates, withPathDir } from "./gh-path.ts";
-import { citeNames, collectRepoDiff as collectRepoDiffImpl, needsFinalFullReview, type RepoDiff } from "./repo-diff.ts";
+import { citeNames, collectRepoDiff as collectRepoDiffImpl, needsFinalFullReview, shouldSkipRepeatFullReview, type RepoDiff } from "./repo-diff.ts";
 import { mergePublish, movedText, publishDecision, refuseText, type PublishEntry, type PublishFacts } from "./publish.ts";
 import { combineRepoTexts, followFolders, parseAddDir, parseWorktreeList, repoKey, uniqueRoots } from "./repos.ts";
 import { askFolderAdd } from "./folder-add.ts";
@@ -123,6 +123,8 @@ interface FlowState {
 	passedDiff?: string;
 	/** The last judge round, so the next one reviews only what changed since. */
 	lastJudge?: LastJudge;
+	/** The last full review that passed in this stage. */
+	lastFullPass?: { repos: Snaps; base: string };
 	/** Active tools before plan mode switched some off. */
 	toolsBeforePlan?: string[];
 	/** Tokens spent per pipeline stage this session. */
@@ -1007,12 +1009,29 @@ export default function workflow(pi: ExtensionAPI) {
 		let r = await judgeOnce(ctx, diff, focus, plan, signal, onChange, disputes);
 		const limit = cfg.judge.finalFullReviewOverChars;
 		if (r.verdict === "PASS" && plan.kind === "recheck" && limit > 0 && diff.chars > limit && needsFinalFullReview(cfg.judge.finalFullReviewNewFilesOnly, plan.prev.text, plan.cites)) {
-			const final = await judgeOnce(ctx, diff, focus, { kind: "full", snaps: plan.snaps }, signal, onChange, disputes);
-			r = { ...final, usage: addUsage(addUsage(emptyUsage(), r.usage), final.usage) };
+			const share = await repeatShare(diff, plan.snaps);
+			if (share !== undefined) {
+				r = { ...r, text: `${r.text}\n\nFinal full review skipped: a full review passed this stage and the changes since are ${Math.round(share * 100)}% of the diff.` };
+			} else {
+				const final = await judgeOnce(ctx, diff, focus, { kind: "full", snaps: plan.snaps }, signal, onChange, disputes);
+				r = { ...final, usage: addUsage(addUsage(emptyUsage(), r.usage), final.usage) };
+			}
 		}
 		// A pass that questions the plan is not a pass yet: resolvePlanFlaw decides.
 		if (r.verdict === "PASS" && !hasPlanFlaw(r.text)) markPassed(diff.hash);
 		return r;
+	}
+
+	/** The share of the diff changed since the last passing full review of this stage, when that is small enough to skip the final full review; else undefined. */
+	async function repeatShare(diff: Diff, snaps: Snaps | undefined): Promise<number | undefined> {
+		const pass = state.lastFullPass;
+		if (!pass || !snaps || pass.base !== diff.base || diff.chars <= 0) return undefined;
+		const keys = Object.keys(snaps);
+		if (keys.length !== Object.keys(pass.repos).length || keys.some((k) => pass.repos[k]?.head !== snaps[k].head)) return undefined;
+		const parts = await Promise.all(diff.repos.map((r) => git(r.dir, "diff", "--no-color", pass.repos[repoKey(r.root)]?.tree ?? "", snaps[repoKey(r.root)]?.tree ?? "")));
+		if (parts.some((p) => p.code !== 0)) return undefined;
+		const since = parts.reduce((n, p) => n + p.stdout.length, 0);
+		return shouldSkipRepeatFullReview(since, diff.chars, cfg.judge.finalFullReviewRepeatMaxShare) ? since / diff.chars : undefined;
 	}
 
 	function markPassed(hash: string): void {
@@ -1795,6 +1814,7 @@ export default function workflow(pi: ExtensionAPI) {
 		// Back to the phase's stage either way; finishPassed moves to commit once the commit is actually handed over.
 		view.stage = phaseStage();
 		state.lastJudge = plan.snaps ? { hash: diff.hash, repos: plan.snaps, base: diff.base, verdict, text } : undefined;
+		if (plan.kind === "full") state.lastFullPass = plan.snaps && verdict === "PASS" && !hasPlanFlaw(text) ? { repos: plan.snaps, base: diff.base } : undefined;
 		if (state.phase === "execute") state.flowFindings = recordFindings(state.flowFindings, state.stage, text);
 		state.lastKnowledge = knowledge;
 		persist();
@@ -1958,6 +1978,7 @@ export default function workflow(pi: ExtensionAPI) {
 		state.stageJudged = undefined;
 		if (state.passedDiff) markPassSummarized(state.passedDiff); // a leftover diff from the round before is not this round's
 		state.lastJudge = undefined; // a new round gets a full review, not a re-review of the last one
+		state.lastFullPass = undefined;
 		planReady = false;
 		planProposed = false;
 		consecutiveErrors = 0;
@@ -2663,6 +2684,7 @@ Nothing was delivered.`);
 					}
 					committedDiffs.add(diff.hash);
 					state.lastJudge = undefined;
+					state.lastFullPass = undefined;
 					state.passedDiff = undefined;
 					state.stageJudged = false;
 					acted = true;
@@ -3245,6 +3267,7 @@ Nothing was delivered.`);
 		state.stageJudged = undefined;
 		if (state.passedDiff) markPassSummarized(state.passedDiff); // a leftover diff from the stage before is not this stage's
 		state.lastJudge = undefined; // a new stage gets a full review, not a re-review of the last one
+		state.lastFullPass = undefined;
 		view.stage = "execute";
 		view.changed();
 		planMilestone(ctx);

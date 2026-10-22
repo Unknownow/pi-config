@@ -2,7 +2,7 @@
 
 Reference list for `pi/agent/extensions/workflow/`. Goal: less time, fewer tokens, more parallelism.
 
-Status: A2, A3, A5, A7, B1, B7, B9, C2, C3, C4, D2, D3, D4, D5, D6, D7, D8, D9, D10, D11, D12, D13, D14, D15, D16 and D17 are implemented; A13, A14, A15, A16, A17, A18, A20 and A21 are implemented; A22 is implemented; A23, A24 and A25 are implemented; A26, A27, A28, A32 and D18 are implemented; A12 is implemented; A1 is rejected; the rest are ideas only. Found by reading the code on 2026-10-16. Nothing was measured, so every benefit below is an estimate. Line numbers are from commit `3fdc69a` and will drift.
+Status: A2, A3, A5, A7, B1, B7, B9, C2, C3, C4, D2, D3, D4, D5, D6, D7, D8, D9, D10, D11, D12, D13, D14, D15, D16 and D17 are implemented; A13, A14, A15, A16, A17, A18, A20 and A21 are implemented; A22 is implemented; A23, A24 and A25 are implemented; A26, A27, A28, A32, B14 and D18 are implemented; A12 is implemented; A1 is rejected; the rest are ideas only. Found by reading the code on 2026-10-16. Nothing was measured, so every benefit below is an estimate. Line numbers are from commit `3fdc69a` and will drift.
 
 ## Keeping this file current
 
@@ -79,6 +79,7 @@ Plan (Opus) -> approve -> execute (Sonnet) -> judge (Opus, separate `pi` process
 | B11 | Use a cheaper model for the commit role (Haiku). | Low (K) | S | Medium-High. Weaker at git edge cases and hook failures; unmeasured. | None; probably not worth it, B10 is better. |
 | B12 | Idea: `finalizeThinking`, a lower thinking level for the final-plan reply (Opus `high` replies took 3-7 min with 23k-46k output tokens). Idea: no double plan at finalize (the final-plan reply repeats the plan). | Medium (T) | S | Medium. A weaker final plan. | Final-plan reply duration and output tokens. |
 | B13 | Idea: cheaper judge rechecks (`judge.recheckThinking: "low"` or a cheaper recheck model); 16-22 judge calls per flow took 15 s-3.5 min each. Idea: Sonnet does the re-reviews. | Medium (T) | S | Medium. A missed regression. | Judge minutes per flow. |
+| B14 | After a passing re-review the final full review repeated a full review that had just passed (129 files, about 1.7M tokens). Skip it when a full review already passed in this stage and the change since is small. **Done:** `shouldSkipRepeatFullReview` in `repo-diff.ts`, `lastFullPass` in `index.ts`, `judge.finalFullReviewRepeatMaxShare` (default 0.1, 0 = off). | High (K, T) | S | Medium. A fix of up to 10% goes without a whole-change review. | Count skipped final full reviews. |
 
 ## C. Repeated work and caching
 
@@ -195,6 +196,7 @@ Method for every item:
 | A33 | Bytes kept out of the context by run_code | Idea only. | Report shows bytes saved |
 | B12 | Final-plan reply duration and output tokens | Session logs. Idea only. | Replies under 3 min |
 | B13 | Judge minutes per flow | Sum judge call times per flow. Idea only. | Rechecks under 1 min |
+| B14 | Full reviews per stage, judge tokens per flow | Judge events in `metrics.jsonl`. Implemented, not measured yet. | Fewer repeated full reviews of large stages, and no defect missed that the repeated review would have caught |
 
 What to report after each change: baseline median, new median, percent change, and the quality-guard result, appended to `docs/workflow-baseline.md`.
 
