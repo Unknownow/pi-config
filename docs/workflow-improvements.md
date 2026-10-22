@@ -2,7 +2,7 @@
 
 Reference list for `pi/agent/extensions/workflow/`. Goal: less time, fewer tokens, more parallelism.
 
-Status: A2, A3, A5, A7, B1, B7, B9, C2, C3, C4, D2, D3, D4, D5, D6, D7, D8, D9, D10, D11, D12, D13 and D14 are implemented; A13 and A14 are implemented; A12 is implemented; A1 is rejected; the rest are ideas only. Found by reading the code on 2026-10-16. Nothing was measured, so every benefit below is an estimate. Line numbers are from commit `3fdc69a` and will drift.
+Status: A2, A3, A5, A7, B1, B7, B9, C2, C3, C4, D2, D3, D4, D5, D6, D7, D8, D9, D10, D11, D12, D13 and D14 are implemented; A13, A14, A15, A16, A17 and A18 are implemented; A12 is implemented; A1 is rejected; the rest are ideas only. Found by reading the code on 2026-10-16. Nothing was measured, so every benefit below is an estimate. Line numbers are from commit `3fdc69a` and will drift.
 
 ## Keeping this file current
 
@@ -42,6 +42,11 @@ Plan (Opus) -> approve -> execute (Sonnet) -> judge (Opus, separate `pi` process
 | A12 | A test-and-fix flow: a strong supervisor plans and triages, Haiku runners run the tests in parallel (ordered by resource: Unity project, device), bugs are fixed automatically and retested. **Done:** the test phase, `test_run`, the runner guard and the report (`runner-guard.ts`, `test-report.ts`, `test-run.ts`), and the automatic fix loop: fix round → judge/arbiter → commit → retest (`test-flow.ts`, `index.ts`, `prompts.ts`). | High (Q), Medium (T) | L | Medium. Runners are cheap models; their claims are checked against their tool calls. | Whether runner tokens are the larger share, and whether fixes survive the retest. |
 | A13 | Commit, push, PR and merge happened only at the end of a stage or flow, so a plan that must publish and then continue needed a replan or a new flow. **Done:** checkpoints: the `deliver` tool (judge-gated, limited by the stage's delivery, unplanned ones amend the plan), `Deliver:` steps and the tag action (`checkpoints.ts`, `tags.ts`, `index.ts`, `prompts.ts`). | High (T) | M | Medium. Delivery is outward-facing, so it is capped and gated. | Checkpoints per flow. |
 | A14 | A flow could not wait for a person (publish with `updates.bat`, open an Editor): a blocked stage ended as "delivered: no changes" and the flow moved on. **Done:** wait points: `wait_for_user`, `Wait:` steps, stage-start `(after: ...; check: ...)`, polled checks with auto-resume, and a stage with open steps no longer advances on a no-change turn (`waits.ts`, `stages.ts`, `agent-end.ts`, `plan-doc.ts`, `config.ts`, `index.ts`). | High (T) | M | Medium. Auto-resume sends a message when the check passes. | Stages ending "no changes" with open steps. |
+| A15 | A session that needed an answer (plan approval, a failed step, a finished wait) gave no signal outside the terminal, so a person came back late. **Done:** desktop notifications for menus, idle sessions, wait events and flow end; automatic turns never notify (`notify.ts`, `config.ts`, `index.ts`). | Medium (T) | S | Low. The notification fails silently where the platform has no support. | Menus answered within 1 min of a notification. |
+| A16 | Agents stopped between steps and ran tool calls one after another. **Done:** every role's prompt and `pi/agent/AGENTS.md` carry a keep-working and parallel-calls rule (`PACE` in `prompts.ts`). | Medium (T) | S | Low. A prompt rule; models may follow it only in part. | Tool calls per assistant message. |
+| A17 | Executors slept for fixed minutes after a background test run (`sleep 270-285`, about 34 min in one session). **Done:** a no-long-sleep rule in the execute and test prompts and `pi/agent/AGENTS.md` (`NO_SLEEP` in `prompts.ts`). | Medium (T) | S | Low. | Total `sleep` seconds per session. |
+| A18 | A delivery over several repositories handled one repository after another, including the CI wait. **Done:** the repositories open their pull requests and wait for checks in parallel, then merge in order and stop at the first failure; checks use `--interval 5` (`delivery.ts`). | Medium (T) | S | Medium. Several `gh` calls at once; merges stay serial. | Commit-step duration on multi-repo merge stages. |
+| A19 | Idea: deliver a pull request in the middle of a plan and merge once at the end, so CI is waited for once. | Medium (T) | M | Medium. A merge at the end hides an early break. | CI waits per flow. |
 
 ## B. Tokens
 
@@ -58,6 +63,8 @@ Plan (Opus) -> approve -> execute (Sonnet) -> judge (Opus, separate `pi` process
 | B9 | `BATCH` and `PLAN_BATCH` in `prompts.ts:7-9` are near-duplicate text. **Done:** one `batchLine` in `prompts.ts`; prompt texts unchanged (`prompts.test.ts`). | Low (K) | S | Low. | None. |
 | B10 | The commit step is a full Sonnet-low subagent with a bash tool (`index.ts:2640-2646`, `config.ts:156`). A scripted commit (stage the reviewed files, commit with a generated subject) needs no model for the common case. | Medium (K, T) | M | Medium. Commit messages get worse unless the plan's section 9 supplies the subject. Keep the model path for odd cases. | Check what the commit agent does beyond `git add` and `git commit`. |
 | B11 | Use a cheaper model for the commit role (Haiku). | Low (K) | S | Medium-High. Weaker at git edge cases and hook failures; unmeasured. | None; probably not worth it, B10 is better. |
+| B12 | Idea: `finalizeThinking`, a lower thinking level for the final-plan reply (Opus `high` replies took 3-7 min with 23k-46k output tokens). | Medium (T) | S | Medium. A weaker final plan. | Final-plan reply duration and output tokens. |
+| B13 | Idea: cheaper judge rechecks (`judge.recheckThinking: "low"` or a cheaper recheck model); 16-22 judge calls per flow took 15 s-3.5 min each. | Medium (T) | S | Medium. A missed regression. | Judge minutes per flow. |
 
 ## C. Repeated work and caching
 
@@ -145,6 +152,13 @@ Method for every item:
 | A12 | User prompts per test flow; supervisor vs runner tokens (D3 metrics); bugs verified fixed per flow | Count the questions asked per flow, compare `test` and `runner` tokens in the flow card, count `[fixed]` items. Not measured yet. | Most flows end without prompts beyond the crucial cases; runner tokens are the larger share; no fix is committed that the retest shows broken |
 | A13 | Checkpoints per flow; stage counts per plan | Count `checkpoint` lines in flow outcomes and `### Stage` headings per plan. Implemented, not measured yet. | Fewer plans split only to deliver midway |
 | A14 | Replans per original plan; stages ending "no changes" with open steps; how many times the user asked "have all stages finished?" | Count `Amendment N (executor: wait)` and replans in session logs. Implemented, not measured yet. | No stage ends "no changes" while steps are open |
+| A15 | Menus answered within 1 min after a notification | Compare menu-open and answer times in session logs. Implemented, not measured yet. | Most menus answered within a minute |
+| A16 | Tool calls per assistant message | Count tool calls per assistant message in session logs. Implemented, not measured yet. | More than one on average in exploring steps |
+| A17 | Total `sleep` seconds per session | Grep `sleep` commands in session logs. Implemented, not measured yet. | No sleep over 30 s |
+| A18 | Commit-step duration on multi-repo merge stages | Commit-step times in session logs. Implemented, not measured yet. | Shorter than the sum of the repositories' times |
+| A19 | CI waits per flow | Count `gh pr checks --watch` calls per flow. Idea only. | One wait per flow |
+| B12 | Final-plan reply duration and output tokens | Session logs. Idea only. | Replies under 3 min |
+| B13 | Judge minutes per flow | Sum judge call times per flow. Idea only. | Rechecks under 1 min |
 
 What to report after each change: baseline median, new median, percent change, and the quality-guard result, appended to `docs/workflow-baseline.md`.
 
