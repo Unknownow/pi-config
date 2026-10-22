@@ -133,12 +133,16 @@ If the repo's front-matter rules (enforced by `npm run check`) need an updated d
 - **Stage 1:** `feat(workflow): run slow suites once and rerun them only when a fix touches them`. Files: `pi/agent/extensions/workflow/prompts.ts`, `pi/agent/extensions/workflow/prompts.test.ts`, `docs/workflow-improvements.md`.
 - **Stage 2:** `docs(playbooks): faster test-packages runs and iterate-narrow guidance`. Files: `entries/eng/playbook/release-code-packages.md`, `entries/eng/guideline/sdk-wrapper-packages.md`.
 
+## Plan choices upheld at a pass
+pi/agent/extensions/workflow/prompts.test.ts:97 - minor - [plan-flaw] The plan's test asserted the slow-suite sentence on `planPhase(true)` and `planPhase(false, "onRequest", "always")`, but neither of those outputs contains it.
+pi/agent/extensions/workflow/prompts.ts:97 - minor - [plan-flaw] The new rerun rule conflicts with the old wording kept in the same bullet.
+
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 In `D:/projects/pi-config`, check `git status -sb`: it must be clean on `master`.
-- [ ] S2 In `prompts.ts:75`, append one sentence to the end of planner item 6, after "…and the expected output.": " Mark each sui
-- [ ] S3 In `docs/workflow-improvements.md`:
-- [ ] S4 Add the test in section 6 to `prompts.test.ts` and add `FIX_ROUND` to the import at `:4`, keeping the import list alphab
+- [x] S1 In `D:/projects/pi-config`, check `git status -sb`: it must be clean on `master`.
+- [x] S2 In `prompts.ts:75`, append one sentence to the end of planner item 6, after "…and the expected output.": " Mark each sui
+- [x] S3 In `docs/workflow-improvements.md`:
+- [x] S4 Add the test in section 6 to `prompts.test.ts` and add `FIX_ROUND` to the import at `:4`, keeping the import list alphab
 - [ ] S5 In `D:/projects/knowledge`, run `git fetch` and then `git merge --ff-only origin/main` on `main`. If the fast-forward fa
 - [ ] S6 In `entries/eng/playbook/release-code-packages.md:29` (item 2, "Test before tagging"), keep the existing commands and ad
 - [ ] S7 Run `npm ci` if `node_modules` is missing, then `npm run check`. It must pass. Then call `judge`.

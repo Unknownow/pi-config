@@ -1,12 +1,17 @@
 {
   "v": 1,
   "flowId": "20261022-1621-faster-unity-test-runs-workflow-prompts-03e6",
-  "rev": 1,
-  "updated": "2026-10-22T09:21:45.359Z",
+  "rev": 2,
+  "updated": "2026-10-22T09:24:02.088Z",
   "title": "Faster Unity test runs: workflow prompts and knowledge playbooks (remaining stages)",
   "stage": 1,
   "delivery": "merge",
-  "done": [],
+  "done": [
+    "S1",
+    "S2",
+    "S3",
+    "S4"
+  ],
   "repos": [
     {
       "branch": "master",
