@@ -1,11 +1,9 @@
 {
   "v": 1,
   "flowId": "20261023-0054-cheaper-workflow-tokens-and-an-own-sandb-97be",
-  "rev": 4,
-  "updated": "2026-10-22T18:22:52.647Z",
+  "rev": 5,
+  "updated": "2026-10-22T18:23:46.846Z",
   "title": "Cheaper workflow tokens, and an own sandbox extension in place of context-mode",
-  "stage": 2,
-  "delivery": "merge",
   "done": [
     "S1",
     "S2",
@@ -24,10 +22,15 @@
     "S15",
     "S16"
   ],
+  "finished": {
+    "at": "2026-10-22T18:23:46.733Z",
+    "ok": true,
+    "text": "stage 1: committed (1 commit); stage 2: committed (5 commits) · 1 human check(s) for you (see the card)"
+  },
   "judgedHeads": {
     "d:/works/wt/reduce-context/pi-config": {
       "base": "5520ecc3be7dcdf93a4764b12b518c0db1019983",
-      "head": "ce4390141916c74fdb5e1f81f09a808e613b0efd",
+      "head": "33f8b466790cda423923ad1777a30013c12ee7db",
       "branch": "wt/reduce-context"
     }
   },
