@@ -57,7 +57,7 @@
   "maxPlanRevisions": 2,
   "delivery": {
     "ask": true,
-    "default": "commit",
+    "default": "merge",
     "splitCommits": true,
     "mergeMethod": "merge",
     "deleteBranch": true,
