@@ -62,6 +62,10 @@ No code changes, so no new tests. Optionally, sanity-run the README test command
 ### 9. Commits
 None. The merge publishes the existing commits `ca46f8d`, `a4cc6f5`, `b0a92e8` and the 18 earlier branch commits unchanged.
 
+## Amendment 1 (executor: checkpoint)
+Deliver pr — User asked to open a PR from the flow branch to master and merge it; all 21 commits are already pushed, so there is nothing uncommitted.
+
+
 <!-- pi-workflow:status -->
 ## Checklist
 - [x] S1 Check before merging:
