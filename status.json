@@ -1,0 +1,17 @@
+{
+  "v": 1,
+  "flowId": "20261022-1402-flow-visualizer-a-progress-line-in-the-w-d9cf",
+  "rev": 1,
+  "updated": "2026-10-22T07:02:46.493Z",
+  "title": "Flow visualizer: a progress line in the widget and a `/flow board` overlay for all flows",
+  "stage": 1,
+  "delivery": "merge",
+  "done": [],
+  "repos": [
+    {
+      "branch": "master",
+      "remote": "github-personal/Unknownow/pi-config",
+      "primary": true
+    }
+  ]
+}
