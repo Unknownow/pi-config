@@ -34,6 +34,25 @@ export interface RunOptions {
 	mcp?: { servers: Record<string, Record<string, unknown>>; extension: string };
 	/** Extra environment for the subagent process. */
 	env?: Record<string, string>;
+	/** Starts the subagent without AGENTS.md / CLAUDE.md context files. */
+	noContextFiles?: boolean;
+}
+
+/** The flags before the system prompts and the task. */
+export function baseArgs(opts: Pick<RunOptions, "role" | "extensions" | "mcp" | "tools" | "noContextFiles">): string[] {
+	const args = ["--mode", "json", "-p", "--no-session", "--no-extensions", "--no-skills", "--no-prompt-templates"];
+	if (opts.noContextFiles) args.push("--no-context-files");
+	for (const ext of opts.extensions) args.push("-e", expandHome(ext));
+	if (opts.mcp) args.push("-e", "builtin:mcp", "-e", opts.mcp.extension);
+	args.push("--model", opts.role.model);
+	if (opts.role.thinking) args.push("--thinking", opts.role.thinking);
+	if (opts.tools.length > 0) args.push("--tools", opts.tools.join(","));
+	return args;
+}
+
+/** Only explore skips the context files, unless `explore.contextFiles` is on. */
+export function noContextFilesFor(role: string, exploreContextFiles: boolean): boolean {
+	return role === "explore" && !exploreContextFiles;
 }
 
 export type SubagentEvent =
@@ -182,12 +201,7 @@ export async function runSubagent(opts: RunOptions): Promise<RunResult> {
 	const messages: Message[] = [];
 
 	try {
-		const args = ["--mode", "json", "-p", "--no-session", "--no-extensions", "--no-skills", "--no-prompt-templates"];
-		for (const ext of opts.extensions) args.push("-e", expandHome(ext));
-		if (opts.mcp) args.push("-e", "builtin:mcp", "-e", opts.mcp.extension);
-		args.push("--model", opts.role.model);
-		if (opts.role.thinking) args.push("--thinking", opts.role.thinking);
-		if (opts.tools.length > 0) args.push("--tools", opts.tools.join(","));
+		const args = baseArgs(opts);
 		// Windows caps a command line at ~32k characters; long tasks travel as a prompt file instead.
 		const longTask = opts.task.length > 8000;
 		const prompts = longTask ? [...opts.systemPrompts, `## Task\n\n${opts.task}`] : opts.systemPrompts;

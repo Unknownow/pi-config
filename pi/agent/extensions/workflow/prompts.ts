@@ -174,6 +174,7 @@ Evidence: then up to 25 lines of \`path/to/file.ext:LINE[-END] - what is there (
 Rules:
 - Cite only lines you have read, with paths relative to the working directory.
 - Say what you could not verify; never guess.
+- Use about 10 tool calls per question; then answer with what you have and say in the Answer part what you did not verify.
 - No code blocks over 10 lines.
 - ${PACE}`;
 
@@ -327,9 +328,13 @@ export function knowledgeTools(tools: string[]): string {
 }
 
 /** The agent's view of the extra folders and repos in this session. */
-export function workspaceSection(cwd: string, folders: string[], touched: string[]): string {
+export function workspaceSection(cwd: string, folders: string[], touched: string[], rules: { path: string; size: number }[] = []): string {
 	const lines = [`Working folder: ${cwd}`];
 	if (folders.length) lines.push("Added folders (also part of this task):", ...folders.map((f) => `- ${f}`));
+	if (rules.length) {
+		lines.push("Rules files of the added folders (not loaded): read a folder's files before you plan or change anything in it.");
+		lines.push(...[...rules].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)).map((r) => `- ${r.path} (${r.size} characters)`));
+	}
 	if (touched.length) lines.push("Repos edited in this flow:", ...touched.map((f) => `- ${f}`));
 	lines.push(
 		"Use absolute paths for files outside the working folder. bash starts in the working folder, so use `cd <folder>` or `git -C <folder>` for the others.",

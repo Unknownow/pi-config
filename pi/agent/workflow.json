@@ -11,7 +11,7 @@
     },
     "explore": {
       "model": "claude-bridge/claude-haiku-5-5",
-      "thinking": "medium"
+      "thinking": "low"
     },
     "advisor": {
       "model": "claude-bridge/claude-opus-5-5",
@@ -128,7 +128,9 @@
       "UNITY_PROJECT_PATH"
     ]
   },
+  "addedFolderRules": "paths",
   "explore": {
+    "contextFiles": false,
     "maxQueries": 8,
     "concurrency": 8,
     "tools": [

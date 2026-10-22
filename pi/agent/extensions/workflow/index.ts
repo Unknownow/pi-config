@@ -78,7 +78,7 @@ import { type CheckVerdict, autopilotAmendment, autopilotReply, checkTitle, chec
 import { nextStage, parseStages, stageDelivery, stageLine, stageNote, stageStart, stagesOutcome } from "./stages.ts";
 import { planToolProblem, planToolRefused } from "./readonly-tools.ts";
 import { MetricsQueue, type MetricEvent, subagentMetric } from "./metrics.ts";
-import { addUsage, emptyUsage, mapLimit, type RunResult, runSubagent } from "./subagent.ts";
+import { addUsage, emptyUsage, mapLimit, noContextFilesFor, type RunResult, runSubagent } from "./subagent.ts";
 import {
 	type Deviation,
 	deviationBlock,
@@ -721,13 +721,14 @@ export default function workflow(pi: ExtensionAPI) {
 		opts: { systemPrompts: string[]; tools: string[]; task: string; cwd: string; signal?: AbortSignal; thinking?: Thinking; env?: Record<string, string>; extensions?: string[]; timeoutMs?: number },
 		onChange?: (run: RunView) => void,
 	): Promise<{ result: RunResult; run: RunView }> {
-		const run = view.start(role, label);
+		const run = view.start(role, label, cfg.roles[role].model);
 		onChange?.(run);
 		const { thinking, extensions, timeoutMs, ...rest } = opts;
 		const k = knowledgeFor(role);
 		const started = Date.now();
 		const result = await runSubagent({
 			...rest,
+			noContextFiles: noContextFilesFor(role, cfg.explore.contextFiles),
 			tools: k ? [...rest.tools, ...k.tools] : rest.tools,
 			systemPrompts: k && role !== "judge" ? [...rest.systemPrompts, prompts.knowledgeTools(k.tools)] : rest.systemPrompts,
 			mcp: k ? { servers: k.servers, extension: FORWARD_EXTENSION } : undefined,
@@ -2698,19 +2699,21 @@ Nothing was delivered.`);
 		const touched = state.touchedRepos ?? [];
 		if (folders.length || touched.length) {
 			const opts = event.systemPromptOptions;
-			opts.sections.workspace = prompts.workspaceSection(ctx.cwd, folders, touched);
 			const have = new Set(opts.contextFiles.map((f) => repoKey(f.path)));
+			const listed: { path: string; size: number }[] = [];
 			for (const folder of folders) {
 				try {
 					for (const f of loadProjectContextFiles({ cwd: folder, agentDir: getAgentDir() })) {
 						if (have.has(repoKey(f.path))) continue;
 						have.add(repoKey(f.path));
-						opts.contextFiles.push(f);
+						if (cfg.addedFolderRules === "full") opts.contextFiles.push(f);
+						else listed.push({ path: f.path, size: f.content.length });
 					}
 				} catch {
 					// an unreadable folder just adds no context files
 				}
 			}
+			opts.sections.workspace = prompts.workspaceSection(ctx.cwd, folders, touched, listed);
 		}
 		const staged = state.phase === "execute" ? currentStages() : undefined;
 		const phaseText = prompts.phaseSection(state.phase, {
@@ -2886,11 +2889,11 @@ Nothing was delivered.`);
 
 	// Live token count per stage: usage is cumulative while a message streams.
 	pi.on("message_update", async (event) => {
-		if (event.message.role === "assistant" && event.message.usage) view.mainUsage(countTokens(event.message.usage, cfg.tokenWeights), false);
+		if (event.message.role === "assistant" && event.message.usage) view.mainUsage(countTokens(event.message.usage, cfg.tokenWeights), false, event.message.model, event.message.usage);
 	});
 
 	pi.on("message_end", async (event) => {
-		if (event.message.role === "assistant" && event.message.usage) view.mainUsage(countTokens(event.message.usage, cfg.tokenWeights), true, event.message.model);
+		if (event.message.role === "assistant" && event.message.usage) view.mainUsage(countTokens(event.message.usage, cfg.tokenWeights), true, event.message.model, event.message.usage);
 	});
 
 	pi.registerEntryRenderer<FlowSummary>(SUMMARY_ENTRY, (entry, _opts, theme) => (entry.data ? new Text(summaryLines(entry.data, theme).join("\n"), 1, 0) : undefined));
