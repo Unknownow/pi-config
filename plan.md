@@ -280,9 +280,11 @@ export interface NotifyConfig { enabled: boolean; idleMs: number }              
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 Session list in rows (`worktree/live.ts:74-88`, `worktree/index.ts:15,769-773`, startLive near `:777`, `worktree/live.te
-- [ ] S2 Desktop notifications (new `workflow/notify.ts` and `notify.test.ts`; `config.ts` interface near `:64`, defaults near `:
-- [ ] S3 Keep-working, parallel rule (`prompts.ts`, `prompts.test.ts`, `pi/agent/AGENTS.md`).
-- [ ] S4 No fixed long sleeps (`prompts.ts`, `prompts.test.ts`, `pi/agent/AGENTS.md`). Export `NO_SLEEP` with the exact text and 
-- [ ] S5 Faster multi-repo delivery (`delivery.ts:110-112,170-178`, `delivery.test.ts:64-70`, `README.md`).
-- [ ] S6 Backlog (`docs/workflow-improvements.md`). Add new rows, following the "Keeping this file current" rules:
+- [x] S1 Session list in rows (`worktree/live.ts:74-88`, `worktree/index.ts:15,769-773`, startLive near `:777`, `worktree/live.te
+- [x] S2 Desktop notifications (new `workflow/notify.ts` and `notify.test.ts`; `config.ts` interface near `:64`, defaults near `:
+- [x] S3 Keep-working, parallel rule (`prompts.ts`, `prompts.test.ts`, `pi/agent/AGENTS.md`).
+- [x] S4 No fixed long sleeps (`prompts.ts`, `prompts.test.ts`, `pi/agent/AGENTS.md`). Export `NO_SLEEP` with the exact text and 
+- [x] S5 Faster multi-repo delivery (`delivery.ts:110-112,170-178`, `delivery.test.ts:64-70`, `README.md`).
+- [x] S6 Backlog (`docs/workflow-improvements.md`). Add new rows, following the "Keeping this file current" rules:
+## Outcome
+2026-10-22T02:34:12.269Z — ok: committed (5 commits), pushed
