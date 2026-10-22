@@ -398,10 +398,12 @@ Run from `pi/agent/extensions/workflow` with `node --test <file>.test.ts`. Every
 - [x] S6 README (`pi/agent/extensions/workflow/README.md`):
 - [x] S7 `docs/workflow-improvements.md`:
 - [x] S8 Run the stage-1 tests (section 6), fix failures, then run the judge.
-- [ ] S9 Add `deliverStepSpec`, `deliverHint`, `deliverHintsBlock`, `publishRefusal` and `deliverStepWarnings` to `checkpoints.ts
-- [ ] S10 Use the hints at the annotation points: `plan_check` (`index.ts:2335`), `startExecution` (`:582-599`) and the next-stage
-- [ ] S11 Replace the refusal texts at `index.ts:2670`, `:2672` and `:2691`, and the new stage-1 pre-check text, with `publishRefu
-- [ ] S12 Update the prompts: `prompts.ts:100`, `CHECKPOINTS` (`:25`), finalize (`:58-66`), and the `deliver` tool description (`i
-- [ ] S13 Show `deliverStepWarnings` as `warning` notices when the final plan is accepted for execution.
-- [ ] S14 README "Checkpoints": the `Deliver: <mode> — <what>` form, the annotations, and the refusal guidance. In `docs/workflow-
-- [ ] S15 Run all workflow tests (section 6), fix failures, then run the judge.
+- [x] S9 Add `deliverStepSpec`, `deliverHint`, `deliverHintsBlock`, `publishRefusal` and `deliverStepWarnings` to `checkpoints.ts
+- [x] S10 Use the hints at the annotation points: `plan_check` (`index.ts:2335`), `startExecution` (`:582-599`) and the next-stage
+- [x] S11 Replace the refusal texts at `index.ts:2670`, `:2672` and `:2691`, and the new stage-1 pre-check text, with `publishRefu
+- [x] S12 Update the prompts: `prompts.ts:100`, `CHECKPOINTS` (`:25`), finalize (`:58-66`), and the `deliver` tool description (`i
+- [x] S13 Show `deliverStepWarnings` as `warning` notices when the final plan is accepted for execution.
+- [x] S14 README "Checkpoints": the `Deliver: <mode> — <what>` form, the annotations, and the refusal guidance. In `docs/workflow-
+- [x] S15 Run all workflow tests (section 6), fix failures, then run the judge.
+## Outcome
+2026-10-22T17:28:49.992Z — failed: stage 1: committed (2 commits), pushed, no open pull request; stage 2: committed (2 commits), pushed, no open pull request
