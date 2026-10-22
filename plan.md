@@ -442,12 +442,12 @@ Don't `/reload` any session.
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 Create `W/board.ts` with the stage 1 functions from Design: `LiveInfo`, `parseLive`, `readLive`, `liveEvents`, `progress
-- [ ] S2 `W/view.ts`:
-- [ ] S3 `W/index.ts` `updateStatus()` (`:432`): set `view.progress` per Design. Then call `liveTick()` as the last statement.
-- [ ] S4 `W/index.ts`: add the live writer next to the claim code (`:1055-1070`).
-- [ ] S5 Tests: create `W/board.test.ts` and extend `W/view.test.ts`, as in §6. Run the full suite and expect `fail 0`.
-- [ ] S6 Docs:
+- [x] S1 Create `W/board.ts` with the stage 1 functions from Design: `LiveInfo`, `parseLive`, `readLive`, `liveEvents`, `progress
+- [x] S2 `W/view.ts`:
+- [x] S3 `W/index.ts` `updateStatus()` (`:432`): set `view.progress` per Design. Then call `liveTick()` as the last statement.
+- [x] S4 `W/index.ts`: add the live writer next to the claim code (`:1055-1070`).
+- [x] S5 Tests: create `W/board.test.ts` and extend `W/view.test.ts`, as in §6. Run the full suite and expect `fail 0`.
+- [x] S6 Docs:
 - [ ] S7 `W/board.ts`: add `BoardEntry`, `BoardRow`, `boardRows`, `boardLines` and `detailLines` exactly as specified. Import `CL
 - [ ] S8 `W/index.ts`:
 - [ ] S9 Tests: extend `W/board.test.ts` as in §6. Run the full suite and expect `fail 0`.
