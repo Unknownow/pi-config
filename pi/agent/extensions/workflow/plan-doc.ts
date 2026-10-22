@@ -9,6 +9,15 @@ export interface ChecklistItem {
 	/** The stage heading above the step, when the plan is staged. */
 	stage?: number;
 	done: boolean;
+	/** A check only a person can do (a `Verify:` step): never an open step. */
+	human?: true;
+}
+
+const VERIFY = /^verify\s*:/i;
+
+/** Whether a step is a human check; also true for checklists saved before the flag existed. */
+export function isHuman(i: ChecklistItem): boolean {
+	return !!i.human || VERIFY.test(i.text);
 }
 
 export interface PlanSections {
@@ -77,7 +86,8 @@ export function parseChecklist(plan: string): ChecklistItem[] {
 		const id = `S${m[1]}`;
 		if (seen.has(id)) continue;
 		seen.add(id);
-		items.push({ id, text: m[2].replace(/\*\*/g, "").trim().slice(0, 120), ...(stage ? { stage } : {}), done: false });
+		const text = m[2].replace(/\*\*/g, "").trim().slice(0, 120);
+		items.push({ id, text, ...(stage ? { stage } : {}), done: false, ...(VERIFY.test(text) ? { human: true as const } : {}) });
 	}
 	return items;
 }
@@ -90,7 +100,7 @@ export function mergeChecklist(plan: string, old: ChecklistItem[] | undefined): 
 
 /** The reminder line for the unticked steps of the current stage (or unstaged steps), or undefined when none are open. */
 export function openStepsReminder(checklist: ChecklistItem[] | undefined, stage?: number): string | undefined {
-	const open = (checklist ?? []).filter((i) => !i.done && (stage === undefined || i.stage === undefined || i.stage === stage));
+	const open = (checklist ?? []).filter((i) => !isHuman(i) && !i.done && (stage === undefined || i.stage === undefined || i.stage === stage));
 	if (!open.length) return undefined;
 	return `Open step${open.length === 1 ? "" : "s"} not ticked: ${open.map((i) => i.id).join(", ")}. Tick the finished ones with \`plan_check\`.`;
 }
@@ -109,10 +119,11 @@ export function planCard(plan: string, checklist: ChecklistItem[] | undefined, s
 	if (s.doneWhen) out.push(`### Done when\n${s.doneWhen}`);
 	if (s.amendments) out.push(`### Amendments\n${s.amendments.replace(/^## /gm, "#### ")}`);
 	if (checklist?.length) {
-		const done = checklist.filter((i) => i.done).length;
-		const open = checklist.filter((i) => !i.done && (stage === undefined || i.stage === undefined || i.stage === stage));
+		const own = checklist.filter((i) => !isHuman(i));
+		const done = own.filter((i) => i.done).length;
+		const open = own.filter((i) => !i.done && (stage === undefined || i.stage === undefined || i.stage === stage));
 		const where = stage !== undefined && stageCount ? ` (stage ${stage} of ${stageCount})` : "";
-		out.push(`### Open steps${where} — ${done} of ${checklist.length} done\n${open.length ? open.map((i) => `- [ ] ${i.id} ${i.text}`).join("\n") : "(none open)"}`);
+		out.push(`### Open steps${where} — ${done} of ${own.length} done\n${open.length ? open.map((i) => `- [ ] ${i.id} ${i.text}`).join("\n") : "(none open)"}`);
 	}
 	if (waiting) out.push(`### Waiting for\n${waiting}`);
 	if (path) out.push(`Read ${path} for a step's details.`);
@@ -174,7 +185,10 @@ export function newFlowId(title: string, now: Date, hex4: string): string {
 /** The readable plan file: the approved text exactly, then a status block below a marker line. */
 export function renderPlanFile(flowId: string, plan: string, checklist: ChecklistItem[] | undefined, finished?: Finished, waiting?: string): string {
 	const out = [`${FILE_HEADER}${flowId} -->`, plan, "", STATUS_MARKER];
-	if (checklist?.length) out.push("## Checklist", ...checklist.map((i) => `- [${i.done ? "x" : " "}] ${i.id} ${i.text}`));
+	const own = (checklist ?? []).filter((i) => !isHuman(i));
+	const human = (checklist ?? []).filter(isHuman);
+	if (own.length) out.push("## Checklist", ...own.map((i) => `- [${i.done ? "x" : " "}] ${i.id} ${i.text}`));
+	if (human.length) out.push("## For you after the flow", ...human.map((i) => `- ${i.id} ${i.text}`));
 	if (waiting) out.push(`**Waiting for:** ${waiting}`);
 	if (finished) out.push("## Outcome", `${finished.at} — ${finished.ok ? "ok" : "failed"}: ${finished.text}`);
 	return `${out.join("\n")}\n`;

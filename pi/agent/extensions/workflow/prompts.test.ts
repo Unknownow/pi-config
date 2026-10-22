@@ -99,3 +99,9 @@ test("slow suites run once and rerun only when touched", async () => {
 	assert.ok(EXECUTE_PHASE.includes("When done, run the plan's tests as above"));
 	assert.ok(FIX_ROUND.includes("rerun a slow suite only if the fix changed files it builds or reads"));
 });
+
+test("human checks are Verify steps, never Wait", () => {
+	assert.ok(planPhase(true).includes("Verify:") && planPhase(true).includes("Wait:"));
+	assert.ok(EXECUTE_PHASE.includes('kind: "verify"'));
+	assert.ok(TEST_PHASE.includes("after the flow"));
+});

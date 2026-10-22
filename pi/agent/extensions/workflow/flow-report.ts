@@ -23,7 +23,7 @@ export interface ReportStep {
 
 export interface ReportLine {
 	text: string;
-	tone: "head" | "done" | "open" | "fixed" | "noted";
+	tone: "head" | "done" | "open" | "fixed" | "noted" | "human";
 }
 
 const HEADLINE = /^\S.*\s-\s*(blocker|major|minor)\s*-/i;
@@ -64,7 +64,7 @@ export function reportFindings(list: FlowFinding[] | undefined, plan: string | u
 }
 
 /** The card's step and finding lines, without colours. */
-export function reportLines(steps: ReportStep[] | undefined, findings: ReportFinding[] | undefined): ReportLine[] {
+export function reportLines(steps: ReportStep[] | undefined, findings: ReportFinding[] | undefined, human?: { id?: string; text: string }[]): ReportLine[] {
 	const lines: ReportLine[] = [];
 	if (steps?.length) {
 		lines.push({ text: `Steps ${steps.filter((s) => s.done).length}/${steps.length} done`, tone: "head" });
@@ -82,6 +82,11 @@ export function reportLines(steps: ReportStep[] | undefined, findings: ReportFin
 			lines.push({ text: `  ${f.status.padEnd(5)} ${stage}${cut(f.line, 120)}`, tone: f.status });
 		}
 		if (ordered.length > MAX_SHOWN) lines.push({ text: `  +${ordered.length - MAX_SHOWN} more`, tone: "fixed" });
+	}
+	if (human?.length) {
+		lines.push({ text: `Human checks (after the flow): ${human.length}`, tone: "head" });
+		for (const h of human.slice(0, MAX_SHOWN)) lines.push({ text: `  ☐ ${h.id ? `${h.id} ` : ""}${cut(h.text, 120)}`, tone: "human" });
+		if (human.length > MAX_SHOWN) lines.push({ text: `  +${human.length - MAX_SHOWN} more`, tone: "fixed" });
 	}
 	return lines;
 }

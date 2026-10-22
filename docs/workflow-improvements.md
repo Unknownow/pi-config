@@ -2,7 +2,7 @@
 
 Reference list for `pi/agent/extensions/workflow/`. Goal: less time, fewer tokens, more parallelism.
 
-Status: A2, A3, A5, A7, B1, B7, B9, C2, C3, C4, D2, D3, D4, D5, D6, D7, D8, D9, D10, D11, D12, D13 and D14 are implemented; A13, A14, A15, A16, A17, A18, A20 and A21 are implemented; A22 is implemented; A23 and A24 are implemented; A12 is implemented; A1 is rejected; the rest are ideas only. Found by reading the code on 2026-10-16. Nothing was measured, so every benefit below is an estimate. Line numbers are from commit `3fdc69a` and will drift.
+Status: A2, A3, A5, A7, B1, B7, B9, C2, C3, C4, D2, D3, D4, D5, D6, D7, D8, D9, D10, D11, D12, D13 and D14 are implemented; A13, A14, A15, A16, A17, A18, A20 and A21 are implemented; A22 is implemented; A23, A24 and A25 are implemented; A12 is implemented; A1 is rejected; the rest are ideas only. Found by reading the code on 2026-10-16. Nothing was measured, so every benefit below is an estimate. Line numbers are from commit `3fdc69a` and will drift.
 
 ## Keeping this file current
 
@@ -52,6 +52,7 @@ Plan (Opus) -> approve -> execute (Sonnet) -> judge (Opus, separate `pi` process
 | A22 | Problem: there is no way to follow what flows are doing or how far they are. **Implemented:** a progress line in the widget, a `live.json` snapshot per flow, and the `/flow board` overlay across repos (`board.ts`, `view.ts`, `index.ts`). | Medium (T) | M | Low. Local files only; best-effort writes. | Time to find a stuck flow. |
 | A23 | Problem: executors reran slow suites (Unity batch mode, 10-20 min) before every judge call. **Done:** prompts.ts: narrow checks while fixing, each slow suite in full once before the first judge call; the planner marks slow suites with a fast and a full command. The planner gets the marking rule with and without finalizePlan. | High (T) | S | Medium. A narrow check can miss a failure the full suite catches; the full run before the first judge call covers it. | Unity harness runs and minutes per flow. |
 | A24 | Problem: a judge round that only changed docs or comments triggered a full slow rerun. **Done:** prompts.ts (execute and fix round): rerun a slow suite only if the fix changed files it builds or reads. The execute prompt says to run the plan's tests "as above", so the final run follows the rerun rule. | Medium (T) | S | Medium. The executor decides what a suite reads; the judge still reviews. | Slow reruns after a judge round whose fix touched no code. |
+| A25 | Problem: a flow paused until the user tested in Unity (a `Wait:` for testing, and test-flow `[manual]` questions between rounds). **Done:** human checks: `Verify:` steps, `wait_for_user {kind: "verify"}` and `[manual]` items deferred to the end card (waits.ts, plan-doc.ts, flow-report.ts, view.ts, test-flow.ts, prompts.ts, index.ts). | High (T) | M | Low. Human checks do not change a flow's ok; a failed one is fixed in the next flow. | Pauses for human testing per flow. |
 
 ## B. Tokens
 
@@ -167,6 +168,7 @@ Method for every item:
 | A22 | Time from "is it stuck?" to an answer | Not measured yet. | Seconds instead of reading logs |
 | A23 | Unity harness runs per flow and their minutes | Count test-packages.mjs runs and their times in session logs. Implemented, not measured yet. | One full run per stage |
 | A24 | Slow reruns after a judge round whose fix touched no code | Compare fix-round diffs with harness runs in session logs. Implemented, not measured yet. | Zero |
+| A25 | Pauses for human testing | Count `wait_for_user` calls without `kind: "verify"` whose reason mentions testing or looking, and test rounds ended only by `[manual]` answers, in session logs. Implemented, not measured yet. | Zero per flow |
 | B12 | Final-plan reply duration and output tokens | Session logs. Idea only. | Replies under 3 min |
 | B13 | Judge minutes per flow | Sum judge call times per flow. Idea only. | Rechecks under 1 min |
 

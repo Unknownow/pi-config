@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { parseChecklist, planSections } from "./plan-doc.ts";
-import { amendmentTail, answerItem, askOptions, newTestFlow, nextAction, openBugs, pendingFromFlaws, recordReport, skipItem, testOutcome, testPlan, type TestFlow } from "./test-flow.ts";
+import { amendmentTail, answerItem, askOptions, newTestFlow, nextAction, openBugs, manualChecks, pendingFromFlaws, recordReport, skipItem, testOutcome, testPlan, type TestFlow } from "./test-flow.ts";
 
 const item = (id: string, tag: string, title = `title ${id}`, body = "") => ({ id, tag: tag as never, title, fields: {}, body });
 const rep = (...items: ReturnType<typeof item>[]) => ({ items, ran: ["unity run-tests"] });
@@ -37,7 +37,7 @@ test("recordReport: fixed, refail, escalate, pending refail", () => {
 
 test("recordReport: questions for new ask/blocked/manual, not for answered or skipped ones", () => {
 	let f = recordReport(flow(), rep(item("S1", "ask"), item("S2", "manual"), item("S3", "blocked"), item("S4", "bug")), 2);
-	assert.deepEqual(f.pending?.map((p) => `${p.id}:${p.kind}`), ["S1:ask", "S2:manual", "S3:blocked"]);
+	assert.deepEqual(f.pending?.map((p) => `${p.id}:${p.kind}`), ["S1:ask", "S3:blocked"]);
 	assert.equal(f.nextId, 5);
 	f = answerItem({ ...f, pending: [] }, "S1", "option a");
 	assert.deepEqual(f.answers, ["D2. S1: option a"]);
@@ -73,13 +73,13 @@ test("testOutcome", () => {
 		skipped: ["S4"],
 		fixRounds: 2,
 	});
-	assert.deepEqual(testOutcome(f), { text: "test: 2 fixed in 2 fix rounds; open: S3 manual; skipped: S4", ok: false });
+	assert.deepEqual(testOutcome(f), { text: "test: 2 fixed in 2 fix rounds; human checks: S3; skipped: S4", ok: false });
 	assert.equal(testOutcome(flow({ items: { S1: { ...bug(), tag: "fixed" } }, fixed: ["S1"], fixRounds: 1 })).ok, true);
 });
 
 test("testOutcome leaves out answered questions", () => {
 	const f = answerItem(flow({ items: { S1: { ...bug(), tag: "ask" }, S2: { ...bug(), tag: "manual" } }, fixRounds: 1 }), "S1", "a");
-	assert.equal(testOutcome(f).text, "test: 0 fixed in 1 fix round; open: S2 manual");
+	assert.equal(testOutcome(f).text, "test: 0 fixed in 1 fix round; human checks: S2");
 });
 
 test("pendingFromFlaws", () => {
@@ -90,4 +90,18 @@ test("pendingFromFlaws", () => {
 test("askOptions", () => {
 	assert.deepEqual(askOptions("  Question: q\n  Options: a) keep it b) drop it"), ["a) keep it", "b) drop it"]);
 	assert.deepEqual(askOptions("  Question: q"), []);
+});
+
+test("manual items are not queued and end the flow as human checks", () => {
+	const f = recordReport(flow(), rep(item("S1", "fixed"), item("S2", "manual", "feel", "  Steps: tap\n  Look for: glow"), item("S3", "ask")), 2);
+	assert.deepEqual(f.pending.map((p) => p.id), ["S3"]);
+	const g = recordReport(flow(), rep(item("S1", "fixed"), item("S2", "manual", "feel", "  Steps: tap\n  Look for: glow")), 2);
+	assert.deepEqual(g.pending, []);
+	const o = testOutcome(g);
+	assert.ok(o.text.includes("human checks: S2") && !o.text.includes("S2 manual"));
+	assert.equal(o.ok, true);
+	const m = manualChecks(g);
+	assert.equal(m[0].id, "S2");
+	assert.ok(m[0].text.includes("feel") && m[0].text.includes("do: tap") && m[0].text.includes("look for: glow"));
+	assert.deepEqual(manualChecks(skipItem(g, "S2")), []);
 });

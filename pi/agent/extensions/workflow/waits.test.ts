@@ -1,7 +1,7 @@
 // node --test waits.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { autopilotAmendment, autopilotReply, checkTitle, checkVerdict, parseWaitStep, pollDecision, resumePrefix, waitAmendment } from "./waits.ts";
+import { autopilotAmendment, autopilotReply, checkTitle, checkVerdict, humanChecks, parseVerifyStep, parseWaitStep, pollDecision, resumePrefix, verifyAmendment, waitAmendment } from "./waits.ts";
 
 const CHECK = "git ls-remote --exit-code --tags origin com.iecgames.core/v0.17.0";
 const plan = `## 5. Steps\n\n**S6.** Edit the code\n**S7.** Wait: publish core 0.17.0 (check: ${CHECK})\n- **S8.** Wait: open the Editor\n**S9.** Do it and write a long line that is more than one hundred and twenty characters long so the checklist text would cut it short, see?\n`;
@@ -83,4 +83,23 @@ test("autopilotReply", () => {
 	for (const s of ["(workflow autopilot)", "manual: true", "plan_check", "gh x"]) assert.ok(a.includes(s), s);
 	const b = autopilotReply("act", "R");
 	for (const s of ["AGENTS.md", "manual: true", "Never script around a confirmation"]) assert.ok(b.includes(s), s);
+});
+
+test("parseVerifyStep reads steps and look-for", () => {
+	const p = "**S3.** Verify: play scene X — look for: no jitter\n- [ ] **S4.** Verify: open menu (look for: icons)\n**S5.** Verify: check it\n**S6.** Wait: publish\n";
+	assert.deepEqual(parseVerifyStep(p, "S3"), { steps: "play scene X", lookFor: "no jitter" });
+	assert.deepEqual(parseVerifyStep(p, "S4"), { steps: "open menu", lookFor: "icons" });
+	assert.deepEqual(parseVerifyStep(p, "S5"), { steps: "check it" });
+	assert.equal(parseVerifyStep(p, "S6"), null);
+	assert.equal(parseVerifyStep(p, "S99"), null);
+});
+
+test("verifyAmendment format", () => {
+	assert.equal(verifyAmendment(2, { steps: "tap X", lookFor: "glow", step: "S4" }), "## Amendment 2 (executor: verify)\ntap X — look for: glow (step S4)");
+});
+
+test("humanChecks lists Verify steps first and drops a duplicated step", () => {
+	const p = "**S1.** Edit\n**S2.** Verify: play\n\n## Amendment 1 (executor: verify)\nlook at HUD\n\n## Amendment 2 (executor: verify)\nplay again (step S2)\n";
+	const cl = [{ id: "S1", text: "Edit", done: false }, { id: "S2", text: "Verify: play", done: false, human: true as const }];
+	assert.deepEqual(humanChecks(p, cl), [{ id: "S2", text: "play" }, { text: "look at HUD" }]);
 });

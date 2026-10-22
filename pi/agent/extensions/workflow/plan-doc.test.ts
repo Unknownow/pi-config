@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { commitPlan, isFlowId, mergeChecklist, newFlowId, normalizeRemote, openStepsReminder, parseChecklist, parseStatus, planCard, pruneIds, renderPlanFile, splitPlanFile } from "./plan-doc.ts";
+import { commitPlan, isFlowId, mergeChecklist, newFlowId, normalizeRemote, isHuman, openStepsReminder, parseChecklist, parseStatus, planCard, pruneIds, renderPlanFile, splitPlanFile } from "./plan-doc.ts";
 
 const PLAN = `## Plan: Demo
 ### 1. Goal and non-goals
@@ -192,4 +192,18 @@ test("parseStatus checkpoint stage", () => {
 	const base = { v: 1, flowId: "20261022-0130-x-ab12", rev: 1, updated: "t", title: "x", done: [], repos: [] };
 	assert.ok(parseStatus(JSON.stringify({ ...base, checkpoints: [{ stage: 2, text: "t", ok: true }] })));
 	assert.equal(parseStatus(JSON.stringify({ ...base, checkpoints: [{ stage: "2", text: "t", ok: true }] })), null);
+});
+
+test("Verify steps are human and never open", () => {
+	const cl = parseChecklist("**S1.** Edit\n**S2.** Verify: play");
+	assert.equal(cl[1].human, true);
+	assert.equal(cl[0].human, undefined);
+	assert.equal(mergeChecklist("**S1.** Edit\n**S2.** Verify: play", cl)[1].human, true);
+	assert.ok(isHuman(cl[1]));
+	assert.equal(openStepsReminder([{ ...cl[0], done: true }, cl[1]]), undefined);
+	const out = renderPlanFile("20260101-0000-x-0000", "## Plan: x", [{ ...cl[0], done: true }, cl[1]]);
+	assert.ok(out.includes("## For you after the flow\n- S2 Verify: play"));
+	assert.ok(!/## Checklist[\s\S]*S2/.test(out.split("## For you")[0]));
+	const card = planCard("## Plan: x\n1. Goal and non-goals.\ngoal\n7. Done when:\nok", [{ ...cl[0], done: true }, cl[1]]);
+	assert.ok(card.includes("1 of 1 done") && card.includes("(none open)"));
 });
