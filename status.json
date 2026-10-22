@@ -1,22 +1,33 @@
 {
   "v": 1,
   "flowId": "20261022-1621-faster-unity-test-runs-workflow-prompts-03e6",
-  "rev": 3,
-  "updated": "2026-10-22T09:24:12.543Z",
+  "rev": 4,
+  "updated": "2026-10-22T09:28:54.167Z",
   "title": "Faster Unity test runs: workflow prompts and knowledge playbooks (remaining stages)",
-  "stage": 2,
-  "delivery": "merge",
   "done": [
     "S1",
     "S2",
     "S3",
-    "S4"
+    "S4",
+    "S5",
+    "S6",
+    "S7"
   ],
+  "finished": {
+    "at": "2026-10-22T09:28:54.050Z",
+    "ok": true,
+    "text": "stage 1: committed (1 commit), push skipped: master is protected; stage 2: knowledge: committed, PR #156 merged"
+  },
   "repos": [
     {
       "branch": "master",
       "remote": "github-personal/Unknownow/pi-config",
       "primary": true
+    },
+    {
+      "branch": "main",
+      "remote": "github.com/iecgames/knowledge",
+      "primary": false
     }
   ]
 }
