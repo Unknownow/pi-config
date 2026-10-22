@@ -1,0 +1,16 @@
+{
+  "v": 1,
+  "flowId": "20261023-0032-make-the-deliverhintsblock-test-check-do-345a",
+  "rev": 1,
+  "updated": "2026-10-22T17:32:58.036Z",
+  "title": "Make the deliverHintsBlock test check done and human items",
+  "delivery": "merge",
+  "done": [],
+  "repos": [
+    {
+      "branch": "flow/publish-judged-checkpoint-commits-and-re",
+      "remote": "github.com/Unknownow/pi-config",
+      "primary": true
+    }
+  ]
+}
