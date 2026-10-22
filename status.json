@@ -1,12 +1,21 @@
 {
   "v": 1,
   "flowId": "20261023-0004-the-workflow-extension-publishes-judged-3c38",
-  "rev": 1,
-  "updated": "2026-10-22T17:04:55.891Z",
+  "rev": 2,
+  "updated": "2026-10-22T17:11:24.749Z",
   "title": "The workflow extension publishes judged checkpoint commits, refuses commits no judge saw, and points the executor at `deliver`",
   "stage": 1,
   "delivery": "merge",
-  "done": [],
+  "done": [
+    "S1",
+    "S2",
+    "S3",
+    "S4",
+    "S5",
+    "S6",
+    "S7",
+    "S8"
+  ],
   "repos": [
     {
       "branch": "master",

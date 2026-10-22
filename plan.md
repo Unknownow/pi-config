@@ -368,16 +368,36 @@ Run from `pi/agent/extensions/workflow` with `node --test <file>.test.ts`. Every
 3. "Point the executor at deliver: Deliver-step modes, hints and refusal texts": `checkpoints.ts`, `checkpoints.test.ts`, `index.ts`.
 4. "Prompts: Deliver steps name their mode; never hand pushes to the user": `prompts.ts`, `prompts.test.ts`, `index.ts` (tool description), README (Checkpoints form), `docs/workflow-improvements.md` (D17).
 
+## Amendment 1 (arbiter)
+**S2 (amended).** `publish.ts`:
+- Add two fields to `PublishFacts`:
+  - `descends: boolean`: true when `HEAD` contains the judged head (`git merge-base --is-ancestor <judged.head> HEAD` exits 0);
+  - `pr: PrState | null`: replaces `{ state: string } | null`, so `prBefore` can read `.number` with a correct type.
+- Add a rule right after the `foreign` rule (rule 2): if `!descends` or `branch !== judged.branch`, return a new `{ kind: "moved"; judgedBranch: string; judgedHead: string }`.
+- Add `movedText(root, d)`. It names the repo, the judged branch and head, and the recovery: `git -C <root> switch <judgedBranch>`, then call `deliver` again. In `publishJudged` and `publishAtEnd`, treat `moved` like `refuse`: nothing is delivered and the text is reported.
+- Tests in `publish.test.ts`:
+  - `descends: false` → `moved`;
+  - a branch other than `judged.branch` → `moved`;
+  - `movedText` contains the repo name, the judged branch and the `switch` command.
+
+**S3 (amended).** In `index.ts`, the gatherer fills `descends` (a failed git call counts as false) and `pr` as a `PrState`. Then extend `deliver`'s non-empty-diff path for `push`, `pr` and `merge`:
+- Run `publishJudged` for the judged repos that are not among `diff.repos` with `changed`.
+- If any of them is `refuse` or `moved`, deliver nothing. Reply with the texts and "Nothing was delivered", before the judge runs.
+- Otherwise merge their `publish` entries into the pending record from `prepareAllRepos`: add them to `pending.repos`, with `head` = the judged `base`. Use `repoDeliveryInstruction` with `committed: true` for those repos. One commit step then delivers both kinds of repo. `recordJudgedHeads` already runs on the merged pending.
+- Test: a pure helper that merges publish entries into a pending record and instruction gets a unit test. The case: one changed repo and one judged repo give two `repos` entries, and the judged entry has `committed: true` wording.
+
+**S4 (amended).** At the end of a flow or stage with a non-empty diff, apply the same merge where the end-of-flow commit step builds its pending record from `prepareAllRepos`. Use the stage's delivery, and only when it is `push`, `pr` or `merge`. A `refuse` or `moved` result does not block delivering the changed repos. Its text is appended to the outcome as `not delivered: …` with `ok: false`, as in 4.4.
+
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 Add the `judgedHeads` field and persistence (4.1):
-- [ ] S2 Create `publish.ts` with `PublishFacts`, `PublishDecision`, `publishDecision` and `refuseText` (4.2). Pure, no git calls
-- [ ] S3 Add `publishJudged`-style helpers in `index.ts`:
-- [ ] S4 Wire the end-of-flow/stage publishing into `flowWithoutChanges` (`:3187`) and `stageWithoutChanges` (`:3205`) as in 4.4.
-- [ ] S5 Extend `push-guard.ts` with `commitCreatingOnly` (4.5), routed from `wordsProblem`. Update the file's header comment. Ex
-- [ ] S6 README (`pi/agent/extensions/workflow/README.md`):
-- [ ] S7 `docs/workflow-improvements.md`:
-- [ ] S8 Run the stage-1 tests (section 6), fix failures, then run the judge.
+- [x] S1 Add the `judgedHeads` field and persistence (4.1):
+- [x] S2 Create `publish.ts` with `PublishFacts`, `PublishDecision`, `publishDecision` and `refuseText` (4.2). Pure, no git calls
+- [x] S3 Add `publishJudged`-style helpers in `index.ts`:
+- [x] S4 Wire the end-of-flow/stage publishing into `flowWithoutChanges` (`:3187`) and `stageWithoutChanges` (`:3205`) as in 4.4.
+- [x] S5 Extend `push-guard.ts` with `commitCreatingOnly` (4.5), routed from `wordsProblem`. Update the file's header comment. Ex
+- [x] S6 README (`pi/agent/extensions/workflow/README.md`):
+- [x] S7 `docs/workflow-improvements.md`:
+- [x] S8 Run the stage-1 tests (section 6), fix failures, then run the judge.
 - [ ] S9 Add `deliverStepSpec`, `deliverHint`, `deliverHintsBlock`, `publishRefusal` and `deliverStepWarnings` to `checkpoints.ts
 - [ ] S10 Use the hints at the annotation points: `plan_check` (`index.ts:2335`), `startExecution` (`:582-599`) and the next-stage
 - [ ] S11 Replace the refusal texts at `index.ts:2670`, `:2672` and `:2691`, and the new stage-1 pre-check text, with `publishRefu
