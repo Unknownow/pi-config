@@ -1,12 +1,20 @@
 {
   "v": 1,
   "flowId": "20261023-0923-agents-publish-and-mirror-unity-packages-764a",
-  "rev": 1,
-  "updated": "2026-10-23T02:23:04.587Z",
+  "rev": 2,
+  "updated": "2026-10-23T02:28:30.002Z",
   "title": "Agents publish and mirror unity-packages from approved plans",
   "stage": 1,
   "delivery": "merge",
-  "done": [],
+  "done": [
+    "S1",
+    "S2",
+    "S3",
+    "S4",
+    "S5",
+    "S6",
+    "S7"
+  ],
   "repos": [
     {
       "branch": "main",

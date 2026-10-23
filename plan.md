@@ -298,15 +298,40 @@ Add `registryPublishProblem` to `push-guard.ts` as described in the design.
 - knowledge: `playbooks: agents publish and mirror from approved plans`. Files: `entries/eng/playbook/unity-packages-updates-menu.md`, `entries/eng/playbook/release-code-packages.md`.
 - pi-config: `workflow: Publish and Mirror steps with publish_packages`. Files: `registry-publish.ts`, `registry-publish.test.ts`, `index.ts`, `push-guard.ts`, `push-guard.test.ts`, `prompts.ts`, `prompts.test.ts`, `waits.ts`, `README.md`, `docs/workflow-improvements.md`.
 
+## Amendment 1 (arbiter)
+**S1 (amended).** `publishSelection` in `scripts/lib/sdk-updates.mjs`:
+- Add a `kind` field to every `blockedBy` entry: `"missing"` (tagged, not on the registry) or `"new"` (no tag). Take it from the candidate. For a `dependency` blocker that is not a candidate, use `"new"`.
+- JSON contract: `blockedBy: [{name, version, tag, reason: "older"|"dependency", kind: "missing"|"new"}]`.
+- Tests:
+  - the `older` blocker test expects `kind: "missing"` when the older candidate has `kind: "missing"`;
+  - the dependency test checks `kind` as well.
+
+**S2 (amended).** In `scripts/update-packages.mjs`, add a check form: `publish --only <list> --dry-run --unblocked`.
+- It prints nothing on stdout.
+- Exit codes: 0 when `blockedBy` is empty (and `notCandidates` is empty); 3 while blocked; 1 on a missing token or a registry error.
+- It reuses the same `publishOnly` path, so the registry decides when the wait ends, not the tags.
+- Document it in `USAGE`, the header and the README next to `--json`.
+- `--unblocked` without `--dry-run` and `--only` is a usage error (exit 2).
+
+**S8 (amended).** In `registry-publish.ts`, replace `tagWaitCheck(root, tags)` with `blockedWaitCheck(root: string, items: {name: string; version: string}[]): string`.
+- It returns `node '<root>/scripts/update-packages.mjs' publish --only '<list>' --dry-run --unblocked`, with forward slashes and the same quoting rules.
+- `registryPublishProblem` must keep allowing it, since it is a `--dry-run` form. Test that.
+- Tests: quoting, and the guard allows the result. Drop the `readOnlyProblem` assertion, because the tool sets `state.waiting` itself and does not go through `wait_for_user`.
+
+**S9 (amended).** In `publish_packages`:
+- The blocked wait uses `blockedWaitCheck` with the step's items.
+- When it is called again for the same step while it is still blocked, the new wait keeps the earlier wait's `since`. Store it per step, for example in `state.waiting.since` carried over, or in a `publishWaitSince[step]` value that is persisted and cleared when the step finishes. This way the existing 1-hour timeout counts across re-blocks and notifies the user instead of looping.
+- Tests: the second blocked call for the same step keeps the first `since`.
+
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 In `unity-packages/scripts/lib/sdk-updates.mjs`, next to `orderItems` (`:192`), add the pure exported function `publishS
-- [ ] S2 In `scripts/update-packages.mjs`:
-- [ ] S3 In `scripts/maintenance.mjs`:
-- [ ] S4 Tests (section 6) in `scripts/update-packages.test.mjs` and `scripts/maintenance.test.mjs`.
-- [ ] S5 `unity-packages/AGENTS.md`, rule 5. Replace it with:
-- [ ] S6 Knowledge:
-- [ ] S7 Run the stage 1 tests (section 6).
+- [x] S1 In `unity-packages/scripts/lib/sdk-updates.mjs`, next to `orderItems` (`:192`), add the pure exported function `publishS
+- [x] S2 In `scripts/update-packages.mjs`:
+- [x] S3 In `scripts/maintenance.mjs`:
+- [x] S4 Tests (section 6) in `scripts/update-packages.test.mjs` and `scripts/maintenance.test.mjs`.
+- [x] S5 `unity-packages/AGENTS.md`, rule 5. Replace it with:
+- [x] S6 Knowledge:
+- [x] S7 Run the stage 1 tests (section 6).
 - [ ] S8 Add a new pure module, `pi-config/pi/agent/extensions/workflow/registry-publish.ts`, modelled on `checkpoints.ts` and `w
 - [ ] S9 In `index.ts`:
 - [ ] S10 Prompts and docs:
