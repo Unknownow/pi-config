@@ -79,7 +79,7 @@ export function sessionLines(entries: LiveEntry[], ownPid: number): string[] {
 		const exec = e.flow?.phase === "execute";
 		let state: string;
 		if (e.busy) state = `working${exec && e.flow?.stage !== undefined ? ` execute ${e.flow.stage}/${e.flow.stages ?? "?"}` : ""}`;
-		else state = e.flow && (e.flow.phase === "plan" || exec) ? "needs you" : "idle";
+		else state = e.flow && (e.flow.phase === "plan" || e.flow.phase === "discuss" || exec) ? "needs you" : "idle";
 		return `${label}: ${state}`;
 	};
 	if (others.length <= 8) return others.map(one);

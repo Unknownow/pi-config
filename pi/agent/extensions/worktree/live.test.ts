@@ -51,3 +51,8 @@ test("sessionLines", () => {
 	assert.equal(ten.length, 8);
 	assert.equal(ten[7], "+3 more");
 });
+
+test("sessionLines: a session waiting in discuss needs you", () => {
+	const list = [entry({ pid: 1 }), entry({ pid: 3, cwd: "D:/p/game", flow: { phase: "discuss" } })];
+	assert.deepEqual(sessionLines(list, 1), ["game: needs you"]);
+});
