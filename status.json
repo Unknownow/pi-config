@@ -1,10 +1,9 @@
 {
   "v": 1,
   "flowId": "20261023-0250-skip-a-repeated-final-full-review-after-3223",
-  "rev": 2,
-  "updated": "2026-10-22T19:53:08.610Z",
+  "rev": 3,
+  "updated": "2026-10-23T01:09:15.277Z",
   "title": "Skip a repeated final full review after a passing one",
-  "delivery": "merge",
   "done": [
     "S1",
     "S2",
@@ -13,6 +12,11 @@
     "S5",
     "S6"
   ],
+  "finished": {
+    "at": "2026-10-23T01:09:15.174Z",
+    "ok": false,
+    "text": "checkpoint S7: committed (3 commits); committed (3 commits), pushed, no open pull request"
+  },
   "checkpoints": [
     {
       "step": "S7",
