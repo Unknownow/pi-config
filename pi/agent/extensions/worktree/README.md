@@ -134,8 +134,8 @@ If the bridge fails, `/wt new` falls back to Windows Terminal and says why. If p
 ## Unity
 
 Only the session in the original folder drives the open Unity Editor. A session that runs inside a
-worktree set gets a system prompt section saying so, and the guard refuses `bash`, `ctx_execute`
-and `ctx_batch_execute` calls with a `unity` command that drives an Editor or runs a project
+worktree set gets a system prompt section saying so, and the guard refuses `bash` calls with a
+`unity` command, and `run_code` calls whose code runs one, that drive an Editor or run a project
 (`command`, `cmd`, `recompile`, `list`, `job`, `mcp`, `run`, `test`, `build`, `pipeline`) unless
 `--project-path` is inside the set. Any `UNITY_PROJECT_PATH=` assignment is refused. `unity status`,
 `install` and similar pass. Sessions outside `<root>` are not restricted.
@@ -165,7 +165,7 @@ The dependency is one-way. This extension uses only the workflow's public contra
 - `node_modules` is shared with the original; a worktree that changes `package.json` should install its own.
 - An added folder that is a subfolder of a repo is replaced by that repo's worktree root.
 - Pushes to `main` stay blocked by each repo's own hook.
-- pi is launched in the original repo (`--session` moves it to the set), so extensions that use `process.cwd()` (for example context-mode's project folder) see the original repo, not the workspace.
+- pi is launched in the original repo (`--session` moves it to the set), so extensions that use `process.cwd()` see the original repo, not the workspace.
 - `/wt clean` and the delivered check look at the 20 latest merged PRs of a branch name; without `gh` a squash merge is not recognised and the set counts as `has-work`.
 - The running-sessions list sees only sessions on this machine, and only those that run this extension with a UI.
 - Plain (non-git) folders come back only through the session's saved folders.

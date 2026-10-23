@@ -38,6 +38,11 @@ export function needsFinalFullReview(newFilesOnly: boolean, findings: string, ch
 	return !newFilesOnly || uncitedFiles(findings, changed).length > 0;
 }
 
+/** Whether the final full review is skipped: the changes since the last passing full review are at most `maxShare` of the whole diff. 0 never skips. */
+export function shouldSkipRepeatFullReview(sinceChars: number, diffChars: number, maxShare: number): boolean {
+	return maxShare > 0 && sinceChars <= diffChars * maxShare;
+}
+
 /** Tracked changes against `base` plus untracked files of one repo (untruncated), or null outside a git work tree. */
 export async function collectRepoDiff(git: RunGit, cwd: string, base = "HEAD"): Promise<RepoDiff | null> {
 	const inside = await git(cwd, "rev-parse", "--is-inside-work-tree", "--show-prefix");

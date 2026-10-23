@@ -1,10 +1,10 @@
 // node --experimental-strip-types --test prompts.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { ADVISOR, ARBITER, COMMIT, EXECUTE_PHASE, EXPLORE, FIX_ROUND, JUDGE, JUDGE_KNOWLEDGE_ONLY, NO_SLEEP, PACE, finalize, phaseSection, planPhase, RUNNER, TEST_PHASE } from "./prompts.ts";
+import { ADVISOR, ARBITER, COMMIT, EXECUTE_PHASE, EXPLORE, FIX_ROUND, JUDGE, JUDGE_KNOWLEDGE_ONLY, NO_SLEEP, PACE, finalize, phaseSection, planPhase, RUNNER, TEST_PHASE, workspaceSection } from "./prompts.ts";
 
-const BATCH = `- Batch tool calls. Each call re-sends the whole conversation, so ten small calls at 150k context re-send 1.5M tokens. Put independent reads and commands in one call (a codemode script, ctx_batch_execute, or one bash command joined with && or ;) and print only what you need. Don't spend a call on something you could have added to the previous one.`;
-const PLAN_BATCH = `- Batch tool calls. Each call re-sends the whole conversation, so ten small calls at 150k context re-send 1.5M tokens. Put independent reads and commands in one call (a codemode script, ctx_execute for read-only analysis, or one bash command joined with && or ;) and print only what you need. Don't spend a call on something you could have added to the previous one.`;
+const BATCH = `- Batch tool calls. Each call re-sends the whole conversation, so ten small calls at 150k context re-send 1.5M tokens. Put independent reads and commands in one call (a codemode script, run_code, or one bash command joined with && or ;) and print only what you need. Don't spend a call on something you could have added to the previous one.`;
+const PLAN_BATCH = `- Batch tool calls. Each call re-sends the whole conversation, so ten small calls at 150k context re-send 1.5M tokens. Put independent reads and commands in one call (a codemode script, run_code for read-only analysis, or one bash command joined with && or ;) and print only what you need. Don't spend a call on something you could have added to the previous one.`;
 
 test("plan phase keeps its batch line", () => {
 	assert.ok(planPhase(true).includes(PLAN_BATCH));
@@ -112,4 +112,23 @@ test("stage 2 guidance in the prompts", () => {
 	assert.match(finalize(false), /git merge --no-commit/);
 	assert.match(planPhase(false), /Deliver: <mode> — <what>/);
 	assert.match(EXECUTE_PHASE, /Never ask the user to push, open or merge a pull request/);
+});
+
+test("EXPLORE sets a budget of tool calls", () => {
+	assert.ok(EXPLORE.includes("about 10 tool calls"));
+});
+
+test("workspaceSection lists rules files sorted by path, after the rule line", () => {
+	const rule = "Rules files of the added folders (not loaded): read a folder's files before you plan or change anything in it.";
+	const text = workspaceSection("/w", ["/a"], [], [{ path: "/b/AGENTS.md", size: 20 }, { path: "/a/AGENTS.md", size: 5 }]);
+	const lines = text.split("\n");
+	const i = lines.indexOf(rule);
+	assert.ok(i > 0);
+	assert.equal(lines[i + 1], "- /a/AGENTS.md (5 characters)");
+	assert.equal(lines[i + 2], "- /b/AGENTS.md (20 characters)");
+});
+
+test("workspaceSection without rules equals the three-argument output", () => {
+	assert.equal(workspaceSection("/w", ["/a"], ["/t"], []), workspaceSection("/w", ["/a"], ["/t"]));
+	assert.ok(!workspaceSection("/w", ["/a"], []).includes("Rules files"));
 });

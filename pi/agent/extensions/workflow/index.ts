@@ -57,11 +57,11 @@ import * as prompts from "./prompts.ts";
 import { branchName, combineOutcomes, type Delivery, type DeliveryOptions, DELIVERIES, DELIVERY_LABELS, deliveryChoices, deliveryInstruction, deliveryMenuLabel, fixedDeliveryLabel, deliveryOutcome, freshPr, isDelivery, landedBranch, planTitle, pushSkipReason, type PrState, repoDeliveryInstruction } from "./delivery.ts";
 import { modelChoices, pathCompletions } from "./pickers.ts";
 import { ghCandidates, withPathDir } from "./gh-path.ts";
-import { citeNames, collectRepoDiff as collectRepoDiffImpl, needsFinalFullReview, type RepoDiff } from "./repo-diff.ts";
+import { citeNames, collectRepoDiff as collectRepoDiffImpl, needsFinalFullReview, shouldSkipRepeatFullReview, type RepoDiff } from "./repo-diff.ts";
 import { mergePublish, movedText, publishDecision, refuseText, type PublishEntry, type PublishFacts } from "./publish.ts";
 import { combineRepoTexts, followFolders, parseAddDir, parseWorktreeList, repoKey, uniqueRoots } from "./repos.ts";
 import { askFolderAdd } from "./folder-add.ts";
-import { codeCommitProblem, shellProblem } from "./push-guard.ts";
+import { codePublishProblem, shellProblem } from "./push-guard.ts";
 import { COMMIT_GUARD_ENV, type CommitGuardSpec } from "./commit-guard.ts";
 import { RUNNER_GUARD_ENV, type RunnerGuardSpec } from "./runner-guard.ts";
 import { parseTestReport } from "./test-report.ts";
@@ -77,8 +77,9 @@ import { pushArgs, tagDecision } from "./tags.ts";
 import { type CheckVerdict, autopilotAmendment, autopilotReply, checkTitle, checkVerdict, type HumanCheck, humanChecks, parseVerifyStep, parseWaitStep, pollDecision, resumePrefix, verifyAmendment, waitAmendment } from "./waits.ts";
 import { nextStage, parseStages, stageDelivery, stageLine, stageNote, stageStart, stagesOutcome } from "./stages.ts";
 import { planToolProblem, planToolRefused } from "./readonly-tools.ts";
+import { refilterPlanTools } from "./plan-tools.ts";
 import { MetricsQueue, type MetricEvent, subagentMetric } from "./metrics.ts";
-import { addUsage, emptyUsage, mapLimit, type RunResult, runSubagent } from "./subagent.ts";
+import { addUsage, emptyUsage, mapLimit, noContextFilesFor, type RunResult, runSubagent } from "./subagent.ts";
 import {
 	type Deviation,
 	deviationBlock,
@@ -122,6 +123,8 @@ interface FlowState {
 	passedDiff?: string;
 	/** The last judge round, so the next one reviews only what changed since. */
 	lastJudge?: LastJudge;
+	/** The last full review that passed in this stage. */
+	lastFullPass?: { repos: Snaps; base: string };
 	/** Active tools before plan mode switched some off. */
 	toolsBeforePlan?: string[];
 	/** Tokens spent per pipeline stage this session. */
@@ -507,9 +510,24 @@ export default function workflow(pi: ExtensionAPI) {
 	/** The read-only tool set of plan phase; the test phase adds test_run and drops judge and plan_check. */
 	function blockPlanTools(phase: "plan" | "test" = "plan"): void {
 		state.toolsBeforePlan ??= pi.getActiveTools();
+		pi.setActiveTools(state.toolsBeforePlan.filter((t) => !planToolRefusedIn(phase, t)));
+	}
+
+	function planToolRefusedIn(phase: "plan" | "test", name: string): boolean {
 		const allowed = phase === "test" ? testAllowedTools() : planAllowedTools();
 		const blocked = phase === "test" ? testBlockedTools() : cfg.planBlockedTools;
-		pi.setActiveTools(state.toolsBeforePlan.filter((t) => !planToolRefused(t, allowed, blocked)));
+		return planToolRefused(name, allowed, blocked) !== null;
+	}
+
+	/** Tools that registered after the phase began (an MCP server that connected late) get the same filter. */
+	function refilterTools(): void {
+		if ((state.phase !== "plan" && state.phase !== "test") || !state.toolsBeforePlan) return;
+		const phase = state.phase;
+		try {
+			refilterPlanTools(pi, state.toolsBeforePlan, (t) => planToolRefusedIn(phase, t));
+		} catch {
+			// the turn goes on with the tools it has
+		}
 	}
 
 	function testAllowedTools(): RegExp[] {
@@ -721,13 +739,14 @@ export default function workflow(pi: ExtensionAPI) {
 		opts: { systemPrompts: string[]; tools: string[]; task: string; cwd: string; signal?: AbortSignal; thinking?: Thinking; env?: Record<string, string>; extensions?: string[]; timeoutMs?: number },
 		onChange?: (run: RunView) => void,
 	): Promise<{ result: RunResult; run: RunView }> {
-		const run = view.start(role, label);
+		const run = view.start(role, label, cfg.roles[role].model);
 		onChange?.(run);
 		const { thinking, extensions, timeoutMs, ...rest } = opts;
 		const k = knowledgeFor(role);
 		const started = Date.now();
 		const result = await runSubagent({
 			...rest,
+			noContextFiles: noContextFilesFor(role, cfg.explore.contextFiles),
 			tools: k ? [...rest.tools, ...k.tools] : rest.tools,
 			systemPrompts: k && role !== "judge" ? [...rest.systemPrompts, prompts.knowledgeTools(k.tools)] : rest.systemPrompts,
 			mcp: k ? { servers: k.servers, extension: FORWARD_EXTENSION } : undefined,
@@ -990,12 +1009,29 @@ export default function workflow(pi: ExtensionAPI) {
 		let r = await judgeOnce(ctx, diff, focus, plan, signal, onChange, disputes);
 		const limit = cfg.judge.finalFullReviewOverChars;
 		if (r.verdict === "PASS" && plan.kind === "recheck" && limit > 0 && diff.chars > limit && needsFinalFullReview(cfg.judge.finalFullReviewNewFilesOnly, plan.prev.text, plan.cites)) {
-			const final = await judgeOnce(ctx, diff, focus, { kind: "full", snaps: plan.snaps }, signal, onChange, disputes);
-			r = { ...final, usage: addUsage(addUsage(emptyUsage(), r.usage), final.usage) };
+			const share = await repeatShare(diff, plan.snaps);
+			if (share !== undefined) {
+				r = { ...r, text: `${r.text}\n\nFinal full review skipped: a full review passed this stage and the changes since are ${Math.round(share * 100)}% of the diff.` };
+			} else {
+				const final = await judgeOnce(ctx, diff, focus, { kind: "full", snaps: plan.snaps }, signal, onChange, disputes);
+				r = { ...final, usage: addUsage(addUsage(emptyUsage(), r.usage), final.usage) };
+			}
 		}
 		// A pass that questions the plan is not a pass yet: resolvePlanFlaw decides.
 		if (r.verdict === "PASS" && !hasPlanFlaw(r.text)) markPassed(diff.hash);
 		return r;
+	}
+
+	/** The share of the diff changed since the last passing full review of this stage, when that is small enough to skip the final full review; else undefined. */
+	async function repeatShare(diff: Diff, snaps: Snaps | undefined): Promise<number | undefined> {
+		const pass = state.lastFullPass;
+		if (!pass || !snaps || pass.base !== diff.base || diff.chars <= 0) return undefined;
+		const keys = Object.keys(snaps);
+		if (keys.length !== Object.keys(pass.repos).length || keys.some((k) => pass.repos[k]?.head !== snaps[k].head)) return undefined;
+		const parts = await Promise.all(diff.repos.map((r) => git(r.dir, "diff", "--no-color", pass.repos[repoKey(r.root)]?.tree ?? "", snaps[repoKey(r.root)]?.tree ?? "")));
+		if (parts.some((p) => p.code !== 0)) return undefined;
+		const since = parts.reduce((n, p) => n + p.stdout.length, 0);
+		return shouldSkipRepeatFullReview(since, diff.chars, cfg.judge.finalFullReviewRepeatMaxShare) ? since / diff.chars : undefined;
 	}
 
 	function markPassed(hash: string): void {
@@ -1778,6 +1814,7 @@ export default function workflow(pi: ExtensionAPI) {
 		// Back to the phase's stage either way; finishPassed moves to commit once the commit is actually handed over.
 		view.stage = phaseStage();
 		state.lastJudge = plan.snaps ? { hash: diff.hash, repos: plan.snaps, base: diff.base, verdict, text } : undefined;
+		if (plan.kind === "full") state.lastFullPass = plan.snaps && verdict === "PASS" && !hasPlanFlaw(text) ? { repos: plan.snaps, base: diff.base } : undefined;
 		if (state.phase === "execute") state.flowFindings = recordFindings(state.flowFindings, state.stage, text);
 		state.lastKnowledge = knowledge;
 		persist();
@@ -1941,6 +1978,7 @@ export default function workflow(pi: ExtensionAPI) {
 		state.stageJudged = undefined;
 		if (state.passedDiff) markPassSummarized(state.passedDiff); // a leftover diff from the round before is not this round's
 		state.lastJudge = undefined; // a new round gets a full review, not a re-review of the last one
+		state.lastFullPass = undefined;
 		planReady = false;
 		planProposed = false;
 		consecutiveErrors = 0;
@@ -2646,6 +2684,7 @@ Nothing was delivered.`);
 					}
 					committedDiffs.add(diff.hash);
 					state.lastJudge = undefined;
+					state.lastFullPass = undefined;
 					state.passedDiff = undefined;
 					state.stageJudged = false;
 					acted = true;
@@ -2693,24 +2732,31 @@ Nothing was delivered.`);
 	// Events
 	// ----------------------------------------------------------------------
 
+	pi.on("turn_start", async () => {
+		refilterTools();
+	});
+
 	pi.on("before_agent_start", async (event, ctx) => {
+		refilterTools();
 		const folders = existingFolders();
 		const touched = state.touchedRepos ?? [];
 		if (folders.length || touched.length) {
 			const opts = event.systemPromptOptions;
-			opts.sections.workspace = prompts.workspaceSection(ctx.cwd, folders, touched);
 			const have = new Set(opts.contextFiles.map((f) => repoKey(f.path)));
+			const listed: { path: string; size: number }[] = [];
 			for (const folder of folders) {
 				try {
 					for (const f of loadProjectContextFiles({ cwd: folder, agentDir: getAgentDir() })) {
 						if (have.has(repoKey(f.path))) continue;
 						have.add(repoKey(f.path));
-						opts.contextFiles.push(f);
+						if (cfg.addedFolderRules === "full") opts.contextFiles.push(f);
+						else listed.push({ path: f.path, size: f.content.length });
 					}
 				} catch {
 					// an unreadable folder just adds no context files
 				}
 			}
+			opts.sections.workspace = prompts.workspaceSection(ctx.cwd, folders, touched, listed);
 		}
 		const staged = state.phase === "execute" ? currentStages() : undefined;
 		const phaseText = prompts.phaseSection(state.phase, {
@@ -2732,22 +2778,10 @@ Nothing was delivered.`);
 			// Pushing is the workflow's job after the judge passes; the executor may not publish or skip hooks.
 			const input = (event.input ?? {}) as Record<string, unknown>;
 			const texts: { text: string; powershell: boolean }[] = [];
-			const win = process.platform === "win32";
 			if (/(^|__)bash$/.test(event.toolName)) texts.push({ text: String(input.command ?? ""), powershell: false });
-			else if (/(^|__)ctx_execute(_file)?$/.test(event.toolName)) {
-				const language = String(input.language ?? "").toLowerCase();
-				const code = String(input.code ?? "");
-				if (["shell", "bash", "sh", "zsh", "powershell", "pwsh", "ps1"].includes(language)) texts.push({ text: code, powershell: ["powershell", "pwsh", "ps1"].includes(language) || (language === "shell" && win) });
-				else if (/\bgit\b/.test(code) && /\bpush\b|(?<!-)\bcommit\b|--no-verify|hooksPath|GIT_CONFIG/i.test(code)) {
-					return { block: true, reason: publishRefuse("code that runs git push, skips hooks or changes hooks") };
-				} else if (codeCommitProblem(code)) {
-					return { block: true, reason: publishRefuse(`code that runs ${codeCommitProblem(code)}`) };
-				} else if (/\bgh\b/.test(code) && /\b(pr|api)\b/.test(code)) {
-					return { block: true, reason: publishRefuse("code that runs gh pr or gh api") };
-				}
-			}
-			else if (/(^|__)ctx_batch_execute$/.test(event.toolName) && Array.isArray(input.commands)) {
-				for (const c of input.commands) texts.push({ text: String((c as { command?: unknown })?.command ?? ""), powershell: win });
+			else if (/(^|__)run_code$/.test(event.toolName)) {
+				const reason = codePublishProblem(String(input.code ?? ""));
+				if (reason) return { block: true, reason: publishRefuse(reason) };
 			}
 			const gitTexts = texts.filter((t) => /\bgit\b|\bgh\b/i.test(t.text));
 			if (gitTexts.length === 0) return;
@@ -2886,11 +2920,11 @@ Nothing was delivered.`);
 
 	// Live token count per stage: usage is cumulative while a message streams.
 	pi.on("message_update", async (event) => {
-		if (event.message.role === "assistant" && event.message.usage) view.mainUsage(countTokens(event.message.usage, cfg.tokenWeights), false);
+		if (event.message.role === "assistant" && event.message.usage) view.mainUsage(countTokens(event.message.usage, cfg.tokenWeights), false, event.message.model, event.message.usage);
 	});
 
 	pi.on("message_end", async (event) => {
-		if (event.message.role === "assistant" && event.message.usage) view.mainUsage(countTokens(event.message.usage, cfg.tokenWeights), true, event.message.model);
+		if (event.message.role === "assistant" && event.message.usage) view.mainUsage(countTokens(event.message.usage, cfg.tokenWeights), true, event.message.model, event.message.usage);
 	});
 
 	pi.registerEntryRenderer<FlowSummary>(SUMMARY_ENTRY, (entry, _opts, theme) => (entry.data ? new Text(summaryLines(entry.data, theme).join("\n"), 1, 0) : undefined));
@@ -3233,6 +3267,7 @@ Nothing was delivered.`);
 		state.stageJudged = undefined;
 		if (state.passedDiff) markPassSummarized(state.passedDiff); // a leftover diff from the stage before is not this stage's
 		state.lastJudge = undefined; // a new stage gets a full review, not a re-review of the last one
+		state.lastFullPass = undefined;
 		view.stage = "execute";
 		view.changed();
 		planMilestone(ctx);

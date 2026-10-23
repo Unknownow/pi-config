@@ -11,7 +11,7 @@
     },
     "explore": {
       "model": "claude-bridge/claude-haiku-5-5",
-      "thinking": "medium"
+      "thinking": "low"
     },
     "advisor": {
       "model": "claude-bridge/claude-opus-5-5",
@@ -84,7 +84,8 @@
   ],
   "planAllowedTools": [
     "^(read|grep|find|ls|bash|codemode|explore|advisor|judge)$",
-    "(^|__)ctx_(search|execute|execute_file|batch_execute|fetch_and_index|index|stats|doctor)$",
+    "(^|__)run_code$",
+    "(^|__)fetch_url$",
     "^mcp__.+__(search|get|list|read|view|status|fetch|find|query|describe|show|lookup)(_\\w+)?$"
   ],
   "planReadOnlyBash": true,
@@ -128,7 +129,9 @@
       "UNITY_PROJECT_PATH"
     ]
   },
+  "addedFolderRules": "paths",
   "explore": {
+    "contextFiles": false,
     "maxQueries": 8,
     "concurrency": 8,
     "tools": [

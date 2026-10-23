@@ -218,7 +218,7 @@ function ghApi(rest: string[], o: PushContext): string | null {
 const SEP = "[\\s,\"'`\\[\\]()]+";
 const CODE_GIT = new RegExp("\\bgit\\b" + SEP + "(?:-[Cc]" + SEP + "[^\\s,\"'`\\[\\]()]+" + SEP + ")*(merge|cherry-pick|revert|rebase|pull|am)\\b(?!-)", "g");
 
-/** Why non-shell code (a script run through ctx_execute) may not run, or null: it spawns a git subcommand that creates a commit, without a flag that stops that. */
+/** Why non-shell code (a script run through run_code) may not run, or null: it spawns a git subcommand that creates a commit, without a flag that stops that. */
 export function codeCommitProblem(code: string): string | null {
 	for (const m of code.matchAll(CODE_GIT)) {
 		const tail = code.slice(m.index + m[0].length, m.index + m[0].length + 200);
@@ -226,5 +226,14 @@ export function codeCommitProblem(code: string): string | null {
 		const rest = (cut < 0 ? tail : tail.slice(0, cut)).split(/[\s,"'`\[\]();]+/).filter(Boolean);
 		if (commitCreatingOnly(m[1], rest, { branch: "", protectedBranches: [], pushAllowed: false, prAllowed: false, mergeAllowed: false, commitAllowed: false })) return commitCreatingText(m[1]);
 	}
+	return null;
+}
+
+/** Why JavaScript run through run_code may not run in execute phase (it publishes, skips hooks or opens a PR), or null. */
+export function codePublishProblem(code: string): string | null {
+	if (/\bgit\b/.test(code) && /\bpush\b|(?<!-)\bcommit\b|--no-verify|hooksPath|GIT_CONFIG/i.test(code)) return "code that runs git push, skips hooks or changes hooks";
+	const commit = codeCommitProblem(code);
+	if (commit) return `code that runs ${commit}`;
+	if (/\bgh\b/.test(code) && /\b(pr|api)\b/.test(code)) return "code that runs gh pr or gh api";
 	return null;
 }

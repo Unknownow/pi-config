@@ -135,20 +135,12 @@ export function codeProblem(code: string): string | null {
 	return null;
 }
 
-const SHELL_LANGS = ["shell", "bash", "sh", "zsh", "powershell", "pwsh", "ps1"];
-
 /** The first Unity-guard problem in a tool call's input, or null. */
 export function guardProblem(toolName: string, input: Record<string, unknown>, o: Omit<GuardOptions, "platform"> & { platform?: NodeJS.Platform }): string | null {
 	const opts = { ...o, platform: o.platform ?? process.platform };
 	const texts: string[] = [];
 	if (/(^|__)bash$/.test(toolName)) texts.push(String(input.command ?? ""));
-	else if (/(^|__)ctx_execute(_file)?$/.test(toolName)) {
-		const code = String(input.code ?? "");
-		if (SHELL_LANGS.includes(String(input.language ?? "").toLowerCase())) texts.push(code);
-		else return codeProblem(code);
-	} else if (/(^|__)ctx_batch_execute$/.test(toolName) && Array.isArray(input.commands)) {
-		for (const c of input.commands) texts.push(String((c as { command?: unknown })?.command ?? ""));
-	}
+	else if (/(^|__)run_code$/.test(toolName)) return codeProblem(String(input.code ?? ""));
 	for (const t of texts) {
 		const why = unityProblem(t, opts);
 		if (why) return why;

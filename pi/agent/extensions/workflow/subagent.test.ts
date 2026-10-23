@@ -1,7 +1,7 @@
 // node --experimental-strip-types --test subagent.test.ts
 import assert from "node:assert/strict";
 import { mock, test } from "node:test";
-import { idleWatch, recordToolEvent, type ToolCall } from "./subagent.ts";
+import { baseArgs, idleWatch, noContextFilesFor, recordToolEvent, type ToolCall } from "./subagent.ts";
 
 const start = (id: string, name: string, args?: unknown) => ({ type: "tool_execution_start", toolCallId: id, toolName: name, args });
 const end = (id: string, name: string, isError: boolean) => ({ type: "tool_execution_end", toolCallId: id, toolName: name, isError });
@@ -101,4 +101,17 @@ test("idleWatch: stop cancels", () => {
 	mock.timers.tick(5000);
 	assert.equal(fired(), 0);
 	mock.timers.reset();
+});
+
+test("baseArgs adds --no-context-files only when asked", () => {
+	const o = { role: { model: "m" }, extensions: [], tools: ["read"] };
+	assert.ok(baseArgs({ ...o, noContextFiles: true }).includes("--no-context-files"));
+	assert.ok(!baseArgs(o).includes("--no-context-files"));
+	assert.ok(!baseArgs({ ...o, noContextFiles: false }).includes("--no-context-files"));
+});
+
+test("noContextFilesFor: explore without the switch, no other role", () => {
+	assert.equal(noContextFilesFor("explore", false), true);
+	assert.equal(noContextFilesFor("judge", false), false);
+	assert.equal(noContextFilesFor("explore", true), false);
 });

@@ -42,9 +42,8 @@ test("recursive deletes of a link are refused", () => {
 });
 
 test("other tools", () => {
-	assert.match(sharedProblem("ctx_execute", { language: "shell", code: "npm install" }, o) ?? "", /unlink/);
-	assert.equal(sharedProblem("ctx_execute", { language: "javascript", code: "npm install" }, o), null);
-	assert.match(sharedProblem("ctx_batch_execute", { commands: [{ command: "ls" }, { command: "rm -rf node_modules" }] }, o) ?? "", /unlink/);
+	assert.equal(sharedProblem("run_code", { code: "npm install" }, o), null);
+	assert.equal(sharedProblem("mcp__x__run_code", { code: "console.log(1)" }, o), null);
 	assert.match(sharedProblem("write", { path: "node_modules/x/y.js" }, o) ?? "", /unlink node_modules/);
 	assert.match(sharedProblem("edit", { path: "D:/wt/w1/game/.pi/git/config" }, o) ?? "", /unlink \.pi\/git/);
 	assert.equal(sharedProblem("write", { path: "src/a.ts" }, o), null);

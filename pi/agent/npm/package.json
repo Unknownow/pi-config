@@ -2,11 +2,6 @@
   "name": "pi-extensions",
   "private": true,
   "dependencies": {
-    "context-mode": "^1.0.169",
     "pi-claude-bridge": "^0.9.3"
-  },
-  "allowScripts": {
-    "better-sqlite3": true,
-    "context-mode": true
   }
 }

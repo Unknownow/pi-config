@@ -19,11 +19,6 @@ const RECURSIVE_DELETE = /(^|[\s;&|(])(rm\b[^\n;|&]*\s(-[a-zA-Z]*[rR][a-zA-Z]*|-
 
 function texts(toolName: string, input: Record<string, unknown>): string[] {
 	if (/(^|__)bash$/.test(toolName)) return [String(input.command ?? "")];
-	if (/(^|__)ctx_execute(_file)?$/.test(toolName)) {
-		const lang = String(input.language ?? "").toLowerCase();
-		return ["shell", "bash", "sh", "zsh", "powershell", "pwsh", "ps1"].includes(lang) ? [String(input.code ?? "")] : [];
-	}
-	if (/(^|__)ctx_batch_execute$/.test(toolName) && Array.isArray(input.commands)) return input.commands.map((c) => String((c as { command?: unknown })?.command ?? ""));
 	return [];
 }
 

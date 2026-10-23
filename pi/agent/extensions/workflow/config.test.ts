@@ -135,3 +135,25 @@ test("invalid autopilot falls back to false", () => {
 	fs.writeFileSync(f, '{"autopilot":true}');
 	assert.equal(loadConfig(f).config.autopilot, true);
 });
+
+test("explore.contextFiles defaults to false and takes only a boolean", () => {
+	assert.equal(DEFAULTS.explore.contextFiles, false);
+	for (const [v, want] of [[true, true], ["yes", false]] as const) {
+		const f = tmp();
+		fs.writeFileSync(f, JSON.stringify({ explore: { contextFiles: v } }));
+		assert.equal(loadConfig(f).config.explore.contextFiles, want);
+	}
+});
+
+test("addedFolderRules defaults to paths; full is kept, anything else falls back", () => {
+	assert.equal(DEFAULTS.addedFolderRules, "paths");
+	for (const [v, want] of [["full", "full"], ["x", "paths"]] as const) {
+		const f = tmp();
+		fs.writeFileSync(f, JSON.stringify({ addedFolderRules: v }));
+		assert.equal(loadConfig(f).config.addedFolderRules, want);
+	}
+});
+
+test("finalFullReviewRepeatMaxShare defaults to 0.1", () => {
+	assert.equal(DEFAULTS.judge.finalFullReviewRepeatMaxShare, 0.1);
+});

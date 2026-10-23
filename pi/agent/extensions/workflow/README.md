@@ -20,7 +20,7 @@ plan is read-only:   bash refuses commands that change files, git or GitHub
 |---|---|---|
 | `plan` | main session model; edit/write off, bash read-only | new sessions start here (`startPhase`). Discuss, investigate, agree; after approval it writes the final execution plan (`finalizePlan`) |
 | `execute` | main session model | after you approve the plan; when the flow ends (delivered, passed without a commit, or stopped) it goes back to `plan` (`returnToPlan`) |
-| `explore` | `explore` tool, parallel sub-`pi` processes | plan and execute send open questions and multi-file searches to it; it decides how much to read and answers with `Answer:` plus `Evidence:` (file:line). Known files are read directly. Judge and advisor do not use it |
+| `explore` | `explore` tool, parallel sub-`pi` processes | plan and execute send open questions and multi-file searches to it; it decides how much to read and answers with `Answer:` plus `Evidence:` (file:line). Known files are read directly. Judge and advisor do not use it. It runs with thinking low, without `AGENTS.md`/`CLAUDE.md` files (`explore.contextFiles: true` loads them) and with a budget of about 10 tool calls per question, after which it answers with what it has and says what it did not verify |
 | `advisor` | `advisor` tool, sub-`pi` with the whole transcript | choosing an approach, after an error repeats (auto-nudged after `repeatedErrorThreshold` failures), before "done" |
 | `judge` | `judge` tool, sub-`pi` with the git diff | the diff is ready; when a run ends with an unreviewed diff it asks (`autoJudge`) |
 | `arbiter` | sub-`pi` with the plan, the judge's report and the diff | the judge questions the plan and `planFlaw` is `auto`, or a passed review has a major plan flaw (whatever `planFlaw` is) (or you pick "Let the arbiter decide", or you picked *Approve, arbiter solves plan flaws* for this flow) |
@@ -99,7 +99,7 @@ after approval runs on its own:
   over `judge.recheckMaxShare` (half) of the whole diff. A change over
   `judge.finalFullReviewOverChars` (80,000 characters) that passes a re-review gets one final full
   review only when the changes since the last round touched a file its findings did not cite
-  (`judge.finalFullReviewNewFilesOnly: false` runs it every time); the judge tool's `full: true` forces one. `"judge": { "recheck": false }` turns it off.
+  (`judge.finalFullReviewNewFilesOnly: false` runs it every time); the judge tool's `full: true` forces one. That final review is skipped when a full review already passed in this stage and the changes since are at most `judge.finalFullReviewRepeatMaxShare` (10%) of the whole diff; `0` turns the skip off. `"judge": { "recheck": false }` turns it off.
 - **Knowledge on re-reviews:** when the last round's knowledge check passed, a re-review runs `get_rule_pack` only for the files changed since that round and carries over the other files' deviation notes. Otherwise it checks the whole change. Full reviews always check everything.
 - **Judge read budget:** the judge prompts ask for about 15 read/grep/find/ls calls on a full review and about 8 on a re-review (knowledge calls excluded). A soft aim, not a limit.
 - **Commit calls:** the commit instruction asks the model to chain dependent steps with `&&` to keep the call count low.
@@ -109,7 +109,7 @@ after approval runs on its own:
   the code, and drops the finding only if the code shows the executor is right.
 - **Turning steps back to manual:** set `"autoJudge": "ask"`, `"delivery": { "default": "off" }`
   (nothing is committed unless you pick it at approval), and `"planPrompt": false` for a "say go" hint instead of the Approve menu.
-  `"autopilot": true` skips the routine menus and lets the agent resolve waits itself (see "Autopilot"). `"handoverCompactTokens": 0` turns off compaction at handovers. `"returnToPlan": false` stays in execute after a flow ends. `"planRecap": "always"` makes every planner reply repeat the plan. `"stageAdvance": "auto"` (default) starts the next stage at once, even after an incomplete delivery or a stage with no changes, with a warning (not after a run you aborted, and never while the stage has open steps, no changes and no judge call); `"ask"` asks first. When `gh` is not on PATH, the workflow looks in the standard GitHub CLI install folders and adds the one it finds to pi's PATH; when there is none, outcomes say the PR state is unknown. `"stagedPlans": "onRequest"` makes the planner use stages only when you ask for delivery in parts.
+  `"autopilot": true` skips the routine menus and lets the agent resolve waits itself (see "Autopilot"). `"handoverCompactTokens": 0` turns off compaction at handovers. `"addedFolderRules": "full"` loads the rules files of added folders into the prompt (default `"paths"`: only their paths and sizes are listed). `"explore": { "contextFiles": true }` gives explore subagents the context files. `"returnToPlan": false` stays in execute after a flow ends. `"planRecap": "always"` makes every planner reply repeat the plan. `"stageAdvance": "auto"` (default) starts the next stage at once, even after an incomplete delivery or a stage with no changes, with a warning (not after a run you aborted, and never while the stage has open steps, no changes and no judge call); `"ask"` asks first. When `gh` is not on PATH, the workflow looks in the standard GitHub CLI install folders and adds the one it finds to pi's PATH; when there is none, outcomes say the PR state is unknown. `"stagedPlans": "onRequest"` makes the planner use stages only when you ask for delivery in parts.
 
 ## The plan, the judge and the arbiter
 
@@ -189,8 +189,8 @@ A session shows a desktop notification (Windows toast, `osascript` on macOS, `no
 ## Plan phase is read-only
 
 Only tools matching `planAllowedTools` (regexes over the tool name) can be called: read, grep, find,
-ls, bash, codemode, explore, advisor, judge, read-only ctx_* tools and MCP tools named search/get/list/...
-Everything else (AskClaude, `propose_entry`, `ctx_purge`, edit, write) is hidden and refused.
+ls, bash, codemode, explore, advisor, judge, `run_code`, `fetch_url` and MCP tools named search/get/list/...
+Everything else (AskClaude, `propose_entry`, edit, write) is hidden and refused.
 MCP tools whose name has a write word (create, update, delete, set, add, run, save, post, ...) are refused even when they start with a read verb
 (`get_or_create`, `get_post`); `planAllowedTools` cannot override this.
 
@@ -208,28 +208,22 @@ its plan and hand over, even when you said "fix it" or "do it for me".
   (`node -e`, `python`), and any command not on the list.
 - **More commands:** add regexes over the command's words to `planBashAllow` (default: `unity cmd
   editor_status` / `console_status`). `"planReadOnlyBash": false` turns the check off.
-- Also allowed on purpose: `git fetch` (it only updates remote-tracking refs), and the knowledge-base tools
-  `ctx_index` / `ctx_fetch_and_index`. `git help <topic>` is refused (it opens a viewer), as are `rg --pre`,
+- Also allowed on purpose: `git fetch` (it only updates remote-tracking refs). `git help <topic>` is refused (it opens a viewer), as are `rg --pre`,
   `ag --pager`, `less -o`, `date -s`, `hostname <name>`, `git diff --ext-diff` / `--textconv`.
 - A repository's own git config (`core.fsmonitor`, `diff.external`, textconv) can still run programs on a
   plain `git status` / `git diff`: plan an untrusted repo in a throwaway clone.
-- **context-mode tools** (`readonly-tools.ts`) are checked too. `ctx_execute` and
-  `ctx_execute_file` with `shell` language get the shell check. With `javascript` or `python`
-  they are refused when the code writes, deletes, runs programs, `eval`s, or sends a POST, PUT,
-  PATCH or DELETE request, or build names at runtime (`fs['wri'+'te']`, `require(x)`, `getattr`, a
-  `open()` mode that is not a plain read literal). Other languages are refused. `ctx_batch_execute`
-  checks each command. MCP tools are also refused when an argument holds a statement that changes data
-  (`INSERT`, `UPDATE ... SET`, `DELETE FROM`, `DROP`, a GraphQL `mutation`, ...).
-  `ctx_purge` is refused.
-- Shell text on Windows: `ctx_execute` and `ctx_batch_execute` run PowerShell, so a command is
-  checked as a shell command, and PowerShell-only cmdlets (`Set-Content`, `Remove-Item`, ...) are
-  refused because they are not on the list. With only the working folder's repo, the push
-  guard checks a PowerShell text twice: with `\` read as a path separator, and as written (a `bash -c`
-  script keeps bash escapes).
+- **`run_code`** (the sandbox extension, `readonly-tools.ts`) is checked too: its JavaScript is refused
+  when the code writes, deletes, runs programs, `eval`s, or sends a POST, PUT, PATCH or DELETE
+  request, or builds names at runtime (`fs['wri'+'te']`, `require(x)`). `fetch_url` only reads. MCP tools
+  are also refused when an argument holds a statement that changes data (`INSERT`, `UPDATE ... SET`,
+  `DELETE FROM`, `DROP`, a GraphQL `mutation`, ...).
+- **Tools that register later** (an MCP server that connects after the phase began) get the same filter:
+  it runs again before each prompt and at each turn start (`plan-tools.ts`) and calls `setActiveTools`
+  only when the set changes.
 - It is a guard against the planner drifting into execution, not a sandbox. The code checks are
   regexes: a determined disguise (a computed lookup on an alias of `require('fs')`, say) can still get
   past them.
-- Tests: `node --experimental-strip-types --test agent-end.test.ts folder-add.test.ts readonly-bash.test.ts readonly-tools.test.ts tokens.test.ts push-guard.test.ts knowledge.test.ts mcp-forward.test.ts subagent.test.ts delivery.test.ts notify.test.ts repos.test.ts stages.test.ts commit-guard.test.ts repo-diff.test.ts prompts.test.ts config.test.ts metrics.test.ts plan-store.test.ts boundary.test.ts plan-doc.test.ts runner-guard.test.ts test-report.test.ts test-run.test.ts test-flow.test.ts flow-report.test.ts view.test.ts waits.test.ts checkpoints.test.ts tags.test.ts`.
+- Tests: `node --experimental-strip-types --test agent-end.test.ts folder-add.test.ts readonly-bash.test.ts readonly-tools.test.ts plan-tools.test.ts tokens.test.ts push-guard.test.ts knowledge.test.ts mcp-forward.test.ts subagent.test.ts delivery.test.ts notify.test.ts repos.test.ts stages.test.ts commit-guard.test.ts repo-diff.test.ts prompts.test.ts config.test.ts metrics.test.ts plan-store.test.ts boundary.test.ts plan-doc.test.ts runner-guard.test.ts test-report.test.ts test-run.test.ts test-flow.test.ts flow-report.test.ts view.test.ts waits.test.ts checkpoints.test.ts tags.test.ts`.
 
 ## Test and fix
 
@@ -342,15 +336,17 @@ when you stop at the judge-rounds or plan-flaw menu. Then the widget starts agai
 from zero:
 
 ```
-✓ flow done · committed and pushed · 1,202,224 (315,300) tokens · 12m04s
+✓ flow done · committed and pushed · 12m04s
+  opus-5-5 1,000,000 (260,000) · in 12,000 · out 30,000 · cache read 900,000 · cache write 58,000
+  haiku-5-5 202,224 (55,300) · in 4,000 · out 8,000 · cache read 190,000 · cache write 224
   plan     █░░░░░░░░░░░░░░░░░░░     48,120 (9,800)   4%  opus-5-5 48,120 (9,800)
-  execute  █████████████████░░░  1,044,100 (280,000) 87%  sonnet-5 920,000 (250,000) · explore ×6 124,100 (30,000)
-  judge    █░░░░░░░░░░░░░░░░░░░     90,004 (21,300)   7%  judge ×1 90,004 (21,300)
+  execute  █████████████████░░░  1,044,100 (280,000) 87%  sonnet-5 920,000 (250,000) · explore haiku-5-5 ×6 124,100 (30,000)
+  judge    █░░░░░░░░░░░░░░░░░░░     90,004 (21,300)   7%  judge opus-5-5 ×1 90,004 (21,300)
   commit   █░░░░░░░░░░░░░░░░░░░     20,000 (4,200)   2%  sonnet-5 20,000 (4,200)
 ```
 
 The outcome says whether the commit really landed (HEAD moved), how many commits, whether it was pushed (nothing
-ahead of upstream), and the pull request's state (`gh pr view`). `/flow tokens` shows the same card for the flow in progress.
+ahead of upstream), and the pull request's state (`gh pr view`). `/flow tokens` shows the same card for the flow in progress. The header no longer sums across models: one line per model follows it (most expensive first, with its input, output, cache read and cache write counts), and each stage row names the model of every part. Summaries saved before this show the old card.
 
 Every flow, finished or stopped, ends with this card, followed by the plan steps (done or open) and all
 findings of the flow (open, fixed or noted). Both are built from the workflow state, so they cost no
@@ -389,7 +385,7 @@ folder's repo, the repos of the folders you add (`/folders add`, `--add-dir`; sa
 and any repo where the executor changed a file with `edit` or `write`.
 
 - The agent's prompt lists the extra folders and says to use absolute paths there. Their
-  `AGENTS.md`/`CLAUDE.md`, skills and prompts are loaded.
+  `AGENTS.md`/`CLAUDE.md` files are not loaded: the prompt lists their paths and sizes and tells the agent to read a folder's files before it plans or changes anything there (`addedFolderRules: "full"` loads them as before). Skills and prompts are loaded.
 - The judge reviews every repo of the flow in one diff, each part headed `=== repo: <root> ===`, and
   re-reviews compare each repo with its last round.
 - After a pass, each repo with changes gets its own commits and its own push/PR/merge. Each command
@@ -399,9 +395,7 @@ and any repo where the executor changed a file with `edit` or `write`.
 
 Limits: `cd` does not move the guard when the command text has `$(…)`, backticks, or parentheses
 outside quotes (such commands are checked against the working folder's branch); changes made
-only through `bash` in an unlisted repo are not noticed (add the folder); when a flow spans several
-repos, PowerShell texts are checked only with `\` read as a path separator, so a bash script passed on
-such a text is not seen with its escapes;
+only through `bash` in an unlisted repo are not noticed (add the folder);
 extensions in the added folders' `.pi/extensions` are not loaded; after `/resume`, run `/reload`
 to pick up that session's folder skills.
 

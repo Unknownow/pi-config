@@ -83,3 +83,17 @@ test("clear empties the queue", () => {
 	q.clear();
 	assert.equal(q.size, 0);
 });
+
+test("flow lines with and without the per-model breakdown both load back", () => {
+	const dir = tmp();
+	const u = () => ({ tokens: { raw: 1, cost: 1 }, main: { raw: 1, cost: 1 }, models: ["m"], subs: {} });
+	const old = { plan: u(), test: u(), execute: u(), judge: u(), commit: u() };
+	const neu = structuredClone(old) as Record<string, any>;
+	neu.plan.mainByModel = { m: { raw: 1, cost: 1 } };
+	neu.plan.byModel = { m: { tokens: { raw: 1, cost: 1 }, input: 1, output: 0, cacheRead: 0, cacheWrite: 0 } };
+	for (const stages of [old, neu]) appendMetrics(dir, [{ kind: "flow", at: "t", outcome: "done", ok: true, ended: 1, stages } as MetricEvent]);
+	const got = lines(dir);
+	assert.equal(got.length, 2);
+	assert.equal(got[0].stages.plan.byModel, undefined);
+	assert.equal(got[1].stages.plan.byModel.m.input, 1);
+});

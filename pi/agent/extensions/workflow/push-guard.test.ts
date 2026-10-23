@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import * as path from "node:path";
-import { codeCommitProblem, pushProblem, shellProblem } from "./push-guard.ts";
+import { codeCommitProblem, codePublishProblem, pushProblem, shellProblem } from "./push-guard.ts";
 import { repoKey } from "./repos.ts";
 
 const feature = { branch: "feat", protectedBranches: ["main", "master"], pushAllowed: false, prAllowed: false, mergeAllowed: false, commitAllowed: false };
@@ -155,6 +155,13 @@ test("codeCommitProblem", () => {
 
 test("codeCommitProblem: a later safe call does not clear an earlier merge", () => {
 	assert.notEqual(codeCommitProblem('execFileSync("git", ["merge", "main"]); execFileSync("git", ["merge", "--abort"])'), null);
+});
+
+test("codePublishProblem", () => {
+	assert.match(codePublishProblem('execSync("git push origin main")') ?? "", /git push/);
+	assert.match(codePublishProblem('execSync("gh pr create")') ?? "", /gh pr/);
+	assert.match(codePublishProblem('execSync("git merge main")') ?? "", /commit/);
+	assert.equal(codePublishProblem("console.log(1)"), null);
 });
 
 test("codeCommitProblem: chained and listed calls", () => {

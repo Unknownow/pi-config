@@ -20,7 +20,7 @@ import * as path from "node:path";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { type Component, type TUI, truncateToWidth } from "@earendil-works/pi-tui";
 import { DEFAULTS, describeRole, type Role, type RoleSpec } from "./config.ts";
-import { countTokens, type Tok, type TokenWeights } from "./tokens.ts";
+import { countTokens, type Tok, type TokenWeights, type UsageCounts } from "./tokens.ts";
 import type { SubagentEvent } from "./subagent.ts";
 import { progressBar } from "./board.ts";
 import { reportLines, type ReportFinding, type ReportStep } from "./flow-report.ts";
@@ -43,9 +43,40 @@ export interface RunView {
 	tokens: Tok;
 	/** Tokens of the message still streaming. */
 	liveTokens: Tok;
+	/** Counts of the message still streaming. */
+	liveCounts: ModelCounts;
 	/** Pipeline stage its tokens count toward. */
 	stage: Stage;
 }
+
+/** The four kinds of tokens, as the provider reports them. */
+export interface ModelCounts {
+	input: number;
+	output: number;
+	cacheRead: number;
+	cacheWrite: number;
+}
+
+export interface ModelTotal extends ModelCounts {
+	tokens: Tok;
+}
+
+const noCounts = (): ModelCounts => ({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
+const countsOf = (u: UsageCounts | undefined): ModelCounts => ({ input: u?.input ?? 0, output: u?.output ?? 0, cacheRead: u?.cacheRead ?? 0, cacheWrite: u?.cacheWrite ?? 0 });
+const maxCounts = (a: ModelCounts, b: ModelCounts): ModelCounts => ({
+	input: Math.max(a.input, b.input),
+	output: Math.max(a.output, b.output),
+	cacheRead: Math.max(a.cacheRead, b.cacheRead),
+	cacheWrite: Math.max(a.cacheWrite, b.cacheWrite),
+});
+const addCounts = (a: ModelCounts, b: ModelCounts): ModelCounts => ({
+	input: a.input + b.input,
+	output: a.output + b.output,
+	cacheRead: a.cacheRead + b.cacheRead,
+	cacheWrite: a.cacheWrite + b.cacheWrite,
+});
+/** Key of a model in the per-model maps: the short name, so "claude-bridge/claude-x" and "claude-x" agree. */
+const modelKey = (model: string | undefined): string => (model ? shortModel(model) : "unknown");
 
 export const STAGES: Stage[] = ["plan", "test", "execute", "judge", "commit"];
 
@@ -71,13 +102,25 @@ export interface StageUsage {
 	/** The main session's share; the rest is subagents. */
 	main: Tok;
 	models: string[];
-	subs: Partial<Record<SubRole, { tokens: Tok; runs: number }>>;
+	subs: Partial<Record<SubRole, { tokens: Tok; runs: number; byModel?: Record<string, { tokens: Tok; runs: number }> }>>;
+	/** The main session's share per model (short name). Absent in summaries saved before the breakdown. */
+	mainByModel?: Record<string, Tok>;
+	/** Main session and subagents per model, with the four counts. */
+	byModel?: Record<string, ModelTotal>;
+}
+
+function addToModel(u: StageUsage, model: string | undefined, tokens: Tok, counts: ModelCounts): string {
+	const key = modelKey(model);
+	const total = ((u.byModel ??= {})[key] ??= { tokens: zero(), ...noCounts() });
+	total.tokens = add(total.tokens, tokens);
+	Object.assign(total, addCounts(total, counts));
+	return key;
 }
 
 export type FlowUsage = Record<Stage, StageUsage>;
 
 export function emptyFlowUsage(): FlowUsage {
-	const empty = (): StageUsage => ({ tokens: zero(), main: zero(), models: [], subs: {} });
+	const empty = (): StageUsage => ({ tokens: zero(), main: zero(), models: [], subs: {}, mainByModel: {}, byModel: {} });
 	return { plan: empty(), test: empty(), execute: empty(), judge: empty(), commit: empty() };
 }
 
@@ -199,14 +242,31 @@ export function summaryLines(s: FlowSummary, theme: Theme): string[] {
 	// The test row shows only for flows that tested.
 	const rows = STAGES.filter((st) => st !== "test" || !isZero(stageTokens(st)));
 	const unit = s.weighted ? "cost-weighted tokens" : "tokens";
+	// Summaries from before the per-model breakdown render as they always did.
+	const perModel = new Map<string, ModelTotal>();
+	for (const st of STAGES) {
+		for (const [m, t] of Object.entries(s.stages[st]?.byModel ?? {})) {
+			const cur = perModel.get(m) ?? { tokens: zero(), ...noCounts() };
+			perModel.set(m, { tokens: add(cur.tokens, asTok(t.tokens)), ...addCounts(cur, countsOf(t)) });
+		}
+	}
+	const byModel = perModel.size > 0;
+	const took = s.started ? elapsed({ started: s.started, ended: s.ended }) : "";
+	const timing = took ? ` · ${took}` : "";
 	const head = [
 		s.ok ? theme.fg("success", "✓") : theme.fg("warning", "■"),
 		theme.bold(s.title ?? "flow done"),
 		theme.fg("dim", "·"),
 		theme.fg(s.ok ? "success" : "warning", s.outcome),
-		theme.fg("dim", `· ${fmtTok(total)} ${unit}${s.started ? ` · ${elapsed({ started: s.started, ended: s.ended })}` : ""}`),
+		theme.fg("dim", byModel ? (took ? `· ${took}` : "") : `· ${fmtTok(total)} ${unit}${timing}`),
 	].join(" ");
-	const lines = [head];
+	const lines = [head.trimEnd()];
+	if (byModel) {
+		const rowsByCost = [...perModel].sort((a, b) => b[1].tokens.cost - a[1].tokens.cost);
+		for (const [m, t] of rowsByCost) {
+			lines.push(theme.fg("text", `  ${m} ${fmtTok(t.tokens)}`) + theme.fg("dim", ` · in ${exact(t.input)} · out ${exact(t.output)} · cache read ${exact(t.cacheRead)} · cache write ${exact(t.cacheWrite)}`));
+		}
+	}
 	const width = 20;
 	const labelWidth = Math.max(...rows.map((st) => fmtTok(stageTokens(st)).length));
 	for (const stage of rows) {
@@ -217,8 +277,15 @@ export function summaryLines(s: FlowSummary, theme: Theme): string[] {
 		const bar = theme.fg("accent", "█".repeat(filled)) + theme.fg("dim", "░".repeat(width - filled));
 		const parts: string[] = [];
 		const main = asTok(u.main);
-		if (!isZero(main)) parts.push(`${u.models.map(shortModel).join("/") || "main"} ${fmtTok(main)}`);
-		for (const [role, sub] of Object.entries(u.subs)) if (sub) parts.push(`${role} ×${sub.runs} ${fmtTok(asTok(sub.tokens))}`);
+		const mains = Object.entries(u.mainByModel ?? {}).filter(([, t]) => !isZero(asTok(t)));
+		if (mains.length) for (const [m, t] of mains) parts.push(`${m} ${fmtTok(asTok(t))}`);
+		else if (!isZero(main)) parts.push(`${u.models.map(shortModel).join("/") || "main"} ${fmtTok(main)}`);
+		for (const [role, sub] of Object.entries(u.subs)) {
+			if (!sub) continue;
+			const models = Object.entries(sub.byModel ?? {});
+			if (models.length) for (const [m, r] of models) parts.push(`${role} ${m} ×${r.runs} ${fmtTok(asTok(r.tokens))}`);
+			else parts.push(`${role} ×${sub.runs} ${fmtTok(asTok(sub.tokens))}`);
+		}
 		const color = t.raw || t.cost ? "text" : "dim";
 		lines.push(
 			`  ${theme.fg(color, stage.padEnd(8))} ${bar} ${theme.fg(color, fmtTok(t).padStart(labelWidth))} ${theme.fg("muted", `${Math.round(share * 100)}%`.padStart(4))}  ${theme.fg("dim", parts.join(" · "))}`,
@@ -270,7 +337,7 @@ export class FlowView {
 	flowStarted: number | undefined;
 
 	/** The main session's message still streaming, and the stage it started in. */
-	private mainLive: { stage: Stage; tokens: Tok } | undefined;
+	private mainLive: { stage: Stage; tokens: Tok; counts: ModelCounts; model?: string } | undefined;
 	private nextId = 1;
 	private tui: TUI | undefined;
 	private ticker: ReturnType<typeof setInterval> | undefined;
@@ -310,12 +377,12 @@ export class FlowView {
 		this.ticker = undefined;
 	}
 
-	start(role: SubRole, label: string): RunView {
+	start(role: SubRole, label: string, model: string = this.roles[role].model): RunView {
 		this.clearFinished(15_000);
 		const run: RunView = {
 			id: this.nextId++,
 			role,
-			model: shortModel(this.roles[role].model),
+			model: shortModel(model),
 			label,
 			started: Date.now(),
 			status: "running",
@@ -323,10 +390,13 @@ export class FlowView {
 			tools: 0,
 			tokens: zero(),
 			liveTokens: zero(),
+			liveCounts: noCounts(),
 			stage: role === "judge" || role === "arbiter" ? "judge" : this.stage,
 		};
 		const sub = (this.flow[run.stage].subs[role] ??= { tokens: zero(), runs: 0 });
 		sub.runs++;
+		const bySub = ((sub.byModel ??= {})[modelKey(run.model)] ??= { tokens: zero(), runs: 0 });
+		bySub.runs++;
 		this.flowStarted ??= run.started;
 		this.runs.push(run);
 		this.changed();
@@ -341,12 +411,16 @@ export class FlowView {
 		} else if (e.type === "usage") {
 			// Cumulative per message; a failed stream can end with empty usage, so keep the larger.
 			const tokens = max(countTokens(e.usage, this.weights), e.done ? run.liveTokens : zero());
+			// Counts are cumulative too: keep the latest of the message, never a sum of its events.
+			const counts = maxCounts(countsOf(e.usage), e.done ? run.liveCounts : noCounts());
 			if (e.done) {
 				run.tokens = add(run.tokens, tokens);
-				this.add(run.stage, tokens, run.role);
+				this.add(run.stage, tokens, run.role, run.model, counts);
 				run.liveTokens = zero();
+				run.liveCounts = noCounts();
 			} else {
 				run.liveTokens = tokens;
+				run.liveCounts = counts;
 			}
 		} else if (e.type === "text" && run.role !== "explore") {
 			run.activity = `writing: ${oneLine(e.text.split("\n").filter(Boolean).pop() ?? "", 50)}`;
@@ -358,46 +432,56 @@ export class FlowView {
 		run.status = ok ? "ok" : "fail";
 		run.ended = Date.now();
 		// A message cut off by an abort or timeout never ends; its tokens were still spent.
-		this.add(run.stage, run.liveTokens, run.role);
+		this.add(run.stage, run.liveTokens, run.role, run.model, run.liveCounts);
 		run.tokens = add(run.tokens, run.liveTokens);
 		run.liveTokens = zero();
+		run.liveCounts = noCounts();
 		run.activity = outcome;
 		this.changed();
 	}
 
 	/** Usage of the main session's assistant message: cumulative while streaming, `done` once it ends. */
-	mainUsage(tokens: Tok, done: boolean, model?: string): void {
-		this.mainLive ??= { stage: this.stage, tokens: zero() };
+	mainUsage(tokens: Tok, done: boolean, model?: string, usage?: UsageCounts): void {
+		this.mainLive ??= { stage: this.stage, tokens: zero(), counts: noCounts() };
 		this.flowStarted ??= Date.now();
+		const counts = maxCounts(countsOf(usage), done ? this.mainLive.counts : noCounts());
 		if (done) {
 			// A failed stream can end with empty usage; the streamed tokens were still spent.
-			this.add(this.mainLive.stage, max(tokens, this.mainLive.tokens), "main", model);
+			this.add(this.mainLive.stage, max(tokens, this.mainLive.tokens), "main", model ?? this.mainLive.model, counts);
 			this.mainLive = undefined;
 		} else if (same(tokens, this.mainLive.tokens)) {
 			return;
 		} else {
 			this.mainLive.tokens = tokens;
+			this.mainLive.counts = counts;
+			if (model) this.mainLive.model = model;
 		}
 		this.changed();
 	}
 
 	/** Counts a main-session message that never ended (e.g. aborted) as spent. */
 	settleMain(): void {
-		if (this.mainLive) this.mainUsage(this.mainLive.tokens, true);
+		if (this.mainLive) this.mainUsage(this.mainLive.tokens, true, this.mainLive.model);
 	}
 
-	private add(stage: Stage, tokens: Tok, source: "main" | SubRole, model?: string): void {
+	private add(stage: Stage, tokens: Tok, source: "main" | SubRole, model?: string, counts: ModelCounts = noCounts()): void {
 		this.used[stage] = add(this.used[stage], tokens);
 		const u = this.flow[stage];
 		u.tokens = add(u.tokens, tokens);
+		const key = addToModel(u, model, tokens, counts);
 		if (source === "main") {
 			u.main = add(u.main, tokens);
 			if (model && !u.models.includes(model)) u.models.push(model);
+			const m = (u.mainByModel ??= {});
+			m[key] = add(m[key] ?? zero(), tokens);
 		} else {
 			// runs is 0 when the run started before this flow did.
 			const sub = (u.subs[source] ??= { tokens: zero(), runs: 0 });
 			sub.tokens = add(sub.tokens, tokens);
 			sub.runs ||= 1;
+			const bySub = ((sub.byModel ??= {})[key] ??= { tokens: zero(), runs: 0 });
+			bySub.tokens = add(bySub.tokens, tokens);
+			bySub.runs ||= 1;
 		}
 	}
 
@@ -433,6 +517,9 @@ export class FlowView {
 			const st = stages[this.mainLive.stage];
 			st.tokens = add(st.tokens, this.mainLive.tokens);
 			st.main = add(st.main, this.mainLive.tokens);
+			const key = addToModel(st, this.mainLive.model, this.mainLive.tokens, this.mainLive.counts);
+			const m = (st.mainByModel ??= {});
+			m[key] = add(m[key] ?? zero(), this.mainLive.tokens);
 		}
 		for (const r of this.runs) {
 			if (isZero(r.liveTokens)) continue;
@@ -440,6 +527,10 @@ export class FlowView {
 			st.tokens = add(st.tokens, r.liveTokens);
 			const sub = (st.subs[r.role] ??= { tokens: zero(), runs: 0 });
 			sub.tokens = add(sub.tokens, r.liveTokens);
+			const key = addToModel(st, r.model, r.liveTokens, r.liveCounts);
+			const bySub = ((sub.byModel ??= {})[key] ??= { tokens: zero(), runs: 0 });
+			bySub.tokens = add(bySub.tokens, r.liveTokens);
+			bySub.runs ||= 1;
 		}
 		return { outcome, ok, started: this.flowStarted, ended: Date.now(), stages };
 	}

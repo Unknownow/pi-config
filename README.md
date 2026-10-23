@@ -83,7 +83,6 @@ Outside the mirror:
 | `~/.pi/agent/bin/` | `fd` / `rg` platform binaries — Pi fetches these itself. |
 | `~/.pi/agent/sessions/` | Conversation history, per-machine. |
 | `npm/node_modules/` | Rebuilt by `npm install`. |
-| `~/.pi/context-mode/` | A search index (~29 MB). Disposable, rebuilt from sources. |
 | `*.db`, `*.sqlite`, `*-shm`, `*-wal` | Live SQLite. Git or cloud sync corrupts it, and two machines writing to it diverge with no sane merge. |
 
 **Neither direction ever deletes.** A file you have and the other machine doesn't is added; a file

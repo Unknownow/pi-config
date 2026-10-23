@@ -4,197 +4,68 @@ import { test } from "node:test";
 import { PLAN_TOOLS, planToolProblem, planToolRefused } from "./readonly-tools.ts";
 
 const allow: RegExp[] = [];
-const check = (name: string, input: Record<string, unknown>, platform = "linux") =>
-	planToolProblem(name, input, allow, platform);
+const check = (name: string, input: Record<string, unknown>) => planToolProblem(name, input, allow);
 
 test("bash goes through the shell check", () => {
 	assert.equal(check("bash", { command: "ls -la" }), null);
 	assert.match(check("bash", { command: "touch x" }) ?? "", /not on the read-only list/);
 });
 
-test("shell code in ctx tools goes through the shell check, with or without an MCP prefix", () => {
-	assert.equal(check("ctx_execute", { language: "shell", code: "git status" }), null);
-	assert.match(check("mcp__custom-tools__ctx_execute", { language: "shell", code: "rm -rf build" }) ?? "", /rm/);
-	assert.equal(check("ctx_execute_file", { path: "a.md", language: "shell", code: "grep -c x FILE_CONTENT" }), null);
+test("run_code goes through the JavaScript check, with or without an MCP prefix", () => {
+	assert.equal(check("run_code", { code: "console.log(1)" }), null);
+	assert.equal(check("run_code", { code: "console.log(require('fs').readFileSync('a', 'utf8').split('\n').length)" }), null);
+	assert.equal(check("run_code", { code: "process.stdout.write('x')" }), null);
+	assert.match(check("run_code", { code: "require('fs').writeFileSync('x', 'y')" }) ?? "", /writes/);
+	assert.match(check("mcp__sandbox__run_code", { code: "fs.rmSync('build', { recursive: true })" }) ?? "", /writes/);
+	assert.match(check("run_code", { code: "fs.writeSync(1, 'x')" }) ?? "", /writes or opens/);
+	assert.match(check("run_code", { code: "fs.openSync(p, 'w')" }) ?? "", /writes or opens/);
+	assert.match(check("run_code", { code: "Bun.write('x', 'y')" }) ?? "", /writes files/);
+	assert.match(check("run_code", { code: "require('child_process').execSync('ls')" }) ?? "", /other programs/);
+	assert.match(check("run_code", { code: "eval(s)" }) ?? "", /runtime/);
+	assert.match(check("run_code", { code: "fetch(u, { method: 'POST' })" }) ?? "", /changes data/);
 });
 
-test("on Windows, shell code with escapes PowerShell reads differently is refused", () => {
-	const code = 'echo "a\\" ; Remove-Item x ; echo "b\\""';
-	const refused = (c: string) => check("ctx_execute", { language: "shell", code: c }, "win32") ?? "allowed";
-	assert.match(refused(code), /characters/);
-	assert.match(refused("echo `rm x`"), /characters/);
-	assert.match(refused("echo a <# x #>"), /characters/);
-	assert.match(refused("echo \\; Remove-Item -Recurse x"), /characters/);
-	assert.match(refused('echo "\\$(Remove-Item x)"'), /characters/);
-	assert.match(refused("echo a \\\nRemove-Item x"), /characters/);
-	assert.equal(refused("git status"), "allowed");
-	assert.match(refused("ls D:\\projects\\x"), /characters/);
-});
-
-test("PowerShell code is refused while planning", () => {
-	assert.match(check("ctx_execute", { language: "powershell", code: "Get-ChildItem" }) ?? "", /PowerShell/);
-	assert.match(check("ctx_execute", { language: "pwsh", code: "Get-ChildItem" }) ?? "", /PowerShell/);
-});
-
-test("batch commands are each checked", () => {
-	assert.equal(check("ctx_batch_execute", { commands: [{ label: "a", command: "ls" }, { label: "b", command: "git log -1" }] }), null);
-	assert.match(
-		check("ctx_batch_execute", { commands: [{ label: "a", command: "ls" }, { label: "b", command: "echo x > out.txt" }] }) ?? "",
-		/writes to out.txt/,
-	);
-	assert.match(
-		check("ctx_batch_execute", { commands: [{ label: "a", command: 'echo "a\\" x' }] }, "win32") ?? "allowed",
-		/characters/,
-	);
-});
-
-test("purge and upgrade are refused", () => {
-	assert.match(check("ctx_purge", { confirm: true, scope: "project" }) ?? "", /knowledge base/);
-	assert.match(check("mcp__custom-tools__ctx_upgrade", {}) ?? "", /installed tool/);
-});
-
-test("javascript reads pass, writes and programs are refused", () => {
-	assert.equal(check("ctx_execute", { language: "javascript", code: "console.log(FILE_CONTENT.split('\\n').length)" }), null);
-	assert.equal(check("ctx_execute", { language: "javascript", code: "process.stdout.write('x')" }), null);
-	assert.match(check("ctx_execute", { language: "javascript", code: "require('fs').writeFileSync('x', 'y')" }) ?? "", /writes/);
-	assert.match(check("ctx_execute", { language: "javascript", code: "fs.rmSync('build', { recursive: true })" }) ?? "", /writes/);
-	assert.match(check("ctx_execute", { language: "javascript", code: "fs.writeSync(1, 'x')" }) ?? "", /writes or opens/);
-	assert.match(check("ctx_execute", { language: "javascript", code: "fs.openSync(p, 'w')" }) ?? "", /writes or opens/);
-	assert.match(check("ctx_execute", { language: "javascript", code: "Bun.write('x', 'y')" }) ?? "", /writes files/);
-	assert.match(check("ctx_execute_file", { path: "a", language: "typescript", code: "require('child_process').execSync('ls')" }) ?? "", /other programs/);
-	assert.match(check("ctx_execute", { language: "javascript", code: "eval(s)" }) ?? "", /runtime/);
-	assert.match(check("ctx_execute", { language: "js", code: "fetch(u, { method: 'POST' })" }) ?? "", /changes data/);
-});
-
-test("python reads pass, writes and programs are refused", () => {
-	assert.equal(check("ctx_execute", { language: "python", code: "print(open('a.txt').read()[:10])" }), null);
-	assert.equal(check("ctx_execute", { language: "python", code: "with open('a.txt', 'rb') as f: f.read()" }), null);
-	assert.match(check("ctx_execute", { language: "python", code: "open('out.txt', 'w').write('x')" }) ?? "", /writing/);
-	assert.match(check("ctx_execute", { language: "python", code: "open('out.txt', mode='a')" }) ?? "", /writing/);
-	assert.match(check("ctx_execute", { language: "python", code: "open(os.path.join(d, 'x'), 'w')" }) ?? "", /writing/);
-	assert.match(check("ctx_execute", { language: "python", code: "open(Path(d) / 'x', 'w')" }) ?? "", /writing/);
-	assert.match(check("ctx_execute", { language: "python", code: "Path('x').open('w')" }) ?? "", /writing/);
-	assert.match(check("ctx_execute", { language: "python", code: "os.write(fd, b'x')" }) ?? "", /os/);
-	assert.match(check("ctx_execute", { language: "python", code: "import os\nos.remove('x')" }) ?? "", /os/);
-	assert.match(check("ctx_execute", { language: "python", code: "import subprocess" }) ?? "", /programs/);
-	assert.match(check("ctx_execute", { language: "python", code: "from pathlib import Path\nPath('x').write_text('y')" }) ?? "", /writes/);
-	assert.equal(check("ctx_execute", { language: "python", code: "s = 'a'.replace('a', 'b')" }), null);
-});
-
-test("other languages are refused while planning", () => {
-	assert.match(check("ctx_execute", { language: "ruby", code: "puts 1" }) ?? "", /not checked/);
-	assert.match(check("ctx_execute", { language: "go", code: "package main" }) ?? "", /not checked/);
-});
-
-test("tools outside the list are not checked here", () => {
-	assert.equal(check("ctx_search", { queries: ["x"] }), null);
+test("fetch_url and other tools are not checked here", () => {
+	assert.equal(check("fetch_url", { url: "https://example.com" }), null);
 	assert.equal(check("read", { path: "a" }), null);
-});
-
-test("on Windows, arithmetic substitution, Unicode quotes and any $ or brackets are refused", () => {
-	const refused = (c: string) => check("ctx_execute", { language: "shell", code: c }, "win32") ?? "allowed";
-	assert.match(refused("echo $((Remove-Item -Recurse src))"), /characters/);
-	assert.match(refused("echo 'a\u2019 ; Remove-Item x ; \u2018b'"), /characters/);
-	assert.match(refused('echo "a\u201d ; Remove-Item x ; \u201cb"'), /characters/);
-	assert.match(refused("echo (Remove-Item x)"), /characters/);
-	assert.match(refused("echo [x]"), /characters/);
-	assert.equal(refused("ls D:/projects/x | wc -l"), "allowed");
-});
-
-test("python: open with nested path arguments and mode= is caught, reads are not", () => {
-	assert.match(check("ctx_execute", { language: "python", code: "open(os.path.join(d, 'x'), 'w')" }) ?? "", /writing/);
-	assert.match(check("ctx_execute", { language: "python", code: "open(Path(d) / 'x', mode='wb')" }) ?? "", /writing/);
-	assert.match(check("ctx_execute", { language: "python", code: "Path('x').open('w')" }) ?? "", /writing/);
-	assert.equal(check("ctx_execute", { language: "python", code: "open('a.txt').read().count('a')" }), null);
-	assert.equal(check("ctx_execute", { language: "python", code: "s = ''.join(open('a.txt').read().split('x'))" }), null);
-});
-
-test("python: names imported from os, shutil or subprocess are refused", () => {
-	assert.match(check("ctx_execute", { language: "python", code: "from os import system, remove" }) ?? "", /by name/);
-	assert.equal(check("ctx_execute", { language: "python", code: "import os\nprint(os.getcwd())" }), null);
-});
-
-test("on Windows, a bare carriage return and PowerShell web aliases are refused", () => {
-	const refused = (c: string) => check("ctx_execute", { language: "shell", code: c }, "win32") ?? "allowed";
-	assert.match(refused("ls\rRemove-Item -Recurse -Force src"), /carriage/);
-	assert.equal(refused("ls\r\nwc -l"), "allowed");
-	assert.match(refused("curl -Method Delete http://x"), /alias/);
-	assert.match(refused("iwr http://x -OutFile y"), /alias/);
-	assert.equal(refused("curl.exe -sL https://x"), "allowed");
-});
-
-test("python: parentheses inside quoted strings do not end the open( match", () => {
-	assert.match(check("ctx_execute", { language: "python", code: "open('a)b.txt', 'w')" }) ?? "", /writing/);
-	assert.match(check("ctx_execute", { language: "python", code: 'open(f"{x})", "w")' }) ?? "", /writing/);
-});
-
-test("quoted PowerShell aliases are refused on Windows; a stray CR is refused everywhere", () => {
-	const refused = (c: string, p = "win32") => check("ctx_execute", { language: "shell", code: c }, p) ?? "allowed";
-	assert.match(refused("& 'curl' -Method Delete -Uri http://x"), /alias/);
-	assert.match(refused("c'url' -Method Delete -Uri http://x"), /alias/);
-	assert.match(refused("git config a.b \r\n", "linux"), /carriage/);
-	assert.match(refused("git config a.b \r\n", "linux"), /carriage/);
 });
 
 test("the allow list admits reading tools and refuses the rest", () => {
 	const allowed = PLAN_TOOLS.map((p) => new RegExp(p));
 	const blocked = ["edit", "write"];
-	for (const name of ["read", "bash", "ctx_search", "mcp__custom-tools__ctx_execute", "mcp__knowledge__get_entry", "mcp__knowledge__search"]) {
+	for (const name of ["read", "bash", "run_code", "fetch_url", "mcp__knowledge__get_entry", "mcp__knowledge__search"]) {
 		assert.equal(planToolRefused(name, allowed, blocked), null, name);
 	}
-	for (const name of ["AskClaude", "mcp__knowledge__propose_entry", "mcp__x__find_and_replace", "mcp__x__get_or_create_item", "ctx_purge", "edit", "powershell"]) {
+	for (const name of ["AskClaude", "mcp__knowledge__propose_entry", "mcp__x__find_and_replace", "mcp__x__get_or_create_item", "ctx_execute", "ctx_purge", "mcp__custom-tools__ctx_search", "edit", "powershell"]) {
 		assert.ok(planToolRefused(name, allowed, blocked), name);
 	}
 });
 
-const exec = "mcp__custom-tools__ctx_execute";
-const bypasses: [string, string][] = [
-	["javascript", "fs['wri'+'teFileSync']('a','b')"],
-	["javascript", "const r=globalThis['req'+'uire']"],
-	["javascript", "import('node:'+'fs')"],
-	["javascript", "process.binding('fs')"],
-	["javascript", "await fetch(u,{method:'PO'+'ST'})"],
-	["javascript", "process.kill(1)"],
-	["python", "importlib.import_module('o'+'s').system('id')"],
-	["python", "getattr(__builtins__,'op'+'en')('a','w')"],
-	["python", "import os as o; o.system('id')"],
-	["python", "m = 'w'\nopen('a', m)"],
-	["javascript", "const n=['writeFileS','ync'].join(''); fs[n]('a','b')"],
-	["javascript", "const k=Object.keys(fs).find(k=>k.startsWith('writeF')); fs[k]('a','b')"],
-	["python", "open('a', ''.join(['w']))"],
-	["python", "open('a', 'r'.replace('r','w'))"],
-	["python", "open('a', ('w'))"],
-	["python", "open('a', mode=m)"],
-	["python", "io.open('a', ''.join(['w'])).write('x')"],
-	["python", "pathlib.Path('a').open(''.join(['w']))"],
-	["python", "Path('a').open(mode=''.join(['w']))"],
-	["javascript", "fs2[n].call(fs2,'a','b')"],
-	["python", "m='w'; pathlib.Path('a').open(m).write('x')"],
-	["python", "Path('a').open(chr(119))"],
-	["python", "gzip.open('a', ''.join(['w']))"],
-	["python", "builtins.open('a', ''.join(['w']))"],
-	["python", "import io as i; i.open('a', ''.join(['w']))"],
+const bypasses: string[] = [
+	"fs['wri'+'teFileSync']('a','b')",
+	"const r=globalThis['req'+'uire']",
+	"import('node:'+'fs')",
+	"process.binding('fs')",
+	"await fetch(u,{method:'PO'+'ST'})",
+	"process.kill(1)",
+	"const n=['writeFileS','ync'].join(''); fs[n]('a','b')",
+	"const k=Object.keys(fs).find(k=>k.startsWith('writeF')); fs[k]('a','b')",
+	"fs2[n].call(fs2,'a','b')",
 ];
-for (const [language, code] of bypasses) {
+for (const code of bypasses) {
 	test(`refuses runtime-built code: ${code.slice(0, 40)}`, () => {
-		assert.notEqual(planToolProblem(exec, { language, code }, [], "linux"), null);
+		assert.notEqual(planToolProblem("run_code", { code }, []), null);
 	});
 }
-const harmless: [string, string][] = [
-	["javascript", "JSON.parse(require('fs').readFileSync('a','utf8'))"],
-	["javascript", "const arr=[1,2,3]; console.log(arr[1+1], arr.length)"],
-	["javascript", "const o={key:1}; console.log(o['key'])"],
-	["python", "print(open('a').read())"],
-	["python", "import json\nprint(json.load(open(p)))"],
-	["python", "print(open('a', 'r', encoding='utf8').read())"],
-	["python", "print(open(os.path.join(a, b), 'rb').read())"],
-	["javascript", "console.log(data[0](1), items[i], path[0])"],
-	["python", "from PIL import Image\nprint(Image.open(p).size)"],
-	["python", "print(Path(p).open().read())"],
+const harmless: string[] = [
+	"JSON.parse(require('fs').readFileSync('a','utf8'))",
+	"const arr=[1,2,3]; console.log(arr[1+1], arr.length)",
+	"const o={key:1}; console.log(o['key'])",
+	"console.log(data[0](1), items[i], path[0])",
 ];
-for (const [language, code] of harmless) {
+for (const code of harmless) {
 	test(`allows plain reads: ${code.slice(0, 40)}`, () => {
-		assert.equal(planToolProblem(exec, { language, code }, [], "linux"), null);
+		assert.equal(planToolProblem("run_code", { code }, []), null);
 	});
 }
 test("an MCP tool that sends a statement changing data is refused", () => {

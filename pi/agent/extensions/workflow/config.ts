@@ -177,7 +177,15 @@ export interface WorkflowConfig {
 	 */
 	tokenWeights: TokenWeights;
 	test: TestConfig;
-	explore: { maxQueries: number; concurrency: number; tools: string[] };
+	explore: {
+		maxQueries: number;
+		concurrency: number;
+		tools: string[];
+		/** Explore subagents load AGENTS.md / CLAUDE.md files when true; off keeps them cheap. */
+		contextFiles: boolean;
+	};
+	/** Rules files of added folders: "paths" lists them in the workspace section, "full" loads them into the prompt. */
+	addedFolderRules: "paths" | "full";
 	advisor: { tools: string[]; maxTranscriptChars: number };
 	arbiter: { tools: string[] };
 	judge: {
@@ -193,6 +201,8 @@ export interface WorkflowConfig {
 		finalFullReviewOverChars: number;
 		/** The final full review runs only when the changes since the last round touched a file its findings did not cite. */
 		finalFullReviewNewFilesOnly: boolean;
+		/** The final full review is skipped when the changes since the last passing full review of this stage are at most this share of the whole diff. 0 never skips. */
+		finalFullReviewRepeatMaxShare: number;
 	};
 	knowledge: KnowledgeConfig;
 	subagent: {
@@ -261,7 +271,8 @@ export const DEFAULTS: WorkflowConfig = {
 		runnerPathFlags: ["--project-path", "-projectPath"],
 		runnerPathEnv: ["UNITY_PROJECT_PATH"],
 	},
-	explore: { maxQueries: 8, concurrency: 8, tools: ["read", "grep", "find", "ls"] },
+	explore: { maxQueries: 8, concurrency: 8, tools: ["read", "grep", "find", "ls"], contextFiles: false },
+	addedFolderRules: "paths",
 	advisor: { tools: ["read", "grep", "find", "ls"], maxTranscriptChars: 1_500_000 },
 	arbiter: { tools: ["read", "grep", "find", "ls"] },
 	judge: {
@@ -272,6 +283,7 @@ export const DEFAULTS: WorkflowConfig = {
 		recheckMaxShare: 0.5,
 		finalFullReviewOverChars: 80_000,
 		finalFullReviewNewFilesOnly: true,
+		finalFullReviewRepeatMaxShare: 0.1,
 	},
 	knowledge: {
 		server: "knowledge",
@@ -336,6 +348,9 @@ function parseConfig(file: string): Loaded {
 		if (config.plans.sync !== "remote" && config.plans.sync !== "local") config.plans.sync = DEFAULTS.plans.sync;
 		if (!Array.isArray(config.plans.localOnly) || config.plans.localOnly.some((s) => typeof s !== "string")) config.plans.localOnly = DEFAULTS.plans.localOnly;
 		for (const k of ["keepDays", "keepCount"] as const) if (typeof config.plans[k] !== "number" || !Number.isFinite(config.plans[k]) || config.plans[k] < 0) config.plans[k] = DEFAULTS.plans[k];
+		if (!isObject(config.explore)) config.explore = DEFAULTS.explore;
+		if (typeof config.explore.contextFiles !== "boolean") config.explore.contextFiles = DEFAULTS.explore.contextFiles;
+		if (config.addedFolderRules !== "paths" && config.addedFolderRules !== "full") config.addedFolderRules = DEFAULTS.addedFolderRules;
 		if (typeof config.autopilot !== "boolean") config.autopilot = DEFAULTS.autopilot;
 		if (!isObject(config.wait)) config.wait = DEFAULTS.wait;
 		for (const k of ["pollMs", "maxMs", "checkTimeoutMs"] as const) if (typeof config.wait[k] !== "number" || !Number.isFinite(config.wait[k]) || config.wait[k] <= 0) config.wait[k] = DEFAULTS.wait[k];

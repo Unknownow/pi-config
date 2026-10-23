@@ -5,7 +5,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { test } from "node:test";
-import { citeNames, collectRepoDiff, type RepoDiff, type RunGit, needsFinalFullReview, uncitedFiles } from "./repo-diff.ts";
+import { citeNames, collectRepoDiff, type RepoDiff, type RunGit, needsFinalFullReview, shouldSkipRepeatFullReview, uncitedFiles } from "./repo-diff.ts";
 
 const NUL = String.fromCharCode(0);
 
@@ -174,4 +174,11 @@ test("citeNames keeps a path bare unless several repos changed it", () => {
 	assert.deepEqual(uncitedFiles("src/a.ts:3 - minor - x", names), ["repoA/README.md", "repoB/README.md"]);
 	assert.deepEqual(uncitedFiles("repoA/README.md:3 - minor - x", names), ["src/a.ts", "repoB/README.md"]);
 	assert.deepEqual(citeNames([], true), []);
+});
+
+test("shouldSkipRepeatFullReview follows the share", () => {
+	assert.equal(shouldSkipRepeatFullReview(100, 1000, 0), false);
+	assert.equal(shouldSkipRepeatFullReview(100, 1000, 0.1), true);
+	assert.equal(shouldSkipRepeatFullReview(101, 1000, 0.1), false);
+	assert.equal(shouldSkipRepeatFullReview(0, 1000, 0.1), true);
 });
