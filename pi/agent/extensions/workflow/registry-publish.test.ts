@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { lockWaitCheck, blockedWaitCheck, classifyPublish, shouldRecordMerged, waitSince, lockDecision, mirrorArgs, parseMirrorStep, parsePublishStep, publishArgs } from "./registry-publish.ts";
+import { lockWaitCheck, blockedWaitCheck, classifyPublish, NO_JUDGED_MERGE, waitSince, lockDecision, mirrorArgs, parseMirrorStep, parsePublishStep, publishArgs } from "./registry-publish.ts";
 import { registryPublishProblem } from "./push-guard.ts";
 
 test("parsePublishStep reads packages and rejects versions", () => {
@@ -59,10 +59,10 @@ test("waitSince keeps the first value", () => {
 	assert.equal(waitSince("a", "b"), "a");
 });
 
-test("shouldRecordMerged needs a merge delivery that succeeded", () => {
-	assert.equal(shouldRecordMerged("merge", true), true);
-	assert.equal(shouldRecordMerged("merge", false), false);
-	assert.equal(shouldRecordMerged("push", true), false);
+test("the missing-merge refusal names the judge gate and not the user", () => {
+	assert.match(NO_JUDGED_MERGE, /gh pr merge after a judge PASS/);
+	assert.match(NO_JUDGED_MERGE, /Nothing published.$/);
+	assert.doesNotMatch(NO_JUDGED_MERGE, /ask|user/i);
 });
 
 test("classifyPublish splits by the dry run and the tags", () => {
