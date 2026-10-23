@@ -122,3 +122,7 @@ test("waitCheckProblem", () => {
 test("parseWaitStep backticked check", () => {
 	assert.deepEqual(parseWaitStep("**S7.** Wait: open the Editor (check: `ls x`)", "S7"), { reason: "open the Editor", check: "ls x" });
 });
+
+test("parseWaitStep keeps a check with nested parentheses", () => {
+	assert.deepEqual(parseWaitStep("**S4.** Wait: open the Editor (check: echo $(x))", "S4"), { reason: "open the Editor", check: "echo $(x)" });
+});

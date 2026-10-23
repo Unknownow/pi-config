@@ -12,7 +12,7 @@ export interface PlanStage {
 
 export const HEADING = /^#{2,4}\s*[*_]*Stage\s+(\d+)[*_]*\s*[:.\u2013\u2014-]\s*(.*?)\s*[*_]*\s*$/i;
 const TAG = /\s*\(\s*deliver(?:y)?\s*:\s*([a-z]+)\s*\)\s*$/i;
-const AFTER = /\s*\(\s*after\s*:\s*([^;)]*?)\s*(?:;\s*check\s*:\s*([^)]*?)\s*)?\)\s*$/i;
+const AFTER = /\s*\(\s*after\s*:\s*([^;)]*?)\s*(?:;\s*check\s*:\s*((?:[^()]|\([^()]*\))*?)\s*)?\)\s*$/i;
 
 /**
  * The plan's stages: `##`-`####` headings "Stage N: title", optionally ending in "(after: …)". A trailing "(delivery: …)" of older plans is ignored.

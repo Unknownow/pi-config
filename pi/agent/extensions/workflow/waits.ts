@@ -8,7 +8,7 @@ export interface WaitSpec {
 	check?: string;
 }
 
-const CHECK = /\s*\(\s*check\s*:\s*([^)]*)\)\s*\.?\s*$/i;
+const CHECK = /\s*\(\s*check\s*:\s*((?:[^()]|\([^()]*\))*)\)\s*\.?\s*$/i;
 
 /** A check as the planner wrote it, without the Markdown backticks around it (bash would run them as command substitution). */
 export function cleanCheck(s: string | undefined): string | undefined {

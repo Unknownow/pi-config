@@ -120,3 +120,12 @@ test("planWaitProblems clean plan", () => {
 	const plan = "### Stage 1: a\n### Stage 2: b (after: x; check: git ls-remote --exit-code --tags origin p/v1)\n**S3.** Wait: y (check: git ls-remote origin q)";
 	assert.deepEqual(planWaitProblems(plan, () => null), []);
 });
+
+test("planWaitProblems catches $( ) in a Wait step and a stage check", () => {
+	const w = planWaitProblems("**S4.** Wait: open the Editor (check: echo $(x))", () => null);
+	assert.equal(w.length, 1);
+	assert.ok(w[0].startsWith("S4 check: uses command substitution"));
+	const s = planWaitProblems("### Stage 1: a\n### Stage 2: b (after: x; check: echo $(x))", () => null);
+	assert.equal(s.length, 1);
+	assert.ok(s[0].startsWith("Stage 2 check: uses command substitution"));
+});

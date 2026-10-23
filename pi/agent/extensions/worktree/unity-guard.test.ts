@@ -40,8 +40,8 @@ test("unity guard: several paths and Windows shells", () => {
 test("guardProblem dispatches by tool", () => {
 	const g = (tool: string, input: Record<string, unknown>) => guardProblem(tool, input, { cwd: o.cwd, setRoot: o.setRoot });
 	assert.match(g("bash", { command: "unity cmd x" }) ?? "", /Refused/);
-	assert.match(g("run_code", { code: "run('unity recompile')" }) ?? "", /Refused/);
-	assert.match(g("mcp__x__run_code", { code: "run('unity cmd x')" }) ?? "", /Refused/);
+	assert.match(g("run_code", { code: "execSync('unity recompile')" }) ?? "", /Refused/);
+	assert.match(g("mcp__x__run_code", { code: "execSync('unity cmd x')" }) ?? "", /Refused/);
 	assert.equal(g("run_code", { code: "console.log(1)" }), null);
 	assert.equal(g("read", { path: "x" }), null);
 });
@@ -73,4 +73,8 @@ test("codeProblem allows unity-packages paths and refuses spawned unity", () => 
 	assert.equal(codeProblem("const fs=require('fs');process.chdir('D:/w/unity-packages');/* run test */ fs.writeFileSync('a','b')"), null);
 	assert.match(codeProblem("require('child_process').execSync('unity test')") ?? "", /^Refused \(worktree\)/);
 	assert.match(codeProblem("spawn('unity.exe',['recompile'])") ?? "", /^Refused \(worktree\)/);
+});
+
+test("codeProblem ignores a comment that only mentions unity", () => {
+	assert.equal(codeProblem("// run the unity tests\nconst a = 1"), null);
 });
