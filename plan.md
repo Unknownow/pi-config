@@ -273,13 +273,15 @@ One commit:
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 `config.ts`:
-- [ ] S2 `agent-end.ts:92-95`: change `phaseAfterFlow` to the §4 signature and update its doc comment. The phase parameter type i
-- [ ] S3 `prompts.ts`:
-- [ ] S4 `view.ts`:
-- [ ] S5 `index.ts`, the phase plumbing:
-- [ ] S6 `index.ts`, the behaviour:
-- [ ] S7 `pi/agent/workflow.json`:
-- [ ] S8 `README.md`:
-- [ ] S9 `docs/workflow-improvements.md`:
-- [ ] S10 Tests (see §6), then run the full workflow suite.
+- [x] S1 `config.ts`:
+- [x] S2 `agent-end.ts:92-95`: change `phaseAfterFlow` to the §4 signature and update its doc comment. The phase parameter type i
+- [x] S3 `prompts.ts`:
+- [x] S4 `view.ts`:
+- [x] S5 `index.ts`, the phase plumbing:
+- [x] S6 `index.ts`, the behaviour:
+- [x] S7 `pi/agent/workflow.json`:
+- [x] S8 `README.md`:
+- [x] S9 `docs/workflow-improvements.md`:
+- [x] S10 Tests (see §6), then run the full workflow suite.
+## Outcome
+2026-10-23T02:14:53.356Z — failed: committed (1 commit), pushed, no open pull request
