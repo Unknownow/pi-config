@@ -1,12 +1,12 @@
 // node --test stages.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { nextStage, parseStages, stageDelivery, stageNote, stageStart, stagesOutcome } from "./stages.ts";
+import { nextStage, parseStages, stageNote, stageStart, stagesOutcome } from "./stages.ts";
 
 test("parses stage headings", () => {
 	assert.deepEqual(parseStages("## Plan: X\n### Stage 1: Core\ntext\n### Stage 2: UI (delivery: merge)\n"), [
 		{ n: 1, title: "Core" },
-		{ n: 2, title: "UI", delivery: "merge" },
+		{ n: 2, title: "UI" },
 	]);
 	const s = parseStages("#### **Stage 1** \u2014 A\n## Stage 2. B");
 	assert.deepEqual(s.map((x) => x.title), ["A", "B"]);
@@ -34,23 +34,23 @@ test("unknown tag", () => {
 	]);
 });
 
-test("stageDelivery", () => {
-	assert.equal(stageDelivery("off", { n: 1, title: "a", delivery: "merge" }), "off");
-	assert.equal(stageDelivery("commit", { n: 1, title: "a", delivery: "merge" }), "merge");
-	assert.equal(stageDelivery("push", { n: 1, title: "a" }), "push");
-	assert.equal(stageDelivery("pr", undefined), "pr");
+test("a delivery tag in a heading is stripped and ignored", () => {
+	const s = parseStages("### Stage 1: A (delivery: push)\n### Stage 2: B");
+	assert.deepEqual(s[0], { n: 1, title: "A" });
 });
 
 test("stageStart and nextStage", () => {
 	const s = parseStages("### Stage 1: A\n### Stage 2: B (delivery: merge)");
-	const t = stageStart(s, 2, "commit");
+	const t = stageStart(s, 2);
 	assert.ok(t.includes("Do stage 2 only"));
 	assert.ok(t.includes('"B"'));
 	assert.ok(t.includes("call `judge`"));
-	assert.ok(t.includes("commit + push + pull request + merge"));
+	assert.ok(t.includes("deliver the stage yourself") && t.includes("merge"));
+	assert.ok(!t.includes("once the judge has passed"));
+	assert.ok(!t.includes("the workflow delivers"));
 	assert.ok(t.includes("This is the last stage."));
-	assert.ok(!stageStart(s, 1, "commit").includes("last stage"));
-	assert.ok(nextStage(s, 2, "commit", "committed").startsWith('Stage 1 ("A") is delivered: committed'));
+	assert.ok(!stageStart(s, 1).includes("last stage"));
+	assert.ok(nextStage(s, 2, "committed").startsWith('Stage 1 ("A") is delivered: committed'));
 });
 
 test("stageNote", () => {
@@ -78,11 +78,11 @@ test("parseStages reads an after tag", () => {
 	assert.deepEqual(stages[1].after, { reason: "publish core 0.15.0", check });
 });
 
-test("parseStages reads delivery and after in either order", () => {
+test("parseStages reads a delivery tag and after in either order", () => {
 	for (const tags of ["(delivery: merge) (after: x; check: y)", "(after: x; check: y) (delivery: merge)"]) {
 		const s = parseStages(`### Stage 1: a\n### Stage 2: b ${tags}\n`)[1];
 		assert.equal(s.title, "b");
-		assert.equal(s.delivery, "merge");
+		assert.equal((s as { delivery?: string }).delivery, undefined);
 		assert.deepEqual(s.after, { reason: "x", check: "y" });
 	}
 });
