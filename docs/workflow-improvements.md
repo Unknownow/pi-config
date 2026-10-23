@@ -2,7 +2,7 @@
 
 Reference list for `pi/agent/extensions/workflow/`. Goal: less time, fewer tokens, more parallelism.
 
-Status: A2, A3, A5, A7, B1, B7, B9, C2, C3, C4, D2, D3, D4, D5, D6, D7, D8, D9, D10, D11, D12, D13, D14, D15, D16 and D17 are implemented; A13, A14, A15, A16, A17, A18, A20 and A21 are implemented; A22 is implemented; A23, A24 and A25 are implemented; A26, A27, A28, A32, B14, D18 and D19 are implemented; A12 is implemented; A1 is rejected; the rest are ideas only. Found by reading the code on 2026-10-16. Nothing was measured, so every benefit below is an estimate. Line numbers are from commit `3fdc69a` and will drift.
+Status: A2, A3, A5, A7, B1, B7, B9, C2, C3, C4, D2, D3, D4, D5, D6, D7, D8, D9, D10, D11, D12, D13, D14, D15, D16 and D17 are implemented; A13, A14, A15, A16, A17, A18, A20 and A21 are implemented; A22 is implemented; A23, A24 and A25 are implemented; A26, A27, A28, A32, A34, B14, D18 and D19 are implemented; A12 is implemented; A1 is rejected; the rest are ideas only. Found by reading the code on 2026-10-16. Nothing was measured, so every benefit below is an estimate. Line numbers are from commit `3fdc69a` and will drift.
 
 ## Keeping this file current
 
@@ -61,6 +61,7 @@ Plan (Opus) -> approve -> execute (Sonnet) -> judge (Opus, separate `pi` process
 | A31 | Idea: a fresh context per flow, so a new flow does not carry the previous one. | Medium (K) | M | Medium. Loses context the user relied on. | First-call input tokens of the second flow. |
 | A32 | Problem: context-mode costs prompt blocks and long tool descriptions on every call. **Done:** the own extension `pi/agent/extensions/sandbox/` with `run_code` (JavaScript in a child process, 8,000-character cap, process-tree kill) and `fetch_url` (page to a cached markdown/json/text file); the plan phase allows both and checks `run_code` with the JS checks (`readonly-tools.ts`); the execute-phase push guard (`push-guard.ts`, `index.ts`) and the worktree guards (`shared-guard.ts`, `unity-guard.ts`) check `run_code`; context-mode left `settings.json` and `npm/package.json`. Lost on purpose: its session memory and `/ctx-stats`. | High (K) | M | Medium. Less tooling than context-mode. | First-call cache write. |
 | A33 | Idea: a bytes-saved report for `run_code`, like `/ctx-stats`. | Low (K) | S | Low. | Report matches the output sizes. |
+| A34 | Problem: a flow waited for a person to publish with `updates.bat`. **Done:** `Publish:` / `Mirror:` steps and `publish_packages` (`registry-publish.ts`, `index.ts`, `prompts.ts`, `push-guard.ts`): it publishes this flow's merged versions with the person's token, waits for older versions and pinned dependencies, uses a lock per clone. | Medium (K) | M | Saves a hand-off per package release. | A `Publish:` step publishes and tags without anyone typing `publish`. |
 
 ## B. Tokens
 
@@ -196,6 +197,7 @@ Method for every item:
 | A31 | First-call input tokens of a second flow | Idea only. | Lower |
 | A32 | Tokens of the first call (tool descriptions and prompt blocks) | Compare the first-call cache write before and after. Implemented, not measured yet. | Smaller cache write |
 | A33 | Bytes kept out of the context by run_code | Idea only. | Report shows bytes saved |
+| A34 | Waits for a person to publish per flow | Count `wait_for_user` reasons mentioning publish in session logs. Implemented, not measured yet. | Zero |
 | B12 | Final-plan reply duration and output tokens | Session logs. Idea only. | Replies under 3 min |
 | B13 | Judge minutes per flow | Sum judge call times per flow. Idea only. | Rechecks under 1 min |
 | B14 | Full reviews per stage, judge tokens per flow | Judge events in `metrics.jsonl`. Implemented, not measured yet. | Fewer repeated full reviews of large stages, and no defect missed that the repeated review would have caught |
