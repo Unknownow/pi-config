@@ -1,0 +1,37 @@
+{
+  "v": 1,
+  "flowId": "20261023-0923-agents-publish-and-mirror-unity-packages-764a",
+  "rev": 1,
+  "updated": "2026-10-23T02:23:04.587Z",
+  "title": "Agents publish and mirror unity-packages from approved plans",
+  "stage": 1,
+  "delivery": "merge",
+  "done": [],
+  "repos": [
+    {
+      "branch": "main",
+      "remote": "github.com/iecgames/game-template",
+      "primary": true
+    },
+    {
+      "branch": "main",
+      "remote": "github.com/iecgames/unity-packages",
+      "primary": false
+    },
+    {
+      "branch": "main",
+      "remote": "github.com/iecgames/knowledge",
+      "primary": false
+    },
+    {
+      "branch": "main",
+      "remote": "github.com/iecgames/shiny-loop",
+      "primary": false
+    },
+    {
+      "branch": "master",
+      "remote": "github-personal/Unknownow/pi-config",
+      "primary": false
+    }
+  ]
+}
