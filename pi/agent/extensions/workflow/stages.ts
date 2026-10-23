@@ -1,3 +1,5 @@
+import { cleanCheck, parseWaitStep, waitCheckProblem } from "./waits.ts";
+
 /** Staged plans: a plan split into `### Stage N: <title>` sections is executed, judged and delivered one stage at a time. Pure text and decisions, kept apart so node tests can reach them. */
 
 export interface PlanStage {
@@ -36,13 +38,34 @@ export function parseStages(plan: string | undefined): PlanStage[] {
 				title = title.slice(0, tag.index);
 			} else if (aft) {
 				title = title.slice(0, aft.index);
-				if (aft[1].trim()) after = { reason: aft[1].trim(), ...(aft[2]?.trim() ? { check: aft[2].trim() } : {}) };
+				if (aft[1].trim()) {
+					const check = cleanCheck(aft[2]);
+					after = { reason: aft[1].trim(), ...(check ? { check } : {}) };
+				}
 			} else break;
 		}
 		stages.push({ n, title: title.replace(/[*_\s]+$/, "").trim(), ...(after ? { after } : {}) });
 	}
 	if (stages.length < 2 || stages.some((s, i) => s.n !== i + 1)) return [];
 	return stages;
+}
+
+/** What is wrong with the wait checks of a plan (stage `(after:)` checks and `Wait:` steps), one line each; [] when they are fine. */
+export function planWaitProblems(plan: string, isReadOnly: (c: string) => string | null): string[] {
+	const out: string[] = [];
+	const add = (label: string, check: string | undefined): void => {
+		if (!check) return;
+		const problem = waitCheckProblem(check) ?? isReadOnly(check);
+		if (problem) out.push(`${label}: ${problem}: ${check}`);
+	};
+	for (const s of parseStages(plan)) add(`Stage ${s.n} check`, s.after?.check);
+	const seen = new Set<string>();
+	for (const m of plan.matchAll(/\*\*(S\d+)\.?\*\*[ \t]*Wait\s*:/gi)) {
+		if (seen.has(m[1])) continue;
+		seen.add(m[1]);
+		add(`${m[1]} check`, parseWaitStep(plan, m[1])?.check);
+	}
+	return out;
 }
 
 /** The instruction to do stage `current` only, then hand over. */

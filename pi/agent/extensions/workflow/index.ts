@@ -75,8 +75,8 @@ import { type FlowFinding, recordFindings, reportFindings, type ReportStep } fro
 import { readOnlyProblem } from "./readonly-bash.ts";
 import { checkpointAmendment, checkpointNote, checkpointOutcome, deliverHint, deliverHintsBlock, deliverStepSpec, hasCheckpointAmendment, checkpointText, isPlannedTag, parseDeliverStep, publishRefusal, withCheckpoints } from "./checkpoints.ts";
 import { pushArgs, tagDecision } from "./tags.ts";
-import { type CheckVerdict, autopilotAmendment, autopilotReply, checkTitle, checkVerdict, type HumanCheck, humanChecks, parseVerifyStep, parseWaitStep, pollDecision, resumePrefix, verifyAmendment, waitAmendment } from "./waits.ts";
-import { nextStage, parseStages, stageLine, stageNote, stageStart, stagesOutcome } from "./stages.ts";
+import { type CheckVerdict, autopilotAmendment, autopilotReply, checkTitle, checkVerdict, cleanCheck, waitCheckProblem, type HumanCheck, humanChecks, parseVerifyStep, parseWaitStep, pollDecision, resumePrefix, verifyAmendment, waitAmendment } from "./waits.ts";
+import { nextStage, parseStages, planWaitProblems, stageLine, stageNote, stageStart, stagesOutcome } from "./stages.ts";
 import { planToolProblem, planToolRefused } from "./readonly-tools.ts";
 import { refilterPlanTools } from "./plan-tools.ts";
 import { MetricsQueue, type MetricEvent, subagentMetric } from "./metrics.ts";
@@ -302,6 +302,8 @@ export default function workflow(pi: ExtensionAPI) {
 	let consecutiveErrors = 0;
 	/** The planner's last reply has a "Plan:" section and no open question; only then does a typed "go" / "do it" approve. */
 	let planReady = false;
+	/** The final plan's broken wait checks were already sent back to the planner once for this approval. */
+	let finalizeWaitRetried = false;
 	/** A planner reply in the current plan discussion had a plan line; with planRecap "changes" a typed "go" then approves later replies without one. Reset when the phase changes. */
 	let planProposed = false;
 	/** The planner's last finished reply, kept as the approved plan when finalizePlan is off. */
@@ -673,6 +675,7 @@ export default function workflow(pi: ExtensionAPI) {
 			// One more planner reply, the final execution plan, before the execute model starts.
 			planReady = false;
 			state.finalizing = true;
+			finalizeWaitRetried = false;
 			persist();
 			pi.sendMessage({ customType: "workflow-finalize", content: prompts.finalize(cfg.delivery.splitCommits, cfg.stagedPlans), display: true }, { triggerTurn: true, deliverAs: "followUp" });
 			return;
@@ -1817,7 +1820,7 @@ export default function workflow(pi: ExtensionAPI) {
 			state.waiting = {
 				...(publishStep ? { step: publishStep } : {}),
 				reason: status.waiting.reason,
-				...(status.waiting.check ? { check: status.waiting.check } : {}),
+				...(cleanCheck(status.waiting.check) ? { check: cleanCheck(status.waiting.check) } : {}),
 				since: status.waiting.since,
 				stage: state.stage,
 				planned: status.waiting.planned ?? true,
@@ -2366,6 +2369,7 @@ export default function workflow(pi: ExtensionAPI) {
 
 	let waitTimer: ReturnType<typeof setInterval> | undefined;
 	let waitTimerStart = 0;
+	let waitFirstTimer: ReturnType<typeof setTimeout> | undefined;
 	/** First wait of each Publish/Mirror step, so the wait's time limit counts across blocked retries. */
 	const publishWaitSince = new Map<string, string>();
 	let waitChecking = false;
@@ -2373,6 +2377,8 @@ export default function workflow(pi: ExtensionAPI) {
 	function stopWaitTimer(): void {
 		if (waitTimer) clearInterval(waitTimer);
 		waitTimer = undefined;
+		if (waitFirstTimer) clearTimeout(waitFirstTimer);
+		waitFirstTimer = undefined;
 	}
 
 	/** Polls the wait's check every `wait.pollMs` while the session is idle. A wait without a check, or whose check already passed, is not polled. */
@@ -2383,6 +2389,8 @@ export default function workflow(pi: ExtensionAPI) {
 		waitTimerStart = sinceMs ?? Date.now();
 		waitTimer = setInterval(() => void waitTick(), cfg.wait.pollMs);
 		(waitTimer as { unref?: () => void }).unref?.();
+		waitFirstTimer = setTimeout(() => void waitTick(), 5_000);
+		(waitFirstTimer as { unref?: () => void }).unref?.();
 	}
 
 	/** pi's own bash (Git Bash on Windows), looked up once; a failed lookup is cached too. */
@@ -2494,8 +2502,10 @@ export default function workflow(pi: ExtensionAPI) {
 				planMilestone(ctx);
 				return reply(`Recorded as a human check for after the flow: ${reason}. Don't wait; continue in this turn.`);
 			}
-			const check = params.check?.trim() || undefined;
+			const check = cleanCheck(params.check);
 			if (check) {
+				const shape = waitCheckProblem(check);
+				if (shape) return reply(`The check ${shape}. Nothing changed.`);
 				const problem = readOnlyProblem(check);
 				if (problem) return reply(`The check must be read-only (${problem}). Nothing changed.`);
 			}
@@ -3415,6 +3425,7 @@ export default function workflow(pi: ExtensionAPI) {
 			// Same as the menu: the planner writes the final plan first, in its reply to this message.
 			planReady = false;
 			state.finalizing = true;
+			finalizeWaitRetried = false;
 			persist();
 			ctx.ui.notify(`workflow: plan approved, the planner writes the final plan`, "info");
 			return { action: "transform", text: `${event.text.trim()}\n\n${prompts.finalize(cfg.delivery.splitCommits, cfg.stagedPlans)}` };
@@ -3496,6 +3507,19 @@ export default function workflow(pi: ExtensionAPI) {
 			state.finalizing = false;
 			const finalText = assistantText(last).trim();
 			if (last?.role === "assistant" && last.stopReason === "stop" && /^##\s*Plan:/m.test(finalText)) {
+				const waitProblems = planWaitProblems(finalText, (c) => readOnlyProblem(c));
+				if (waitProblems.length && !finalizeWaitRetried) {
+					finalizeWaitRetried = true;
+					state.finalizing = true;
+					persist();
+					pi.sendMessage({ customType: "workflow-finalize", content: `The final plan has wait checks that can't run:\n${waitProblems.map((p) => `- ${p}`).join("\n")}\nFix them and reply with the whole final plan again. A check is one plain read-only command: no backticks around it, no placeholders like <version>, no command substitution. If a value is only known after an earlier stage (a version a script picks), drop that check or the wait itself.`, display: true }, { triggerTurn: true, deliverAs: "followUp" });
+					return;
+				}
+				if (waitProblems.length) {
+					persist();
+					ctx.ui.notify(`workflow: the final plan still has wait checks that can't run (${waitProblems[0]}). Approve again to retry.`, "warning");
+					return;
+				}
 				await setPhase(ctx, "execute");
 				const extra = startExecution(ctx, finalText);
 				persist();

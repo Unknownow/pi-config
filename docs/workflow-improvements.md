@@ -2,7 +2,7 @@
 
 Reference list for `pi/agent/extensions/workflow/`. Goal: less time, fewer tokens, more parallelism.
 
-Status: A2, A3, A5, A7, B1, B7, B9, C2, C3, C4, D2, D3, D4, D5, D6, D7, D8, D9, D10, D11, D12, D13, D14, D15, D16 and D17 are implemented; A13, A14, A15, A16, A17, A18, A20 and A21 are implemented; A22 is implemented; A23, A24 and A25 are implemented; A26, A27, A28, A32, A34, A35, B11, B14, D18, D19 and D20 are implemented; D16 is superseded by D20; A13's delivery modes, D14, D15 and B10 are superseded by A35; A12 is implemented; A1 is rejected; the rest are ideas only. Found by reading the code on 2026-10-16. Nothing was measured, so every benefit below is an estimate. Line numbers are from commit `3fdc69a` and will drift.
+Status: A2, A3, A5, A7, B1, B7, B9, C2, C3, C4, D2, D3, D4, D5, D6, D7, D8, D9, D10, D11, D12, D13, D14, D15, D16 and D17 are implemented; A13, A14, A15, A16, A17, A18, A20 and A21 are implemented; A22 is implemented; A23, A24 and A25 are implemented; A26, A27, A28, A32, A34, A35, B11, B14, D18, D19, D20 and D21 are implemented; D16 is superseded by D20; A13's delivery modes, D14, D15 and B10 are superseded by A35; A12 is implemented; A1 is rejected; the rest are ideas only. Found by reading the code on 2026-10-16. Nothing was measured, so every benefit below is an estimate. Line numbers are from commit `3fdc69a` and will drift.
 
 ## Keeping this file current
 
@@ -118,6 +118,7 @@ Plan (Opus) -> approve -> execute (Sonnet) -> judge (Opus, separate `pi` process
 | D18 | A tool that registered after the plan or test phase began (an MCP server that connected late) stayed active, even when the allow list refuses it. **Done:** `plan-tools.ts` (`refilterPlanTools`), called from `before_agent_start` and a new `turn_start` handler in `index.ts`; the snapshot `toolsBeforePlan` is extended in place so a restore brings the tool back. | Medium (T) | S | Low: one cache rewrite per change. | Plan-phase tool list after a late MCP connect. |
 | D19 | The plan phase mixed open discussion with plan writing and offered the approve menu after every reply. **Done:** discuss phase: `DISCUSS_PHASE` and `PLAN_KICKOFF` in `prompts.ts`, the `discuss` role, `startPhase` and `returnTo` in `config.ts`, `phaseAfterFlow` in `agent-end.ts`, the phase plumbing and `/flow discuss` in `index.ts`, the stage node in `view.ts`. | Medium (T) | M | Low: leaving discuss is one command or "go". | Approve menus dismissed with "Keep discussing" per flow. |
 | D20 | The D16 refusals of `merge`, `pull`, `rebase`, `cherry-pick`, `revert` and `am` contradicted free commits and made the executor hand routine git work to the user. **Done:** dropped, keeping the `--no-verify` ban (`push-guard.ts`, `push-guard.test.ts`). | Medium (T) | S | Low. | Refusals of merge or pull (target zero). |
+| D21 | Wait checks in `(after:)` headings and `Wait:` steps kept their Markdown backticks, so bash ran them as command substitution: a finished wait reported 'can't run' (exit 127), and plans with placeholder or English checks were accepted, so stages waited until the user typed. **Done:** `cleanCheck` and `waitCheckProblem` (`waits.ts`), `planWaitProblems` (`stages.ts`), a final-plan check with one retry, a 5 s first poll and cleaned checks in `wait_for_user` and the wait restore (`index.ts`), and a planning rule (`prompts.ts`). | Medium (T) | S | Low: a plan with an unusable check is sent back once. | Wait-check notices and continues without a pass. |
 
 ## Effect measurement
 
@@ -176,6 +177,7 @@ Method for every item:
 | D18 | Tools the plan phase should refuse that were active | Check the plan-phase tool list after an MCP server connects late. Implemented, not measured yet. | None |
 | D19 | Approve menus dismissed with "Keep discussing" per flow | Count them in flow transcripts. Implemented, not measured yet. | Fewer than before |
 | D20 | User hand-offs of merge or pull refused by the D16 rule | Count refusals of `merge` or `pull` in flow transcripts. Implemented, not measured yet. | Zero |
+| D21 | Stage waits that never pass | Count "wait check can't run" notices and resumes without the check passing in flow transcripts. Implemented, not measured yet. | Zero |
 | A10 | Flow steps failed by `cannot lock ref` | Count in session logs | Idea only, not measured |
 | A11 | Plans started in a second workspace | n/a | Idea only |
 | A12 | User prompts per test flow; supervisor vs runner tokens (D3 metrics); bugs verified fixed per flow | Count the questions asked per flow, compare `test` and `runner` tokens in the flow card, count `[fixed]` items. Not measured yet. | Most flows end without prompts beyond the crucial cases; runner tokens are the larger share; no fix is committed that the retest shows broken |

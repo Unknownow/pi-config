@@ -68,3 +68,9 @@ test("unity guard: quotes in paths and line continuations", () => {
 	refused(`unity cmd x --project-path ..${B}"..${B}"${B}..${B}game-template${B}unity`);
 	passes(`unity cmd x ${B}${String.fromCharCode(10)}  --project-path D:/projects/wt/x/game-template/unity`);
 });
+
+test("codeProblem allows unity-packages paths and refuses spawned unity", () => {
+	assert.equal(codeProblem("const fs=require('fs');process.chdir('D:/w/unity-packages');/* run test */ fs.writeFileSync('a','b')"), null);
+	assert.match(codeProblem("require('child_process').execSync('unity test')") ?? "", /^Refused \(worktree\)/);
+	assert.match(codeProblem("spawn('unity.exe',['recompile'])") ?? "", /^Refused \(worktree\)/);
+});

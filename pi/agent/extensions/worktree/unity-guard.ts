@@ -129,7 +129,7 @@ export function unityProblem(text: string, o: GuardOptions): string | null {
 
 /** Why non-shell code would drive the Unity CLI, or null. */
 export function codeProblem(code: string): string | null {
-	if (/\bunity(\.exe)?\b/.test(code) && /\b(command|cmd|recompile|list|job|mcp|run|test|build|pipeline)\b/.test(code)) {
+	if (/(?<![\w./-])unity(\.exe)?(?![\w.-])/.test(code) && /\b(command|cmd|recompile|list|job|mcp|run|test|build|pipeline|child_process|spawn|spawnSync|exec|execSync|execFile|execFileSync)\b/.test(code)) {
 		return refuse("code that runs the unity CLI");
 	}
 	return null;
