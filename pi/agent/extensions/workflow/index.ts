@@ -58,7 +58,8 @@ import { planTitle } from "./delivery.ts";
 import { modelChoices, pathCompletions } from "./pickers.ts";
 import { ghCandidates, withPathDir } from "./gh-path.ts";
 import { citeNames, collectRepoDiff as collectRepoDiffImpl, needsFinalFullReview, shouldSkipRepeatFullReview, type RepoDiff } from "./repo-diff.ts";
-import { forkBase, mergedInStage, baseFromTree, defaultRunner, gateCheck, mergedBase, noMerge } from "./merge-gate.ts";
+import { GIT_GUARD_ENV, type GitGuardSpec } from "./git-guard.ts";
+import { forkBase, mergedInStage, baseFromTree, defaultRunner, recordJudged, gateCheck, mergedBase, noMerge } from "./merge-gate.ts";
 import { combineRepoTexts, followFolders, parseAddDir, parseWorktreeList, repoKey, uniqueRoots } from "./repos.ts";
 import { askFolderAdd } from "./folder-add.ts";
 import { codePublishProblem, registryPublishCodeProblem, registryPublishProblem, shellProblem } from "./push-guard.ts";
@@ -218,6 +219,8 @@ const EXPLORE_REASONS = ["question", "broad_search", "timeout", "too_much_output
 const execFileAsync = promisify(execFile);
 /** Subagent-only extension that registers forwarded MCP servers (see mcp-forward.ts). */
 const FORWARD_EXTENSION = path.join(path.dirname(CONFIG_PATH), "extensions", "workflow", "mcp-forward.ts");
+/** Subagent-only extension that guards the git_task subagent's git and gh commands (see git-guard.ts). */
+const GIT_GUARD_EXTENSION = path.join(path.dirname(CONFIG_PATH), "extensions", "workflow", "git-guard.ts");
 /** Subagent-only extension that guards the test runners (see runner-guard.ts). */
 const RUNNER_GUARD_EXTENSION = path.join(path.dirname(CONFIG_PATH), "extensions", "workflow", "runner-guard.ts");
 
@@ -2627,6 +2630,90 @@ export default function workflow(pi: ExtensionAPI) {
 		},
 		renderCall(args, theme) {
 			return new Text(`${title(theme, "publish_packages", "execute")}${theme.fg("accent", ` ${String(args.step ?? "")}`)}`, 0, 0);
+		},
+	});
+
+	pi.registerTool({
+		name: "git_task",
+		label: "Git task",
+		description:
+			"Delegate routine git work (commit, push, open a pull request, merge) to a cheaper model and get its report back in the same turn. It runs under the same guard as you: a merge or a push to a protected branch is refused until the exact tree has passed judge. Give the exact task (repo, branch, commit messages, base). If it fails, do the work yourself.",
+		promptSnippet: "git_task: delegate commit/push/PR/merge work to a cheap model; returns its report",
+		parameters: Type.Object({
+			task: Type.String({ description: "What to do, e.g. 'commit the staged changes as \"feat: x\", push the branch, open a PR against main'" }),
+			repo: Type.Optional(Type.String({ description: "Folder of the repo to work in; default the working folder" })),
+		}),
+		async execute(_id, params, signal, onUpdate, ctx) {
+			const reply = (text: string, details: object = {}) => ({ content: [{ type: "text" as const, text }], details });
+			if (state.phase !== "execute" || !state.approvedPlan) return reply("git_task works only while executing an approved plan. Nothing changed.");
+			if (!fs.existsSync(GIT_GUARD_EXTENSION)) return reply(`git_task failed: git guard extension not found at ${GIT_GUARD_EXTENSION}`);
+			const repos = await flowRepos(ctx);
+			const cwd = params.repo ? path.resolve(ctx.cwd, params.repo) : ctx.cwd;
+			if (!fs.existsSync(cwd)) return reply(`git_task failed: ${cwd} does not exist.`);
+			const multi = (state.folders?.length ?? 0) > 0 || (state.touchedRepos?.length ?? 0) > 0;
+			const spec: GitGuardSpec = {
+				roots: multi ? repos.map((r) => r.root) : [],
+				protectedBranches: cfg.protectedBranches,
+				passedTrees: state.passedTrees ?? {},
+				noMerge: noMerge(state.approvedPlan),
+			};
+			const task = [
+				params.task.trim(),
+				"",
+				"Rules:",
+				`- Work only in ${multi ? repos.map((r) => r.root).join(", ") : cwd}.`,
+				"- Never force-push, use --no-verify, --admin or --auto.",
+				"- Chain dependent steps with &&.",
+				"- Stop at the first failure and report the command and its error.",
+				"- Report each commit subject, branch and pull request URL.",
+			].join("\n");
+			const repoList = repos.length ? repos : [{ root: cwd, dir: cwd, changed: false }];
+			// A merge with --delete-branch leaves the checkout on the default branch, so the branch is read first.
+			const branchBefore = new Map<string, string>();
+			const headBefore = new Map<string, string>();
+			for (const r of repoList) {
+				branchBefore.set(r.root, (await git(r.dir, "rev-parse", "--abbrev-ref", "HEAD")).stdout.trim());
+				headBefore.set(r.root, (await git(r.dir, "rev-parse", "HEAD")).stdout.trim());
+			}
+			const progress = toolProgress(onUpdate);
+			const prevStage = view.stage;
+			view.stage = "commit";
+			let text: string;
+			try {
+				ctx.ui.setWorkingMessage("git_task running…");
+				const ran = await runRole(
+					"commit",
+					"git task",
+					{ systemPrompts: [prompts.COMMIT], tools: ["bash", "read"], task, cwd, signal, env: { [GIT_GUARD_ENV]: JSON.stringify(spec) }, extensions: [GIT_GUARD_EXTENSION] },
+					progress.track,
+				);
+				if (ran.result.ok) view.finish(ran.run, true, "report ready");
+				text = ran.result.ok ? ran.result.text : `git_task failed: ${ran.result.error}`;
+			} catch (e) {
+				text = `git_task failed: ${e instanceof Error ? e.message : String(e)}`;
+			} finally {
+				view.stage = prevStage;
+				ctx.ui.setWorkingMessage();
+			}
+			const lines: string[] = [];
+			for (const r of repoList) {
+				const key = repoKey(r.root);
+				const branch = (await git(r.dir, "rev-parse", "--abbrev-ref", "HEAD")).stdout.trim();
+				const base = state.reviewBase?.[key];
+				const n = base ? (await git(r.dir, "rev-list", "--count", `${base}..HEAD`)).stdout.trim() : "?";
+				const rec = await recordJudged(defaultRunner, r.dir, { startBranch: branchBefore.get(r.root) ?? "", headBefore: headBefore.get(r.root), report: text, passed: state.passedTrees?.[key] ?? [], protectedBranches: cfg.protectedBranches });
+				const pr = rec.pr;
+				const existing = state.judgedMerges?.[key];
+				if (rec.entry && !(rec.entry.commit && existing?.pr && existing.stage === state.stage)) {
+					state.judgedMerges = { ...(state.judgedMerges ?? {}), [key]: { ...rec.entry, ...(state.stage ? { stage: state.stage } : {}) } };
+					persist();
+				}
+				lines.push(`${path.basename(r.root)}: branch ${branch}, ${n} commits since review base, ${pr}`);
+			}
+			return reply(`${text}\n\n${lines.join("\n")}`, { runs: progress.snapshot() });
+		},
+		renderCall(args, theme) {
+			return new Text(`${title(theme, "git_task", "commit")}${theme.fg("accent", ` ${String(args.task ?? "").slice(0, 80)}`)}`, 0, 0);
 		},
 	});
 

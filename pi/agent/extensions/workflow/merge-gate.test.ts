@@ -4,7 +4,7 @@ import { test } from "node:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { forkBase, mergedInStage, baseFromTree, defaultRunner, gateCheck, gateProblem, mergedBase, noMerge, type Runner } from "./merge-gate.ts";
+import { forkBase, mergedInStage, baseFromTree, defaultRunner, gateCheck, recordJudged, gateProblem, mergedBase, noMerge, type Runner } from "./merge-gate.ts";
 
 test("gateProblem: a passed tree is allowed", () => {
 	assert.equal(gateProblem("merge", { noMerge: false, passedTrees: ["t1", "t2"], tree: "t2", what: "merging" }), null);
@@ -176,4 +176,47 @@ test("mergedBase: a conflict gives null", async (t) => {
 	} finally {
 		fs.rmSync(dir, { recursive: true, force: true });
 	}
+});
+
+function stub(opts: { branch: string; pr?: { number: number; state: string; headRefOid: string }; trees: Record<string, string>; remote?: string }): Runner {
+	return async (cmd, args) => {
+		const ok = (stdout: string) => ({ code: 0, stdout, stderr: "" });
+		if (cmd === "gh") return opts.pr ? ok(JSON.stringify({ ...opts.pr, url: "u" })) : { code: 1, stdout: "", stderr: "" };
+		if (args[0] === "rev-parse" && args[1] === "--abbrev-ref") return ok(opts.branch);
+		if (args[0] === "rev-parse") return ok(opts.trees[args[1]] ?? "");
+		if (args[0] === "branch") return ok(opts.remote ?? "");
+		return ok("");
+	};
+}
+
+test("recordJudged: a merged PR with a passed tree is found from the starting branch, even when the checkout is on main", async () => {
+	const run = stub({ branch: "main", pr: { number: 7, state: "MERGED", headRefOid: "h" }, trees: { "h^{tree}": "T" } });
+	const r = await recordJudged(run, ".", { startBranch: "flow/x", report: "", passed: ["T"], protectedBranches: ["main"] });
+	assert.deepEqual(r.entry, { pr: "7", tree: "T" });
+});
+
+test("recordJudged: a PR number in the report is found", async () => {
+	const run = stub({ branch: "main", pr: { number: 12, state: "MERGED", headRefOid: "h" }, trees: { "h^{tree}": "T" } });
+	const r = await recordJudged(run, ".", { startBranch: "", report: "merged #12", passed: ["T"], protectedBranches: [] });
+	assert.equal(r.entry?.pr, "12");
+});
+
+test("recordJudged: an open PR or an unpassed tree is skipped", async () => {
+	const open = stub({ branch: "f", pr: { number: 1, state: "OPEN", headRefOid: "h" }, trees: { "h^{tree}": "T" } });
+	assert.equal((await recordJudged(open, ".", { startBranch: "f", report: "", passed: ["T"], protectedBranches: [] })).entry, undefined);
+	const merged = stub({ branch: "f", pr: { number: 1, state: "MERGED", headRefOid: "h" }, trees: { "h^{tree}": "T" } });
+	assert.equal((await recordJudged(merged, ".", { startBranch: "f", report: "", passed: ["other"], protectedBranches: [] })).entry, undefined);
+});
+
+test("recordJudged: an unchanged HEAD on a protected branch records nothing", async () => {
+	const run = stub({ branch: "main", trees: { HEAD: "c1", "HEAD^{tree}": "T" }, remote: "origin/main" });
+	assert.equal((await recordJudged(run, ".", { startBranch: "main", headBefore: "c1", report: "", passed: ["T"], protectedBranches: ["main"] })).entry, undefined);
+});
+
+test("recordJudged: a protected push of a passed tree that is on the remote is recorded", async () => {
+	const run = stub({ branch: "main", trees: { HEAD: "c1", "HEAD^{tree}": "T" }, remote: "origin/main" });
+	const r = await recordJudged(run, ".", { startBranch: "main", report: "", passed: ["T"], protectedBranches: ["main"] });
+	assert.deepEqual(r.entry, { commit: "c1", tree: "T" });
+	const local = stub({ branch: "main", trees: { HEAD: "c1", "HEAD^{tree}": "T" } });
+	assert.equal((await recordJudged(local, ".", { startBranch: "main", report: "", passed: ["T"], protectedBranches: ["main"] })).entry, undefined);
 });

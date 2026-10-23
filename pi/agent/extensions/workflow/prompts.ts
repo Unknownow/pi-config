@@ -293,7 +293,7 @@ export const HANDOVER_COMPACT = `The workflow is handing over to the next step (
 Keep: the user's decisions and requests, the files changed so far and why, test commands and their last results, open problems and findings, and anything the next step needs that the plan doesn't say.
 Drop: options that were not chosen, and tool output that was already acted on.`;
 
-export const COMMIT = `You are the workflow's commit step, running in a separate session: the code was already written and reviewed.
+export const COMMIT = `You are the workflow's git helper, running in a separate session for the executor: the code is already written.
 Follow the instruction exactly. Run only git and gh commands; never edit, create or delete files, and never stage files the instruction doesn't cover.
 Use as few bash calls as possible: chain dependent steps with && .
 If a command is refused or fails, stop and report it; don't work around it.

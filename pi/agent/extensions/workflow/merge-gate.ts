@@ -118,3 +118,35 @@ export async function mergedBase(run: Runner, dir: string, base: string, upstrea
 	if (!/^[0-9a-f]{40,64}$/.test(tree)) return null;
 	return baseFromTree(run, dir, tree, base);
 }
+
+/** What a finished git task left behind that counts as a judged merge: a MERGED pull request whose head tree passed (looked up by the starting branch and by PR numbers in the report), else a protected branch whose HEAD tree passed and is on a remote. `pr` is the text to show. */
+export async function recordJudged(
+	run: Runner,
+	dir: string,
+	opts: { startBranch: string; headBefore?: string; report: string; passed: string[]; protectedBranches: string[] },
+): Promise<{ entry?: { pr?: string; commit?: string; tree: string }; pr: string }> {
+	const out = async (...args: string[]) => (await run("git", args, dir).catch(() => ({ code: 1, stdout: "", stderr: "" }))).stdout.trim();
+	const candidates = [opts.startBranch, ...[...opts.report.matchAll(/(?:\/pull\/|#)(\d+)/g)].map((m) => m[1])].filter((c, i, all) => c && c !== "HEAD" && all.indexOf(c) === i);
+	let pr = "no PR";
+	for (const cand of candidates) {
+		const fromBranch = cand === opts.startBranch;
+		const res = await run("gh", ["pr", "view", cand, "--json", "number,state,url,headRefOid"], dir).catch(() => undefined);
+		if (res?.code !== 0) continue;
+		try {
+			const j = JSON.parse(res.stdout);
+			if (pr === "no PR" && fromBranch) pr = `PR #${j.number} ${j.state} ${j.url}`;
+			if (j.state !== "MERGED" || !j.headRefOid) continue;
+			const tree = await out("rev-parse", `${j.headRefOid}^{tree}`);
+			if (tree && opts.passed.includes(tree)) return { entry: { pr: String(j.number), tree }, pr: `PR #${j.number} ${j.state} ${j.url}` };
+		} catch {
+			// unreadable: try the next candidate
+		}
+	}
+	const branch = await out("rev-parse", "--abbrev-ref", "HEAD");
+	if (opts.protectedBranches.includes(branch)) {
+		const head = await out("rev-parse", "HEAD");
+		const tree = await out("rev-parse", "HEAD^{tree}");
+		if (head && head !== opts.headBefore && tree && opts.passed.includes(tree) && (await out("branch", "-r", "--contains", "HEAD"))) return { entry: { commit: head, tree }, pr };
+	}
+	return { pr };
+}
