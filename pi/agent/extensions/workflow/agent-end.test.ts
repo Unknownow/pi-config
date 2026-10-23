@@ -1,7 +1,7 @@
 // node --test agent-end.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { handoverAction, afterPass, noChangeStage, arbiterFirst, fixableFindings, hasPlanFlaw, planFlawLines, planFlawOnPass, canApprove, hasPlanLine, isPlanReady, judgeCapReached, minorFixOpen, selfCommitted, parseArbiter, phaseAfterFlow, shouldResume, skipJudge } from "./agent-end.ts";
+import { handoverAction, afterPass, noChangeStage, arbiterFirst, fixableFindings, hasPlanFlaw, planFlawLines, planFlawOnPass, canApprove, hasPlanLine, isPlanReady, judgeCapReached, minorFixOpen, passPending, stageEndAction, parseArbiter, phaseAfterFlow, shouldResume, skipJudge } from "./agent-end.ts";
 
 const empty = { role: "assistant", content: [] };
 
@@ -129,23 +129,40 @@ test("fixableFindings skips knowledge deviations, plan flaws and indented lines"
 	assert.equal(fixableFindings("VERDICT: PASS"), 0);
 });
 
-test("a passed diff gets one minor-fix round, not after commit, flow end or an earlier message", () => {
-	const open = { committed: false, commitPending: false, summarized: false, hash: "h" };
+test("a passed diff gets one minor-fix round, not after flow end or an earlier message", () => {
+	const open = { summarized: false, hash: "h" };
 	assert.equal(minorFixOpen(open), true);
-	assert.equal(minorFixOpen({ ...open, committed: true }), false);
-	assert.equal(minorFixOpen({ ...open, commitPending: true }), false);
-	// delivery off: the flow ended on this diff, so a later agent_end must not ask again
 	assert.equal(minorFixOpen({ ...open, summarized: true }), false);
 	assert.equal(minorFixOpen({ ...open, sentFor: "h" }), false);
 	assert.equal(minorFixOpen({ ...open, sentFor: "other" }), true);
 });
 
-test("a pass with findings is fixed while rounds are left, then committed", () => {
-	assert.equal(afterPass(0, 0, 2), "commit");
+test("a pass is pending until its stage or flow was ended", () => {
+	const judged = { hash: "h", verdict: "PASS" as const };
+	assert.equal(passPending({ passedDiff: "h", judged }), true);
+	assert.equal(passPending({ passedDiff: "h", judged, summarized: ["x"] }), true);
+	assert.equal(passPending({ passedDiff: "h", judged, summarized: ["h"] }), false);
+	assert.equal(passPending({ judged }), false);
+	assert.equal(passPending({ passedDiff: "h", judged: { hash: "other", verdict: "PASS" } }), false);
+	assert.equal(passPending({ passedDiff: "h", judged: { hash: "h", verdict: "FAIL" } }), false);
+	assert.equal(passPending({ passedDiff: "h" }), false);
+});
+
+test("a stage with open steps is reminded once per pass", () => {
+	assert.equal(stageEndAction({ openSteps: 2, hash: "h" }), "nudge");
+	assert.equal(stageEndAction({ openSteps: 2, nudgedFor: "other", hash: "h" }), "nudge");
+	assert.equal(stageEndAction({ openSteps: 2, nudgedFor: "h", hash: "h" }), "done");
+	assert.equal(stageEndAction({ openSteps: 0, hash: "h" }), "done");
+	// an unmerged pull request counts as one open step
+	assert.equal(stageEndAction({ openSteps: 1, hash: "h" }), "nudge");
+});
+
+test("a pass with findings is fixed while rounds are left, then the stage is done", () => {
+	assert.equal(afterPass(0, 0, 2), "done");
 	assert.equal(afterPass(2, 0, 2), "fix");
 	assert.equal(afterPass(1, 1, 2), "fix");
-	assert.equal(afterPass(1, 2, 2), "commit");
-	assert.equal(afterPass(3, 0, 0), "commit");
+	assert.equal(afterPass(1, 2, 2), "done");
+	assert.equal(afterPass(3, 0, 0), "done");
 });
 
 test("a finished flow returns to plan only from execute, when enabled", () => {
@@ -171,7 +188,7 @@ test("a no-change stage advances only when judged", () => {
 });
 
 test("handoverAction compacts only an idle, unaborted run over the threshold with a plan", () => {
-	const ok = { aborted: false, commit: false, idle: true, compacting: false, hasPlan: true, tokens: 50_000, threshold: 30_000 };
+	const ok = { aborted: false, idle: true, compacting: false, hasPlan: true, tokens: 50_000, threshold: 30_000 };
 	assert.equal(handoverAction(ok), "compact");
 	for (const o of [{ idle: false }, { compacting: true }, { hasPlan: false }, { tokens: null }, { tokens: 30_000 }, { threshold: 0 }]) {
 		assert.equal(handoverAction({ ...ok, ...o }), "send");
@@ -179,22 +196,6 @@ test("handoverAction compacts only an idle, unaborted run over the threshold wit
 	assert.equal(handoverAction({ ...ok, aborted: true }), "hold");
 	assert.equal(handoverAction({ ...ok, aborted: true, tokens: 1000 }), "hold");
 	assert.equal(handoverAction({ ...ok, aborted: true, hasPlan: false }), "hold");
-	assert.equal(handoverAction({ ...ok, aborted: true, commit: true }), "send");
-	assert.equal(handoverAction({ ...ok, aborted: true, commit: true, tokens: 1000 }), "send");
-});
-
-test("selfCommitted only when the passed tree was committed", () => {
-	const J = { hash: "h", verdict: "PASS" as const, repos: { a: { tree: "t1", head: "c1" } } };
-	assert.equal(selfCommitted("h", J, { a: { head: "c2", tree: "t1" } }, false), true);
-	assert.equal(selfCommitted("h", J, { a: { head: "c1", tree: "t1" } }, false), false);
-	assert.equal(selfCommitted("h", J, { a: { head: "c2", tree: "t2" } }, false), false);
-	assert.equal(selfCommitted("x", J, { a: { head: "c2", tree: "t1" } }, false), false);
-	assert.equal(selfCommitted("h", { ...J, verdict: "FAIL" }, { a: { head: "c2", tree: "t1" } }, false), false);
-	assert.equal(selfCommitted("h", { hash: "h", verdict: "PASS" }, { a: { head: "c2", tree: "t1" } }, false), false);
-	assert.equal(selfCommitted("h", J, { a: { head: "c2", tree: "t1" } }, true), false);
-	assert.equal(selfCommitted("h", J, {}, false), false);
-	const two = { ...J, repos: { a: { tree: "t1", head: "c1" }, b: { tree: "u1", head: "d1" } } };
-	assert.equal(selfCommitted("h", two, { a: { head: "c2", tree: "t1" }, b: { head: "d1", tree: "u1" } }, false), true);
 });
 
 test("noChangeStage keeps a stage with open steps", () => {

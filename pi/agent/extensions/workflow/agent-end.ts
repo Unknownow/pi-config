@@ -55,28 +55,24 @@ export function canApprove(text: string, stoppedNormally: boolean, planProposed:
 	return stoppedNormally && !ENDS_IN_QUESTION.test(text.trim()) && (hasPlanLine(text) || planProposed);
 }
 
-/** A passed diff is sent back for a minor-fix round only once: not after its commit step started, its flow ended, or a fix message already went out for it. */
-export function minorFixOpen(s: { committed: boolean; commitPending: boolean; summarized: boolean; sentFor?: string; hash: string }): boolean {
-	return !s.committed && !s.commitPending && !s.summarized && s.sentFor !== s.hash;
+/** A passed diff is sent back for a minor-fix round only once: not after its flow ended, or when a fix message already went out for it. */
+export function minorFixOpen(s: { summarized: boolean; sentFor?: string; hash: string }): boolean {
+	return !s.summarized && s.sentFor !== s.hash;
 }
 
-/** The executor committed exactly the tree the judge passed: some judged repo's HEAD moved, and every judged repo still has the judged tree. */
-export function selfCommitted(
-	passed: string | undefined,
-	judged: { hash: string; verdict: "PASS" | "FAIL"; repos?: Record<string, { tree: string; head: string }> } | undefined,
-	now: Record<string, { head: string; tree: string }>,
-	handled: boolean,
-): boolean {
-	if (handled || !passed || !judged || judged.hash !== passed || judged.verdict !== "PASS" || !judged.repos) return false;
-	const keys = Object.keys(judged.repos);
-	if (!keys.length) return false;
-	if (!keys.every((k) => now[k] && now[k].tree === judged.repos![k].tree)) return false;
-	return keys.some((k) => now[k].head !== judged.repos![k].head);
+/** After a pass: go back for a fix round while findings remain and rounds are left, else the stage is done. */
+export function afterPass(findings: number, minorRounds: number, maxMinorRounds: number): "fix" | "done" {
+	return findings > 0 && minorRounds < maxMinorRounds ? "fix" : "done";
 }
 
-/** After a pass: go back for a fix round while findings remain and rounds are left, else commit. */
-export function afterPass(findings: number, minorRounds: number, maxMinorRounds: number): "fix" | "commit" {
-	return findings > 0 && minorRounds < maxMinorRounds ? "fix" : "commit";
+/** A judge pass nobody has ended a stage or flow for yet: the diff may be empty by now (the pull request was merged and the base moved up). */
+export function passPending(s: { passedDiff?: string; judged?: { hash: string; verdict: "PASS" | "FAIL" }; summarized?: string[] }): boolean {
+	return !!s.passedDiff && s.judged?.hash === s.passedDiff && s.judged.verdict === "PASS" && !s.summarized?.includes(s.passedDiff);
+}
+
+/** A passed stage with steps still open gets one reminder per pass; the next time it ends anyway. */
+export function stageEndAction(s: { openSteps: number; nudgedFor?: string; hash: string }): "nudge" | "done" {
+	return s.openSteps > 0 && s.nudgedFor !== s.hash ? "nudge" : "done";
 }
 
 /** The judge runs after an execute reply unless the reply errored. */
@@ -94,9 +90,9 @@ export function phaseAfterFlow(returnTo: "discuss" | "plan" | "off", phase: "off
 	return returnTo !== "off" && (phase === "execute" || phase === "test") ? returnTo : undefined;
 }
 
-/** Whether a pending handover message is sent after compacting the session first. An aborted run holds it (the user stopped the flow), except the commit step, which is sent uncompacted so the pending commit is not lost. */
-export function handoverAction(s: { aborted: boolean; commit: boolean; idle: boolean; compacting: boolean; hasPlan: boolean; tokens: number | null; threshold: number }): "compact" | "send" | "hold" {
-	if (s.aborted) return s.commit ? "send" : "hold";
+/** Whether a pending handover message is sent after compacting the session first. An aborted run holds it (the user stopped the flow). */
+export function handoverAction(s: { aborted: boolean; idle: boolean; compacting: boolean; hasPlan: boolean; tokens: number | null; threshold: number }): "compact" | "send" | "hold" {
+	if (s.aborted) return "hold";
 	return s.idle && !s.compacting && s.hasPlan && s.threshold > 0 && s.tokens !== null && s.tokens > s.threshold ? "compact" : "send";
 }
 

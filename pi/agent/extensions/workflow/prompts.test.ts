@@ -1,7 +1,7 @@
 // node --experimental-strip-types --test prompts.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { ADVISOR, ARBITER, COMMIT, EXECUTE_PHASE, EXPLORE, FIX_ROUND, JUDGE, JUDGE_KNOWLEDGE_ONLY, NO_SLEEP, PACE, finalize, phaseSection, PLAN_KICKOFF, planPhase, RUNNER, TEST_PHASE, workspaceSection } from "./prompts.ts";
+import { ADVISOR, ARBITER, COMMIT, EXECUTE_PHASE, EXPLORE, FIX_ROUND, JUDGE, JUDGE_KNOWLEDGE_ONLY, NO_SLEEP, PACE, deliveryGuidance, finalize, phaseSection, PLAN_KICKOFF, planPhase, RUNNER, TEST_PHASE, workspaceSection } from "./prompts.ts";
 
 const BATCH = `- Batch tool calls. Each call re-sends the whole conversation, so ten small calls at 150k context re-send 1.5M tokens. Put independent reads and commands in one call (a codemode script, run_code, or one bash command joined with && or ;) and print only what you need. Don't spend a call on something you could have added to the previous one.`;
 const PLAN_BATCH = `- Batch tool calls. Each call re-sends the whole conversation, so ten small calls at 150k context re-send 1.5M tokens. Put independent reads and commands in one call (a codemode script, run_code for read-only analysis, or one bash command joined with && or ;) and print only what you need. Don't spend a call on something you could have added to the previous one.`;
@@ -115,12 +115,28 @@ test("human checks are Verify steps, never Wait", () => {
 	assert.ok(TEST_PHASE.includes("after the flow"));
 });
 
-test("stage 2 guidance in the prompts", () => {
-	assert.match(finalize(false), /Deliver: <mode> — <what>/);
+test("delivery guidance in the prompts", () => {
+	assert.match(finalize(false), /Deliver: <what>/);
 	assert.match(finalize(false), /never contains .*git push/);
-	assert.match(finalize(false), /git merge --no-commit/);
-	assert.match(planPhase(false), /Deliver: <mode> — <what>/);
-	assert.match(EXECUTE_PHASE, /Never ask the user to push, open or merge a pull request/);
+	assert.match(finalize(false), /Delivery: no merge/);
+	assert.match(planPhase(false), /Deliver: <what>/);
+	assert.doesNotMatch(finalize(true), /\(delivery:/);
+});
+
+test("the execute prompt makes delivery the executor's job and never the user's", () => {
+	assert.ok(!EXECUTE_PHASE.includes("Never commit, push"));
+	assert.doesNotMatch(EXECUTE_PHASE, /When the judge passes, end your turn/);
+	assert.match(EXECUTE_PHASE, /When the judge passes, finish the delivery \(push, pull request, and the merge unless the plan says/);
+	assert.ok(EXECUTE_PHASE.includes("git_task"));
+	assert.ok(EXECUTE_PHASE.includes("call `judge`"));
+	assert.doesNotMatch(EXECUTE_PHASE, /ask the user to (push|merge|open)/i);
+	assert.doesNotMatch(EXECUTE_PHASE, /the workflow delivers/i);
+});
+
+test("deliveryGuidance names the configured settings", () => {
+	const t = deliveryGuidance({ splitCommits: true, mergeMethod: "squash", deleteBranch: true, base: "", branchPrefix: "flow/" });
+	assert.ok(t.includes("flow/<slug>") && t.includes("--squash --delete-branch") && t.includes("default branch"));
+	assert.ok(phaseSection("execute", { ...SECTION_OPTS, delivery: t })?.includes(t));
 });
 
 test("EXPLORE sets a budget of tool calls", () => {

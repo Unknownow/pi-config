@@ -50,33 +50,33 @@ import {
 	type Thinking,
 	type WorkflowConfig,
 } from "./config.ts";
-import { handoverAction, afterPass, noChangeStage, arbiterFirst, fixableFindings, canApprove, hasPlanFlaw, planFlawLines, planFlawOnPass, hasPlanLine, isPlanReady, judgeCapReached, minorFixOpen, selfCommitted, parseArbiter, phaseAfterFlow, shouldResume, skipJudge } from "./agent-end.ts";
+import { handoverAction, afterPass, noChangeStage, arbiterFirst, fixableFindings, canApprove, hasPlanFlaw, planFlawLines, planFlawOnPass, hasPlanLine, isPlanReady, judgeCapReached, minorFixOpen, passPending, stageEndAction, parseArbiter, phaseAfterFlow, shouldResume, skipJudge } from "./agent-end.ts";
 import { countTokens, type Tok } from "./tokens.ts";
 import { idleReason, notifyCommand, notifyDue } from "./notify.ts";
 import * as prompts from "./prompts.ts";
-import { branchName, combineOutcomes, type Delivery, type DeliveryOptions, DELIVERIES, DELIVERY_LABELS, deliveryChoices, deliveryInstruction, deliveryMenuLabel, fixedDeliveryLabel, deliveryOutcome, freshPr, isDelivery, landedBranch, planTitle, pushSkipReason, type PrState, repoDeliveryInstruction } from "./delivery.ts";
+import { planTitle } from "./delivery.ts";
 import { modelChoices, pathCompletions } from "./pickers.ts";
 import { ghCandidates, withPathDir } from "./gh-path.ts";
 import { citeNames, collectRepoDiff as collectRepoDiffImpl, needsFinalFullReview, shouldSkipRepeatFullReview, type RepoDiff } from "./repo-diff.ts";
-import { mergePublish, movedText, publishDecision, refuseText, type PublishEntry, type PublishFacts } from "./publish.ts";
+import { GIT_GUARD_ENV, type GitGuardSpec } from "./git-guard.ts";
+import { forkBase, mergedInStage, baseFromTree, defaultRunner, recordJudged, gateCheck, mergedBase, noMerge } from "./merge-gate.ts";
 import { combineRepoTexts, followFolders, parseAddDir, parseWorktreeList, repoKey, uniqueRoots } from "./repos.ts";
 import { askFolderAdd } from "./folder-add.ts";
 import { codePublishProblem, registryPublishCodeProblem, registryPublishProblem, shellProblem } from "./push-guard.ts";
-import { blockedWaitCheck, classifyPublish, lockDecision, lockWaitCheck, shouldRecordMerged, waitSince, mirrorArgs, parseMirrorStep, parsePublishStep, publishArgs } from "./registry-publish.ts";
-import { COMMIT_GUARD_ENV, type CommitGuardSpec } from "./commit-guard.ts";
+import { blockedWaitCheck, classifyPublish, lockDecision, lockWaitCheck, NO_JUDGED_MERGE, waitSince, mirrorArgs, parseMirrorStep, parsePublishStep, publishArgs } from "./registry-publish.ts";
 import { RUNNER_GUARD_ENV, type RunnerGuardSpec } from "./runner-guard.ts";
 import { parseTestReport } from "./test-report.ts";
 import { amendmentTail, answerItem, askOptions, bodyField, manualChecks, newTestFlow, nextAction, normalize, openBugs, pendingFromFlaws, recordReport, skipItem, testOutcome, testPlan, type TestFlow } from "./test-flow.ts";
 import { callDir, formatTaskResult, parseRunnerReply, runnerGate, sanitizeIds, scheduleTasks, taskCard, taskRecord, type TestTask, verifyRun } from "./test-run.ts";
-import { commitPlan, type Finished, mergeChecklist, newFlowId, isHuman, openStepsReminder, parseChecklist, type PlanStatus, planCard, pruneIds, renderPlanFile, splitPlanFile, type ChecklistItem } from "./plan-doc.ts";
+import { type Finished, mergeChecklist, newFlowId, isHuman, openStepsReminder, parseChecklist, type PlanStatus, planCard, pruneIds, renderPlanFile, splitPlanFile, type ChecklistItem } from "./plan-doc.ts";
 import { addToRegistry, type BoardEntry, boardLines, boardRows, detailLines, liveEvents, type LiveInfo, readLive, readRegistry } from "./board.ts";
-import { adoptHigher, claimLive, commitRef, dropClaim, pidAlive, readClaim, writeClaim, deleteLocal, deleteRef, fetchMirror, type Git, listRefs, plansDir, pushRef, readLocalStatuses, readPlanMd, refRev, remoteOf, repoInfo, type RefEntry, writeLocal } from "./plan-store.ts";
+import { adoptHigher, claimLive, commitRef, dropClaim, pidAlive, readClaim, writeClaim, deleteLocal, deleteRef, deleteReviewRef, fetchMirror, type Git, listRefs, plansDir, pushRef, readLocalStatuses, readPlanMd, refRev, remoteOf, repoInfo, type RefEntry, sweepReviewRefs, writeLocal, writeReviewRef } from "./plan-store.ts";
 import { type FlowFinding, recordFindings, reportFindings, type ReportStep } from "./flow-report.ts";
 import { readOnlyProblem } from "./readonly-bash.ts";
-import { checkpointAmendment, checkpointNote, checkpointOutcome, deliverHint, deliverHintsBlock, deliverStepSpec, deliverStepWarnings, hasCheckpointAmendment, checkpointText, isPlannedTag, modeAllowed, parseDeliverStep, publishRefusal, withCheckpoints } from "./checkpoints.ts";
+import { checkpointAmendment, checkpointNote, checkpointOutcome, deliverHint, deliverHintsBlock, deliverStepSpec, hasCheckpointAmendment, checkpointText, isPlannedTag, parseDeliverStep, publishRefusal, withCheckpoints } from "./checkpoints.ts";
 import { pushArgs, tagDecision } from "./tags.ts";
 import { type CheckVerdict, autopilotAmendment, autopilotReply, checkTitle, checkVerdict, type HumanCheck, humanChecks, parseVerifyStep, parseWaitStep, pollDecision, resumePrefix, verifyAmendment, waitAmendment } from "./waits.ts";
-import { nextStage, parseStages, stageDelivery, stageLine, stageNote, stageStart, stagesOutcome } from "./stages.ts";
+import { nextStage, parseStages, stageLine, stageNote, stageStart, stagesOutcome } from "./stages.ts";
 import { planToolProblem, planToolRefused } from "./readonly-tools.ts";
 import { refilterPlanTools } from "./plan-tools.ts";
 import { MetricsQueue, type MetricEvent, subagentMetric } from "./metrics.ts";
@@ -135,13 +135,9 @@ interface FlowState {
 	/** The current flow's breakdown, until its summary is shown. */
 	flow?: FlowUsage;
 	flowStarted?: number;
-	/** Set when the commit step's instruction goes out; the run after it ends the flow. `branch`: the branch the commits go on. `prBefore`: a closed or merged PR gh already showed for the branch before the step ran; it is not this flow's. */
-	commitPending?: { self?: boolean; notes?: string[]; mode: Exclude<Delivery, "off">; head: string; branch?: string; prBefore?: number; pushSkipped?: string; repos?: { root: string; mode: Exclude<Delivery, "off">; head: string; branch?: string; prBefore?: number; pushSkipped?: string }[] };
-	/** What happens after the judge passes in this flow, chosen at approval; unset means `delivery.default`. */
-	delivery?: Delivery;
 	/** Plan flaws go straight to the arbiter in this flow, chosen at approval; unset means `cfg.planFlaw`. */
 	planFlaw?: "auto";
-	/** Passed diffs whose flow already ended (or will, at the commit run's end). */
+	/** Passed diffs whose flow already ended (or will, at the stage's end). */
 	summarizedPasses?: string[];
 	/** The plan the user approved (the final plan, plus arbiter amendments); the judge and the arbiter read it. */
 	approvedPlan?: string;
@@ -179,10 +175,14 @@ interface FlowState {
 	waiting?: { reason: string; check?: string; step?: string; stage?: number; since: string; planned: boolean; atStageStart?: boolean; checkPassed?: boolean; held?: string };
 	/** Deliveries made inside the plan, before the end of a stage or flow. */
 	checkpoints?: { step?: string; stage?: number; text: string; ok: boolean }[];
-	/** Per repo key: the head the workflow's commit step produced (base = HEAD before this flow's first commit there). */
-	judgedHeads?: Record<string, { base: string; head: string; branch: string }>;
-	/** Per repo key: the judged head a merge delivery landed (Publish steps read versions from it). */
-	mergedHeads?: Record<string, string>;
+	/** Per repo key: the commit the judge diffs from. It starts at HEAD when the flow starts executing and moves up when a stage passes (and when the base branch is merged in), so commits made meanwhile do not change what the judge sees. */
+	reviewBase?: Record<string, string>;
+	/** Per repo key: the worktree trees of every judge pass in this flow. A merge, a push to a protected branch and a publish need the tree they act on to be among them. */
+	passedTrees?: Record<string, string[]>;
+	/** Per repo key: the judged merge (a pull request or a pushed commit) that a Publish step reads package versions from. */
+	judgedMerges?: Record<string, { pr?: string; commit?: string; tree: string; stage?: number }>;
+	/** The pass hash for which the executor was reminded of open steps. */
+	stageNudgedFor?: string;
 }
 
 interface LastJudge {
@@ -219,7 +219,8 @@ const EXPLORE_REASONS = ["question", "broad_search", "timeout", "too_much_output
 const execFileAsync = promisify(execFile);
 /** Subagent-only extension that registers forwarded MCP servers (see mcp-forward.ts). */
 const FORWARD_EXTENSION = path.join(path.dirname(CONFIG_PATH), "extensions", "workflow", "mcp-forward.ts");
-const COMMIT_GUARD_EXTENSION = path.join(path.dirname(CONFIG_PATH), "extensions", "workflow", "commit-guard.ts");
+/** Subagent-only extension that guards the git_task subagent's git and gh commands (see git-guard.ts). */
+const GIT_GUARD_EXTENSION = path.join(path.dirname(CONFIG_PATH), "extensions", "workflow", "git-guard.ts");
 /** Subagent-only extension that guards the test runners (see runner-guard.ts). */
 const RUNNER_GUARD_EXTENSION = path.join(path.dirname(CONFIG_PATH), "extensions", "workflow", "runner-guard.ts");
 
@@ -307,12 +308,11 @@ export default function workflow(pi: ExtensionAPI) {
 	let lastPlanText = "";
 	let guardTokens: number | null = null;
 	let compacting = false;
-	let commitHandoverInFlight = false; // the commit instruction waits for a handover compaction: a run ending meanwhile must not close the commit
 	/** The guard threshold was crossed during a run; compact when the run settles. */
 	let compactPending = false;
 	/** A handover message (execute, fix round, next stage) sent from agent_end; it goes out when the run settles, after an optional compaction. */
 	let pendingHandover: { customType: string; content: string } | undefined;
-	let inAgentEnd = 0; // nesting depth: a run can end while a handler still waits on the commit subagent
+	let inAgentEnd = 0; // nesting depth: a run can end while a handler still waits on a subagent
 	let lastNotifyAt: number | undefined;
 	let notifiedSinceStart = false; // a notification already went out for this turn
 	let idleTimer: ReturnType<typeof setTimeout> | undefined;
@@ -343,13 +343,12 @@ export default function workflow(pi: ExtensionAPI) {
 			idleTimer = undefined;
 			try {
 				if (notifiedSinceStart || !ctx.isIdle()) return;
-				if (compacting || compactPending || pendingHandover || commitHandoverInFlight || commitSubagentRunning) return scheduleIdleNotice(ctx);
+				if (compacting || compactPending || pendingHandover) return scheduleIdleNotice(ctx);
 				notifyUser(ctx, idleReason({ phase: state.phase, waiting: state.waiting?.reason }));
 			} catch {}
 		}, cfg.notify.idleMs);
 		idleTimer.unref?.();
 	}
-	let commitSubagentRunning = false; // a run ending meanwhile must not close the commit
 	/** An overflow compaction is retrying the turn; the bridge may answer that retry with an empty reply. */
 	let overflowRetry = false;
 	/** Automatic resumes since the user's last prompt. */
@@ -428,11 +427,14 @@ export default function workflow(pi: ExtensionAPI) {
 	/** A flow has ended: on to the phase `returnTo` names. */
 	async function endFlow(ctx: ExtensionContext): Promise<void> {
 		notifyUser(ctx, "flow finished");
+		await dropReviewRefs(ctx);
+		state.reviewBase = undefined;
+		state.passedTrees = undefined;
+		state.judgedMerges = undefined;
 		state.waiting = undefined;
 		stopWaitTimer();
 		if (state.testFlow) {
 			state.testFlow = undefined;
-			state.delivery = undefined;
 			state.planFlaw = undefined;
 			persist();
 		}
@@ -571,17 +573,22 @@ export default function workflow(pi: ExtensionAPI) {
 		}
 		if (leavingFlow && state.planDoc && !state.planDoc.finished) planMilestone(ctx, { at: new Date().toISOString(), ok: false, text: "abandoned" });
 		const leftTest = state.phase === "test";
+		const samePhase = phase === state.phase; // a repeated setPhase keeps what the judge already passed
+		if (leavingFlow) await dropReviewRefs(ctx);
 		state.testFlow = undefined;
 		state.phase = phase;
 		state.escalated = false;
 		state.judgeRounds = 0;
 		state.minorRounds = 0;
 		state.minorSentFor = undefined;
-		state.commitPending = undefined;
 		state.waiting = undefined;
 		state.checkpoints = undefined;
-		state.judgedHeads = undefined;
-		state.mergedHeads = undefined;
+		if (!samePhase) {
+			state.reviewBase = undefined;
+			state.passedTrees = undefined;
+			state.judgedMerges = undefined;
+			state.stageNudgedFor = undefined;
+		}
 		publishWaitSince.clear();
 		stopWaitTimer();
 		state.finalizing = undefined;
@@ -596,10 +603,10 @@ export default function workflow(pi: ExtensionAPI) {
 			state.approvedPlan = undefined;
 			state.checklist = undefined;
 			state.planDoc = undefined;
-			state.delivery = undefined;
 			state.planFlaw = undefined;
 		}
 		consecutiveErrors = 0;
+		if (phase === "execute" && !(samePhase && state.reviewBase)) await initReviewBase(ctx);
 		if (phase !== "off") await applyRole(ctx, phase);
 		persist();
 		updateStatus(ctx);
@@ -629,10 +636,9 @@ export default function workflow(pi: ExtensionAPI) {
 		const stages = parseStages(plan);
 		state.stage = stages.length ? 1 : undefined;
 		planMilestone(ctx);
-		for (const w of deliverStepWarnings(plan ?? "", (id) => stageCapFor(state.checklist?.find((i) => i.id === id)?.stage))) ctx.ui.notify(`workflow: ${w}`, "warning");
 		if (!stages.length) return deliverHintsText(undefined);
 		ctx.ui.notify(`workflow: staged plan, ${stages.length} stages; stage 1: ${stages[0].title}`, "info");
-		const first = stageStart(stages, 1, state.delivery ?? defaultDelivery());
+		const first = stageStart(stages, 1);
 		if (holdForStageWait(ctx, stages[0], first)) return `\n\nStage 1 waits for: ${stages[0].after?.reason}. Don't start it; end your turn now. The workflow sends you the stage when the wait is over.`;
 		return `\n\n${first}${deliverHintsText(1)}`;
 	}
@@ -643,48 +649,32 @@ export default function workflow(pi: ExtensionAPI) {
 		return stages.length && state.stage ? { stages, current: state.stage } : null;
 	}
 
-	/** The delivery that caps the Deliver steps of `stage` (or of the whole flow when unstaged). */
-	function stageCapFor(stage: number | undefined): Delivery {
-		const stages = stage ? parseStages(state.approvedPlan) : [];
-		return stageDelivery(state.delivery ?? defaultDelivery(), stage ? stages[stage - 1] : undefined);
-	}
-
 	/** The open Deliver steps of `stage` with the call each one makes, as text to append to a message ("" when there are none). */
 	function deliverHintsText(stage: number | undefined): string {
-		const block = deliverHintsBlock(state.approvedPlan ?? "", state.checklist, stage, stageCapFor(stage));
+		const block = deliverHintsBlock(state.approvedPlan ?? "", state.checklist, stage);
 		return block ? `\n\n${block}` : "";
 	}
 
-	/** ` → call deliver …` for a Deliver step, or "". */
+	/** A refusal of a command the executor may not run. */
+	function publishRefuse(problem: string): string {
+		return publishRefusal(problem);
+	}
+
+	/** ` → call deliver …` for a Deliver step that names a tag, or "". */
 	function deliverLine(id: string, stage: number | undefined): string {
 		const spec = deliverStepSpec(state.approvedPlan ?? "", id);
-		return spec ? ` ${deliverHint(id, spec, stageCapFor(stage))}` : "";
+		const hint = spec ? deliverHint(id, spec) : "";
+		return hint ? ` ${hint}` : "";
 	}
 
-	/** A refusal of a publish the executor may not run itself, naming the next Deliver call. */
-	function publishRefuse(problem: string): string {
-		const stage = currentStages()?.current;
-		const cap = stageCapFor(stage);
-		const plan = state.approvedPlan ?? "";
-		let next: { id: string; hint: string } | null = null;
-		for (const i of state.checklist ?? []) {
-			if (i.done || isHuman(i) || (stage !== undefined && i.stage !== undefined && i.stage !== stage)) continue;
-			const spec = deliverStepSpec(plan, i.id);
-			if (spec?.mode && spec.mode !== "commit") { next = { id: i.id, hint: deliverHint(i.id, spec, cap) }; break; }
-		}
-		if (next && /^→ (delivery is off|beyond)/.test(next.hint)) next = null;
-		return publishRefusal(problem, next, DELIVERY_LABELS[cap]);
-	}
-
-	async function approve(ctx: ExtensionContext, delivery?: Delivery, arbiterOnFlaw = false): Promise<void> {
-		state.delivery = delivery ?? (await chooseDelivery(ctx));
+	async function approve(ctx: ExtensionContext, arbiterOnFlaw = false): Promise<void> {
 		state.planFlaw = arbiterOnFlaw ? "auto" : undefined;
 		if (cfg.finalizePlan) {
 			// One more planner reply, the final execution plan, before the execute model starts.
 			planReady = false;
 			state.finalizing = true;
 			persist();
-			pi.sendMessage({ customType: "workflow-finalize", content: prompts.finalize(cfg.delivery.splitCommits, DELIVERY_LABELS[state.delivery], cfg.stagedPlans), display: true }, { triggerTurn: true, deliverAs: "followUp" });
+			pi.sendMessage({ customType: "workflow-finalize", content: prompts.finalize(cfg.delivery.splitCommits, cfg.stagedPlans), display: true }, { triggerTurn: true, deliverAs: "followUp" });
 			return;
 		}
 		await setPhase(ctx, "execute");
@@ -708,26 +698,6 @@ export default function workflow(pi: ExtensionAPI) {
 		persist();
 		updateStatus(ctx);
 		ctx.ui.notify(`workflow: back to ${state.phase}${state.phase === "off" ? "" : ` on ${describeRole(cfg.roles[state.phase])}`}`, "info");
-	}
-
-	function defaultDelivery(): Delivery {
-		return isDelivery(cfg.delivery.default) ? cfg.delivery.default : "commit";
-	}
-
-	/** The menu's first and Escape choice: the one set with /flow delivery, else the configured default. */
-	function menuDefault(): Delivery {
-		return state.delivery ?? defaultDelivery();
-	}
-
-	/** Asks what happens after the judge passes (default first); Escape, no UI or `ask: false` gives the default. */
-	async function chooseDelivery(ctx: ExtensionContext): Promise<Delivery> {
-		const def = menuDefault();
-		if (!cfg.delivery.ask || !ctx.hasUI || autopilotOn()) return def;
-		const options = deliveryChoices(def);
-		const labels = options.map((d) => deliveryMenuLabel(d, def));
-		const choice = await ctx.ui.select("After the judge passes", labels);
-		const i = choice ? labels.indexOf(choice) : -1;
-		return i >= 0 ? options[i] : def;
 	}
 
 	// ----------------------------------------------------------------------
@@ -813,12 +783,12 @@ export default function workflow(pi: ExtensionAPI) {
 		return { text, hash, files, truncated, base, names, checkNames, chars: full.length, repos, multi };
 	}
 
-	/** One repo's diff, or null outside a git work tree. */
-	async function collectDiff(cwd: string, base = "HEAD"): Promise<Diff | null> {
+	/** One repo's diff, or null outside a git work tree. `baseKey` identifies the base(s) the diff was taken against. */
+	async function collectDiff(cwd: string, base = "HEAD", baseKey = base): Promise<Diff | null> {
 		const r = await collectRepoDiff(cwd, base);
 		if (!r) return null;
 		const root = (await gitRoot(cwd)) ?? cwd;
-		return makeDiff(r.full, r.files, r.names, r.checkNames, base, [{ root, dir: cwd, changed: r.full.length > 0 }], false);
+		return makeDiff(r.full, r.files, r.names, r.checkNames, baseKey, [{ root, dir: cwd, changed: r.full.length > 0 }], false);
 	}
 
 	const rootCache = new Map<string, string>();
@@ -883,17 +853,34 @@ export default function workflow(pi: ExtensionAPI) {
 		return out;
 	}
 
-	/** The diff of every repo in this flow. With only the working folder's repo it is exactly collectDiff(ctx.cwd). */
-	async function collectFlowDiff(ctx: ExtensionContext, base = "HEAD"): Promise<Diff | null> {
+	const goneBases = new Set<string>();
+
+	/** The ref each repo's diff is taken against: `base` when given, else the repo's review base while executing, else HEAD. */
+	async function diffBase(ctx: ExtensionContext, ref: RepoRef, base: string | undefined): Promise<string> {
+		if (base) {
+			// A base that exists only in the working folder's repo means HEAD in the others.
+			if (ref.dir !== ctx.cwd && base !== "HEAD" && (await git(ref.dir, "rev-parse", "--verify", "--quiet", `${base}^{commit}`)).code !== 0) return "HEAD";
+			return base;
+		}
+		if (state.phase === "execute" && !state.reviewBase?.[repoKey(ref.root)]) await joinReviewBase(ref.root, true);
+		const review = state.phase === "execute" ? state.reviewBase?.[repoKey(ref.root)] : undefined;
+		if (!review) return "HEAD";
+		if ((await git(ref.dir, "rev-parse", "--verify", "--quiet", `${review}^{commit}`)).code === 0) return review;
+		if (!goneBases.has(review)) {
+			goneBases.add(review);
+			ctx.ui.notify(`workflow: the review base of ${ref.root} is gone; reviewing from HEAD`, "warning");
+		}
+		return "HEAD";
+	}
+
+	/** The diff of every repo in this flow, each against its review base (or `base`). With only the working folder's repo it is exactly collectDiff(ctx.cwd). */
+	async function collectFlowDiff(ctx: ExtensionContext, base?: string): Promise<Diff | null> {
 		const refs = await flowRepos(ctx);
 		if (refs.length === 0) return null;
-		if (refs.length === 1 && refs[0].dir === ctx.cwd) return collectDiff(ctx.cwd, base);
-		const per = await mapLimit(refs, 4, async (ref) => {
-			let b = base;
-			// A base that exists only in the working folder's repo means HEAD in the others.
-			if (ref.dir !== ctx.cwd && base !== "HEAD" && (await git(ref.dir, "rev-parse", "--verify", "--quiet", `${base}^{commit}`)).code !== 0) b = "HEAD";
-			return collectRepoDiff(ref.dir, b);
-		});
+		const bases = await Promise.all(refs.map((ref) => diffBase(ctx, ref, base)));
+		const baseKey = refs.map((ref, i) => `${repoKey(ref.root)}=${bases[i]}`).join(";");
+		if (refs.length === 1 && refs[0].dir === ctx.cwd) return collectDiff(ctx.cwd, bases[0], baseKey);
+		const per = await mapLimit(refs, 4, async (ref) => collectRepoDiff(ref.dir, bases[refs.indexOf(ref)]));
 		const parts: { root: string; text: string }[] = [];
 		const names: string[] = [];
 		const checkNames: string[] = [];
@@ -908,7 +895,7 @@ export default function workflow(pi: ExtensionAPI) {
 			}
 			return { ...ref, changed: !!r && r.full.length > 0 };
 		});
-		return makeDiff(combineRepoTexts(parts), files, names, checkNames, base, repos, true);
+		return makeDiff(combineRepoTexts(parts), files, names, checkNames, baseKey, repos, true);
 	}
 
 	function repoRoots(diff: Diff): string[] {
@@ -983,11 +970,11 @@ export default function workflow(pi: ExtensionAPI) {
 		if (!full && !skipSame && prev?.hash === diff.hash) return { kind: "same", prev };
 		const snaps = await snapshotRepos(diff);
 		const fullPlan = { kind: "full" as const, snaps };
-		// A commit, rebase or branch switch since, another base or another set of repos: the last round no longer lines up.
+		// Another base or another set of repos: the last round no longer lines up. Commits since do not matter: the delta is between trees.
 		if (full || !cfg.judge.recheck || !prev?.repos || !snaps || prev.base !== diff.base) return fullPlan;
 		const before = prev.repos;
 		const keys = Object.keys(snaps);
-		if (keys.length !== Object.keys(before).length || keys.some((k) => before[k]?.head !== snaps[k].head)) return fullPlan;
+		if (keys.length !== Object.keys(before).length || keys.some((k) => !before[k])) return fullPlan;
 		const per = await Promise.all(
 			diff.repos.map(async (r) => {
 				const k = repoKey(r.root);
@@ -1042,7 +1029,7 @@ export default function workflow(pi: ExtensionAPI) {
 		const pass = state.lastFullPass;
 		if (!pass || !snaps || pass.base !== diff.base || diff.chars <= 0) return undefined;
 		const keys = Object.keys(snaps);
-		if (keys.length !== Object.keys(pass.repos).length || keys.some((k) => pass.repos[k]?.head !== snaps[k].head)) return undefined;
+		if (keys.length !== Object.keys(pass.repos).length || keys.some((k) => !pass.repos[k])) return undefined;
 		const parts = await Promise.all(diff.repos.map((r) => git(r.dir, "diff", "--no-color", pass.repos[repoKey(r.root)]?.tree ?? "", snaps[repoKey(r.root)]?.tree ?? "")));
 		if (parts.some((p) => p.code !== 0)) return undefined;
 		const since = parts.reduce((n, p) => n + p.stdout.length, 0);
@@ -1052,7 +1039,145 @@ export default function workflow(pi: ExtensionAPI) {
 	function markPassed(hash: string): void {
 		state.passedDiff = hash;
 		state.judgeRounds = 0;
+		recordPassedTrees(hash);
 		persist();
+	}
+
+	// ----------------------------------------------------------------------
+	// Review base, passed trees and the judge gate
+	// ----------------------------------------------------------------------
+
+	/** Review-base refs written this session by repo key, so the end of the flow can delete them. */
+	const reviewRefs = new Map<string, { dir: string; flowId: string }>();
+
+	/** Remembers the trees of a judge pass: a merge, a push to a protected branch and a publish need the tree they act on to be one of them. */
+	function recordPassedTrees(hash: string): void {
+		const repos = state.lastJudge?.hash === hash ? state.lastJudge.repos : undefined;
+		if (!repos) return;
+		const all = { ...(state.passedTrees ?? {}) };
+		for (const [k, v] of Object.entries(repos)) all[k] = [...(all[k] ?? []).filter((t) => t !== v.tree), v.tree].slice(-20);
+		state.passedTrees = all;
+	}
+
+	/** Every repo of the flow starts its review at its HEAD. */
+	async function initReviewBase(ctx: ExtensionContext): Promise<void> {
+		const base: Record<string, string> = {};
+		for (const r of await flowRepos(ctx)) {
+			const head = await git(r.dir, "rev-parse", "HEAD");
+			if (head.code === 0 && head.stdout.trim()) base[repoKey(r.root)] = head.stdout.trim();
+		}
+		state.reviewBase = Object.keys(base).length ? base : undefined;
+	}
+
+	/**
+	 * A repo that joins the flow later reviews from its HEAD at that time. `lazy`: the join is only noticed now (a resumed flow, or a diff of a repo
+	 * nobody announced), so commits may already exist: the base is then where the branch left the base branch, so they are reviewed too.
+	 */
+	async function joinReviewBase(root: string, lazy = false): Promise<void> {
+		if (state.phase !== "execute") return;
+		const key = repoKey(root);
+		if (state.reviewBase?.[key]) return;
+		let base = "";
+		if (lazy) {
+			const upstream = await upstreamBase(root);
+			base = (upstream ? await forkBase(defaultRunner, root, upstream) : null) ?? "";
+		}
+		if (!base) {
+			const head = await git(root, "rev-parse", "HEAD");
+			if (head.code === 0) base = head.stdout.trim();
+		}
+		if (base) {
+			state.reviewBase = { ...(state.reviewBase ?? {}), [key]: base };
+			persist();
+		}
+	}
+
+	/** Moves a repo's review base to `commit` and keeps that commit alive under the flow's ref. A failed ref write only warns: the base works until git collects it. */
+	async function setReviewBase(ctx: ExtensionContext, ref: RepoRef, commit: string): Promise<void> {
+		const key = repoKey(ref.root);
+		state.reviewBase = { ...(state.reviewBase ?? {}), [key]: commit };
+		const flowId = state.planDoc?.flowId;
+		if (!flowId) return;
+		if (await writeReviewRef(gitEnv, ref.dir, flowId, commit)) reviewRefs.set(key, { dir: ref.dir, flowId });
+		else ctx.ui.notify(`workflow: review base kept in memory only (could not write refs/pi/review-base/${flowId} in ${ref.root})`, "warning");
+	}
+
+	/** The base branch of a repo as `origin/<name>`: delivery.base, else origin's HEAD, else origin/main; undefined when none exists. */
+	async function upstreamBase(dir: string): Promise<string | undefined> {
+		const names: string[] = [];
+		if (cfg.delivery.base) names.push(`origin/${cfg.delivery.base}`);
+		const head = await git(dir, "symbolic-ref", "--short", "refs/remotes/origin/HEAD");
+		if (head.code === 0 && head.stdout.trim()) names.push(head.stdout.trim());
+		names.push("origin/main");
+		for (const n of names) if ((await git(dir, "rev-parse", "--verify", "--quiet", `${n}^{commit}`)).code === 0) return n;
+		return undefined;
+	}
+
+	/**
+	 * Before a judge run: when the base branch was merged into a repo's branch, its review base takes in what that brought, so the merged work
+	 * is not reviewed as this flow's. Returns a note for the judge's focus when that was not possible (a conflict, or git before 2.38).
+	 */
+	async function refreshReviewBase(ctx: ExtensionContext): Promise<string | undefined> {
+		if (state.phase !== "execute") return undefined;
+		const notes = new Set<string>();
+		for (const ref of await flowRepos(ctx)) {
+			const base = state.reviewBase?.[repoKey(ref.root)];
+			if (!base) continue;
+			const upstream = await upstreamBase(ref.dir);
+			if (!upstream) continue;
+			if ((await git(ref.dir, "merge-base", "--is-ancestor", upstream, "HEAD")).code !== 0) continue;
+			if ((await git(ref.dir, "merge-base", "--is-ancestor", upstream, base)).code === 0) continue;
+			const moved = await mergedBase(defaultRunner, ref.dir, base, upstream);
+			if (moved) await setReviewBase(ctx, ref, moved);
+			else notes.add(`This diff includes changes merged from ${upstream}; review only this flow's changes.`);
+		}
+		return notes.size ? [...notes].join(" ") : undefined;
+	}
+
+	/** After a stage passes: each repo's review base becomes the worktree as it is, so the next stage is reviewed on its own. */
+	async function advanceReviewBase(ctx: ExtensionContext): Promise<void> {
+		const repos = state.lastJudge?.repos;
+		if (!repos) return;
+		for (const ref of await flowRepos(ctx)) {
+			const snap = repos[repoKey(ref.root)];
+			if (!snap) continue;
+			// The worktree as it is now, not the tree that was judged: the flow's pull request may be merged and the base branch moved on since.
+			const tree = (await snapshotTree(ref.dir)) ?? snap.tree;
+			const sha = await baseFromTree(defaultRunner, ref.dir, tree);
+			if (!sha) {
+				ctx.ui.notify("workflow: review base not moved (git commit-tree failed)", "warning");
+				continue;
+			}
+			await setReviewBase(ctx, ref, sha);
+		}
+	}
+
+	/** Deletes the flow's review-base refs: those this session wrote, and the flow's ref in every repo it covers (a reloaded session lost the list). */
+	async function dropReviewRefs(ctx: ExtensionContext): Promise<void> {
+		const written = [...reviewRefs.values()];
+		reviewRefs.clear();
+		for (const v of written) await deleteReviewRef(gitEnv, v.dir, v.flowId);
+		const flowId = state.planDoc?.flowId;
+		if (!flowId) return;
+		for (const ref of await flowRepos(ctx)) await deleteReviewRef(gitEnv, ref.dir, flowId);
+	}
+
+	/** A resumed flow takes back its review state. A review base git no longer has falls back to HEAD with a warning. */
+	async function restoreReview(ctx: ExtensionContext, status: PlanStatus): Promise<void> {
+		state.passedTrees = status.passedTrees ? Object.fromEntries(Object.entries(status.passedTrees).map(([k, v]) => [k, [...v]])) : undefined;
+		state.judgedMerges = status.judgedMerges ? Object.fromEntries(Object.entries(status.judgedMerges).map(([k, v]) => [k, { ...v }])) : undefined;
+		for (const ref of await flowRepos(ctx)) {
+			const key = repoKey(ref.root);
+			const sha = status.reviewBase?.[key];
+			if (!sha) {
+				await joinReviewBase(ref.root, true);
+				continue;
+			}
+			if ((await git(ref.dir, "cat-file", "-e", `${sha}^{commit}`)).code === 0) {
+				state.reviewBase = { ...(state.reviewBase ?? {}), [key]: sha };
+				reviewRefs.set(key, { dir: ref.dir, flowId: status.flowId });
+			} else ctx.ui.notify(`workflow: the review base of ${ref.root} is gone; reviewing from HEAD`, "warning");
+		}
 	}
 
 	/** The approved plan for the judge and the arbiter; a very long one loses its middle, never its amendments. */
@@ -1079,14 +1204,6 @@ export default function workflow(pi: ExtensionAPI) {
 	/** N of the next `## Amendment N`: the amendments already in the approved plan + 1 (shared by the arbiter and the executor). */
 	function nextAmendmentNumber(): number {
 		return (state.approvedPlan?.match(/^## Amendment \d+/gm) ?? []).length + 1;
-	}
-
-	/** The commit step's view of the plan: goal, commits, amendments and the stage being delivered; the whole plan when it has no Commits section. */
-	function commitExcerpt(): string {
-		const excerpt = commitPlan(state.approvedPlan ?? "");
-		if (!excerpt) return `## Approved plan\n\n${planForJudge()}`;
-		const staged = currentStages();
-		return (staged ? `${excerpt}\n\n${stageNote(staged.stages, staged.current)}` : excerpt) + checkpointSection();
 	}
 
 	/** `planCardText` once the plan file is written: waits for the plan write queue, at most 10 s, so the card can name the file. */
@@ -1163,14 +1280,14 @@ export default function workflow(pi: ExtensionAPI) {
 		plan: string;
 		checklist?: ChecklistItem[];
 		stage?: number;
-		delivery?: string;
 		kind?: "test";
 		touched: string[];
 		finished?: Finished;
 		waiting?: NonNullable<PlanStatus["waiting"]>;
 		checkpoints?: { step?: string; stage?: number; text: string; ok: boolean }[];
-		judgedHeads?: Record<string, { base: string; head: string; branch: string }>;
-		mergedHeads?: Record<string, string>;
+		reviewBase?: Record<string, string>;
+		passedTrees?: Record<string, string[]>;
+		judgedMerges?: Record<string, { pr?: string; commit?: string; tree: string; stage?: number }>;
 		/** A restore of the file (no new rev): never commits over a newer ref. */
 		retry?: boolean;
 	}
@@ -1296,14 +1413,14 @@ export default function workflow(pi: ExtensionAPI) {
 			updated: new Date().toISOString(),
 			title: planTitle(snap.plan),
 			...(snap.stage ? { stage: snap.stage } : {}),
-			...(snap.delivery ? { delivery: snap.delivery } : {}),
 			...(snap.kind ? { kind: snap.kind } : {}),
 			done: (snap.checklist ?? []).filter((i) => i.done).map((i) => i.id),
 			...(snap.finished ? { finished: snap.finished } : {}),
 			...(snap.waiting ? { waiting: snap.waiting } : {}),
 			...(snap.checkpoints?.length ? { checkpoints: snap.checkpoints } : {}),
-			...(snap.judgedHeads && Object.keys(snap.judgedHeads).length ? { judgedHeads: snap.judgedHeads } : {}),
-			...(snap.mergedHeads && Object.keys(snap.mergedHeads).length ? { mergedHeads: snap.mergedHeads } : {}),
+			...(snap.reviewBase && Object.keys(snap.reviewBase).length ? { reviewBase: snap.reviewBase } : {}),
+			...(snap.passedTrees && Object.keys(snap.passedTrees).length ? { passedTrees: snap.passedTrees } : {}),
+			...(snap.judgedMerges && Object.keys(snap.judgedMerges).length ? { judgedMerges: snap.judgedMerges } : {}),
 			repos: infos.map((info, i) => ({ ...info, primary: i === 0 })),
 		};
 		const planMd = renderPlanFile(snap.flowId, snap.plan, snap.checklist, snap.finished, snap.waiting?.reason);
@@ -1398,13 +1515,14 @@ export default function workflow(pi: ExtensionAPI) {
 
 	/** A point where the plan file is rewritten: approval, an amendment, a stage end, the flow's end. Runs in the background, in order; `bump: false` only restores the file. */
 	/** The wait and checkpoints as they go into the plan's status. */
-	function waitSnapshot(): Pick<PlanSnap, "waiting" | "checkpoints" | "judgedHeads" | "mergedHeads"> {
+	function waitSnapshot(): Pick<PlanSnap, "waiting" | "checkpoints" | "reviewBase" | "passedTrees" | "judgedMerges"> {
 		const w = state.waiting;
 		return {
 			...(w ? { waiting: { reason: w.reason, ...(w.check ? { check: w.check } : {}), since: w.since, planned: w.planned, ...(w.atStageStart ? { atStageStart: true } : {}), ...(w.held ? { held: w.held } : {}) } } : {}),
 			...(state.checkpoints?.length ? { checkpoints: state.checkpoints.map((c) => ({ ...(c.step ? { step: c.step } : {}), ...(c.stage ? { stage: c.stage } : {}), text: c.text, ok: c.ok })) } : {}),
-			...(state.judgedHeads && Object.keys(state.judgedHeads).length ? { judgedHeads: { ...state.judgedHeads } } : {}),
-			...(state.mergedHeads && Object.keys(state.mergedHeads).length ? { mergedHeads: { ...state.mergedHeads } } : {}),
+			...(state.reviewBase && Object.keys(state.reviewBase).length ? { reviewBase: { ...state.reviewBase } } : {}),
+			...(state.passedTrees && Object.keys(state.passedTrees).length ? { passedTrees: { ...state.passedTrees } } : {}),
+			...(state.judgedMerges && Object.keys(state.judgedMerges).length ? { judgedMerges: { ...state.judgedMerges } } : {}),
 		};
 	}
 
@@ -1421,7 +1539,6 @@ export default function workflow(pi: ExtensionAPI) {
 			plan,
 			checklist: state.checklist?.map((i) => ({ ...i })),
 			stage: state.stage,
-			delivery: state.delivery,
 			...(state.testFlow ? { kind: "test" as const } : {}),
 			touched: [...(state.touchedRepos ?? [])],
 			finished: doc.finished,
@@ -1448,8 +1565,9 @@ export default function workflow(pi: ExtensionAPI) {
 			const status: PlanStatus = { ...last.status, updated: new Date().toISOString(), done: (state.checklist ?? []).filter((i) => i.done).map((i) => i.id) };
 			delete status.waiting;
 			delete status.checkpoints;
-			delete status.judgedHeads;
-			delete status.mergedHeads;
+			delete status.reviewBase;
+			delete status.passedTrees;
+			delete status.judgedMerges;
 			Object.assign(status, waitSnapshot());
 			const file = writeLocal(last.dir, doc.flowId, renderPlanFile(doc.flowId, state.approvedPlan, state.checklist, doc.finished, state.waiting?.reason), status);
 			last.status = status;
@@ -1502,9 +1620,15 @@ export default function workflow(pi: ExtensionAPI) {
 				const t = e.status ? Date.parse(e.status.updated) : NaN;
 				return { flowId: e.flowId, updated: Number.isFinite(t) ? t : e.date, finished: e.status ? !!e.status.finished : true };
 			});
-			for (const id of pruneIds(entries, { keepDays: cfg.plans.keepDays, keepCount: cfg.plans.keepCount, now: Date.now(), activeId })) {
+			const pruned = pruneIds(entries, { keepDays: cfg.plans.keepDays, keepCount: cfg.plans.keepCount, now: Date.now(), activeId });
+			for (const id of pruned) {
 				await deleteRef(gitEnv, root, id, sync ? remote?.name : undefined);
 			}
+			// Review bases are local only: the pruned flows' go, and so do leftovers of crashed flows older than a day.
+			const keep = new Set(entries.map((e) => e.flowId).filter((id) => !pruned.includes(id)));
+			if (activeId) keep.add(activeId);
+			const finished = entries.filter((e) => e.finished && e.flowId !== activeId).map((e) => e.flowId);
+			await sweepReviewRefs(gitEnv, root, { drop: [...pruned, ...finished], keep, now: Date.now(), minAgeMs: 86_400_000 });
 		} catch {}
 	}
 
@@ -1673,15 +1797,13 @@ export default function workflow(pi: ExtensionAPI) {
 		}
 		state.folders = folders;
 		state.approvedPlan = plan;
-		state.delivery = isDelivery(status.delivery) ? status.delivery : defaultDelivery();
 		state.stage = status.stage;
 		state.stageOutcomes = undefined;
 		state.stageJudged = undefined;
 		state.checklist = parseChecklist(plan).map((i) => ({ ...i, done: status.done.includes(i.id) }));
 		if (!state.checklist.length) state.checklist = undefined;
 		state.checkpoints = status.checkpoints?.map((c) => ({ ...c }));
-		state.judgedHeads = status.judgedHeads ? { ...status.judgedHeads } : undefined;
-		state.mergedHeads = status.mergedHeads ? { ...status.mergedHeads } : undefined;
+		await restoreReview(ctx, status);
 		state.waiting = undefined;
 		publishWaitSince.clear();
 		if (status.waiting) {
@@ -1689,7 +1811,7 @@ export default function workflow(pi: ExtensionAPI) {
 			const resumedStages = state.stage ? parseStages(plan) : [];
 			const after = state.stage ? resumedStages[state.stage - 1]?.after : undefined;
 			const atStart = status.waiting.atStageStart ?? (!!after && after.reason === status.waiting.reason);
-			const held = status.waiting.held ?? (atStart && state.stage ? stageStart(resumedStages, state.stage, state.delivery ?? defaultDelivery()) : undefined);
+			const held = status.waiting.held ?? (atStart && state.stage ? stageStart(resumedStages, state.stage) : undefined);
 			const publishStep = /^Call publish_packages again with step (\S+)\.$/.exec(status.waiting.held ?? "")?.[1];
 			if (publishStep) publishWaitSince.set(publishStep, status.waiting.since);
 			state.waiting = {
@@ -1835,7 +1957,7 @@ export default function workflow(pi: ExtensionAPI) {
 		const knowledgeNote = knowledge ? ` · knowledge ${knowledge.status === "checked" ? "checked" : "not checked"}` : "";
 		view.finish(run, verdict === "PASS", `${verdict} · ${findings} finding${findings === 1 ? "" : "s"}${recheck ? " · re-review" : ""}${knowledgeNote}`);
 		onChange?.(run);
-		// Back to the phase's stage either way; finishPassed moves to commit once the commit is actually handed over.
+		// Back to the phase's stage either way.
 		view.stage = phaseStage();
 		state.lastJudge = plan.snaps ? { hash: diff.hash, repos: plan.snaps, base: diff.base, verdict, text } : undefined;
 		if (plan.kind === "full") state.lastFullPass = plan.snaps && verdict === "PASS" && !hasPlanFlaw(text) ? { repos: plan.snaps, base: diff.base } : undefined;
@@ -1888,7 +2010,6 @@ export default function workflow(pi: ExtensionAPI) {
 		state.planDoc = undefined;
 		state.flowFindings = undefined;
 		state.flowSummarized = undefined;
-		state.delivery = cfg.test.delivery;
 		state.planFlaw = "auto";
 		refreshChecklist();
 		planMilestone(ctx);
@@ -1996,10 +2117,10 @@ export default function workflow(pi: ExtensionAPI) {
 		state.judgeRounds = 0;
 		state.minorRounds = 0;
 		state.minorSentFor = undefined;
-		state.commitPending = undefined;
 		state.finalizing = undefined;
 		state.pendingPlanFlaw = undefined;
 		state.stageJudged = undefined;
+		state.stageNudgedFor = undefined;
 		if (state.passedDiff) markPassSummarized(state.passedDiff); // a leftover diff from the round before is not this round's
 		state.lastJudge = undefined; // a new round gets a full review, not a re-review of the last one
 		state.lastFullPass = undefined;
@@ -2512,6 +2633,116 @@ export default function workflow(pi: ExtensionAPI) {
 		},
 	});
 
+	pi.registerTool({
+		name: "git_task",
+		label: "Git task",
+		description:
+			"Delegate routine git work (commit, push, open a pull request, merge) to a cheaper model and get its report back in the same turn. It runs under the same guard as you: a merge or a push to a protected branch is refused until the exact tree has passed judge. Give the exact task (repo, branch, commit messages, base). If it fails, do the work yourself.",
+		promptSnippet: "git_task: delegate commit/push/PR/merge work to a cheap model; returns its report",
+		parameters: Type.Object({
+			task: Type.String({ description: "What to do, e.g. 'commit the staged changes as \"feat: x\", push the branch, open a PR against main'" }),
+			repo: Type.Optional(Type.String({ description: "Folder of the repo to work in; default the working folder" })),
+		}),
+		async execute(_id, params, signal, onUpdate, ctx) {
+			const reply = (text: string, details: object = {}) => ({ content: [{ type: "text" as const, text }], details });
+			if (state.phase !== "execute" || !state.approvedPlan) return reply("git_task works only while executing an approved plan. Nothing changed.");
+			if (!fs.existsSync(GIT_GUARD_EXTENSION)) return reply(`git_task failed: git guard extension not found at ${GIT_GUARD_EXTENSION}`);
+			const repos = await flowRepos(ctx);
+			const cwd = params.repo ? path.resolve(ctx.cwd, params.repo) : ctx.cwd;
+			if (!fs.existsSync(cwd)) return reply(`git_task failed: ${cwd} does not exist.`);
+			const multi = (state.folders?.length ?? 0) > 0 || (state.touchedRepos?.length ?? 0) > 0;
+			const spec: GitGuardSpec = {
+				roots: multi ? repos.map((r) => r.root) : [],
+				protectedBranches: cfg.protectedBranches,
+				passedTrees: state.passedTrees ?? {},
+				noMerge: noMerge(state.approvedPlan),
+			};
+			const task = [
+				params.task.trim(),
+				"",
+				"Rules:",
+				`- Work only in ${multi ? repos.map((r) => r.root).join(", ") : cwd}.`,
+				"- Never force-push, use --no-verify, --admin or --auto.",
+				"- Chain dependent steps with &&.",
+				"- Stop at the first failure and report the command and its error.",
+				"- Report each commit subject, branch and pull request URL.",
+			].join("\n");
+			const repoList = repos.length ? repos : [{ root: cwd, dir: cwd, changed: false }];
+			// A merge with --delete-branch leaves the checkout on the default branch, so the branch is read first.
+			const branchBefore = new Map<string, string>();
+			const headBefore = new Map<string, string>();
+			for (const r of repoList) {
+				branchBefore.set(r.root, (await git(r.dir, "rev-parse", "--abbrev-ref", "HEAD")).stdout.trim());
+				headBefore.set(r.root, (await git(r.dir, "rev-parse", "HEAD")).stdout.trim());
+			}
+			const progress = toolProgress(onUpdate);
+			const prevStage = view.stage;
+			view.stage = "commit";
+			let text: string;
+			try {
+				ctx.ui.setWorkingMessage("git_task running…");
+				const ran = await runRole(
+					"commit",
+					"git task",
+					{ systemPrompts: [prompts.COMMIT], tools: ["bash", "read"], task, cwd, signal, env: { [GIT_GUARD_ENV]: JSON.stringify(spec) }, extensions: [GIT_GUARD_EXTENSION] },
+					progress.track,
+				);
+				if (ran.result.ok) view.finish(ran.run, true, "report ready");
+				text = ran.result.ok ? ran.result.text : `git_task failed: ${ran.result.error}`;
+			} catch (e) {
+				text = `git_task failed: ${e instanceof Error ? e.message : String(e)}`;
+			} finally {
+				view.stage = prevStage;
+				ctx.ui.setWorkingMessage();
+			}
+			const lines: string[] = [];
+			for (const r of repoList) {
+				const key = repoKey(r.root);
+				const branch = (await git(r.dir, "rev-parse", "--abbrev-ref", "HEAD")).stdout.trim();
+				const base = state.reviewBase?.[key];
+				const n = base ? (await git(r.dir, "rev-list", "--count", `${base}..HEAD`)).stdout.trim() : "?";
+				const rec = await recordJudged(defaultRunner, r.dir, { startBranch: branchBefore.get(r.root) ?? "", headBefore: headBefore.get(r.root), report: text, passed: state.passedTrees?.[key] ?? [], protectedBranches: cfg.protectedBranches });
+				const pr = rec.pr;
+				const existing = state.judgedMerges?.[key];
+				if (rec.entry && !(rec.entry.commit && existing?.pr && existing.stage === state.stage)) {
+					state.judgedMerges = { ...(state.judgedMerges ?? {}), [key]: { ...rec.entry, ...(state.stage ? { stage: state.stage } : {}) } };
+					persist();
+				}
+				lines.push(`${path.basename(r.root)}: branch ${branch}, ${n} commits since review base, ${pr}`);
+			}
+			return reply(`${text}\n\n${lines.join("\n")}`, { runs: progress.snapshot() });
+		},
+		renderCall(args, theme) {
+			return new Text(`${title(theme, "git_task", "commit")}${theme.fg("accent", ` ${String(args.task ?? "").slice(0, 80)}`)}`, 0, 0);
+		},
+	});
+
+	/** The commit a judged merge landed in this repo (a merged pull request's merge commit, or a pushed commit that origin has), or the reason there is none. */
+	async function judgedMergeHead(root: string): Promise<{ head: string } | { error: string }> {
+		const jm = state.judgedMerges?.[repoKey(root)];
+		if (!jm) return { error: NO_JUDGED_MERGE };
+		await git(root, "fetch", "--quiet", "origin");
+		if (jm.pr) {
+			const view = await defaultRunner("gh", ["pr", "view", jm.pr, "--json", "state,mergeCommit"], root);
+			if (view.code !== 0) return { error: `Cannot read pull request ${jm.pr} (${view.stderr.trim().split(/\r?\n/)[0] || "gh failed"}). Nothing published.` };
+			try {
+				const j = JSON.parse(view.stdout) as { state?: unknown; mergeCommit?: { oid?: unknown } | null };
+				if (j.state !== "MERGED") return { error: `Pull request ${jm.pr} is ${String(j.state)}, not MERGED: merge the judged pull request first. Nothing published.` };
+				const oid = typeof j.mergeCommit?.oid === "string" ? j.mergeCommit.oid : "";
+				if (!oid) return { error: `Pull request ${jm.pr} has no merge commit to read. Nothing published.` };
+				return { head: oid };
+			} catch {
+				return { error: `Cannot read pull request ${jm.pr} (gh printed no JSON). Nothing published.` };
+			}
+		}
+		if (jm.commit) {
+			const onRemote = await git(root, "branch", "-r", "--contains", jm.commit);
+			if (onRemote.code !== 0 || !onRemote.stdout.trim()) return { error: `The judged commit ${jm.commit.slice(0, 9)} is not on origin yet: push it first. Nothing published.` };
+			return { head: jm.commit };
+		}
+		return { error: NO_JUDGED_MERGE };
+	}
+
 	/** The versions the merged head holds for these packages, or the reason it can't be read. */
 	async function readMergedItems(root: string, head: string, packages: string[]): Promise<{ items: { name: string; version: string }[] } | { error: string }> {
 		const items: { name: string; version: string }[] = [];
@@ -2554,9 +2785,10 @@ export default function workflow(pi: ExtensionAPI) {
 
 	/** The Publish step: versions come from the head this flow merged; the script's dry run decides what is published, already on the registry or not publishable; blockers start a wait. */
 	async function runPublish(root: string, step: string, packages: string[], reply: (t: string) => ToolReply, wait: (why: string, check: string) => ToolReply): Promise<ToolReply> {
-		const head = state.mergedHeads?.[repoKey(root)];
-		if (!head) return reply("No merged head is recorded for the unity-packages repo: the Deliver: merge step that lands the packages must run first (and succeed). Nothing published.");
-		const read = await readMergedItems(root, head, packages);
+		if (noMerge(state.approvedPlan ?? "")) return reply("this plan says Delivery: no merge; publishing is not allowed. Nothing published.");
+		const merged = await judgedMergeHead(root);
+		if ("error" in merged) return reply(merged.error);
+		const read = await readMergedItems(root, merged.head, packages);
 		if ("error" in read) return reply(read.error);
 		const names = (list: { name: string; version: string }[]) => list.map((i) => `${i.name}@${i.version}`).join(", ");
 		const dry = await dryRunPublish(root, read.items);
@@ -2654,11 +2886,11 @@ export default function workflow(pi: ExtensionAPI) {
 		name: "judge",
 		label: "Judge",
 		description:
-			"Adversarial review of the current uncommitted diff (plus untracked files) of every git repo in this flow (the working folder's, the /folders ones, and repos edited this flow) by a stronger model that assumes the change is wrong. Returns one line per finding and VERDICT: PASS or FAIL. Call it when the diff is ready; fix blocker and major findings and call it again. On a pass, end your turn: the workflow decides whether minor findings get a fix round. Rounds after the first review only the changes since the last round, with its findings. Do not commit before PASS.",
-		promptSnippet: "judge: adversarial review of the current diff; must PASS before commit",
+			"Adversarial review of the diff since the flow's review base (committed or not, plus untracked files) of every git repo in this flow (the working folder's, the /folders ones, and repos edited this flow) by a stronger model that assumes the change is wrong. Returns one line per finding and VERDICT: PASS or FAIL. Call it when the diff is ready; fix blocker and major findings and call it again. On a pass, finish the delivery (push, pull request, and the merge unless the plan says Delivery: no merge), tick the steps and end your turn: the workflow decides whether minor findings get a fix round. Rounds after the first review only the changes since the last round, with its findings. Commits are free; merge, a protected push and publish_packages need a PASS on their exact tree.",
+		promptSnippet: "judge: adversarial review of the current diff; must PASS before a merge, a protected push or a publish",
 		parameters: Type.Object({
 			focus: Type.Optional(Type.String({ description: "What the change is meant to do, or areas to scrutinize" })),
-			base: Type.Optional(Type.String({ description: "Git ref to diff against. Default HEAD" })),
+			base: Type.Optional(Type.String({ description: "Git ref to diff against. Default: the flow's review base" })),
 			full: Type.Optional(
 				Type.Boolean({ description: "Review the whole diff, not only the changes since the last round. Use once before committing a risky change." }),
 			),
@@ -2667,7 +2899,8 @@ export default function workflow(pi: ExtensionAPI) {
 			),
 		}),
 		async execute(_id, params, signal, onUpdate, ctx) {
-			const diff = await collectFlowDiff(ctx, params.base || "HEAD");
+			const baseNote = params.base ? undefined : await refreshReviewBase(ctx);
+			const diff = await collectFlowDiff(ctx, params.base || undefined);
 			if (!diff) throw new Error("no git work tree in this flow (working folder, /folders, or repos edited this flow); the judge reviews git diffs");
 			if (state.phase === "execute" && currentStages()) {
 				state.stageJudged = true;
@@ -2675,10 +2908,18 @@ export default function workflow(pi: ExtensionAPI) {
 			}
 			if (!diff.text) return { content: [{ type: "text", text: "No changes to review." }], details: undefined };
 			const progress = toolProgress(onUpdate);
-			const r = await judge(ctx, diff, params.focus, signal, progress.track, params.full === true, params.disputes);
+			const r = await judge(ctx, diff, [params.focus, baseNote].filter(Boolean).join("\n") || undefined, signal, progress.track, params.full === true, params.disputes);
 			if (r.verdict === "ERROR") throw new Error(r.text);
 			if (r.verdict === "FAIL") state.judgeRounds++;
 			let text = r.text;
+			if (r.verdict === "PASS" && state.phase === "execute" && !state.testFlow && !hasPlanFlaw(r.text) && !noMerge(state.approvedPlan ?? "") && (await flowHasRemote(ctx))) {
+				text += "\n\nNow deliver this exact tree: commit, push, open or update the pull request and merge it with gh pr merge (as its own command), then end your turn.";
+			}
+			if (r.verdict === "PASS") {
+				const knowledge = state.lastKnowledge?.hash === diff.hash ? state.lastKnowledge : undefined;
+				const block = knowledge ? deviationBlock(knowledge.deviations) : "";
+				if (block) text += `\n\nEnd the pull request body (or the last commit message if there is no pull request) with this block, unchanged:\n\n${block}`;
+			}
 			const reminder = state.phase === "execute" ? openStepsReminder(state.checklist, currentStages()?.current) : undefined;
 			if (reminder) text += `\n\n${reminder}${state.phase === "execute" ? deliverHintsText(currentStages()?.current) : ""}`;
 			// Every call replaces the pending report, so a stale one never outlives a clean review.
@@ -2756,10 +2997,9 @@ export default function workflow(pi: ExtensionAPI) {
 		name: "deliver",
 		label: "Deliver",
 		description:
-			"Deliver inside the plan, then carry on in the same turn: commit, push, open a pull request or merge (`mode`), and/or create or move a tag on the remote default branch (`tag`). Within this stage's approved delivery only. The diff must pass the judge first (an unchanged passed diff is reused). Name the plan's `Deliver:` step as `step`; a call without one is added to the plan as an amendment. Already-committed judged work is published by a later push, pr or merge call. Tags are created or moved only for a named plan step or when you need them to continue; a move needs a plan step that names the tag and the word move.",
-		promptSnippet: "deliver: commit/push/PR/merge and tags inside the plan (judge-gated), then continue",
+			"Create or move a tag on the remote default branch (`tag`), inside the plan, then carry on in the same turn. Commit, push, pull requests and merges are done with git and gh directly or with git_task, not with this tool. Name the plan's `Deliver:` step as `step`; a call without one is added to the plan as an amendment. Tags are created or moved only for a named plan step or when you need them to continue; a move needs a plan step that names the tag and the word move.",
+		promptSnippet: "deliver: create or move a tag inside the plan, then continue",
 		parameters: Type.Object({
-			mode: Type.Optional(Type.String({ description: "commit, push, pr or merge. Omit to only handle a tag." })),
 			tag: Type.Optional(
 				Type.Object({
 					name: Type.String({ description: "Tag name, e.g. unity-build/v1.0.8" }),
@@ -2771,27 +3011,19 @@ export default function workflow(pi: ExtensionAPI) {
 			step: Type.Optional(Type.String({ description: "The plan's Deliver step, e.g. S4" })),
 			reason: Type.Optional(Type.String({ description: "Why, for an unplanned checkpoint (goes into the plan's amendment)" })),
 		}),
-		async execute(_id, params, signal, onUpdate, ctx) {
+		async execute(_id, params, _signal, _onUpdate, ctx) {
 			const reply = (text: string, details?: unknown) => ({ content: [{ type: "text" as const, text }], details });
 			const plan = state.approvedPlan;
 			if (state.phase !== "execute" || !plan) return reply("deliver works only while executing an approved plan. Nothing changed.");
-			const staged = currentStages();
-			const stage = staged?.stages[staged.current - 1];
-			const cap = stageDelivery(state.delivery ?? defaultDelivery(), stage);
-			if (cap === "off") return reply("Delivery is off for this stage. Nothing changed.");
-			const mode = params.mode?.trim().toLowerCase() || undefined;
 			const tag = params.tag && params.tag.name?.trim() ? { ...params.tag, name: params.tag.name.trim(), move: params.tag.move === true } : undefined;
-			if (!mode && !tag) return reply("Give a mode (commit, push, pr, merge) or a tag. Nothing changed.");
-			if (mode && !["commit", "push", "pr", "merge"].includes(mode)) return reply(`Unknown mode "${mode}": use commit, push, pr or merge. Nothing changed.`);
-			if (mode && !modeAllowed(mode, cap)) return reply(`mode ${mode} is beyond this stage's delivery (${cap}). Nothing changed.`);
-			if (tag && !modeAllowed("push", cap)) return reply(`A tag is pushed: this stage's delivery (${cap}) does not allow a push. Nothing changed.`);
+			if (!tag) return reply("Give a tag: deliver only creates or moves tags. Commit, push, pull requests and merges are done with git and gh. Nothing changed.");
 
 			const step = params.step?.trim().toUpperCase() || undefined;
 			const stepText = step ? parseDeliverStep(plan, step) : null;
 			const planned = stepText !== null;
 			if (!planned) {
 				const reason = params.reason?.trim() || "needed to continue";
-				const amend = { mode, tag: tag?.name, reason };
+				const amend = { tag: tag.name, reason };
 				if (!hasCheckpointAmendment(plan, amend)) {
 					state.approvedPlan = `${plan.replace(/\s+$/, "")}\n\n${checkpointAmendment(nextAmendmentNumber(), amend)}\n`;
 					refreshChecklist();
@@ -2800,122 +3032,24 @@ export default function workflow(pi: ExtensionAPI) {
 				}
 			}
 
-			const parts: string[] = [];
-			let ok = true;
-			let acted = false;
-			let waitReason: string | undefined;
-			if (mode) {
-				const diff = await collectFlowDiff(ctx);
-				if (!diff) throw new Error("no git work tree in this flow (working folder, /folders, or repos edited this flow); deliver commits git diffs");
-				if (!diff.text || (diff.multi && !diff.repos.some((r) => r.changed))) {
-					const pub = mode === "commit" ? undefined : await publishJudged(ctx, mode as "push" | "pr" | "merge");
-					if (!pub) parts.push("no changes to deliver");
-					else if (pub.refusal) return reply(`${pub.refusal}\n\nNothing was delivered.`);
-					else if (!pub.run) parts.push(pub.none ?? "no changes to deliver");
-					else {
-						if (!fs.existsSync(COMMIT_GUARD_EXTENSION)) return reply(`Not delivered: commit guard extension not found at ${COMMIT_GUARD_EXTENSION}.`);
-						view.stage = "commit";
-						view.changed();
-						let report: string;
-						let outcome: { text: string; ok: boolean };
-						try {
-							report = await runCommitSubagent(ctx, pub.run.instruction, mode as Delivery, pub.run.pending, signal);
-							outcome = await readOutcome(ctx, pub.run.pending);
-							await recordJudgedHeads(ctx, pub.run.pending, outcome.ok);
-						} finally {
-							view.stage = "execute";
-							view.changed();
-						}
-						acted = true;
-						ok = outcome.ok;
-						parts.push(outcome.text);
-						if (!outcome.ok && report) parts.push(`commit step: ${report.slice(0, 500)}`);
-					}
-				} else {
-					// Judged commits in repos with no uncommitted changes go out in the same commit step.
-					const extra = mode === "commit" ? undefined : await publishJudged(ctx, mode as "push" | "pr" | "merge", new Set(diff.repos.filter((r) => r.changed).map((r) => repoKey(r.root))));
-					if (extra?.refusal) return reply(`${extra.refusal}
-
-Nothing was delivered.`);
-					const reuse = state.passedDiff === diff.hash && state.lastJudge?.hash === diff.hash && state.lastJudge.verdict === "PASS";
-					if (!reuse) {
-						if (staged) state.stageJudged = true;
-						const progress = toolProgress(onUpdate);
-						const r = await judge(ctx, diff, params.reason?.trim() || undefined, signal, progress.track);
-						if (r.verdict === "ERROR") throw new Error(r.text);
-						if (r.verdict === "FAIL") state.judgeRounds++;
-						let text = r.text;
-						const reminder = openStepsReminder(state.checklist, staged?.current);
-						if (reminder) text += `\n\n${reminder}${deliverHintsText(staged?.current)}`;
-						state.pendingPlanFlaw = hasPlanFlaw(r.text) ? r.text : undefined;
-						persist();
-						if (r.verdict === "FAIL") return reply(`${text}\n\nNot delivered: fix the findings and call deliver again.`, { runs: progress.snapshot(), verdict: r.verdict });
-						if (state.pendingPlanFlaw) return reply(`${text}\n\nThis review questions the plan. Do not change the plan's design yourself: end your turn now; the workflow resolves it. Nothing was delivered.`, { runs: progress.snapshot(), verdict: r.verdict });
-					}
-					if (!fs.existsSync(COMMIT_GUARD_EXTENSION)) return reply(`Not delivered: commit guard extension not found at ${COMMIT_GUARD_EXTENSION}.`);
-					const knowledge = state.lastKnowledge?.hash === diff.hash ? state.lastKnowledge : undefined;
-					if (knowledge?.status === "unavailable" && ctx.hasUI && autopilotOn()) {
-						ctx.ui.notify(`workflow: autopilot commits without the knowledge check: ${knowledge.reason}`, "warning");
-					} else if (knowledge?.status === "unavailable" && ctx.hasUI) {
-						const choice = await askUser(ctx, `Judge passed, knowledge not checked: ${knowledge.reason}`, ["Commit anyway", "Stop"]);
-						if (choice !== "Commit anyway") return reply("Not delivered: stopped at the knowledge check.");
-					}
-					const seed = branchName(cfg.delivery.branchPrefix, stage?.title || planTitle(plan), new Date());
-					const { pending, instruction } = await prepareAllRepos(ctx, diff, mode as Exclude<Delivery, "off">, seed, knowledge ? deviationBlock(knowledge.deviations) : "", extra?.run?.entries);
-					view.stage = "commit";
-					view.changed();
-					let report: string;
-					let outcome: { text: string; ok: boolean };
-					try {
-						report = await runCommitSubagent(ctx, instruction, mode as Delivery, pending, signal);
-						outcome = await readOutcome(ctx, pending);
-						await recordJudgedHeads(ctx, pending, outcome.ok);
-					} finally {
-						view.stage = "execute";
-						view.changed();
-					}
-					committedDiffs.add(diff.hash);
-					state.lastJudge = undefined;
-					state.lastFullPass = undefined;
-					state.passedDiff = undefined;
-					state.stageJudged = false;
-					acted = true;
-					ok = outcome.ok;
-					parts.push(outcome.text);
-					if (!outcome.ok && report) parts.push(`commit step: ${report.slice(0, 500)}`);
-				}
+			const t = await deliverTag(ctx, tag, isPlannedTag(stepText, tag.name, tag.move));
+			if (t.wait) {
+				state.waiting = { reason: t.wait, ...(planned && step ? { step } : {}), stage: state.stage, since: new Date().toISOString(), planned };
 			}
-			if (tag) {
-				if (mode && !ok) parts.push(`tag ${tag.name} not attempted: the delivery is incomplete`);
-				else {
-					acted = true;
-					const t = await deliverTag(ctx, tag, isPlannedTag(stepText, tag.name, tag.move));
-					parts.push(t.text);
-					if (!t.ok) ok = false;
-					waitReason = t.wait;
-				}
-			}
-			if (waitReason) {
-				state.waiting = { reason: waitReason, ...(planned && step ? { step } : {}), stage: state.stage, since: new Date().toISOString(), planned };
-			}
-			const text = parts.join("; ");
-			if (acted) {
-				state.checkpoints = [...(state.checkpoints ?? []), { ...(planned && step ? { step } : {}), stage: state.stage, text: checkpointText(planned ? step : undefined, text), ok }];
-			}
+			state.checkpoints = [...(state.checkpoints ?? []), { ...(planned && step ? { step } : {}), stage: state.stage, text: checkpointText(planned ? step : undefined, t.text), ok: t.ok }];
 			persist();
 			updateStatus(ctx);
 			planMilestone(ctx);
-			if (waitReason) return reply(`${text}\n\nWaiting for: ${waitReason}. End your turn now; the workflow resumes you when the user replies.`);
+			if (t.wait) return reply(`${t.text}\n\nWaiting for: ${t.wait}. End your turn now; the workflow resumes you when the user replies.`);
 			const branches: string[] = [];
 			for (const ref of await flowRepos(ctx)) {
 				const b = (await git(ref.dir, "rev-parse", "--abbrev-ref", "HEAD")).stdout.trim();
 				if (b) branches.push(`${path.basename(ref.root)}: ${b}`);
 			}
-			return reply(`${text}${branches.length ? `\n\nCurrent branch: ${branches.join(", ")}` : ""}\n\nContinue with the next steps in this turn.`);
+			return reply(`${t.text}${branches.length ? `\n\nCurrent branch: ${branches.join(", ")}` : ""}\n\nContinue with the next steps in this turn.`);
 		},
 		renderCall(args, theme) {
-			const what = [args.mode, args.tag?.name ? `tag ${args.tag.name}` : ""].filter(Boolean).join(" + ");
-			return new Text(`${title(theme, "deliver", "execute")}${theme.fg("accent", ` ${what}`)}`, 0, 0);
+			return new Text(`${title(theme, "deliver", "execute")}${theme.fg("accent", args.tag?.name ? ` tag ${args.tag.name}` : "")}`, 0, 0);
 		},
 		renderResult: (result, opts, theme) => renderRuns(result, opts, theme, 40),
 	});
@@ -2957,6 +3091,7 @@ Nothing was delivered.`);
 			recap: cfg.planRecap,
 			stage: staged ? stageLine(staged.stages, staged.current) : undefined,
 			testFix: state.phase === "execute" && !!state.testFlow,
+			delivery: state.phase === "execute" ? prompts.deliveryGuidance(cfg.delivery) + (noMerge(state.approvedPlan ?? "") ? "\n- This plan says Delivery: no merge: do not merge, push to a protected branch or publish; commit, push your branch and open the pull request, then stop there." : "") : undefined,
 		});
 		if (phaseText) event.systemPromptOptions.sections.workflow = phaseText;
 		else delete event.systemPromptOptions.sections.workflow;
@@ -2967,7 +3102,7 @@ Nothing was delivered.`);
 	pi.on("tool_call", async (event, ctx) => {
 		if (event.toolName === "test_run" && state.phase !== "test") return { block: true, reason: "test_run works only in the test phase." };
 		if (state.phase === "execute") {
-			// Pushing is the workflow's job after the judge passes; the executor may not publish or skip hooks.
+			// Commits, pushes and pull requests are the executor's; a merge, a push to a protected branch and a publish need a judge pass on their tree; hooks are never skipped.
 			const input = (event.input ?? {}) as Record<string, unknown>;
 			const texts: { text: string; powershell: boolean }[] = [];
 			if (/(^|__)bash$/.test(event.toolName)) texts.push({ text: String(input.command ?? ""), powershell: false });
@@ -2991,9 +3126,25 @@ Nothing was delivered.`);
 				if (!branches.has(dir)) branches.set(dir, (await git(dir, "rev-parse", "--abbrev-ref", "HEAD")).stdout.trim());
 				return branches.get(dir) as string;
 			};
-			const modeOf = (root: string | undefined) => (root ? state.commitPending?.repos?.find((r) => repoKey(r.root) === repoKey(root))?.mode : undefined) ?? state.commitPending?.mode;
+			const gate = async (kind: "merge" | "protected-push", root: string | undefined, target: string | undefined, repo?: string): Promise<string | null> => {
+				const dir = root ?? ctx.cwd;
+				const key = repoKey(root ?? (await gitRoot(ctx.cwd)) ?? ctx.cwd);
+				if (kind === "merge") await ensureGh(ctx).catch(() => false);
+				const res = await gateCheck(defaultRunner, kind, dir, target, { passedTrees: state.passedTrees?.[key] ?? [], noMerge: noMerge(state.approvedPlan ?? ""), repo });
+				if (res.problem) return res.problem;
+				if (res.tree) {
+					const stage = state.stage;
+					const record = kind === "merge" ? { pr: target ?? (await branchOf(dir)), tree: res.tree, ...(stage ? { stage } : {}) } : res.commit ? { commit: res.commit, tree: res.tree, ...(stage ? { stage } : {}) } : undefined;
+					if (record) {
+						state.judgedMerges = { ...(state.judgedMerges ?? {}), [key]: record };
+						persist();
+					}
+				}
+				return null;
+			};
+			const isTag = async (root: string | undefined, name: string) => (await git(root ?? ctx.cwd, "show-ref", "--verify", "--quiet", `refs/tags/${name}`)).code === 0;
 			for (const { text, powershell } of gitTexts) {
-				const problem = await shellProblem(text, powershell, { roots: multi ? roots : undefined, cwd: ctx.cwd, protectedBranches: cfg.protectedBranches, branchOf, modeOf });
+				const problem = await shellProblem(text, powershell, { roots: multi ? roots : undefined, cwd: ctx.cwd, protectedBranches: cfg.protectedBranches, branchOf, gate, isTag });
 				if (problem) return { block: true, reason: publishRefuse(problem) };
 			}
 			return;
@@ -3070,6 +3221,7 @@ Nothing was delivered.`);
 		const known = new Set((await flowRepos(ctx)).map((r) => repoKey(r.root)));
 		if (known.has(repoKey(root)) || (state.touchedRepos ?? []).some((t) => repoKey(t) === repoKey(root))) return;
 		state.touchedRepos = [...(state.touchedRepos ?? []), root];
+		await joinReviewBase(root);
 		persist();
 		updateStatus(ctx);
 		ctx.ui.notify(`workflow: ${root} joins this flow (edited ${raw})`, "info");
@@ -3135,12 +3287,11 @@ Nothing was delivered.`);
 			const msg = pendingHandover;
 			pendingHandover = undefined;
 			const send = (content: string) => {
-				commitHandoverInFlight = false;
 				pi.sendMessage({ customType: msg.customType, content, display: true }, { triggerTurn: true, deliverAs: "followUp" });
 			};
 			const held = ctx.getContextUsage()?.tokens ?? null;
 			const plan = state.approvedPlan;
-			const action = handoverAction({ aborted: event.aborted, commit: msg.customType === "workflow-commit", idle: ctx.isIdle(), compacting, hasPlan: !!plan, tokens: held, threshold: cfg.handoverCompactTokens });
+			const action = handoverAction({ aborted: event.aborted, idle: ctx.isIdle(), compacting, hasPlan: !!plan, tokens: held, threshold: cfg.handoverCompactTokens });
 			if (action === "hold") {
 				ctx.ui.notify("workflow: handover held: the run was aborted. Send a message or use /flow to continue.", "warning");
 				return;
@@ -3151,7 +3302,6 @@ Nothing was delivered.`);
 			}
 			compactPending = false;
 			compacting = true;
-			commitHandoverInFlight = msg.customType === "workflow-commit";
 			const compactStart = Date.now();
 			ctx.ui.notify(`workflow: handing over at ${Math.round((held ?? 0) / 1000)}k tokens, compacting first`, "info");
 			ctx.compact({
@@ -3160,8 +3310,7 @@ Nothing was delivered.`);
 					recordMetric({ kind: "compaction", at: new Date().toISOString(), reason: "handover", tokensBefore: held ?? null, ms: Date.now() - compactStart, ok: true });
 					compacting = false;
 					guardTokens = null;
-					if (msg.customType === "workflow-commit") send(`${msg.content}\n\n${commitExcerpt()}`);
-					else void planCardReady().then((card) => send(`${msg.content}\n\n${card}`));
+					void planCardReady().then((card) => send(`${msg.content}\n\n${card}`));
 				},
 				onError: (e) => {
 					recordMetric({ kind: "compaction", at: new Date().toISOString(), reason: "handover", tokensBefore: held ?? null, ms: Date.now() - compactStart, ok: false, error: e.message });
@@ -3259,20 +3408,19 @@ Nothing was delivered.`);
 		if (state.phase !== "plan" || event.source === "extension" || event.streamingBehavior) return { action: "continue" };
 		// Without a plan on screen, "yes, do that" answers a question; it doesn't approve anything.
 		if (!planReady || !approveRe().test(event.text.trim())) return { action: "continue" };
-		state.delivery = await chooseDelivery(ctx);
 		state.planFlaw = undefined;
 		if (cfg.finalizePlan) {
 			// Same as the menu: the planner writes the final plan first, in its reply to this message.
 			planReady = false;
 			state.finalizing = true;
 			persist();
-			ctx.ui.notify(`workflow: plan approved (then ${DELIVERY_LABELS[state.delivery]}), the planner writes the final plan`, "info");
-			return { action: "transform", text: `${event.text.trim()}\n\n${prompts.finalize(cfg.delivery.splitCommits, DELIVERY_LABELS[state.delivery], cfg.stagedPlans)}` };
+			ctx.ui.notify(`workflow: plan approved, the planner writes the final plan`, "info");
+			return { action: "transform", text: `${event.text.trim()}\n\n${prompts.finalize(cfg.delivery.splitCommits, cfg.stagedPlans)}` };
 		}
 		await setPhase(ctx, "execute");
 		const extra = startExecution(ctx, lastPlanText);
 		persist();
-		ctx.ui.notify(`workflow: plan approved, executing on ${describeRole(cfg.roles.execute)}, then ${DELIVERY_LABELS[state.delivery]}`, "info");
+		ctx.ui.notify(`workflow: plan approved, executing on ${describeRole(cfg.roles.execute)}`, "info");
 		return { action: "transform", text: `${event.text.trim()}\n\n${APPROVED}${extra}` };
 	});
 
@@ -3373,14 +3521,10 @@ Nothing was delivered.`);
 				ctx.ui.notify(`workflow: say "go" to execute on ${describeRole(cfg.roles.execute)}, or keep discussing.`, "info");
 				return;
 			}
-			const def = menuDefault();
-			const single = !cfg.delivery.ask || autopilotOn();
-			const options = single ? [def] : deliveryChoices(def);
-			const fixedReason = state.delivery ? "flow" : autopilotOn() ? "autopilot" : "ask-off";
-			const labels = options.map((d) => `Approve → ${single ? fixedDeliveryLabel(d, fixedReason) : deliveryMenuLabel(d, def)}`);
+			const approveLabel = "Approve";
 			const arbiterLabel = "Approve, arbiter solves plan flaws →";
 			const showLabel = "Show the full plan";
-			const choice = await askUser(ctx, `Plan phase · execute on ${describeRole(cfg.roles.execute)}`, [...labels, ...(cfg.planFlaw === "ask" ? [arbiterLabel] : []), ...(recapChanges ? [showLabel] : []), "Back to discussion", "Keep discussing"]);
+			const choice = await askUser(ctx, `Plan phase · execute on ${describeRole(cfg.roles.execute)}`, [approveLabel, ...(cfg.planFlaw === "ask" ? [arbiterLabel] : []), ...(recapChanges ? [showLabel] : []), "Back to discussion", "Keep discussing"]);
 			if (choice === "Back to discussion") {
 				await setPhase(ctx, "discuss");
 				ctx.ui.notify(`workflow: back to discussion on ${describeRole(cfg.roles.discuss)}`, "info");
@@ -3391,11 +3535,10 @@ Nothing was delivered.`);
 				return;
 			}
 			if (choice === arbiterLabel && cfg.planFlaw === "ask") {
-				await approve(ctx, undefined, true);
+				await approve(ctx, true);
 				return;
 			}
-			const i = choice ? labels.indexOf(choice) : -1;
-			if (i >= 0) await approve(ctx, options[i]);
+			if (choice === approveLabel) await approve(ctx);
 			return;
 		}
 
@@ -3446,11 +3589,6 @@ Nothing was delivered.`);
 				}
 			}
 		}
-		if (commitHandoverInFlight || commitSubagentRunning) return;
-		if (state.commitPending) {
-			const advanced = await summarizeCommit(ctx);
-			if (advanced === "advanced" || state.phase !== "execute") return; // the next stage started, or the flow ended and went back to planning
-		}
 		await reviewDiff(ctx, rejudge);
 	}
 
@@ -3482,7 +3620,7 @@ Nothing was delivered.`);
 		planMilestone(ctx);
 		persist();
 		ctx.ui.notify(`workflow: stage ${next} of ${stages.length}: ${stages[next - 1].title}`, "info");
-		const text = nextStage(stages, next, state.delivery ?? defaultDelivery(), outcome) + deliverHintsText(next);
+		const text = nextStage(stages, next, outcome) + deliverHintsText(next);
 		if (holdForStageWait(ctx, stages[next - 1], text)) return;
 		handover("workflow-stage", text);
 	}
@@ -3503,19 +3641,15 @@ Nothing was delivered.`);
 
 	/** An unstaged flow whose remaining changes were all delivered by checkpoints: ends it with their outcome. Open steps ask first (and do nothing without a UI). */
 	async function flowWithoutChanges(ctx: ExtensionContext): Promise<void> {
-		let outcome = checkpointOutcome(state.checkpoints ?? []);
+		const outcome = checkpointOutcome(state.checkpoints ?? []) ?? (state.lastJudge?.verdict === "PASS" ? { text: "judge passed, nothing left to review", ok: true } : null);
 		if (!outcome || state.phase !== "execute" || turnAborted) return;
 		if ((state.checklist ?? []).some((i) => !isHuman(i) && !i.done)) {
 			if (!ctx.hasUI) return;
 			const yes = "Mark done and finish";
 			if ((await askUser(ctx, "All changes were delivered at checkpoints, but plan steps are still open", [yes, "Wait"])) !== yes) return;
 		}
-		const pub = await publishAtEnd(ctx, undefined);
-		if (pub && "sent" in pub) return;
-		if (pub) outcome = { text: `${outcome.text}; not delivered: ${pub.refused}`, ok: false };
 		state.minorRounds = 0;
 		state.minorSentFor = undefined;
-		state.delivery = undefined;
 		state.planFlaw = undefined;
 		view.stage = "execute";
 		if (!summarizeFlow(outcome.text, outcome.ok)) persist();
@@ -3524,10 +3658,7 @@ Nothing was delivered.`);
 
 	/** A staged plan's stage ended with nothing to review: records it and starts the next stage, or ends the flow after the last one. */
 	async function stageWithoutChanges(ctx: ExtensionContext, staged: { stages: ReturnType<typeof parseStages>; current: number }): Promise<void> {
-		let outcome = checkpointOutcome(stageCheckpoints()) ?? { text: "no changes", ok: true };
-		const pub = await publishAtEnd(ctx, staged.stages[staged.current - 1]);
-		if (pub && "sent" in pub) return;
-		if (pub) outcome = { text: `${outcome.text}; not delivered: ${pub.refused}`, ok: false };
+		const outcome = checkpointOutcome(stageCheckpoints()) ?? { text: "no changes", ok: true };
 		state.stageOutcomes = [...(state.stageOutcomes ?? []), outcome];
 		if (staged.current < staged.stages.length) {
 			startNextStage(ctx, staged.stages, outcome.text);
@@ -3536,7 +3667,6 @@ Nothing was delivered.`);
 		const final = stagesOutcome(state.stageOutcomes, staged.stages.length);
 		state.minorRounds = 0;
 		state.minorSentFor = undefined;
-		state.delivery = undefined;
 		state.planFlaw = undefined;
 		state.stage = undefined;
 		state.stageOutcomes = undefined;
@@ -3555,86 +3685,6 @@ Nothing was delivered.`);
 		return `${done.map((p, i) => `stage ${i + 1}: ${p.text}`).join("; ")}; ${text}`;
 	}
 
-	/** What the commit step achieved in every repo of `pending`, read from git and gh. */
-	async function readOutcome(ctx: ExtensionContext, pending: NonNullable<FlowState["commitPending"]>): Promise<{ text: string; ok: boolean }> {
-		const { mode, head, branch, prBefore, pushSkipped, repos } = pending;
-		if (repos?.length) {
-			const parts = await Promise.all(repos.map(async (r) => ({ name: path.basename(r.root), outcome: await repoOutcome(r.root, r.mode, r.head, r.branch, r.prBefore, r.pushSkipped) })));
-			return combineOutcomes(parts);
-		}
-		return (await repoOutcome(ctx.cwd, mode, head, branch, prBefore, pushSkipped)) ?? { text: "commit step ended without a commit", ok: false };
-	}
-
-	/** The commit step ended. "advanced": a staged plan moved on to its next stage; "ended": the flow is over. */
-	async function summarizeCommit(ctx: ExtensionContext): Promise<"advanced" | "ended"> {
-		const pending = state.commitPending!;
-		state.commitPending = undefined;
-		state.minorRounds = 0;
-		state.minorSentFor = undefined;
-		let outcome = await readOutcome(ctx, pending);
-		if (!pending.self) await recordJudgedHeads(ctx, pending, outcome.ok);
-		if (pending.notes?.length) outcome = { text: `${outcome.text}; not delivered: ${pending.notes.join(" ")}`, ok: false };
-		const cps = stageCheckpoints();
-		if (cps.length && !state.testFlow) outcome = { text: withCheckpoints(cps.map((c) => c.text), outcome.text), ok: outcome.ok && cps.every((c) => c.ok) };
-		if (state.testFlow) {
-			if (!outcome.ok) ctx.ui.notify(`workflow: the fix round's delivery is incomplete (${outcome.text}); testing again anyway`, "warning");
-			await startTestRound(ctx, "retest");
-			return "advanced";
-		}
-		const staged = currentStages();
-		if (staged) {
-			state.stageOutcomes = [...(state.stageOutcomes ?? []), outcome];
-			if (staged.current < staged.stages.length) {
-				let go = outcome.ok;
-				if (!go && (cfg.stageAdvance === "auto" || autopilotOn()) && !turnAborted) {
-					ctx.ui.notify(`workflow: stage ${staged.current} delivery incomplete (${outcome.text}); continuing with stage ${staged.current + 1} (${cfg.stageAdvance === "auto" ? "stageAdvance: auto" : "autopilot"})`, "warning");
-					go = true;
-				} else if (!go && ctx.hasUI) {
-					const more = `Continue with stage ${staged.current + 1}`;
-					go = (await askUser(ctx, `Stage ${staged.current} delivery incomplete: ${outcome.text}`, [more, "Stop"])) === more;
-				}
-				if (go) {
-					startNextStage(ctx, staged.stages, outcome.text);
-					return "advanced";
-				}
-			}
-			outcome = stagesOutcome(state.stageOutcomes, staged.stages.length);
-		}
-		state.delivery = undefined; // the flow is over; the next one chooses again
-		state.planFlaw = undefined;
-		state.stage = undefined;
-		state.stageOutcomes = undefined;
-		const shown = summarizeFlow(outcome.text, outcome.ok);
-		if (!shown) persist(); // commitPending was cleared
-		await endFlow(ctx);
-		return "ended";
-	}
-
-	/** What one repo's commit step achieved, or null when it made no commit (and merged nothing). */
-	async function repoOutcome(dir: string, mode: Exclude<Delivery, "off">, head: string, branch: string | undefined, prBefore: number | undefined, pushSkipped: string | undefined): Promise<{ text: string; ok: boolean } | null> {
-		// The commits' branch; HEAD when detached, unknown (state saved by an older version) or gone (deleted after the merge).
-		const recordedNamed = !!branch && branch !== "HEAD" && (await git(dir, "rev-parse", "--verify", "--quiet", `refs/heads/${branch}`)).code === 0;
-		if (recordedNamed) {
-			// The commit step may have switched to a new branch (D14): then the commits are there, not on the recorded one.
-			const landed = await landedBranch((...a) => git(dir, ...a), branch as string, head);
-			if (landed) branch = landed;
-		}
-		const named = !!branch && branch !== "HEAD" && (await git(dir, "rev-parse", "--verify", "--quiet", `refs/heads/${branch}`)).code === 0;
-		const rev = named ? (branch as string) : "HEAD";
-		const now = (await git(dir, "rev-parse", rev)).stdout.trim();
-		const wantsPr = mode === "pr" || mode === "merge";
-		const ghOk = wantsPr ? await ghReady : true;
-		const pr = wantsPr && branch && branch !== "HEAD" ? freshPr(await prState(dir, branch), prBefore) : null;
-		if (pr?.state !== "MERGED" && (!now || now === head)) return null;
-		// A merge that deleted the branch leaves HEAD on the base branch, whose count would include other commits.
-		const counted = named || !branch || branch === "HEAD" ? await git(dir, "rev-list", "--count", `${head}..${rev}`) : undefined;
-		const commits = counted?.code === 0 ? Number(counted.stdout.trim()) : undefined;
-		const ahead = mode === "commit" ? undefined : await git(dir, "rev-list", "--count", `${named ? branch : ""}@{u}..${rev}`);
-		const pushed = ahead?.code === 0 && ahead.stdout.trim() === "0";
-		return deliveryOutcome(mode, commits, pushed, pr, !ghOk, pushSkipped);
-	}
-
-	let ghReady: Promise<boolean> = Promise.resolve(true);
 	let ghNoticed = false;
 
 	/** Makes `gh` runnable: when it is not on PATH, adds a standard GitHub CLI install folder to this process's PATH. */
@@ -3660,30 +3710,16 @@ Nothing was delivered.`);
 		return true;
 	}
 
-	/** The pull request for `branch` as gh sees it, or null when there is none or gh fails. */
-	async function prState(cwd: string, branch: string): Promise<PrState | null> {
-		try {
-			const r = await pi.exec("gh", ["pr", "view", branch, "--json", "number,state"], { cwd, timeout: 30_000 });
-			if (r.code !== 0) return null;
-			const j = JSON.parse(r.stdout) as { number?: unknown; state?: unknown };
-			return typeof j.number === "number" && typeof j.state === "string" ? { number: j.number, state: j.state } : null;
-		} catch {
-			return null;
-		}
-	}
-
 	/** diff ready -> judge -> fix loop, or commit (and push) once it passes. */
 	async function reviewDiff(ctx: ExtensionContext, manual: boolean): Promise<void> {
+		const baseNote = await refreshReviewBase(ctx);
 		const diff = await collectFlowDiff(ctx);
-		// Committed, or changed since the judge passed: back to executing.
-		if (view.stage === "commit" && diff?.hash !== state.passedDiff) {
-			view.stage = "execute";
-			view.changed();
-		}
 		if (!diff?.text) {
 			if (manual) ctx.ui.notify("workflow: no changes to review", "info");
-			else {
-				if (await deliverSelfCommit(ctx)) return;
+			else if (diff && state.passedDiff && passPending({ passedDiff: state.passedDiff, judged: state.lastJudge, summarized: state.summarizedPasses })) {
+				// The executor delivered the passed change and the base moved up with it: nothing is left to review, but the pass is still open.
+				await stageDone(ctx, { ...diff, hash: state.passedDiff });
+			} else {
 				if (state.testFlow) {
 					if (!turnAborted) await startTestRound(ctx, "retest");
 					return;
@@ -3697,15 +3733,9 @@ Nothing was delivered.`);
 		// Already passed, e.g. the executor called judge itself: straight to commit.
 		if (!manual && diff.hash === state.passedDiff) {
 			const prior = state.lastJudge?.hash === diff.hash ? state.lastJudge.text : "";
-			const open = minorFixOpen({
-				committed: committedDiffs.has(diff.hash),
-				commitPending: !!state.commitPending,
-				summarized: !!state.summarizedPasses?.includes(diff.hash),
-				sentFor: state.minorSentFor,
-				hash: diff.hash,
-			});
+			const open = minorFixOpen({ summarized: !!state.summarizedPasses?.includes(diff.hash), sentFor: state.minorSentFor, hash: diff.hash });
 			if (open && fixMinorFindings(prior, diff.hash)) return;
-			if (!(await finishPassed(ctx, diff, prior ? `**Judge: PASS**\n\n${prior}` : undefined))) await summarizePass(ctx, diff.hash);
+			await stageDone(ctx, diff);
 			return;
 		}
 		if (!manual && (cfg.autoJudge === "off" || seenDiffs.has(diff.hash))) return;
@@ -3721,7 +3751,7 @@ Nothing was delivered.`);
 		ctx.ui.setWorkingMessage(`judge reviewing ${diff.files} file(s)…`);
 		let r: JudgeResult;
 		try {
-			r = await judge(ctx, diff, undefined);
+			r = await judge(ctx, diff, baseNote);
 		} finally {
 			ctx.ui.setWorkingMessage();
 		}
@@ -3756,10 +3786,7 @@ Nothing was delivered.`);
 		}
 
 		if (fixMinorFindings(r.text, diff.hash, report)) return;
-		if (!(await finishPassed(ctx, diff, report))) {
-			pi.sendMessage({ customType: "workflow-judge", content: report, display: true }, { triggerTurn: false });
-			await summarizePass(ctx, diff.hash);
-		}
+		await stageDone(ctx, diff, report);
 	}
 
 	/** After a failed judge round: send the executor back to fix, or ask what to do once the round cap is hit. */
@@ -3945,19 +3972,73 @@ Nothing was delivered.`);
 		state.summarizedPasses = [...(state.summarizedPasses ?? []).filter((h) => h !== hash), hash].slice(-20);
 	}
 
-	/** The user chose Stop at the knowledge prompt of the pass being summarized. */
-	let passStopped = false;
+	/** What the stage delivered in each changed repo, read from git and gh: the branch, the commits since the review base, and the pull request if there is one. */
+	async function stageOutcomeText(ctx: ExtensionContext, diff: Diff): Promise<string> {
+		const changed = diff.repos.filter((r) => r.changed);
+		const repos = changed.length ? changed : diff.repos;
+		await ensureGh(ctx).catch(() => false);
+		const parts = await Promise.all(
+			repos.map(async (ref) => {
+				const branch = (await git(ref.dir, "rev-parse", "--abbrev-ref", "HEAD")).stdout.trim() || "HEAD";
+				const base = state.reviewBase?.[repoKey(ref.root)];
+				const counted = base ? await git(ref.dir, "rev-list", "--count", `${base}..HEAD`) : undefined;
+				const n = counted?.code === 0 ? Number(counted.stdout.trim()) : undefined;
+				let text = `${branch}${n === undefined ? "" : `, ${n} commit${n === 1 ? "" : "s"} since the review base`}`;
+				const jm = state.judgedMerges?.[repoKey(ref.root)];
+				const merged = mergedInStage(jm, state.stage) ? jm?.pr : undefined;
+				const pr = await defaultRunner("gh", ["pr", "view", ...(merged ? [merged] : []), "--json", "number,state,url"], ref.dir);
+				if (pr.code === 0) {
+					try {
+						const j = JSON.parse(pr.stdout) as { number?: unknown; state?: unknown; url?: unknown };
+						if (typeof j.number === "number") text += `, PR #${j.number} ${String(j.state ?? "")} ${String(j.url ?? "")}`.trimEnd();
+					} catch {}
+				}
+				return diff.multi ? `${path.basename(ref.root)}: ${text}` : text;
+			}),
+		);
+		return parts.join("; ");
+	}
 
-	/** The flow ends at a pass that won't be committed (delivery off, or Stop at the knowledge prompt), and may go back to planning. */
-	async function summarizePass(ctx: ExtensionContext, hash: string): Promise<void> {
-		const stopped = passStopped;
-		passStopped = false;
+	/** Whether some repo of the flow has a remote, so a pull request can be merged. */
+	async function flowHasRemote(ctx: ExtensionContext): Promise<boolean> {
+		const remotes = await Promise.all((await flowRepos(ctx)).map((r) => git(r.dir, "remote")));
+		return remotes.some((r) => r.stdout.trim() !== "");
+	}
+
+	/** The changed repos of a passed diff that have a remote but no judged merge yet, by folder name: the executor still has to merge. Empty when the plan says no merge. */
+	async function unmergedRepos(diff: Diff): Promise<string[]> {
+		if (noMerge(state.approvedPlan ?? "")) return [];
+		const out: string[] = [];
+		for (const ref of diff.repos.filter((r) => r.changed)) {
+			const jm = state.judgedMerges?.[repoKey(ref.root)];
+			if (mergedInStage(jm, state.stage)) {
+				// The gate records a merge before the command runs; it counts only once the pull request is MERGED (gh unreadable: believe it).
+				if (!jm?.pr) continue;
+				const view = await defaultRunner("gh", ["pr", "view", jm.pr, "--json", "state"], ref.dir);
+				let state2 = "MERGED";
+				try {
+					if (view.code === 0) state2 = String(JSON.parse(view.stdout).state);
+				} catch {}
+				if (state2 === "MERGED") continue;
+			}
+			if (!(await git(ref.dir, "remote")).stdout.trim()) continue;
+			out.push(path.basename(ref.root));
+		}
+		return out;
+	}
+
+	/**
+	 * The judge passed and nothing is left to fix. A stage with steps still open gets one reminder per pass; then the stage ends: the review base
+	 * moves up to the passed tree, and the next stage starts, or the flow ends. `report` is a verdict the executor has not seen yet.
+	 */
+	async function stageDone(ctx: ExtensionContext, diff: Diff, report?: string): Promise<void> {
+		const hash = diff.hash;
+		if (report) pi.sendMessage({ customType: "workflow-judge", content: report, display: true }, { triggerTurn: false });
 		if (state.testFlow) {
 			markPassSummarized(hash);
+			await advanceReviewBase(ctx);
 			if (turnAborted) return;
-			// Nothing was committed: test again, unless the user chose Stop at the knowledge prompt.
-			if (stopped) await finishTestFlow(ctx);
-			else await startTestRound(ctx, "retest");
+			await startTestRound(ctx, "retest");
 			return;
 		}
 		const staged = currentStages();
@@ -3966,378 +4047,44 @@ Nothing was delivered.`);
 			if (staged) await noChangeTurn(ctx, staged);
 			return;
 		}
-		const passed = { text: "judge passed, not committed", ok: true };
-		if (staged) state.stageOutcomes = [...(state.stageOutcomes ?? []), passed];
-		if (staged && staged.current < staged.stages.length && stageDelivery(state.delivery ?? defaultDelivery(), staged.stages[staged.current - 1]) === "off") {
-			markPassSummarized(hash);
-			startNextStage(ctx, staged.stages, passed.text);
+		const open = (state.checklist ?? []).filter((i) => !isHuman(i) && !i.done && (!staged || i.stage === undefined || i.stage === staged.current));
+		const unmerged = await unmergedRepos(diff);
+		if (stageEndAction({ openSteps: open.length + (unmerged.length ? 1 : 0), nudgedFor: state.stageNudgedFor, hash }) === "nudge") {
+			state.stageNudgedFor = hash;
+			persist();
+			const lines: string[] = [];
+			if (open.length) lines.push(`Open steps ${open.map((i) => i.id).join(", ")}: finish them (merge, publish), tick them with plan_check, then end your turn.`);
+			if (unmerged.length) lines.push(`The judge passed: merge the pull request (gh pr merge, as its own command)${unmerged.length > 1 || diff.multi ? ` in ${unmerged.join(", ")}` : ""}, then end your turn.`);
+			handover("workflow-open-steps", lines.join("\n"));
 			return;
 		}
-		const outcome = staged ? stagesOutcome(state.stageOutcomes ?? [passed], staged.stages.length) : passed;
+		const knowledge = state.lastKnowledge?.hash === hash ? state.lastKnowledge : undefined;
+		if (knowledge?.status === "unavailable") ctx.ui.notify(`workflow: judge passed without the knowledge check: ${knowledge.reason}`, "warning");
+		let outcome = { text: await stageOutcomeText(ctx, diff), ok: true };
+		const cps = stageCheckpoints();
+		if (cps.length) outcome = { text: withCheckpoints(cps.map((c) => c.text), outcome.text), ok: cps.every((c) => c.ok) };
+		markPassSummarized(hash);
+		await advanceReviewBase(ctx);
 		state.minorRounds = 0;
 		state.minorSentFor = undefined;
-		state.delivery = undefined;
+		state.stageNudgedFor = undefined;
+		if (staged) {
+			state.stageOutcomes = [...(state.stageOutcomes ?? []), outcome];
+			if (staged.current < staged.stages.length) {
+				startNextStage(ctx, staged.stages, outcome.text);
+				return;
+			}
+			outcome = stagesOutcome(state.stageOutcomes, staged.stages.length);
+		}
 		state.planFlaw = undefined;
 		state.stage = undefined;
 		state.stageOutcomes = undefined;
-		markPassSummarized(hash);
 		view.stage = "execute";
 		if (!summarizeFlow(outcome.text, outcome.ok)) persist();
 		await endFlow(ctx);
 	}
 
-	/** Diffs already handed to the commit step, so a pass is committed once. */
-	const committedDiffs = new Set<string>();
 
-	/** Sends the commit step's instruction (commit, push, pull request, merge, as this flow's delivery says), prefixed with `report`. False if nothing was sent. */
-	/** Where the commits of one repo go: the mode (a push on a protected branch falls back to commit), the branch, and what the instruction needs. `tag` names the repo in notices. */
-	async function prepareDelivery(ctx: ExtensionContext, dir: string, chosen: Exclude<Delivery, "off">, seed: string, tag: string) {
-		let mode = chosen;
-		const current = (await git(dir, "rev-parse", "--abbrev-ref", "HEAD")).stdout.trim();
-		const unsafe = !current || current === "HEAD" || cfg.protectedBranches.includes(current);
-		let branch = current;
-		let from: string | undefined;
-		let pushSkipped: string | undefined;
-		if (unsafe && mode === "push") {
-			mode = "commit";
-			pushSkipped = pushSkipReason(current);
-			ctx.ui.notify(`workflow${tag}: on ${current || "a detached HEAD"}, committing without pushing`, "warning");
-		} else if (unsafe && (mode === "pr" || mode === "merge")) {
-			// A pull request never comes from a protected branch; the commits go on a new one.
-			from = current || "HEAD";
-			branch = await freeBranchName(dir, seed);
-			ctx.ui.notify(`workflow${tag}: on ${current || "a detached HEAD"}, committing on new branch ${branch}`, "info");
-		}
-		const base = cfg.delivery.base || (from && from !== "HEAD" ? from : "");
-
-		// An old closed or merged PR on this branch must not pass as this flow's (gh pr view falls back to it when none is open).
-		let prBefore: number | undefined;
-		if ((mode === "pr" || mode === "merge") && !from) {
-			const old = await prState(dir, branch);
-			if (old && old.state !== "OPEN") prBefore = old.number;
-		}
-		const head = (await git(dir, "rev-parse", "HEAD")).stdout.trim();
-		const mergeInProgress = (await git(dir, "rev-parse", "-q", "--verify", "MERGE_HEAD")).code === 0;
-		return { mode, branch, from, base, prBefore, head, pushSkipped, mergeInProgress };
-	}
-
-	/** Prepares every changed repo of `diff` for the commit step: the pending record (not stored in state) and the instruction. Only reads. */
-	async function prepareAllRepos(ctx: ExtensionContext, diff: Diff, chosen: Exclude<Delivery, "off">, seed: string, deviations: string, extras: PublishEntry[] = []): Promise<{ pending: NonNullable<FlowState["commitPending"]>; instruction: string }> {
-		const options = (p: Awaited<ReturnType<typeof prepareDelivery>>): DeliveryOptions => ({
-			mode: p.mode,
-			branch: p.branch,
-			from: p.from,
-			base: p.base,
-			split: cfg.delivery.splitCommits,
-			mergeMethod: cfg.delivery.mergeMethod,
-			deleteBranch: cfg.delivery.deleteBranch,
-			deviations,
-			pushSkipped: p.pushSkipped,
-			mergeInProgress: p.mergeInProgress,
-		});
-		if (!diff.multi) {
-			const p = await prepareDelivery(ctx, ctx.cwd, chosen, seed, "");
-			return { pending: { mode: p.mode, head: p.head, branch: p.branch, prBefore: p.prBefore, pushSkipped: p.pushSkipped }, instruction: deliveryInstruction(options(p)) };
-		}
-		const changed = diff.repos.filter((r) => r.changed);
-		// Per-repo preparation only reads (git rev-parse, gh pr view), so the repos run at once; the order of `changed` is kept.
-		const prepared = await Promise.all(changed.map(async (ref) => ({ root: ref.root, p: await prepareDelivery(ctx, ref.dir, chosen, seed, ` [${ref.root}]`) })));
-		const first = prepared[0].p;
-		const merged = mergePublish(
-			prepared.map(({ root, p }) => ({ root, options: options(p) })),
-			prepared.map(({ root, p }) => ({ root, mode: p.mode, head: p.head, branch: p.branch, prBefore: p.prBefore, pushSkipped: p.pushSkipped })),
-			extras,
-		);
-		return {
-			pending: {
-				mode: first.mode,
-				head: first.head,
-				branch: first.branch,
-				prBefore: first.prBefore,
-				pushSkipped: first.pushSkipped,
-				repos: merged.repos,
-			},
-			instruction: repoDeliveryInstruction(merged.parts),
-		};
-	}
-
-	/** Sends the commit step's instruction (commit, push, pull request, merge, as this flow's delivery says), prefixed with `report`. False if nothing was sent. */
-	async function finishPassed(ctx: ExtensionContext, diff: Diff, report?: string): Promise<boolean> {
-		passStopped = false;
-		const hash = diff.hash;
-		const staged = currentStages();
-		const stage = staged?.stages[staged.current - 1];
-		const chosen = stageDelivery(state.delivery ?? defaultDelivery(), stage);
-		if (chosen === "off" || committedDiffs.has(hash)) return false;
-		const changed = diff.multi ? diff.repos.filter((r) => r.changed) : [];
-		if (diff.multi && changed.length === 0) return false;
-		committedDiffs.add(hash);
-		const knowledge = state.lastKnowledge?.hash === hash ? state.lastKnowledge : undefined;
-		// D5: a pass without a knowledge check commits only when you say so.
-		if (knowledge?.status === "unavailable" && ctx.hasUI && autopilotOn()) {
-			ctx.ui.notify(`workflow: autopilot commits without the knowledge check: ${knowledge.reason}`, "warning");
-		} else if (knowledge?.status === "unavailable" && ctx.hasUI) {
-			const choice = await askUser(ctx, `Judge passed, knowledge not checked: ${knowledge.reason}`, ["Commit anyway", "Stop"]);
-			if (choice !== "Commit anyway") {
-				passStopped = true;
-				return false;
-			}
-		}
-
-		const seed = branchName(cfg.delivery.branchPrefix, stage?.title || planTitle(state.approvedPlan), new Date());
-		const deviations = knowledge ? deviationBlock(knowledge.deviations) : "";
-		const extra = chosen === "push" || chosen === "pr" || chosen === "merge" ? await publishJudged(ctx, chosen, new Set(diff.repos.filter((r) => r.changed).map((r) => repoKey(r.root)))) : undefined;
-		const { pending, instruction } = await prepareAllRepos(ctx, diff, chosen, seed, deviations, extra?.run?.entries);
-		// Judged commits that could not be published beside this commit step are reported in its outcome.
-		state.commitPending = extra?.refusal ? { ...pending, notes: [extra.refusal] } : pending;
-
-		await sendCommitStep(ctx, hash, report, instruction, chosen);
-		return true;
-	}
-
-	/** Marks the commit stage and sends the commit step's instruction, in a subagent or the main session. */
-	async function sendCommitStep(ctx: ExtensionContext, hash: string, report: string | undefined, instruction: string, chosen: Delivery): Promise<void> {
-		view.stage = "commit";
-		view.changed();
-		markPassSummarized(hash); // the commit run's end summarizes this flow
-		persist();
-		if (cfg.delivery.runner === "subagent") {
-			await commitInSubagent(ctx, report, instruction, chosen);
-			return;
-		}
-		handover("workflow-commit", report ? `${report}
-
-${instruction}` : instruction);
-	}
-
-	/** The executor committed the judged change itself: carry on with the flow's delivery from that commit. False when this is not that case. */
-	/** Records the heads the commit step produced in the repos of `pending`. Only a commit step's own heads are ever recorded; `base` is kept from the first one. */
-	async function recordJudgedHeads(ctx: ExtensionContext, pending: NonNullable<FlowState["commitPending"]>, deliveryOk = false): Promise<void> {
-		const targets = pending.repos?.length
-			? pending.repos.map((r) => ({ root: r.root, head: r.head, branch: r.branch, mode: r.mode }))
-			: [{ root: (await gitRoot(ctx.cwd)) ?? ctx.cwd, head: pending.head, branch: pending.branch, mode: pending.mode }];
-		for (const t of targets) {
-			let branch = t.branch;
-			if (!branch || branch === "HEAD") continue;
-			if ((await git(t.root, "rev-parse", "--verify", "--quiet", `refs/heads/${branch}`)).code !== 0) {
-				// A merge that deleted the branch: its work is on the base branch, nothing is left to publish.
-				if (shouldRecordMerged(t.mode, deliveryOk)) state.mergedHeads = { ...(state.mergedHeads ?? {}), [repoKey(t.root)]: state.judgedHeads?.[repoKey(t.root)]?.head ?? t.head };
-				if (t.mode === "merge" && state.judgedHeads?.[repoKey(t.root)]) delete state.judgedHeads[repoKey(t.root)];
-				continue;
-			}
-			const landed = await landedBranch((...a) => git(t.root, ...a), branch, t.head);
-			if (landed) branch = landed;
-			if (shouldRecordMerged(t.mode, deliveryOk)) state.mergedHeads = { ...(state.mergedHeads ?? {}), [repoKey(t.root)]: t.head };
-			const now = (await git(t.root, "rev-parse", branch)).stdout.trim();
-			if (!now || now === t.head) continue;
-			const key = repoKey(t.root);
-			const prev = state.judgedHeads?.[key];
-			// Once the earlier judged work is on a remote, the next publish counts from here.
-			const prevPublished = !!prev && (await git(t.root, "branch", "-r", "--contains", prev.head)).stdout.trim() !== "";
-			state.judgedHeads = { ...(state.judgedHeads ?? {}), [key]: { base: prev && !prevPublished ? prev.base : t.head, head: now, branch } };
-		}
-	}
-
-	/** What a push, pr or merge delivery would publish of the commits earlier commit steps made: per-repo decisions, then the commit step's pending record and instruction. Only reads. */
-	async function publishJudged(ctx: ExtensionContext, mode: "push" | "pr" | "merge", skip?: Set<string>): Promise<{ refusal?: string; none?: string; run?: { pending: NonNullable<FlowState["commitPending"]>; instruction: string; entries: PublishEntry[] } }> {
-		const refs = (await flowRepos(ctx)).filter((r) => state.judgedHeads?.[repoKey(r.root)] && !skip?.has(repoKey(r.root)));
-		const wantsPr = mode === "pr" || mode === "merge";
-		const gathered = await Promise.all(refs.map(async (ref) => {
-			const judgedRaw = state.judgedHeads![repoKey(ref.root)];
-			const alive = (await git(ref.dir, "rev-parse", "--verify", "--quiet", `${judgedRaw.head}^{commit}`)).code === 0;
-			const branch = (await git(ref.dir, "rev-parse", "--abbrev-ref", "HEAD")).stdout.trim();
-			const head = (await git(ref.dir, "rev-parse", "HEAD")).stdout.trim();
-			const descends = alive && (await git(ref.dir, "merge-base", "--is-ancestor", judgedRaw.head, "HEAD")).code === 0;
-			const onRemote = alive && (await git(ref.dir, "branch", "-r", "--contains", judgedRaw.head)).stdout.trim() !== "";
-			const log = alive ? await git(ref.dir, "log", "-n", "20", "--format=%h %s", "HEAD", "--not", judgedRaw.head, "--remotes") : undefined;
-			const foreign = log?.code === 0 ? log.stdout.split("\n").map((l) => l.trim()).filter(Boolean) : [];
-			const up = await git(ref.dir, "rev-parse", "--abbrev-ref", "@{u}");
-			const hasUpstream = up.code === 0;
-			const count = hasUpstream ? await git(ref.dir, "rev-list", "--count", "@{u}..HEAD") : undefined;
-			const ahead = count?.code === 0 ? Number(count.stdout.trim()) || 0 : 0;
-			const named = !!branch && branch !== "HEAD";
-			const pr = wantsPr && named ? await prState(ref.dir, branch) : null;
-			const facts: PublishFacts = { repo: ref.root, branch, head, judged: alive ? judgedRaw : undefined, foreign, descends, judgedOnRemote: onRemote, judgedBranchExists: (await git(ref.dir, "rev-parse", "--verify", "--quiet", `refs/heads/${judgedRaw.branch}`)).code === 0, hasUpstream, ahead, pr, protectedBranch: cfg.protectedBranches.includes(branch) };
-			return { ref, facts, decision: publishDecision(facts, mode) };
-		}));
-		const refusals = gathered.flatMap((g) => (g.decision.kind === "refuse" ? [refuseText(g.ref.root, g.decision)] : g.decision.kind === "moved" ? [movedText(g.ref.root, g.decision)] : []));
-		if (refusals.length) return { refusal: refusals.join("\n") };
-		const todo = gathered.flatMap((g) => (g.decision.kind === "publish" ? [{ g, d: g.decision }] : []));
-		if (!todo.length) {
-			const why = gathered.flatMap((g) => (g.decision.kind === "nothing" ? [`${path.basename(g.ref.root)}: ${g.decision.reason}`] : []));
-			return { none: why.length ? `no changes to deliver (${why.join("; ")})` : "no changes to deliver" };
-		}
-		const multi = !(refs.length === 1 && refs[0].dir === ctx.cwd);
-		const moved = todo.map(({ g, d }) => {
-			const old = g.facts.pr && g.facts.pr.state !== "OPEN" ? g.facts.pr.number : undefined;
-			return { root: g.ref.root, mode, head: d.base, branch: d.branch, prBefore: old, pushSkipped: undefined as string | undefined };
-		});
-		const first = moved[0];
-		const pending: NonNullable<FlowState["commitPending"]> = multi
-			? { mode, head: first.head, branch: first.branch, prBefore: first.prBefore, repos: moved.map((m) => ({ root: m.root, mode: m.mode, head: m.head, branch: m.branch, prBefore: m.prBefore })) }
-			: { mode, head: first.head, branch: first.branch, prBefore: first.prBefore };
-		const options = (m: (typeof moved)[number]): DeliveryOptions => ({
-			mode: m.mode,
-			branch: m.branch,
-			base: cfg.delivery.base,
-			split: false,
-			mergeMethod: cfg.delivery.mergeMethod,
-			deleteBranch: cfg.delivery.deleteBranch,
-			deviations: "",
-			committed: true,
-		});
-		const instruction = multi ? repoDeliveryInstruction(moved.map((m) => ({ root: m.root, options: options(m) }))) : deliveryInstruction(options(first));
-		return { run: { pending, instruction, entries: moved.map((m) => ({ root: m.root, mode: m.mode, head: m.head, branch: m.branch, prBefore: m.prBefore, options: options(m) })) } };
-	}
-
-	/** At the end of a flow or stage with nothing to review: publishes judged commits that are still unpublished, per the stage's delivery. "sent": the commit step took over and ends or advances the flow; "refused": the text to report. */
-	async function publishAtEnd(ctx: ExtensionContext, stage: ReturnType<typeof parseStages>[number] | undefined): Promise<{ sent: true } | { refused: string } | undefined> {
-		if (!state.judgedHeads || Object.keys(state.judgedHeads).length === 0) return undefined;
-		const cap = stageDelivery(state.delivery ?? defaultDelivery(), stage);
-		if (cap !== "push" && cap !== "pr" && cap !== "merge") return undefined;
-		const pub = await publishJudged(ctx, cap);
-		if (pub.refusal) return { refused: pub.refusal };
-		if (!pub.run) return undefined;
-		if (!fs.existsSync(COMMIT_GUARD_EXTENSION)) return { refused: `commit guard extension not found at ${COMMIT_GUARD_EXTENSION}` };
-		state.commitPending = pub.run.pending;
-		await sendCommitStep(ctx, `publish:${Object.values(state.judgedHeads).map((h) => h.head).join(",")}`, undefined, pub.run.instruction, cap);
-		return { sent: true };
-	}
-
-	async function deliverSelfCommit(ctx: ExtensionContext): Promise<boolean> {
-		const judged = state.lastJudge;
-		const hash = state.passedDiff;
-		if (!hash || !judged || judged.hash !== hash || judged.verdict !== "PASS" || !judged.repos) return false;
-		const refs = await flowRepos(ctx);
-		const now: Record<string, { head: string; tree: string }> = {};
-		const read = await Promise.all(refs.map((ref) => Promise.all([git(ref.dir, "rev-parse", "HEAD"), git(ref.dir, "rev-parse", "HEAD^{tree}")])));
-		refs.forEach((ref, i) => {
-			const [head, tree] = read[i];
-			if (head.code === 0 && tree.code === 0) now[repoKey(ref.root)] = { head: head.stdout.trim(), tree: tree.stdout.trim() };
-		});
-		const handled = committedDiffs.has(hash) || !!state.summarizedPasses?.includes(hash) || !!state.commitPending;
-		if (!selfCommitted(hash, judged, now, handled)) return false;
-
-		const staged = currentStages();
-		const chosen = stageDelivery(state.delivery ?? defaultDelivery(), staged?.stages[staged.current - 1]);
-		if (chosen === "off") {
-			await summarizePass(ctx, hash);
-			return true;
-		}
-		committedDiffs.add(hash);
-		ctx.ui.notify("workflow: the executor committed the change itself; continuing with delivery", "info");
-
-		const multi = !(refs.length === 1 && refs[0].dir === ctx.cwd);
-		const moved: { root: string; mode: Exclude<Delivery, "off">; head: string; branch: string; prBefore?: number; pushSkipped?: string }[] = [];
-		for (const ref of refs) {
-			const key = repoKey(ref.root);
-			const before = judged.repos[key];
-			if (!before || now[key]?.head === before.head) continue;
-			const branch = (await git(ref.dir, "rev-parse", "--abbrev-ref", "HEAD")).stdout.trim();
-			const unsafe = !branch || branch === "HEAD" || cfg.protectedBranches.includes(branch);
-			let mode = chosen;
-			let prBefore: number | undefined;
-			let pushSkipped: string | undefined;
-			if (unsafe) {
-				mode = "commit";
-				if (chosen !== "commit") pushSkipped = pushSkipReason(branch);
-				if (chosen !== "commit") ctx.ui.notify(`workflow${multi ? ` [${ref.root}]` : ""}: the executor committed on ${branch && branch !== "HEAD" ? branch : "a detached HEAD"} itself; push and open the pull request by hand`, "warning");
-			} else if (mode === "pr" || mode === "merge") {
-				const old = await prState(ref.dir, branch);
-				if (old && old.state !== "OPEN") prBefore = old.number;
-			}
-			moved.push({ root: ref.root, mode, head: before.head, branch, prBefore, pushSkipped });
-		}
-		if (moved.length === 0) return false;
-		const first = moved[0];
-		// self: an executor commit is not a head the commit step produced, so it is never recorded as judged.
-		state.commitPending = multi
-			? { self: true, mode: first.mode, head: first.head, branch: first.branch, prBefore: first.prBefore, pushSkipped: first.pushSkipped, repos: moved.map((m) => ({ root: m.root, mode: m.mode, head: m.head, branch: m.branch, prBefore: m.prBefore, pushSkipped: m.pushSkipped })) }
-			: { self: true, mode: first.mode, head: first.head, branch: first.branch, prBefore: first.prBefore, pushSkipped: first.pushSkipped };
-		if (moved.every((m) => m.mode === "commit")) {
-			markPassSummarized(hash);
-			persist();
-			await summarizeCommit(ctx);
-			return true;
-		}
-		const options = (m: (typeof moved)[number]): DeliveryOptions => ({
-			mode: m.mode,
-			branch: m.branch,
-			base: cfg.delivery.base,
-			split: false,
-			mergeMethod: cfg.delivery.mergeMethod,
-			deleteBranch: cfg.delivery.deleteBranch,
-			deviations: "",
-			committed: true,
-			pushSkipped: m.pushSkipped,
-		});
-		const instruction = multi ? repoDeliveryInstruction(moved.map((m) => ({ root: m.root, options: options(m) }))) : deliveryInstruction(options(first));
-		await sendCommitStep(ctx, hash, `**Judge: PASS**
-
-${judged.text}`, instruction, chosen);
-		return true;
-	}
-
-	/** Runs the commit step in a fresh subagent with its own push guard; returns its report (or the failure) as text. */
-	async function runCommitSubagent(ctx: ExtensionContext, instruction: string, chosen: Delivery, pending: FlowState["commitPending"], signal?: AbortSignal): Promise<string> {
-		commitSubagentRunning = true;
-		let result: RunResult;
-		try {
-			const multi = (state.folders?.length ?? 0) > 0 || (state.touchedRepos?.length ?? 0) > 0;
-			const spec: CommitGuardSpec = {
-				protectedBranches: cfg.protectedBranches,
-				roots: multi ? (await flowRepos(ctx)).map((r) => r.root) : [],
-				mode: pending?.mode,
-				repos: (pending?.repos ?? []).map((r) => ({ root: r.root, mode: r.mode })),
-			};
-			ctx.ui.setWorkingMessage("commit step running…");
-			const ran = await runRole("commit", DELIVERY_LABELS[chosen], {
-				systemPrompts: [prompts.COMMIT, commitExcerpt()],
-				tools: ["bash"],
-				task: instruction,
-				cwd: ctx.cwd,
-				signal,
-				env: { [COMMIT_GUARD_ENV]: JSON.stringify(spec) },
-				extensions: [COMMIT_GUARD_EXTENSION],
-			});
-			result = ran.result;
-			if (result.ok) view.finish(ran.run, true, "report ready");
-		} finally {
-			commitSubagentRunning = false;
-			ctx.ui.setWorkingMessage();
-		}
-		return result.ok ? result.text : `failed: ${result.error}`;
-	}
-
-	/** Runs the commit step in a fresh subagent with its own push guard, then reads the outcome from git and gh. */
-	async function commitInSubagent(ctx: ExtensionContext, report: string | undefined, instruction: string, chosen: Delivery): Promise<void> {
-		if (report) pi.sendMessage({ customType: "workflow-judge", content: report, display: true }, { triggerTurn: false });
-		if (!fs.existsSync(COMMIT_GUARD_EXTENSION)) {
-			pi.sendMessage({ customType: "workflow-commit", content: `**Commit step** failed: commit guard extension not found at ${COMMIT_GUARD_EXTENSION}`, display: true }, { triggerTurn: false });
-			if (state.commitPending) await summarizeCommit(ctx);
-			resetCommitStage();
-			return;
-		}
-		const text = await runCommitSubagent(ctx, instruction, chosen, state.commitPending);
-		pi.sendMessage({ customType: "workflow-commit", content: `**Commit step** (${describeRole(cfg.roles.commit)})\n\n${text}`, display: true }, { triggerTurn: false });
-		if (state.commitPending) await summarizeCommit(ctx);
-		resetCommitStage();
-	}
-
-	function resetCommitStage(): void {
-		if (view.stage !== "commit") return;
-		view.stage = phaseStage();
-		view.changed();
-	}
-
-	/** `name`, or `name-2`, `name-3`, ... when a local branch already has it. */
-	async function freeBranchName(cwd: string, name: string): Promise<string> {
-		for (let n = 1; n < 100; n++) {
-			const candidate = n === 1 ? name : `${name}-${n}`;
-			if ((await git(cwd, "rev-parse", "--verify", "--quiet", `refs/heads/${candidate}`)).code !== 0) return candidate;
-		}
-		return `${name}-${Date.now()}`;
-	}
 
 	/** Folders from --add-dir join the session's list (existing folders only, no repeats, not the working folder). */
 	function applyAddDir(ctx: ExtensionContext): void {
@@ -4399,7 +4146,7 @@ ${judged.text}`, instruction, chosen);
 		cfg = loaded.config;
 		configError = loaded.error;
 		if (configError) ctx.ui.notify(`workflow: bad config, using defaults: ${configError}`, "error");
-		ghReady = ensureGh(ctx).catch(() => false);
+		void ensureGh(ctx).catch(() => false);
 
 		const saved = ctx.sessionManager
 			.getBranch()
@@ -4418,7 +4165,6 @@ ${judged.text}`, instruction, chosen);
 			view.used = { ...emptyStageTokens(), ...state.tokens };
 			view.flow = { ...emptyFlowUsage(), ...structuredClone(state.flow) };
 			view.flowStarted = state.flowStarted;
-			if (state.commitPending) view.stage = "commit";
 			if (state.phase === "discuss" || state.phase === "plan" || state.phase === "test") blockPlanTools(state.phase === "test" ? "test" : "plan");
 			if (event.reason !== "reload") {
 				await followWorkingFolder(ctx);
@@ -4476,7 +4222,6 @@ ${judged.text}`, instruction, chosen);
 		{ value: "discuss", label: "discuss - discuss phase (read-only, talk before planning)" },
 		{ value: "plan", label: "plan - plan phase (read-only, planner model)" },
 		{ value: "approve", label: "approve - approve the plan, switch to execute and start" },
-		{ value: "delivery", label: "delivery <commit|push|pr|merge|off> - what happens after the judge passes, this flow" },
 		{ value: "execute", label: "execute - execute phase without sending anything" },
 		{ value: "test", label: "test [scope] - test phase: a strong supervisor sends cheap runners and reports bugs" },
 		{ value: "off", label: "off - leave the workflow; model stays as is" },
@@ -4493,7 +4238,7 @@ ${judged.text}`, instruction, chosen);
 	function statusText(): string {
 		const lines = [
 			`phase      ${state.phase}${state.escalated ? " (escalated)" : ""}`,
-			`judge     ${state.judgeRounds} failed round(s); auto=${cfg.autoJudge}; then ${DELIVERY_LABELS[state.delivery ?? defaultDelivery()]}${state.delivery ? " (set for this flow)" : " (default)"}`,
+			`judge     ${state.judgeRounds} failed round(s); auto=${cfg.autoJudge}; ${noMerge(state.approvedPlan ?? "") ? "no merge (the plan says so)" : "merge and publish after a judge pass"}`,
 			...(state.testFlow ? [`test flow  round ${state.testFlow.round}, fix rounds ${normalize(state.testFlow).fixRounds}, fixed ${normalize(state.testFlow).fixed.length}, open ${openBugs(state.testFlow).length}, pending questions ${normalize(state.testFlow).pending.length}`] : []),
 			...(currentStages() ? [`stage     ${currentStages()!.current} of ${currentStages()!.stages.length}: ${currentStages()!.stages[currentStages()!.current - 1].title}`] : []),
 			state.planFlaw === "auto" ? "flaws     arbiter (this flow)" : `flaws     ${cfg.planFlaw === "auto" ? "arbiter" : "ask"} (config)`,
@@ -4608,6 +4353,8 @@ ${judged.text}`, instruction, chosen);
 					return;
 				}
 				state.folders = [...current, final];
+				const addedRoot = await gitRoot(final);
+				if (addedRoot) await joinReviewBase(addedRoot);
 				persist();
 				publishFolders(ctx);
 				updateStatus(ctx);
@@ -4649,9 +4396,6 @@ ${judged.text}`, instruction, chosen);
 				} catch {
 					return null;
 				}
-			}
-			if (parts[0] === "delivery" && parts.length === 2) {
-				return DELIVERIES.filter((d) => d.startsWith(parts[1])).map((d) => ({ value: `delivery ${d}`, label: `${d} - ${DELIVERY_LABELS[d]}` }));
 			}
 			const matches = SUBCOMMANDS.filter((c) => c.value.startsWith(prefix.trim()));
 			return matches.length > 0 ? matches : null;
@@ -4781,21 +4525,6 @@ ${judged.text}`, instruction, chosen);
 					autopilotOverride = arg === undefined ? !autopilotOn() : arg === "on";
 					updateStatus(ctx);
 					ctx.ui.notify(`workflow: autopilot ${autopilotOn() ? "on" : "off"} (session)`, "info");
-					return;
-				}
-				case "delivery": {
-					const want = rest[0]?.toLowerCase();
-					if (!want) {
-						ctx.ui.notify(`workflow: after the judge passes: ${DELIVERY_LABELS[state.delivery ?? defaultDelivery()]}. Usage: /flow delivery <${DELIVERIES.join("|")}>`, "info");
-						return;
-					}
-					if (!isDelivery(want)) {
-						ctx.ui.notify(`Usage: /flow delivery <${DELIVERIES.join("|")}>`, "warning");
-						return;
-					}
-					state.delivery = want;
-					persist();
-					ctx.ui.notify(`workflow: after the judge passes: ${DELIVERY_LABELS[want]} (this flow)`, "info");
 					return;
 				}
 				case "escalate":

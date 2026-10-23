@@ -208,10 +208,15 @@ test("Verify steps are human and never open", () => {
 	assert.ok(card.includes("1 of 1 done") && card.includes("(none open)"));
 });
 
-test("parseStatus validates judgedHeads", () => {
+test("parseStatus validates the review state and drops the removed commit step's fields", () => {
 	const ok = { v: 1, flowId: "20260101-1200-demo-abcd", rev: 1, updated: "2026-01-01T00:00:00Z", title: "t", done: [], repos: [] };
 	assert.ok(parseStatus(JSON.stringify(ok)));
-	const jh = { "d:/r": { base: "a", head: "b", branch: "feat" } };
-	assert.deepEqual(parseStatus(JSON.stringify({ ...ok, judgedHeads: jh }))?.judgedHeads, jh);
-	assert.equal(parseStatus(JSON.stringify({ ...ok, judgedHeads: { "d:/r": { base: "a", head: 1, branch: "f" } } })), null);
+	const review = { reviewBase: { "d:/r": "abc" }, passedTrees: { "d:/r": ["t1", "t2"] }, judgedMerges: { "d:/r": { pr: "12", tree: "t2", stage: 2 } } };
+	assert.deepEqual(parseStatus(JSON.stringify({ ...ok, ...review }))?.judgedMerges, review.judgedMerges);
+	assert.deepEqual(parseStatus(JSON.stringify({ ...ok, ...review }))?.passedTrees, review.passedTrees);
+	assert.equal(parseStatus(JSON.stringify({ ...ok, reviewBase: { "d:/r": 1 } })), null);
+	assert.equal(parseStatus(JSON.stringify({ ...ok, passedTrees: { "d:/r": "t1" } })), null);
+	assert.equal(parseStatus(JSON.stringify({ ...ok, judgedMerges: { "d:/r": { pr: "1" } } })), null);
+	const old = parseStatus(JSON.stringify({ ...ok, judgedHeads: { "d:/r": { base: "a", head: "b", branch: "f" } }, mergedHeads: { "d:/r": "x" } })) as unknown as Record<string, unknown>;
+	assert.ok(old && !("judgedHeads" in old) && !("mergedHeads" in old));
 });

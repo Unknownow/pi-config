@@ -278,3 +278,41 @@ export function pidAlive(pid: number): boolean {
 		return (e as { code?: string }).code === "EPERM";
 	}
 }
+
+/** The local-only ref that keeps a flow's synthetic review-base commit alive. It is never pushed: plan sync pushes `refs/pi/plans/*` only. */
+export const reviewRef = (flowId: string) => `refs/pi/review-base/${flowId}`;
+
+/** Points the flow's review-base ref at `commit`. False when the ref could not be written. */
+export async function writeReviewRef(git: Git, root: string, flowId: string, commit: string): Promise<boolean> {
+	if (!isFlowId(flowId)) return false;
+	const r = await git(root, ["update-ref", reviewRef(flowId), commit]).catch(() => null);
+	return !!r && r.code === 0;
+}
+
+/** Removes the flow's review-base ref; a ref that is already gone is not an error. */
+export async function deleteReviewRef(git: Git, root: string, flowId: string): Promise<void> {
+	if (!isFlowId(flowId)) return;
+	if (await resolveRef(git, root, reviewRef(flowId))) await git(root, ["update-ref", "-d", reviewRef(flowId)]).catch(() => null);
+}
+
+/**
+ * Deletes the review-base refs of `drop` (pruned plans) and the leftovers of crashed flows: refs whose flow is not in `keep` and whose
+ * commit is older than `minAgeMs`. Returns the flow IDs it deleted.
+ */
+export async function sweepReviewRefs(git: Git, root: string, o: { drop: Iterable<string>; keep: Set<string>; now: number; minAgeMs: number }): Promise<string[]> {
+	const prefix = "refs/pi/review-base/";
+	const r = await git(root, ["for-each-ref", "--format=%(refname)\t%(committerdate:unix)", prefix]).catch(() => null);
+	if (!r || r.code !== 0) return [];
+	const drop = new Set(o.drop);
+	const gone: string[] = [];
+	for (const line of r.stdout.split("\n")) {
+		const [name, unix] = line.trim().split("\t");
+		const id = name?.slice(prefix.length);
+		if (!id || !isFlowId(id)) continue;
+		const old = o.now - (Number(unix) * 1000 || 0) > o.minAgeMs;
+		if (!drop.has(id) && !(old && !o.keep.has(id))) continue;
+		await git(root, ["update-ref", "-d", name]).catch(() => null);
+		gone.push(id);
+	}
+	return gone;
+}

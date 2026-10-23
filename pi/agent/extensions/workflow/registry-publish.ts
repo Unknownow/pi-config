@@ -66,10 +66,8 @@ export function waitSince(prev: string | undefined, now: string): string {
 	return prev ?? now;
 }
 
-/** Whether a delivery that ended with `ok` landed a merge, so the judged head may be read as merged. */
-export function shouldRecordMerged(mode: string, ok: boolean): boolean {
-	return mode === "merge" && ok;
-}
+/** The refusal when no judged, completed merge is recorded for the repo a Publish step reads versions from. */
+export const NO_JUDGED_MERGE = "No judged merge is recorded for the unity-packages repo: merge the judged PR first (gh pr merge after a judge PASS). Nothing published.";
 
 type Item = { name: string; version: string };
 
