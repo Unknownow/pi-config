@@ -1,0 +1,16 @@
+{
+  "v": 1,
+  "flowId": "20261023-1205-record-a-protected-push-made-by-git-task-4049",
+  "rev": 1,
+  "updated": "2026-10-23T05:05:34.811Z",
+  "title": "Record a protected push made by `git_task` when the commit already existed locally",
+  "delivery": "merge",
+  "done": [],
+  "repos": [
+    {
+      "branch": "flow/judge-gated-self-delivery-replaces-the-c",
+      "remote": "github-personal/Unknownow/pi-config",
+      "primary": true
+    }
+  ]
+}
