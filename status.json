@@ -1,11 +1,27 @@
 {
   "v": 1,
   "flowId": "20261023-1205-record-a-protected-push-made-by-git-task-4049",
-  "rev": 1,
-  "updated": "2026-10-23T05:05:34.811Z",
+  "rev": 2,
+  "updated": "2026-10-23T05:07:23.247Z",
   "title": "Record a protected push made by `git_task` when the commit already existed locally",
-  "delivery": "merge",
-  "done": [],
+  "done": [
+    "S1",
+    "S2",
+    "S3",
+    "S4"
+  ],
+  "finished": {
+    "at": "2026-10-23T05:07:23.152Z",
+    "ok": false,
+    "text": "committed (1 commit), pushed, no open pull request"
+  },
+  "judgedHeads": {
+    "d:/projects/pi-config": {
+      "base": "27e32228489a30699673fe41257bab7e3fd96bde",
+      "head": "f18904674338b64e5b1fbe2f6eff8761567627ac",
+      "branch": "flow/judge-gated-self-delivery-replaces-the-c"
+    }
+  },
   "repos": [
     {
       "branch": "flow/judge-gated-self-delivery-replaces-the-c",

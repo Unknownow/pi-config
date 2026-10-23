@@ -91,7 +91,9 @@ This adds one optional field to an existing interface:
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 `merge-gate.ts:123-149`, `recordJudged`:
-- [ ] S2 `index.ts:2673-2676` and `:2704`, the `git_task` `execute`:
-- [ ] S3 `merge-gate.test.ts`:
-- [ ] S4 Run the tests and the typecheck from section 6. Then call `judge` with the focus "Record a protected push made by git_ta
+- [x] S1 `merge-gate.ts:123-149`, `recordJudged`:
+- [x] S2 `index.ts:2673-2676` and `:2704`, the `git_task` `execute`:
+- [x] S3 `merge-gate.test.ts`:
+- [x] S4 Run the tests and the typecheck from section 6. Then call `judge` with the focus "Record a protected push made by git_ta
+## Outcome
+2026-10-23T05:07:23.152Z — failed: committed (1 commit), pushed, no open pull request
