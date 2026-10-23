@@ -473,7 +473,9 @@ Stage 2:
 - [x] S8 `publish_packages`/`runPublish` (`index.ts:2467`, `:2555`): the `noMerge` check, and the head from `judgedMerges` as in 
 - [x] S9 Config (D6).
 - [x] S10 `prompts.ts` (D7).
-- [ ] S11 Rename `commit-guard.ts` to `git-guard.ts`.
-- [ ] S12 Register `git_task` in `index.ts`, next to `publish_packages`.
-- [ ] S13 `README.md`: rewrite the parts about the commit step, the delivery menu and the checkpoint modes in "Hands-off run" (`:3
-- [ ] S14 `docs/workflow-improvements.md` (D11):
+- [x] S11 Rename `commit-guard.ts` to `git-guard.ts`.
+- [x] S12 Register `git_task` in `index.ts`, next to `publish_packages`.
+- [x] S13 `README.md`: rewrite the parts about the commit step, the delivery menu and the checkpoint modes in "Hands-off run" (`:3
+- [x] S14 `docs/workflow-improvements.md` (D11):
+## Outcome
+2026-10-23T05:00:00.982Z — failed: stage 1: committed (6 commits), pushed, no open pull request; stage 2: committed (4 commits), pushed, no open pull request
