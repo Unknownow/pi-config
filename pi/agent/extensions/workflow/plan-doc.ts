@@ -156,6 +156,7 @@ export interface PlanStatus {
 	updated: string;
 	title: string;
 	stage?: number;
+	/** Written by older versions (the delivery chosen at approval); ignored. */
 	delivery?: string;
 	/** "test": a test-and-fix flow, which cannot be resumed. */
 	kind?: "test";
@@ -166,10 +167,12 @@ export interface PlanStatus {
 	waiting?: { reason: string; check?: string; since: string; planned?: boolean; atStageStart?: boolean; held?: string };
 	/** Checkpoints delivered mid-plan. */
 	checkpoints?: { step?: string; stage?: number; text: string; ok: boolean }[];
-	/** Heads the workflow's commit step produced, per repo key: what a later push, pr or merge may publish. */
-	judgedHeads?: Record<string, { base: string; head: string; branch: string }>;
-	/** Per repo key: the judged head a merge delivery landed; the Publish step reads package versions from it. */
-	mergedHeads?: Record<string, string>;
+	/** Per repo key: the commit the judge diffs from. */
+	reviewBase?: Record<string, string>;
+	/** Per repo key: the worktree trees of every judge pass in this flow; a merge, a protected push or a publish needs one of them. */
+	passedTrees?: Record<string, string[]>;
+	/** Per repo key: the judged merge (a pull request or a pushed commit) that a Publish step reads package versions from. */
+	judgedMerges?: Record<string, { pr?: string; commit?: string; tree: string; stage?: number }>;
 	repos: { remote?: string; branch?: string; primary: boolean }[];
 }
 
@@ -230,10 +233,16 @@ export function parseStatus(json: string): PlanStatus | null {
 	if (w !== undefined && !(w && isStr(w.reason) && isStr(w.since) && (w.check === undefined || isStr(w.check)) && (w.held === undefined || isStr(w.held)) && (w.planned === undefined || typeof w.planned === "boolean") && (w.atStageStart === undefined || typeof w.atStageStart === "boolean"))) return null;
 	const cps = o.checkpoints;
 	if (cps !== undefined && !(Array.isArray(cps) && cps.every((c: any) => c && isStr(c.text) && typeof c.ok === "boolean" && (c.step === undefined || isStr(c.step)) && (c.stage === undefined || Number.isInteger(c.stage))))) return null;
-	const jh = o.judgedHeads;
-	if (jh !== undefined && !(jh && typeof jh === "object" && !Array.isArray(jh) && Object.values(jh).every((h: any) => h && isStr(h.base) && isStr(h.head) && isStr(h.branch)))) return null;
-	const mh = o.mergedHeads;
-	if (mh !== undefined && !(mh && typeof mh === "object" && !Array.isArray(mh) && Object.values(mh).every((h: any) => isStr(h)))) return null;
+	const isMap = (v: any) => v && typeof v === "object" && !Array.isArray(v);
+	const rb = o.reviewBase;
+	if (rb !== undefined && !(isMap(rb) && Object.values(rb).every(isStr))) return null;
+	const pt = o.passedTrees;
+	if (pt !== undefined && !(isMap(pt) && Object.values(pt).every((l: any) => Array.isArray(l) && l.every(isStr)))) return null;
+	const jm = o.judgedMerges;
+	if (jm !== undefined && !(isMap(jm) && Object.values(jm).every((m: any) => m && isStr(m.tree) && (m.pr === undefined || isStr(m.pr)) && (m.commit === undefined || isStr(m.commit)) && (m.stage === undefined || Number.isInteger(m.stage))))) return null;
+	// Heads of the removed commit step, in status files of older versions.
+	delete o.judgedHeads;
+	delete o.mergedHeads;
 	for (const r of o.repos) {
 		if (!r || typeof r.primary !== "boolean" || (r.remote !== undefined && !isStr(r.remote)) || (r.branch !== undefined && !isStr(r.branch))) return null;
 	}

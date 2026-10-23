@@ -5,7 +5,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import test from "node:test";
 import { type PlanStatus } from "./plan-doc.ts";
-import { claimLive, dropClaim, readClaim, writeClaim, adoptHigher, commitRef, deleteLocal, deleteRef, fetchMirror, type Git, listRefs, plansDir, pushRef, readLocalStatuses, readPlanMd, refRev, remoteOf, writeLocal } from "./plan-store.ts";
+import { deleteReviewRef, reviewRef, sweepReviewRefs, writeReviewRef, claimLive, dropClaim, readClaim, writeClaim, adoptHigher, commitRef, deleteLocal, deleteRef, fetchMirror, type Git, listRefs, plansDir, pushRef, readLocalStatuses, readPlanMd, refRev, remoteOf, writeLocal } from "./plan-store.ts";
 
 const git: Git = async (cwd, args, env) => {
 	try {
@@ -210,4 +210,41 @@ test("claims: round trip and liveness", () => {
 	dropClaim(dir, id);
 	assert.equal(readClaim(dir, id), null);
 	fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("review-base refs: written, deleted, swept, and never pushed with the plan ref", async () => {
+	const root = fs.mkdtempSync(path.join(os.tmpdir(), "plan-review-"));
+	try {
+		execFileSync("git", ["init", "-q"], { cwd: root });
+		execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "x"], { cwd: root });
+		const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
+		const ids = ["20261015-0930-demo-a1b2", "20261015-0931-demo-a1b3", "20261015-0932-demo-a1b4"];
+		for (const id of ids) assert.equal(await writeReviewRef(git, root, id, head), true);
+		const refs = () => execFileSync("git", ["for-each-ref", "--format=%(refname)", "refs/pi/review-base/"], { cwd: root, encoding: "utf8" }).trim().split("\n").filter(Boolean);
+		assert.equal(refs().length, 3);
+		await deleteReviewRef(git, root, ids[0]);
+		await deleteReviewRef(git, root, ids[0]);
+		assert.deepEqual(refs(), [reviewRef(ids[1]), reviewRef(ids[2])]);
+		// a pruned flow goes; a young leftover and a kept flow stay; an old leftover goes
+		assert.deepEqual(await sweepReviewRefs(git, root, { drop: [ids[1]], keep: new Set(), now: Date.now(), minAgeMs: 86_400_000 }), [ids[1]]);
+		assert.deepEqual(refs(), [reviewRef(ids[2])]);
+		assert.deepEqual(await sweepReviewRefs(git, root, { drop: [], keep: new Set([ids[2]]), now: Date.now() + 10 * 86_400_000, minAgeMs: 86_400_000 }), []);
+		assert.deepEqual(await sweepReviewRefs(git, root, { drop: [], keep: new Set(), now: Date.now() + 10 * 86_400_000, minAgeMs: 86_400_000 }), [ids[2]]);
+		assert.deepEqual(refs(), []);
+		// plan sync pushes only the plan ref
+		assert.equal(await writeReviewRef(git, root, ids[0], head), true);
+		const bare = fs.mkdtempSync(path.join(os.tmpdir(), "plan-review-bare-"));
+		try {
+			execFileSync("git", ["init", "-q", "--bare"], { cwd: bare });
+			execFileSync("git", ["remote", "add", "origin", bare], { cwd: root });
+			await commitRef(git, root, ids[0], "# p\n", JSON.stringify({ ...status, flowId: ids[0] }));
+			assert.equal(await pushRef(git, root, "origin", ids[0]), "ok");
+			const remoteRefs = execFileSync("git", ["for-each-ref", "--format=%(refname)"], { cwd: bare, encoding: "utf8" }).trim().split("\n");
+			assert.deepEqual(remoteRefs, [`refs/pi/plans/${ids[0]}`]);
+		} finally {
+			fs.rmSync(bare, { recursive: true, force: true });
+		}
+	} finally {
+		fs.rmSync(root, { recursive: true, force: true });
+	}
 });
