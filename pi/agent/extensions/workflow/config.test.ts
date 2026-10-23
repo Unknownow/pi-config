@@ -74,7 +74,8 @@ test("test block defaults", () => {
 	assert.equal(t.runnerTimeoutMs, 2700000);
 	assert.equal(t.maxRounds, 3);
 	assert.equal(t.refails, 2);
-	assert.equal(t.delivery, "commit");
+	assert.equal((t as Record<string, unknown>).delivery, undefined);
+	assert.deepEqual(DEFAULTS.roles.commit, { model: "claude-bridge/claude-haiku-5-5", thinking: "medium" });
 	assert.deepEqual(DEFAULTS.roles.test, { model: "claude-bridge/claude-opus-5-5", thinking: "medium" });
 	assert.deepEqual(DEFAULTS.roles.runner, { model: "claude-bridge/claude-haiku-5-5", thinking: "low" });
 });
@@ -87,7 +88,7 @@ test("test block validation: bad values fall back, concurrency 1 is kept", () =>
 	assert.equal(t.maxTasks, 8);
 	assert.equal(t.runnerTimeoutMs, 2700000);
 	assert.equal(t.refails, 2);
-	assert.equal(t.delivery, "commit");
+	assert.equal((t as Record<string, unknown>).delivery, undefined);
 	assert.deepEqual(t.runnerDeny, DEFAULTS.test.runnerDeny);
 	const g = tmp();
 	fs.writeFileSync(g, JSON.stringify({ test: { concurrency: 1, maxRounds: 0 } }));
@@ -177,4 +178,13 @@ test("legacy returnToPlan and invalid values", () => {
 	assert.equal(get('{"returnTo":"bogus"}').returnTo, "discuss");
 	assert.equal(get('{"startPhase":"x"}').startPhase, "discuss");
 	assert.equal(get('{"startPhase":"plan"}').startPhase, "plan");
+});
+
+test("keys of the removed delivery menu and commit step load and are dropped", () => {
+	const f = tmp();
+	fs.writeFileSync(f, JSON.stringify({ delivery: { ask: true, default: "merge", runner: "main", base: "dev" }, test: { delivery: "commit" } }));
+	const c = loadConfig(f).config;
+	for (const k of ["ask", "default", "runner"]) assert.equal(k in c.delivery, false, k);
+	assert.equal(c.delivery.base, "dev");
+	assert.equal("delivery" in c.test, false);
 });

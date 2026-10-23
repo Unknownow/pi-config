@@ -8,7 +8,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { PLAN_TOOLS } from "./readonly-tools.ts";
-import { type Delivery, isDelivery, type MergeMethod } from "./delivery.ts";
+import type { MergeMethod } from "./delivery.ts";
 import type { TokenWeights } from "./tokens.ts";
 
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
@@ -36,11 +36,8 @@ export interface KnowledgeConfig {
 	judgeCheck: boolean;
 }
 
+/** Guidance for the executor's own commit, push, pull request and merge. Merging, pushing to a protected branch and publishing still wait for a judge pass; a plan line `Delivery: no merge` turns them off for a flow. */
 export interface DeliveryConfig {
-	/** Ask at each plan approval; otherwise `default` is used. */
-	ask: boolean;
-	/** Listed first in the menu, chosen on Escape, and used when not asking or when executing without approval. */
-	default: Delivery;
 	/** One commit per function (feature, fix, refactor, ...) instead of one commit for the whole change. */
 	splitCommits: boolean;
 	/** `gh pr merge --<method>`. "merge" keeps the per-function commits. */
@@ -51,8 +48,6 @@ export interface DeliveryConfig {
 	base: string;
 	/** Pull request mode on a protected branch or a detached HEAD commits on a new branch: this prefix + a slug of the plan title. */
 	branchPrefix: string;
-	/** Where the commit step runs: a fresh subagent (`commit` role) or the main session (compacted first at the handover). */
-	runner: "subagent" | "main";
 }
 
 /** "auto": the planner proposes stages itself when the work warrants them; "onRequest": only when the user asks for delivery in parts. */
@@ -103,8 +98,6 @@ export interface TestConfig {
 	maxRounds: number;
 	/** Failed fixes of one bug before the user is asked. */
 	refails: number;
-	/** Delivery after each fix round; test flows never show the delivery menu. */
-	delivery: Delivery;
 	/** The runners' tools (regular names; no edit or write). */
 	runnerTools: string[];
 	/** Extra commands the supervisor's bash may run, as regexes over the command's words. */
@@ -151,7 +144,7 @@ export interface WorkflowConfig {
 	maxMinorRounds: number;
 	/** After the judge passes: commit, push, pull request, merge or nothing, chosen for each flow at plan approval. */
 	delivery: DeliveryConfig;
-	/** Branches never pushed automatically; the commit stays local. */
+	/** Protected branches: a push to one, like a merge, needs a judge pass on its exact tree. */
 	protectedBranches: string[];
 	plans: PlansConfig;
 	/** Wait points: how a flow waits for a person and checks that the wait is over. */
@@ -224,7 +217,7 @@ export const DEFAULTS: WorkflowConfig = {
 		advisor: { model: "claude-bridge/claude-opus-5-5", thinking: "high" },
 		judge: { model: "claude-bridge/claude-opus-5-5", thinking: "high" },
 		arbiter: { model: "claude-bridge/claude-fable-5-1", thinking: "high" },
-		commit: { model: "claude-bridge/claude-sonnet-5-5", thinking: "low" },
+		commit: { model: "claude-bridge/claude-haiku-5-5", thinking: "medium" },
 		escalate: { model: "claude-bridge/claude-fable-5-1", thinking: "high" },
 		test: { model: "claude-bridge/claude-opus-5-5", thinking: "medium" },
 		runner: { model: "claude-bridge/claude-haiku-5-5", thinking: "low" },
@@ -243,7 +236,7 @@ export const DEFAULTS: WorkflowConfig = {
 	stageAdvance: "auto",
 	planRecap: "changes",
 	maxPlanRevisions: 2,
-	delivery: { ask: true, default: "commit", splitCommits: true, mergeMethod: "merge", deleteBranch: true, base: "", branchPrefix: "flow/", runner: "subagent" },
+	delivery: { splitCommits: true, mergeMethod: "merge", deleteBranch: true, base: "", branchPrefix: "flow/" },
 	protectedBranches: ["main", "master"],
 	plans: { sync: "remote", localOnly: [], keepDays: 14, keepCount: 50 },
 	wait: { pollMs: 120_000, maxMs: 3_600_000, checkTimeoutMs: 30_000, autoResume: true },
@@ -263,7 +256,6 @@ export const DEFAULTS: WorkflowConfig = {
 		runnerTimeoutMs: 45 * 60_000,
 		maxRounds: 3,
 		refails: 2,
-		delivery: "commit",
 		runnerTools: ["bash", "read", "grep", "find", "ls"],
 		supervisorBashAllow: ["^adb( -[sdetHP] \\S+)* (devices|shell getprop)\\b", "^unity (cmd )?(status|editor_status|console_status)\\b"],
 		runnerDeny: [
@@ -352,7 +344,8 @@ function parseConfig(file: string): Loaded {
 		// A delivery that is not an object (the old autoCommit style, null) would crash the first approval.
 		if (!isObject(config.delivery)) config.delivery = DEFAULTS.delivery;
 		for (const k of ["base", "branchPrefix"] as const) if (typeof config.delivery[k] !== "string") config.delivery[k] = DEFAULTS.delivery[k];
-		if (config.delivery.runner !== "subagent" && config.delivery.runner !== "main") config.delivery.runner = DEFAULTS.delivery.runner;
+		// Keys of the removed delivery menu and commit step: ignored.
+		for (const k of ["ask", "default", "runner"]) delete (config.delivery as unknown as Record<string, unknown>)[k];
 		if (isObject(config.subagent) && (typeof config.subagent.idleTimeoutMs !== "number" || !Number.isFinite(config.subagent.idleTimeoutMs) || config.subagent.idleTimeoutMs < 0)) config.subagent.idleTimeoutMs = DEFAULTS.subagent.idleTimeoutMs;
 		if (typeof config.handoverCompactTokens !== "number" || !Number.isFinite(config.handoverCompactTokens) || config.handoverCompactTokens < 0) config.handoverCompactTokens = DEFAULTS.handoverCompactTokens;
 		if (!isObject(config.plans)) config.plans = DEFAULTS.plans;
@@ -379,7 +372,7 @@ function parseConfig(file: string): Loaded {
 		if (typeof t.runnerTimeoutMs !== "number" || !Number.isFinite(t.runnerTimeoutMs) || t.runnerTimeoutMs < 60_000) t.runnerTimeoutMs = DEFAULTS.test.runnerTimeoutMs;
 		if (!num(t.maxRounds, 0)) t.maxRounds = DEFAULTS.test.maxRounds;
 		if (!num(t.refails, 1)) t.refails = DEFAULTS.test.refails;
-		if (!isDelivery(t.delivery)) t.delivery = DEFAULTS.test.delivery;
+		delete (t as unknown as Record<string, unknown>).delivery;
 		for (const k of ["runnerTools", "supervisorBashAllow", "runnerDeny", "runnerPathFlags", "runnerPathEnv"] as const) {
 			if (!Array.isArray(t[k]) || t[k].some((s) => typeof s !== "string")) t[k] = DEFAULTS.test[k];
 		}

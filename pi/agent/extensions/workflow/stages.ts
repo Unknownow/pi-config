@@ -1,13 +1,9 @@
 /** Staged plans: a plan split into `### Stage N: <title>` sections is executed, judged and delivered one stage at a time. Pure text and decisions, kept apart so node tests can reach them. */
 
-import { DELIVERY_LABELS, type Delivery } from "./delivery.ts";
-
 export interface PlanStage {
 	/** 1-based, in plan order. */
 	n: number;
 	title: string;
-	/** The stage's own delivery, from a trailing `(delivery: <mode>)` on its heading. */
-	delivery?: Exclude<Delivery, "off">;
 	/** A person's action the stage waits for before it starts, from a trailing `(after: <what>; check: <command>)` on its heading. */
 	after?: { reason: string; check?: string };
 }
@@ -15,10 +11,9 @@ export interface PlanStage {
 export const HEADING = /^#{2,4}\s*[*_]*Stage\s+(\d+)[*_]*\s*[:.\u2013\u2014-]\s*(.*?)\s*[*_]*\s*$/i;
 const TAG = /\s*\(\s*deliver(?:y)?\s*:\s*([a-z]+)\s*\)\s*$/i;
 const AFTER = /\s*\(\s*after\s*:\s*([^;)]*?)\s*(?:;\s*check\s*:\s*([^)]*?)\s*)?\)\s*$/i;
-const MODES = ["commit", "push", "pr", "merge"] as const;
 
 /**
- * The plan's stages: `##`-`####` headings "Stage N: title", optionally ending in "(delivery: merge)".
+ * The plan's stages: `##`-`####` headings "Stage N: title", optionally ending in "(after: …)". A trailing "(delivery: …)" of older plans is ignored.
  * A number seen before is skipped (an arbiter amendment may repeat a heading). The numbers must run
  * 1, 2, 3, ... in order and there must be at least two, else it is not a staged plan: [].
  */
@@ -32,7 +27,6 @@ export function parseStages(plan: string | undefined): PlanStage[] {
 		if (seen.has(n)) continue;
 		seen.add(n);
 		let title = m[2];
-		let delivery: PlanStage["delivery"];
 		let after: PlanStage["after"];
 		// The two tags may come in either order; strip them from the end.
 		for (let i = 0; i < 2; i++) {
@@ -40,35 +34,28 @@ export function parseStages(plan: string | undefined): PlanStage[] {
 			const aft = tag ? null : AFTER.exec(title);
 			if (tag) {
 				title = title.slice(0, tag.index);
-				const mode = tag[1].toLowerCase();
-				delivery = (MODES as readonly string[]).includes(mode) ? (mode as PlanStage["delivery"]) : undefined;
 			} else if (aft) {
 				title = title.slice(0, aft.index);
 				if (aft[1].trim()) after = { reason: aft[1].trim(), ...(aft[2]?.trim() ? { check: aft[2].trim() } : {}) };
 			} else break;
 		}
-		stages.push({ n, title: title.replace(/[*_\s]+$/, "").trim(), ...(delivery ? { delivery } : {}), ...(after ? { after } : {}) });
+		stages.push({ n, title: title.replace(/[*_\s]+$/, "").trim(), ...(after ? { after } : {}) });
 	}
 	if (stages.length < 2 || stages.some((s, i) => s.n !== i + 1)) return [];
 	return stages;
 }
 
-/** What a stage's pass delivers: "off" for the flow wins, else the stage's own choice, else the flow's. */
-export function stageDelivery(flow: Delivery, stage: PlanStage | undefined): Delivery {
-	return flow === "off" ? "off" : (stage?.delivery ?? flow);
-}
-
 /** The instruction to do stage `current` only, then hand over. */
-export function stageStart(stages: PlanStage[], current: number, flow: Delivery): string {
+export function stageStart(stages: PlanStage[], current: number): string {
 	const s = stages[current - 1];
 	const rest = current < stages.length ? " The workflow then sends you the next stage." : " This is the last stage.";
-	return `This plan has ${stages.length} stages. Do stage ${current} only: "${s.title}". Don't start a later stage. When it is done, run its tests and call \`judge\`; once the judge passes, end your turn: the workflow delivers the stage (${DELIVERY_LABELS[stageDelivery(flow, s)]}).${rest}`;
+	return `This plan has ${stages.length} stages. Do stage ${current} only: "${s.title}". Don't start a later stage. When it is done, run its tests and call \`judge\`. Once it passes, deliver the stage yourself as the plan says (commit, push, pull request, merge), tick its steps and end your turn.${rest}`;
 }
 
 /** The message that starts stage `current` after the previous one was delivered. */
-export function nextStage(stages: PlanStage[], current: number, flow: Delivery, outcome: string): string {
+export function nextStage(stages: PlanStage[], current: number, outcome: string): string {
 	const prev = stages[current - 2];
-	return `Stage ${current - 1} ("${prev.title}") is delivered: ${outcome}.\n\nCheck \`git status\` and the current branch before you change anything. ${stageStart(stages, current, flow)}`;
+	return `Stage ${current - 1} ("${prev.title}") is delivered: ${outcome}.\n\nCheck \`git status\` and the current branch before you change anything. ${stageStart(stages, current)}`;
 }
 
 /** One line for the executor's system prompt while a staged plan runs. */

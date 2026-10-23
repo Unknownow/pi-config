@@ -60,14 +60,11 @@
   "planRecap": "changes",
   "maxPlanRevisions": 2,
   "delivery": {
-    "ask": true,
-    "default": "merge",
     "splitCommits": true,
     "mergeMethod": "merge",
     "deleteBranch": true,
     "base": "",
-    "branchPrefix": "flow/",
-    "runner": "subagent"
+    "branchPrefix": "flow/"
   },
   "plans": {
     "sync": "remote",
@@ -108,7 +105,6 @@
     "runnerTimeoutMs": 2700000,
     "maxRounds": 3,
     "refails": 2,
-    "delivery": "commit",
     "runnerTools": [
       "bash",
       "read",
