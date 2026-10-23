@@ -141,3 +141,10 @@ test("workspaceSection without rules equals the three-argument output", () => {
 	assert.equal(workspaceSection("/w", ["/a"], ["/t"], []), workspaceSection("/w", ["/a"], ["/t"]));
 	assert.ok(!workspaceSection("/w", ["/a"], []).includes("Rules files"));
 });
+
+test("Publish and Mirror steps are in the planner and executor prompts", () => {
+	assert.ok(planPhase(true).includes("Publish: <package>"));
+	assert.ok(planPhase(true).includes("Mirror: <folder>|all"));
+	assert.ok(!planPhase(true).includes("publish with `updates.bat`"));
+	assert.ok(EXECUTE_PHASE.includes("publish_packages {step}"));
+});

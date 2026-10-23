@@ -168,3 +168,10 @@ test("codeCommitProblem: chained and listed calls", () => {
 	assert.notEqual(codeCommitProblem('run("git merge main && git merge --abort")'), null);
 	assert.notEqual(codeCommitProblem('["git merge main", "git merge --abort"].forEach(run)'), null);
 });
+
+test("registryPublishProblem is wired into the guard module", async () => {
+	const { registryPublishProblem, registryPublishCodeProblem } = await import("./push-guard.ts");
+	assert.ok(registryPublishProblem("npm publish"));
+	assert.ok(registryPublishCodeProblem("spawn('npm', ['publish'])"));
+	assert.equal(registryPublishCodeProblem("console.log(1)"), null);
+});

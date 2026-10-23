@@ -237,3 +237,30 @@ export function codePublishProblem(code: string): string | null {
 	if (/\bgh\b/.test(code) && /\b(pr|api)\b/.test(code)) return "code that runs gh pr or gh api";
 	return null;
 }
+
+const REGISTRY_WHAT = [
+	{ re: /(?:^|[;&|("'`]\s*|\bsudo\s+|\bcall\s+)(?:\S*[\\/])?(?:npm|pnpm|yarn)(?:\.cmd)?["']?\s+(?:-\S+(?:\s+[^-\s]\S*)?\s+)*publish\b/i, what: "npm publish" },
+	{ re: /\bupdates\.(?:bat|command|mjs)["']?\s+(?:-\S+\s+)*(?:publish|mirror)\b/i, what: "updates publish or mirror" },
+	{ re: /\bmaintenance\.mjs["']?\s+(?:-\S+\s+)*mirror\b[^\n;&|]*--confirm/i, what: "maintenance.mjs mirror --confirm" },
+	{ re: /\bnode(?:\.exe)?["']?\s+(?:-\S+\s+)*["']?\S*publish-package\.mjs/i, what: "publish-package.mjs" },
+];
+
+/** Why this command may not run in the execute phase: publishing and mirroring packages goes only through `publish_packages`. Null when it is fine (a `--dry-run` of update-packages.mjs is). */
+export function registryPublishProblem(text: string): string | null {
+	const reason = (what: string) => `${what}: publishing and mirroring run only through publish_packages with the plan's Publish:/Mirror: step`;
+	for (const { re, what } of REGISTRY_WHAT) if (re.test(text)) return reason(what);
+	for (const m of text.matchAll(/\bupdate-packages\.mjs["']?\s+((?:--?\S+\s+)*publish\b[^\n;&|]*)/gi)) {
+		if (!/--dry-run\b/.test(m[1])) return reason("update-packages.mjs publish");
+	}
+	return null;
+}
+
+/** The same check for JavaScript run through run_code: a script that names a publish tool and a publish verb close together. */
+export function registryPublishCodeProblem(code: string): string | null {
+	if (/\b(?:npm|pnpm|yarn)(?:\.cmd)?\b[^\n]{0,60}\bpublish\b/i.test(code)) return "code that runs npm publish: publishing and mirroring run only through publish_packages with the plan's Publish:/Mirror: step";
+	if (/\bpublish-package\.mjs/i.test(code)) return "code that runs publish-package.mjs: publishing and mirroring run only through publish_packages with the plan's Publish:/Mirror: step";
+	for (const m of code.matchAll(/\b(?:update-packages|maintenance|updates)\.(?:mjs|bat|command)\b[^\n]{0,80}\b(?:publish|mirror)\b[^\n]{0,80}/gi)) {
+		if (!/--dry-run/.test(m[0])) return "code that runs a publish or mirror: publishing and mirroring run only through publish_packages with the plan's Publish:/Mirror: step";
+	}
+	return null;
+}

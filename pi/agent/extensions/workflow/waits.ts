@@ -1,4 +1,4 @@
-/** Wait points: a flow pauses for a person (publish a package, open an Editor) and then continues the same plan. Human checks (test in the Editor, look at visuals) never pause: they are listed after the flow. Pure text and decisions, kept apart so node tests can reach them. */
+/** Wait points: a flow pauses for a person (open an Editor) and then continues the same plan. Human checks (test in the Editor, look at visuals) never pause: they are listed after the flow. Pure text and decisions, kept apart so node tests can reach them. */
 
 import type { ChecklistItem } from "./plan-doc.ts";
 

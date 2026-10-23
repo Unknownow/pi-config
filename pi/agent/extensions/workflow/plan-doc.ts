@@ -168,6 +168,8 @@ export interface PlanStatus {
 	checkpoints?: { step?: string; stage?: number; text: string; ok: boolean }[];
 	/** Heads the workflow's commit step produced, per repo key: what a later push, pr or merge may publish. */
 	judgedHeads?: Record<string, { base: string; head: string; branch: string }>;
+	/** Per repo key: the judged head a merge delivery landed; the Publish step reads package versions from it. */
+	mergedHeads?: Record<string, string>;
 	repos: { remote?: string; branch?: string; primary: boolean }[];
 }
 
@@ -230,6 +232,8 @@ export function parseStatus(json: string): PlanStatus | null {
 	if (cps !== undefined && !(Array.isArray(cps) && cps.every((c: any) => c && isStr(c.text) && typeof c.ok === "boolean" && (c.step === undefined || isStr(c.step)) && (c.stage === undefined || Number.isInteger(c.stage))))) return null;
 	const jh = o.judgedHeads;
 	if (jh !== undefined && !(jh && typeof jh === "object" && !Array.isArray(jh) && Object.values(jh).every((h: any) => h && isStr(h.base) && isStr(h.head) && isStr(h.branch)))) return null;
+	const mh = o.mergedHeads;
+	if (mh !== undefined && !(mh && typeof mh === "object" && !Array.isArray(mh) && Object.values(mh).every((h: any) => isStr(h)))) return null;
 	for (const r of o.repos) {
 		if (!r || typeof r.primary !== "boolean" || (r.remote !== undefined && !isStr(r.remote)) || (r.branch !== undefined && !isStr(r.branch))) return null;
 	}

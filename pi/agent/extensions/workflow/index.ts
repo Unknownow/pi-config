@@ -61,7 +61,8 @@ import { citeNames, collectRepoDiff as collectRepoDiffImpl, needsFinalFullReview
 import { mergePublish, movedText, publishDecision, refuseText, type PublishEntry, type PublishFacts } from "./publish.ts";
 import { combineRepoTexts, followFolders, parseAddDir, parseWorktreeList, repoKey, uniqueRoots } from "./repos.ts";
 import { askFolderAdd } from "./folder-add.ts";
-import { codePublishProblem, shellProblem } from "./push-guard.ts";
+import { codePublishProblem, registryPublishCodeProblem, registryPublishProblem, shellProblem } from "./push-guard.ts";
+import { blockedWaitCheck, classifyPublish, lockDecision, lockWaitCheck, shouldRecordMerged, waitSince, mirrorArgs, parseMirrorStep, parsePublishStep, publishArgs } from "./registry-publish.ts";
 import { COMMIT_GUARD_ENV, type CommitGuardSpec } from "./commit-guard.ts";
 import { RUNNER_GUARD_ENV, type RunnerGuardSpec } from "./runner-guard.ts";
 import { parseTestReport } from "./test-report.ts";
@@ -180,6 +181,8 @@ interface FlowState {
 	checkpoints?: { step?: string; stage?: number; text: string; ok: boolean }[];
 	/** Per repo key: the head the workflow's commit step produced (base = HEAD before this flow's first commit there). */
 	judgedHeads?: Record<string, { base: string; head: string; branch: string }>;
+	/** Per repo key: the judged head a merge delivery landed (Publish steps read versions from it). */
+	mergedHeads?: Record<string, string>;
 }
 
 interface LastJudge {
@@ -578,6 +581,8 @@ export default function workflow(pi: ExtensionAPI) {
 		state.waiting = undefined;
 		state.checkpoints = undefined;
 		state.judgedHeads = undefined;
+		state.mergedHeads = undefined;
+		publishWaitSince.clear();
 		stopWaitTimer();
 		state.finalizing = undefined;
 		state.planRevisions = undefined;
@@ -1165,6 +1170,7 @@ export default function workflow(pi: ExtensionAPI) {
 		waiting?: NonNullable<PlanStatus["waiting"]>;
 		checkpoints?: { step?: string; stage?: number; text: string; ok: boolean }[];
 		judgedHeads?: Record<string, { base: string; head: string; branch: string }>;
+		mergedHeads?: Record<string, string>;
 		/** A restore of the file (no new rev): never commits over a newer ref. */
 		retry?: boolean;
 	}
@@ -1297,6 +1303,7 @@ export default function workflow(pi: ExtensionAPI) {
 			...(snap.waiting ? { waiting: snap.waiting } : {}),
 			...(snap.checkpoints?.length ? { checkpoints: snap.checkpoints } : {}),
 			...(snap.judgedHeads && Object.keys(snap.judgedHeads).length ? { judgedHeads: snap.judgedHeads } : {}),
+			...(snap.mergedHeads && Object.keys(snap.mergedHeads).length ? { mergedHeads: snap.mergedHeads } : {}),
 			repos: infos.map((info, i) => ({ ...info, primary: i === 0 })),
 		};
 		const planMd = renderPlanFile(snap.flowId, snap.plan, snap.checklist, snap.finished, snap.waiting?.reason);
@@ -1391,12 +1398,13 @@ export default function workflow(pi: ExtensionAPI) {
 
 	/** A point where the plan file is rewritten: approval, an amendment, a stage end, the flow's end. Runs in the background, in order; `bump: false` only restores the file. */
 	/** The wait and checkpoints as they go into the plan's status. */
-	function waitSnapshot(): Pick<PlanSnap, "waiting" | "checkpoints" | "judgedHeads"> {
+	function waitSnapshot(): Pick<PlanSnap, "waiting" | "checkpoints" | "judgedHeads" | "mergedHeads"> {
 		const w = state.waiting;
 		return {
 			...(w ? { waiting: { reason: w.reason, ...(w.check ? { check: w.check } : {}), since: w.since, planned: w.planned, ...(w.atStageStart ? { atStageStart: true } : {}), ...(w.held ? { held: w.held } : {}) } } : {}),
 			...(state.checkpoints?.length ? { checkpoints: state.checkpoints.map((c) => ({ ...(c.step ? { step: c.step } : {}), ...(c.stage ? { stage: c.stage } : {}), text: c.text, ok: c.ok })) } : {}),
 			...(state.judgedHeads && Object.keys(state.judgedHeads).length ? { judgedHeads: { ...state.judgedHeads } } : {}),
+			...(state.mergedHeads && Object.keys(state.mergedHeads).length ? { mergedHeads: { ...state.mergedHeads } } : {}),
 		};
 	}
 
@@ -1441,6 +1449,7 @@ export default function workflow(pi: ExtensionAPI) {
 			delete status.waiting;
 			delete status.checkpoints;
 			delete status.judgedHeads;
+			delete status.mergedHeads;
 			Object.assign(status, waitSnapshot());
 			const file = writeLocal(last.dir, doc.flowId, renderPlanFile(doc.flowId, state.approvedPlan, state.checklist, doc.finished, state.waiting?.reason), status);
 			last.status = status;
@@ -1672,14 +1681,19 @@ export default function workflow(pi: ExtensionAPI) {
 		if (!state.checklist.length) state.checklist = undefined;
 		state.checkpoints = status.checkpoints?.map((c) => ({ ...c }));
 		state.judgedHeads = status.judgedHeads ? { ...status.judgedHeads } : undefined;
+		state.mergedHeads = status.mergedHeads ? { ...status.mergedHeads } : undefined;
 		state.waiting = undefined;
+		publishWaitSince.clear();
 		if (status.waiting) {
 			// Older status files lack the held text and the flags: rebuild the plain stage start for a stage that declares this wait.
 			const resumedStages = state.stage ? parseStages(plan) : [];
 			const after = state.stage ? resumedStages[state.stage - 1]?.after : undefined;
 			const atStart = status.waiting.atStageStart ?? (!!after && after.reason === status.waiting.reason);
 			const held = status.waiting.held ?? (atStart && state.stage ? stageStart(resumedStages, state.stage, state.delivery ?? defaultDelivery()) : undefined);
+			const publishStep = /^Call publish_packages again with step (\S+)\.$/.exec(status.waiting.held ?? "")?.[1];
+			if (publishStep) publishWaitSince.set(publishStep, status.waiting.since);
 			state.waiting = {
+				...(publishStep ? { step: publishStep } : {}),
 				reason: status.waiting.reason,
 				...(status.waiting.check ? { check: status.waiting.check } : {}),
 				since: status.waiting.since,
@@ -1694,7 +1708,7 @@ export default function workflow(pi: ExtensionAPI) {
 		publishFolders(ctx);
 		updateStatus(ctx);
 		planMilestone(ctx);
-		startWaitTimer();
+		startWaitTimer(state.waiting?.step && publishWaitSince.has(state.waiting.step) ? Date.parse(state.waiting.since) : undefined);
 		await planChain;
 		pi.sendMessage(
 			{ customType: "workflow-resume-plan", content: `Resumed on this device: check \`git status\` and the branch in each repo, then continue with the open steps.\n\n${planCardText()}`, display: true },
@@ -2231,6 +2245,8 @@ export default function workflow(pi: ExtensionAPI) {
 
 	let waitTimer: ReturnType<typeof setInterval> | undefined;
 	let waitTimerStart = 0;
+	/** First wait of each Publish/Mirror step, so the wait's time limit counts across blocked retries. */
+	const publishWaitSince = new Map<string, string>();
 	let waitChecking = false;
 
 	function stopWaitTimer(): void {
@@ -2239,11 +2255,11 @@ export default function workflow(pi: ExtensionAPI) {
 	}
 
 	/** Polls the wait's check every `wait.pollMs` while the session is idle. A wait without a check, or whose check already passed, is not polled. */
-	function startWaitTimer(): void {
+	function startWaitTimer(sinceMs?: number): void {
 		stopWaitTimer();
 		const w = state.waiting;
 		if (!w?.check || w.checkPassed) return;
-		waitTimerStart = Date.now();
+		waitTimerStart = sinceMs ?? Date.now();
 		waitTimer = setInterval(() => void waitTick(), cfg.wait.pollMs);
 		(waitTimer as { unref?: () => void }).unref?.();
 	}
@@ -2329,7 +2345,7 @@ export default function workflow(pi: ExtensionAPI) {
 		name: "wait_for_user",
 		label: "Wait for user",
 		description:
-			"Pause the flow until a person has done something a later step needs (publish a package, open the Unity Editor so the unity CLI can run). For a check only a person can do (play it in the Editor, look at visuals) use kind \"verify\": nothing pauses, the check is listed for the user after the flow. Optional `check` is a read-only command that exits 0 once it is done; the workflow runs it once at once, then every few minutes, and resumes you by itself. Then end your turn. With autopilot on, the tool tells you what to do instead of pausing, unless `manual: true`. Name the plan step as `step` when the plan has a `Wait:` step; otherwise the wait is added to the plan as an amendment.",
+			"Pause the flow until a person has done something a later step needs (open the Unity Editor so the unity CLI can run). For a check only a person can do (play it in the Editor, look at visuals) use kind \"verify\": nothing pauses, the check is listed for the user after the flow. Optional `check` is a read-only command that exits 0 once it is done; the workflow runs it once at once, then every few minutes, and resumes you by itself. Then end your turn. With autopilot on, the tool tells you what to do instead of pausing, unless `manual: true`. Name the plan step as `step` when the plan has a `Wait:` step; otherwise the wait is added to the plan as an amendment.",
 		promptSnippet: "wait_for_user: pause the flow until a person did something; resumes by check or by their reply",
 		parameters: Type.Object({
 			reason: Type.String({ description: "What the person must do, in one line" }),
@@ -2392,6 +2408,172 @@ export default function workflow(pi: ExtensionAPI) {
 			return new Text(`${title(theme, "wait_for_user", "execute")}${theme.fg("accent", ` ${String(args.reason ?? "").slice(0, 80)}`)}`, 0, 0);
 		},
 	});
+
+	/** Runs `node scripts/<script> <args>` in a repo with stdin closed; resolves with the exit code and the output. */
+	function runNodeScript(root: string, script: string, args: string[], timeoutMs = 30 * 60_000): Promise<{ code: number; stdout: string; stderr: string }> {
+		return new Promise((resolve) => {
+			const child = spawn("node", [path.join(root, "scripts", script), ...args], { cwd: root, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+			let stdout = "";
+			let stderr = "";
+			const timer = setTimeout(() => child.kill(), timeoutMs);
+			child.stdout.on("data", (d) => (stdout += d));
+			child.stderr.on("data", (d) => (stderr += d));
+			child.on("error", (e) => {
+				clearTimeout(timer);
+				resolve({ code: 1, stdout, stderr: `${stderr}${e.message}` });
+			});
+			child.on("close", (code) => {
+				clearTimeout(timer);
+				resolve({ code: code ?? 1, stdout, stderr });
+			});
+		});
+	}
+
+	const lastLines = (text: string, n = 40) => text.trim().split(/\r?\n/).slice(-n).join("\n");
+
+	/** The clone's publish lock file (shared by every session and worktree of the clone). */
+	async function publishLockFile(root: string): Promise<string> {
+		const common = (await git(root, "rev-parse", "--git-common-dir")).stdout.trim() || ".git";
+		return path.resolve(root, common, "iec-publish.lock");
+	}
+
+	/** Takes the clone's publish lock: a release function, or "held" while another session publishes. */
+	async function takePublishLock(file: string): Promise<{ release: () => void } | "held"> {
+		for (let attempt = 0; attempt < 2; attempt++) {
+			try {
+				fs.writeFileSync(file, JSON.stringify({ session: state.planDoc?.flowId ?? "session", pid: process.pid, startedAt: new Date().toISOString() }), { flag: "wx" });
+				return { release: () => fs.rmSync(file, { force: true }) };
+			} catch {
+				let lock: { pid: number; startedAt: string } | null = null;
+				try {
+					lock = JSON.parse(fs.readFileSync(file, "utf8"));
+				} catch {
+					// A half-written file is a lock being taken: judge it by its age.
+					try {
+						lock = { pid: 0, startedAt: fs.statSync(file).mtime.toISOString() };
+					} catch {
+						lock = null;
+					}
+				}
+				if (lockDecision(lock, Date.now(), pidAlive) === "held") return "held";
+				fs.rmSync(file, { force: true });
+			}
+		}
+		return "held";
+	}
+
+	type ToolReply = { content: { type: "text"; text: string }[]; details: object };
+
+	pi.registerTool({
+		name: "publish_packages",
+		label: "Publish packages",
+		description:
+			"Run a plan's `Publish:` or `Mirror:` step: publishes the unity-packages versions this flow merged (with the person's registry token, on this computer) or mirrors vendor packages. Pass the plan step ID. If an earlier version or a pinned package is not published yet, the flow waits and resumes by itself; then call this again with the same step. Never run updates.bat, update-packages.mjs publish, maintenance.mjs mirror --confirm, publish-package.mjs or npm publish yourself.",
+		promptSnippet: "publish_packages: run the plan's Publish:/Mirror: step S<n>",
+		parameters: Type.Object({ step: Type.String({ description: "The plan's Publish: or Mirror: step, e.g. S9" }) }),
+		async execute(_id, params, _signal, _onUpdate, ctx) {
+			const reply = (text: string): ToolReply => ({ content: [{ type: "text" as const, text }], details: {} });
+			const plan = state.approvedPlan;
+			if (state.phase !== "execute" || !plan) return reply("publish_packages works only while executing an approved plan. Nothing published.");
+			const step = params.step.trim().toUpperCase();
+			const pub = parsePublishStep(plan, step);
+			const mir = pub ? null : parseMirrorStep(plan, step);
+			if (!pub && !mir) return reply(`Step ${step} is not a \`Publish: <package>\` or \`Mirror: <folder>|all\` step of the approved plan (packages only, no versions). Nothing published.`);
+			if (state.checklist?.find((i) => i.id === step)?.done) return reply(`Step ${step} is already ticked. Nothing published.`);
+			const repo = (await flowRepos(ctx)).find((r) => fs.existsSync(path.join(r.root, "scripts", "update-packages.mjs")));
+			if (!repo) return reply("No repo of this flow has scripts/update-packages.mjs (add the unity-packages folder to the flow). Nothing published.");
+			const root = repo.root;
+			const wait = (why: string, check: string): ToolReply => {
+				const since = waitSince(publishWaitSince.get(step), new Date().toISOString());
+				publishWaitSince.set(step, since);
+				state.waiting = { reason: why, check, step, stage: state.stage, since, planned: true, held: `Call publish_packages again with step ${step}.` };
+				persist();
+				updateStatus(ctx);
+				planMilestone(ctx);
+				startWaitTimer(Date.parse(since));
+				return reply(`Waiting: ${why}. End your turn now; the workflow resumes you when the check passes. Then call publish_packages again with step ${step}.`);
+			};
+			const lockFile = await publishLockFile(root);
+			const lock = await takePublishLock(lockFile);
+			if (lock === "held") return wait("another session is publishing", lockWaitCheck(lockFile));
+			try {
+				if (mir) {
+					const r = await runNodeScript(root, "maintenance.mjs", mirrorArgs(mir));
+					if (r.code === 0) publishWaitSince.delete(step);
+					return reply(`mirror ${mir.target} exit ${r.code}:\n${lastLines(`${r.stdout}\n${r.stderr}`)}\n${r.code === 0 ? `Tick ${step} with plan_check.` : "Nothing more was done; report the failure."}`);
+				}
+				return await runPublish(root, step, pub!.packages, reply, wait);
+			} finally {
+				lock.release();
+			}
+		},
+		renderCall(args, theme) {
+			return new Text(`${title(theme, "publish_packages", "execute")}${theme.fg("accent", ` ${String(args.step ?? "")}`)}`, 0, 0);
+		},
+	});
+
+	/** The versions the merged head holds for these packages, or the reason it can't be read. */
+	async function readMergedItems(root: string, head: string, packages: string[]): Promise<{ items: { name: string; version: string }[] } | { error: string }> {
+		const items: { name: string; version: string }[] = [];
+		for (const name of packages) {
+			const show = await git(root, "show", `${head}:${name}/package.json`);
+			let version = "";
+			try {
+				version = String(JSON.parse(show.stdout).version ?? "");
+			} catch {
+				version = "";
+			}
+			if (show.code !== 0 || !version) return { error: `${name} has no package.json at the merged head ${head.slice(0, 8)}. Nothing published.` };
+			items.push({ name, version });
+		}
+		return { items };
+	}
+
+	/** The script's dry run for these versions: its JSON, or the reason it failed. */
+	async function dryRunPublish(root: string, items: { name: string; version: string }[]) {
+		const dry = await runNodeScript(root, "update-packages.mjs", publishArgs(items, true));
+		let result: { items?: { name: string; version: string }[]; blockedBy?: { tag: string }[]; notCandidates?: string[]; error?: string } | undefined;
+		try {
+			result = JSON.parse(dry.stdout.trim().split(/\r?\n/).filter(Boolean).pop() ?? "");
+		} catch {
+			result = undefined;
+		}
+		if (dry.code !== 0 || !result || result.error) return { error: `exit ${dry.code}${result?.error ? ` (${result.error})` : ""}:\n${lastLines(`${dry.stderr}\n${dry.stdout}`, 20)}` };
+		return { result };
+	}
+
+	/** The tags (name/vversion) of these versions that origin has. */
+	async function taggedOnOrigin(root: string, items: { name: string; version: string }[]): Promise<Set<string>> {
+		const tagged = new Set<string>();
+		for (const i of items) {
+			const remote = await git(root, "ls-remote", "--tags", "origin", `${i.name}/v${i.version}`);
+			if (remote.code === 0 && remote.stdout.trim()) tagged.add(`${i.name}/v${i.version}`);
+		}
+		return tagged;
+	}
+
+	/** The Publish step: versions come from the head this flow merged; the script's dry run decides what is published, already on the registry or not publishable; blockers start a wait. */
+	async function runPublish(root: string, step: string, packages: string[], reply: (t: string) => ToolReply, wait: (why: string, check: string) => ToolReply): Promise<ToolReply> {
+		const head = state.mergedHeads?.[repoKey(root)];
+		if (!head) return reply("No merged head is recorded for the unity-packages repo: the Deliver: merge step that lands the packages must run first (and succeed). Nothing published.");
+		const read = await readMergedItems(root, head, packages);
+		if ("error" in read) return reply(read.error);
+		const names = (list: { name: string; version: string }[]) => list.map((i) => `${i.name}@${i.version}`).join(", ");
+		const dry = await dryRunPublish(root, read.items);
+		if ("error" in dry) return reply(`Checking ${names(read.items)} failed (${dry.error})\nNothing published.`);
+		const split = classifyPublish(read.items, dry.result, await taggedOnOrigin(root, read.items));
+		if (split.notPublishable.length) return reply(`${split.notPublishable.join(", ")}: superseded or not on origin/main; nothing published. Stop and explain to the user.`);
+		if (!split.publish.length) {
+			publishWaitSince.delete(step);
+			return reply(`${names(read.items)} already on the registry. Tick ${step} with plan_check.`);
+		}
+		if (dry.result.blockedBy?.length) return wait(`waiting for ${dry.result.blockedBy.map((b) => b.tag).join(", ")} to be published`, blockedWaitCheck(root, split.publish));
+		const run = await runNodeScript(root, "update-packages.mjs", publishArgs(split.publish, false));
+		if (run.code === 0) publishWaitSince.delete(step);
+		const skipped = split.alreadyPublished.length ? `Skipped, the registry already has: ${names(split.alreadyPublished)}.\n` : "";
+		const next = run.code === 0 ? `Tick ${step} with plan_check.` : run.code === 3 ? "Blocked meanwhile; call publish_packages again." : "Nothing more was done; report the failure.";
+		return reply(`${skipped}publish ${names(split.publish)} exit ${run.code}:\n${lastLines(`${run.stdout}\n${run.stderr}`)}\n${next}`);
+	}
 
 	pi.registerTool({
 		name: "plan_check",
@@ -2639,7 +2821,7 @@ export default function workflow(pi: ExtensionAPI) {
 						try {
 							report = await runCommitSubagent(ctx, pub.run.instruction, mode as Delivery, pub.run.pending, signal);
 							outcome = await readOutcome(ctx, pub.run.pending);
-							await recordJudgedHeads(ctx, pub.run.pending);
+							await recordJudgedHeads(ctx, pub.run.pending, outcome.ok);
 						} finally {
 							view.stage = "execute";
 							view.changed();
@@ -2687,7 +2869,7 @@ Nothing was delivered.`);
 					try {
 						report = await runCommitSubagent(ctx, instruction, mode as Delivery, pending, signal);
 						outcome = await readOutcome(ctx, pending);
-						await recordJudgedHeads(ctx, pending);
+						await recordJudgedHeads(ctx, pending, outcome.ok);
 					} finally {
 						view.stage = "execute";
 						view.changed();
@@ -2792,6 +2974,12 @@ Nothing was delivered.`);
 			else if (/(^|__)run_code$/.test(event.toolName)) {
 				const reason = codePublishProblem(String(input.code ?? ""));
 				if (reason) return { block: true, reason: publishRefuse(reason) };
+				const registry = registryPublishCodeProblem(String(input.code ?? ""));
+				if (registry) return { block: true, reason: registry };
+			}
+			if (texts.length) {
+				const registry = registryPublishProblem(texts[0].text);
+				if (registry) return { block: true, reason: registry };
 			}
 			const gitTexts = texts.filter((t) => /\bgit\b|\bgh\b/i.test(t.text));
 			if (gitTexts.length === 0) return;
@@ -3384,7 +3572,7 @@ Nothing was delivered.`);
 		state.minorRounds = 0;
 		state.minorSentFor = undefined;
 		let outcome = await readOutcome(ctx, pending);
-		if (!pending.self) await recordJudgedHeads(ctx, pending);
+		if (!pending.self) await recordJudgedHeads(ctx, pending, outcome.ok);
 		if (pending.notes?.length) outcome = { text: `${outcome.text}; not delivered: ${pending.notes.join(" ")}`, ok: false };
 		const cps = stageCheckpoints();
 		if (cps.length && !state.testFlow) outcome = { text: withCheckpoints(cps.map((c) => c.text), outcome.text), ok: outcome.ok && cps.every((c) => c.ok) };
@@ -3924,7 +4112,7 @@ ${instruction}` : instruction);
 
 	/** The executor committed the judged change itself: carry on with the flow's delivery from that commit. False when this is not that case. */
 	/** Records the heads the commit step produced in the repos of `pending`. Only a commit step's own heads are ever recorded; `base` is kept from the first one. */
-	async function recordJudgedHeads(ctx: ExtensionContext, pending: NonNullable<FlowState["commitPending"]>): Promise<void> {
+	async function recordJudgedHeads(ctx: ExtensionContext, pending: NonNullable<FlowState["commitPending"]>, deliveryOk = false): Promise<void> {
 		const targets = pending.repos?.length
 			? pending.repos.map((r) => ({ root: r.root, head: r.head, branch: r.branch, mode: r.mode }))
 			: [{ root: (await gitRoot(ctx.cwd)) ?? ctx.cwd, head: pending.head, branch: pending.branch, mode: pending.mode }];
@@ -3933,11 +4121,13 @@ ${instruction}` : instruction);
 			if (!branch || branch === "HEAD") continue;
 			if ((await git(t.root, "rev-parse", "--verify", "--quiet", `refs/heads/${branch}`)).code !== 0) {
 				// A merge that deleted the branch: its work is on the base branch, nothing is left to publish.
+				if (shouldRecordMerged(t.mode, deliveryOk)) state.mergedHeads = { ...(state.mergedHeads ?? {}), [repoKey(t.root)]: state.judgedHeads?.[repoKey(t.root)]?.head ?? t.head };
 				if (t.mode === "merge" && state.judgedHeads?.[repoKey(t.root)]) delete state.judgedHeads[repoKey(t.root)];
 				continue;
 			}
 			const landed = await landedBranch((...a) => git(t.root, ...a), branch, t.head);
 			if (landed) branch = landed;
+			if (shouldRecordMerged(t.mode, deliveryOk)) state.mergedHeads = { ...(state.mergedHeads ?? {}), [repoKey(t.root)]: t.head };
 			const now = (await git(t.root, "rev-parse", branch)).stdout.trim();
 			if (!now || now === t.head) continue;
 			const key = repoKey(t.root);
