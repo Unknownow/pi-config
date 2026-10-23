@@ -32,6 +32,7 @@ export function notifyCommand(platform: NodeJS.Platform, title: string, body: st
 /** Why the session is idle, for the notification text. */
 export function idleReason(o: { phase: string; waiting?: string }): string {
 	if (o.waiting) return `waiting for you: ${o.waiting}`;
+	if (o.phase === "discuss") return "discuss reply ready";
 	return o.phase === "plan" ? "plan reply ready" : "turn finished";
 }
 

@@ -157,3 +157,24 @@ test("addedFolderRules defaults to paths; full is kept, anything else falls back
 test("finalFullReviewRepeatMaxShare defaults to 0.1", () => {
 	assert.equal(DEFAULTS.judge.finalFullReviewRepeatMaxShare, 0.1);
 });
+
+test("discuss defaults", () => {
+	const c = loadConfig(tmp()).config;
+	assert.equal(c.startPhase, "discuss");
+	assert.equal(c.returnTo, "discuss");
+	assert.deepEqual(c.roles.discuss, c.roles.plan);
+});
+
+test("legacy returnToPlan and invalid values", () => {
+	const get = (json: string) => {
+		const f = tmp();
+		fs.writeFileSync(f, json);
+		return loadConfig(f).config;
+	};
+	assert.equal(get('{"returnToPlan":false}').returnTo, "off");
+	assert.equal(get('{"returnToPlan":true}').returnTo, "plan");
+	assert.equal(get('{"returnTo":"plan","returnToPlan":false}').returnTo, "plan");
+	assert.equal(get('{"returnTo":"bogus"}').returnTo, "discuss");
+	assert.equal(get('{"startPhase":"x"}').startPhase, "discuss");
+	assert.equal(get('{"startPhase":"plan"}').startPhase, "plan");
+});

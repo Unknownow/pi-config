@@ -1,7 +1,7 @@
 // node --experimental-strip-types --test prompts.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { ADVISOR, ARBITER, COMMIT, EXECUTE_PHASE, EXPLORE, FIX_ROUND, JUDGE, JUDGE_KNOWLEDGE_ONLY, NO_SLEEP, PACE, finalize, phaseSection, planPhase, RUNNER, TEST_PHASE, workspaceSection } from "./prompts.ts";
+import { ADVISOR, ARBITER, COMMIT, EXECUTE_PHASE, EXPLORE, FIX_ROUND, JUDGE, JUDGE_KNOWLEDGE_ONLY, NO_SLEEP, PACE, finalize, phaseSection, PLAN_KICKOFF, planPhase, RUNNER, TEST_PHASE, workspaceSection } from "./prompts.ts";
 
 const BATCH = `- Batch tool calls. Each call re-sends the whole conversation, so ten small calls at 150k context re-send 1.5M tokens. Put independent reads and commands in one call (a codemode script, run_code, or one bash command joined with && or ;) and print only what you need. Don't spend a call on something you could have added to the previous one.`;
 const PLAN_BATCH = `- Batch tool calls. Each call re-sends the whole conversation, so ten small calls at 150k context re-send 1.5M tokens. Put independent reads and commands in one call (a codemode script, run_code for read-only analysis, or one bash command joined with && or ;) and print only what you need. Don't spend a call on something you could have added to the previous one.`;
@@ -16,6 +16,15 @@ test("execute phase keeps its batch line", () => {
 });
 
 const SECTION_OPTS = { finalize: true, staging: "auto", recap: "changes" } as const;
+
+test("discuss prompt asks for no plan; the plan prompt no longer calls the planner a discussion partner", () => {
+	const d = phaseSection("discuss", SECTION_OPTS) ?? "";
+	assert.ok(d.includes("## Workflow: DISCUSS phase") && d.includes("Agreed so far"));
+	assert.ok(!/end the reply with a short `Plan:`|propose the plan in a short/.test(d));
+	const p = phaseSection("plan", SECTION_OPTS) ?? "";
+	assert.ok(p.includes("## Workflow: PLAN phase") && p.includes("Staged delivery") && !p.includes("partner in discussion"));
+	assert.ok(PLAN_KICKOFF.includes("Plan:"));
+});
 
 test("phaseSection gives the plan prompt in the plan phase", () => {
 	const text = phaseSection("plan", SECTION_OPTS);

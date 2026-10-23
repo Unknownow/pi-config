@@ -18,8 +18,9 @@ plan is read-only:   bash refuses commands that change files, git or GitHub
 
 | Role | Runs as | When |
 |---|---|---|
-| `plan` | main session model; edit/write off, bash read-only | new sessions start here (`startPhase`). Discuss, investigate, agree; after approval it writes the final execution plan (`finalizePlan`) |
-| `execute` | main session model | after you approve the plan; when the flow ends (delivered, passed without a commit, or stopped) it goes back to `plan` (`returnToPlan`) |
+| `discuss` | main session model; same read-only rules as `plan` | new sessions start here (`startPhase`). Open talk before a plan: investigate, answer, agree; no `Plan:` sections and no menus. `/flow plan` or a typed "go" moves to `plan` (it never executes) |
+| `plan` | main session model; edit/write off, bash read-only | turns the discussion into a `Plan:`, checks it and fixes it with you; `/flow discuss` or "Back to discussion" in the menu returns to talk; after approval it writes the final execution plan (`finalizePlan`) |
+| `execute` | main session model | after you approve the plan; when the flow ends (delivered, passed without a commit, or stopped) it goes back to `discuss` (`returnTo`: `discuss`, `plan` or `off`) |
 | `explore` | `explore` tool, parallel sub-`pi` processes | plan and execute send open questions and multi-file searches to it; it decides how much to read and answers with `Answer:` plus `Evidence:` (file:line). Known files are read directly. Judge and advisor do not use it. It runs with thinking low, without `AGENTS.md`/`CLAUDE.md` files (`explore.contextFiles: true` loads them) and with a budget of about 10 tool calls per question, after which it answers with what it has and says what it did not verify |
 | `advisor` | `advisor` tool, sub-`pi` with the whole transcript | choosing an approach, after an error repeats (auto-nudged after `repeatedErrorThreshold` failures), before "done" |
 | `judge` | `judge` tool, sub-`pi` with the git diff | the diff is ready; when a run ends with an unreviewed diff it asks (`autoJudge`) |
@@ -121,7 +122,7 @@ after approval runs on its own:
   and the judge checks the result against it. With `finalizePlan: false` the last `Plan:` reply is used.
 - **Execute** follows the plan in order and writes the code within its contracts.
   It stops and says so when a step cannot be done as written. It never runs `git commit` or `git push` itself (the push guard refuses them): at a delivery point it ends its turn after the judge passes, or it calls `deliver` (see Checkpoints).
-  When the flow ends it switches back to the plan phase (`returnToPlan`, default on).
+  When the flow ends it switches to the phase `returnTo` names (default `"discuss"`; `"plan"` or `"off"`). The old boolean `returnToPlan` is still read when `returnTo` is not set (`true` = `"plan"`, `false` = `"off"`).
 - **The judge** runs in its own session. It sees the approved plan and the diff, not the discussion,
   and assumes the change is wrong. It is asked to stay within about 15 read/grep/find/ls calls on a full review and about 8 on a re-review (knowledge calls excluded), a soft aim, not a limit. What it trusts:
 
@@ -186,7 +187,9 @@ These let one plan deliver or pause partway through, without replanning and with
 
 A session shows a desktop notification (Windows toast, `osascript` on macOS, `notify-send` on Linux) when it needs you: a workflow menu opens (the plan is waiting for approval, a question, a failure), the session stays idle for `idleMs` after a turn, a wait's check passes without `autoResume` or its polling stops, or a flow finishes. Turns the workflow continues by itself (judge, commit step, next stage, auto-resume) never notify, and one session notifies at most every 15 s. There is no focus check. Config: `notify: { enabled: true, idleMs: 10000 }`; `enabled: false` turns it off.
 
-## Plan phase is read-only
+## Discuss and plan phases are read-only
+
+The discuss phase uses exactly the same rules as plan.
 
 Only tools matching `planAllowedTools` (regexes over the tool name) can be called: read, grep, find,
 ls, bash, codemode, explore, advisor, judge, `run_code`, `fetch_url` and MCP tools named search/get/list/...
@@ -365,7 +368,7 @@ next run starts.
 |---|---|
 | `/flow` | status: phase, the model for each role, config path |
 | `/flow board` | live view of every flow on this machine (overlay, read-only) |
-| `/flow plan` / `execute` / `off` | switch phase (`off` leaves the model alone) |
+| `/flow discuss` / `plan` / `execute` / `off` | switch phase (`off` leaves the model alone). `/flow plan` from discuss also asks the planner for the `Plan:`; `/flow approve` in discuss does the same |
 | `/flow test [scope]` | test phase: a strong supervisor plans tests, cheap runners run them, the report lists the bugs (without a scope, type it as the next message) |
 | `/flow approve` | approve the plan: switch to execute and start (also offered when a plan ends) |
 | `/flow delivery <commit\|push\|pr\|merge\|off>` | what happens after the judge passes, for the current flow |

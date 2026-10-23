@@ -2,7 +2,7 @@
 
 Reference list for `pi/agent/extensions/workflow/`. Goal: less time, fewer tokens, more parallelism.
 
-Status: A2, A3, A5, A7, B1, B7, B9, C2, C3, C4, D2, D3, D4, D5, D6, D7, D8, D9, D10, D11, D12, D13, D14, D15, D16 and D17 are implemented; A13, A14, A15, A16, A17, A18, A20 and A21 are implemented; A22 is implemented; A23, A24 and A25 are implemented; A26, A27, A28, A32, B14 and D18 are implemented; A12 is implemented; A1 is rejected; the rest are ideas only. Found by reading the code on 2026-10-16. Nothing was measured, so every benefit below is an estimate. Line numbers are from commit `3fdc69a` and will drift.
+Status: A2, A3, A5, A7, B1, B7, B9, C2, C3, C4, D2, D3, D4, D5, D6, D7, D8, D9, D10, D11, D12, D13, D14, D15, D16 and D17 are implemented; A13, A14, A15, A16, A17, A18, A20 and A21 are implemented; A22 is implemented; A23, A24 and A25 are implemented; A26, A27, A28, A32, B14, D18 and D19 are implemented; A12 is implemented; A1 is rejected; the rest are ideas only. Found by reading the code on 2026-10-16. Nothing was measured, so every benefit below is an estimate. Line numbers are from commit `3fdc69a` and will drift.
 
 ## Keeping this file current
 
@@ -114,6 +114,7 @@ Plan (Opus) -> approve -> execute (Sonnet) -> judge (Opus, separate `pi` process
 | D16 | `git merge`, `cherry-pick`, `revert`, `pull`, `rebase` and `am` could create commits no judge saw during execution. **Done:** `commitCreatingOnly` in `push-guard.ts`, and the non-shell pre-check in `index.ts`; allowed only with `--no-commit`/`-n`/`--squash`/`--ff-only` or to abort. | Medium (T) | S | Low: the refusal names the allowed flag. | `git pull` without `--ff-only` is refused. |
 | D17 | The executor handed pushes to the user; plans spelled out raw publish commands and Deliver steps named no mode. **Done:** `deliverStepSpec`, `deliverHint`, `deliverHintsBlock`, `publishRefusal` and `deliverStepWarnings` in `checkpoints.ts`; the prompts in `prompts.ts`; annotations, refusal texts and the accept-time warnings in `index.ts`. | Medium (T) | S | Low: hints only, warnings never block. | The executor sees `→ call deliver {…}` for each open Deliver step. |
 | D18 | A tool that registered after the plan or test phase began (an MCP server that connected late) stayed active, even when the allow list refuses it. **Done:** `plan-tools.ts` (`refilterPlanTools`), called from `before_agent_start` and a new `turn_start` handler in `index.ts`; the snapshot `toolsBeforePlan` is extended in place so a restore brings the tool back. | Medium (T) | S | Low: one cache rewrite per change. | Plan-phase tool list after a late MCP connect. |
+| D19 | The plan phase mixed open discussion with plan writing and offered the approve menu after every reply. **Done:** discuss phase: `DISCUSS_PHASE` and `PLAN_KICKOFF` in `prompts.ts`, the `discuss` role, `startPhase` and `returnTo` in `config.ts`, `phaseAfterFlow` in `agent-end.ts`, the phase plumbing and `/flow discuss` in `index.ts`, the stage node in `view.ts`. | Medium (T) | M | Low: leaving discuss is one command or "go". | Approve menus dismissed with "Keep discussing" per flow. |
 
 ## Effect measurement
 
@@ -170,6 +171,7 @@ Method for every item:
 | D16 | Guard refusals of commit-creating subcommands per flow | Count refusals containing "creates a commit no judge has seen". Implemented, not measured yet. | Few; each followed by a retry with the flag |
 | D17 | Executor turns asking the user to push or open/merge a PR | Count such turns in flow transcripts. Implemented, not measured yet. | None |
 | D18 | Tools the plan phase should refuse that were active | Check the plan-phase tool list after an MCP server connects late. Implemented, not measured yet. | None |
+| D19 | Approve menus dismissed with "Keep discussing" per flow | Count them in flow transcripts. Implemented, not measured yet. | Fewer than before |
 | A10 | Flow steps failed by `cannot lock ref` | Count in session logs | Idea only, not measured |
 | A11 | Plans started in a second workspace | n/a | Idea only |
 | A12 | User prompts per test flow; supervisor vs runner tokens (D3 metrics); bugs verified fixed per flow | Count the questions asked per flow, compare `test` and `runner` tokens in the flow card, count `[fixed]` items. Not measured yet. | Most flows end without prompts beyond the crucial cases; runner tokens are the larger share; no fix is committed that the retest shows broken |

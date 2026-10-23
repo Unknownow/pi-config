@@ -25,7 +25,7 @@ import type { SubagentEvent } from "./subagent.ts";
 import { progressBar } from "./board.ts";
 import { reportLines, type ReportFinding, type ReportStep } from "./flow-report.ts";
 
-export type Stage = "plan" | "test" | "execute" | "judge" | "commit";
+export type Stage = "discuss" | "plan" | "test" | "execute" | "judge" | "commit";
 export type SubRole = "explore" | "advisor" | "judge" | "arbiter" | "commit" | "runner";
 
 export interface RunView {
@@ -78,7 +78,7 @@ const addCounts = (a: ModelCounts, b: ModelCounts): ModelCounts => ({
 /** Key of a model in the per-model maps: the short name, so "claude-bridge/claude-x" and "claude-x" agree. */
 const modelKey = (model: string | undefined): string => (model ? shortModel(model) : "unknown");
 
-export const STAGES: Stage[] = ["plan", "test", "execute", "judge", "commit"];
+export const STAGES: Stage[] = ["discuss", "plan", "test", "execute", "judge", "commit"];
 
 const zero = (): Tok => ({ raw: 0, cost: 0 });
 const isZero = (t: Tok): boolean => t.raw === 0 && t.cost === 0;
@@ -93,7 +93,7 @@ function asTok(x: Tok | number | undefined): Tok {
 }
 
 export function emptyStageTokens(): Record<Stage, Tok> {
-	return { plan: zero(), test: zero(), execute: zero(), judge: zero(), commit: zero() };
+	return { discuss: zero(), plan: zero(), test: zero(), execute: zero(), judge: zero(), commit: zero() };
 }
 
 /** Where one stage's tokens went during a flow. */
@@ -121,7 +121,7 @@ export type FlowUsage = Record<Stage, StageUsage>;
 
 export function emptyFlowUsage(): FlowUsage {
 	const empty = (): StageUsage => ({ tokens: zero(), main: zero(), models: [], subs: {}, mainByModel: {}, byModel: {} });
-	return { plan: empty(), test: empty(), execute: empty(), judge: empty(), commit: empty() };
+	return { discuss: empty(), plan: empty(), test: empty(), execute: empty(), judge: empty(), commit: empty() };
 }
 
 /** Data of the summary entry shown when a flow ends. */
@@ -239,8 +239,8 @@ export function runLine(run: RunView, theme: Theme, opts: { showRole: boolean })
 export function summaryLines(s: FlowSummary, theme: Theme): string[] {
 	const stageTokens = (st: Stage) => asTok(s.stages[st]?.tokens);
 	const total = STAGES.reduce((n, st) => add(n, stageTokens(st)), zero());
-	// The test row shows only for flows that tested.
-	const rows = STAGES.filter((st) => st !== "test" || !isZero(stageTokens(st)));
+	// The discuss and test rows show only for flows that used them.
+	const rows = STAGES.filter((st) => (st !== "test" && st !== "discuss") || !isZero(stageTokens(st)));
 	const unit = s.weighted ? "cost-weighted tokens" : "tokens";
 	// Summaries from before the per-model breakdown render as they always did.
 	const perModel = new Map<string, ModelTotal>();
@@ -320,7 +320,7 @@ export function progressLine(p: FlowProgress, theme: Theme): string {
 }
 
 export class FlowView {
-	phase: "off" | "plan" | "execute" | "test" = "off";
+	phase: "off" | "discuss" | "plan" | "execute" | "test" = "off";
 	escalated = false;
 	stage: Stage = "plan";
 	roles: Record<Role, RoleSpec>;
@@ -565,9 +565,10 @@ export class FlowView {
 			};
 			const sep = theme.fg("dim", " ▸ ");
 			const total = STAGES.reduce((sum, s) => add(sum, this.stageTokens(s)), zero());
+			const discussNode = this.stage === "discuss" || !isZero(this.stageTokens("discuss")) ? `${node("discuss", "discuss")}${sep}` : "";
 			const testNode = this.stage === "test" || !isZero(this.stageTokens("test")) ? `${node("test", "test")}${sep}` : "";
 			lines.push(
-				`${theme.fg("muted", "flow ")} ${node("plan", "plan")}${sep}${testNode}${node("execute", "execute")}${sep}${node("judge", "judge")}${sep}${node("commit", null)}${isZero(total) ? "" : theme.fg("dim", ` · Σ ${fmtTok(total)}`)}`,
+				`${theme.fg("muted", "flow ")} ${discussNode}${node("plan", "plan")}${sep}${testNode}${node("execute", "execute")}${sep}${node("judge", "judge")}${sep}${node("commit", null)}${isZero(total) ? "" : theme.fg("dim", ` · Σ ${fmtTok(total)}`)}`,
 			);
 			if (this.progress) lines.push(progressLine(this.progress, theme));
 		}

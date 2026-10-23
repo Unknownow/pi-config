@@ -1,6 +1,10 @@
 {
   "_comment": "Config for ~/.pi/agent/extensions/workflow. model is provider/model-id (see `pi --list-models`); thinking is off|minimal|low|medium|high|xhigh|max. Edit here or with `/flow model <role> <provider/id[:thinking]>`, then `/flow reload`. Synced by pi-config.",
   "roles": {
+    "discuss": {
+      "model": "claude-bridge/claude-opus-5-5",
+      "thinking": "medium"
+    },
     "plan": {
       "model": "claude-bridge/claude-opus-5-5",
       "thinking": "medium"
@@ -42,13 +46,13 @@
       "thinking": "low"
     }
   },
-  "startPhase": "plan",
+  "startPhase": "discuss",
   "contextGuardTokens": 140000,
   "autoJudge": "auto",
   "maxJudgeRounds": 5,
   "maxMinorRounds": 1,
   "finalizePlan": true,
-  "returnToPlan": true,
+  "returnTo": "discuss",
   "planFlaw": "ask",
   "autopilot": true,
   "stagedPlans": "auto",
