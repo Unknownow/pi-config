@@ -1,12 +1,33 @@
 {
   "v": 1,
   "flowId": "20261023-1850-make-stage-and-step-waits-finish-on-thei-bf8c",
-  "rev": 2,
-  "updated": "2026-10-23T11:56:05.100Z",
+  "rev": 3,
+  "updated": "2026-10-23T11:59:30.704Z",
   "title": "Make stage and step waits finish on their own, and stop the Unity guard refusing `unity-packages` paths",
-  "done": [],
+  "done": [
+    "S1",
+    "S2",
+    "S3",
+    "S4",
+    "S5",
+    "S6",
+    "S7",
+    "S8",
+    "S9",
+    "S10"
+  ],
+  "finished": {
+    "at": "2026-10-23T11:59:30.584Z",
+    "ok": true,
+    "text": "flow/wait-checks, 2 commits since the review base"
+  },
   "reviewBase": {
-    "d:/works/pi-config": "efc7d5859ab2a6f3fa005919f3d196812304d261"
+    "d:/works/pi-config": "0c43a7fc5ab3d6642e440d536bad3e8093d9076a"
+  },
+  "passedTrees": {
+    "d:/works/pi-config": [
+      "01b5dd06b10c8389f074c35fc82a6addc3713e67"
+    ]
   },
   "repos": [
     {

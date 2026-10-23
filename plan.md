@@ -275,14 +275,16 @@ Fix them and reply with the whole final plan again. A check is one plain read-on
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 `workflow/waits.ts`: add `cleanCheck` and `waitCheckProblem` next to `CHECK` (`:11`), as specified in section 4. In `par
-- [ ] S2 `workflow/stages.ts`:
-- [ ] S3 `workflow/index.ts`, `wait_for_user` (`:2494-2500`):
-- [ ] S4 `workflow/index.ts`, wait restore (`:1820`): pass `status.waiting.check` through `cleanCheck`, and keep the key only whe
-- [ ] S5 `workflow/index.ts`, final plan acceptance (`:620-627`): add the `finalizeWaitRetried` handling and the problem check de
-- [ ] S6 `workflow/index.ts`, `startWaitTimer` / `stopWaitTimer` (`:2373-2388`): add the 5 s one-shot first tick and clear it in 
-- [ ] S7 `workflow/prompts.ts:25`, `CHECKPOINTS`: right after the sentence ending `` ends its heading in `(after: <what>; check: 
-- [ ] S8 `worktree/unity-guard.ts:131-136`, `codeProblem`: change it to the two-condition test from section 4. Keep the refusal t
-- [ ] S9 Add the tests from section 6 and run both suites.
-- [ ] S10 `docs/workflow-improvements.md`:
+- [x] S1 `workflow/waits.ts`: add `cleanCheck` and `waitCheckProblem` next to `CHECK` (`:11`), as specified in section 4. In `par
+- [x] S2 `workflow/stages.ts`:
+- [x] S3 `workflow/index.ts`, `wait_for_user` (`:2494-2500`):
+- [x] S4 `workflow/index.ts`, wait restore (`:1820`): pass `status.waiting.check` through `cleanCheck`, and keep the key only whe
+- [x] S5 `workflow/index.ts`, final plan acceptance (`:620-627`): add the `finalizeWaitRetried` handling and the problem check de
+- [x] S6 `workflow/index.ts`, `startWaitTimer` / `stopWaitTimer` (`:2373-2388`): add the 5 s one-shot first tick and clear it in 
+- [x] S7 `workflow/prompts.ts:25`, `CHECKPOINTS`: right after the sentence ending `` ends its heading in `(after: <what>; check: 
+- [x] S8 `worktree/unity-guard.ts:131-136`, `codeProblem`: change it to the two-condition test from section 4. Keep the refusal t
+- [x] S9 Add the tests from section 6 and run both suites.
+- [x] S10 `docs/workflow-improvements.md`:
 - [ ] S11 Deliver: merge. Commit, push, open a PR and merge it after a judge pass.
+## Outcome
+2026-10-23T11:59:30.584Z — ok: flow/wait-checks, 2 commits since the review base
