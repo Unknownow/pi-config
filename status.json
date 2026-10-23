@@ -1,8 +1,8 @@
 {
   "v": 1,
   "flowId": "20261023-1850-make-stage-and-step-waits-finish-on-thei-bf8c",
-  "rev": 1,
-  "updated": "2026-10-23T11:50:39.432Z",
+  "rev": 2,
+  "updated": "2026-10-23T11:56:05.100Z",
   "title": "Make stage and step waits finish on their own, and stop the Unity guard refusing `unity-packages` paths",
   "done": [],
   "reviewBase": {
@@ -10,7 +10,7 @@
   },
   "repos": [
     {
-      "branch": "master",
+      "branch": "flow/wait-checks",
       "remote": "github.com/Unknownow/pi-config",
       "primary": true
     }

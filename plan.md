@@ -253,6 +253,26 @@ Fix them and reply with the whole final plan again. A check is one plain read-on
    - `pi/agent/extensions/worktree/unity-guard.ts`, `unity-guard.test.ts`
    - `docs/workflow-improvements.md`
 
+## Amendment 1 (arbiter)
+**S1a.** `workflow/waits.ts`, `CHECK` (`:11`):
+- Let the check group hold one level of balanced parentheses: `/\s*\(\s*check\s*:\s*((?:[^()]|\([^()]*\))*)\)\s*\.?\s*$/i`.
+- Why: a `$(…)` check must reach `cleanCheck` and `waitCheckProblem` so it can be rejected, and must not end up inside the reason text.
+- Behaviour: checks without parentheses parse exactly as before. The existing `waits.test.ts` cases must still pass.
+
+**S2a.** `workflow/stages.ts`, `AFTER` (`:15`):
+- Change the check group to `((?:[^()]|\([^()]*\))*?)`. Leave the reason group `([^;)]*?)` as it is.
+- Behaviour: `### Stage 2: b (after: x; check: echo $(x))` parses with `after.check === "echo $(x)"`.
+
+**S9a.** Tests:
+- `stages.test.ts`, in `planWaitProblems checks Wait steps`: restore the plan's case. `planWaitProblems("**S4.** Wait: open the Editor (check: echo $(x))", () => null)` gives one entry starting `S4 check: uses command substitution`. Keep the backtick case as a second assertion.
+- `stages.test.ts`: add `planWaitProblems` for `"### Stage 1: a\n### Stage 2: b (after: x; check: echo $(x))"` with the stub returning null. Expected: one entry starting `Stage 2 check: uses command substitution`.
+- `waits.test.ts`: `parseWaitStep("**S4.** Wait: open the Editor (check: echo $(x))", "S4")` gives `{ reason: "open the Editor", check: "echo $(x)" }`.
+- Re-run the full workflow suite (`README.md:211`). Expected: 0 failures.
+
+**S8 (reminder, unchanged plan step).** `worktree/unity-guard.ts`, `codeProblem`:
+- The second regex must be only `/\b(child_process|spawn|spawnSync|exec|execSync|execFile|execFileSync)\b/`, as section 4 already says. The diff still keeps the old word list.
+- Add a test: `codeProblem("// run the unity tests\nconst a = 1")` gives `null`.
+
 <!-- pi-workflow:status -->
 ## Checklist
 - [ ] S1 `workflow/waits.ts`: add `cleanCheck` and `waitCheckProblem` next to `CHECK` (`:11`), as specified in section 4. In `par
