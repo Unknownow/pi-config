@@ -210,7 +210,12 @@ test("recordJudged: an open PR or an unpassed tree is skipped", async () => {
 
 test("recordJudged: an unchanged HEAD on a protected branch records nothing", async () => {
 	const run = stub({ branch: "main", trees: { HEAD: "c1", "HEAD^{tree}": "T" }, remote: "origin/main" });
-	assert.equal((await recordJudged(run, ".", { startBranch: "main", headBefore: "c1", report: "", passed: ["T"], protectedBranches: ["main"] })).entry, undefined);
+	assert.equal((await recordJudged(run, ".", { startBranch: "main", headBefore: "c1", remoteBefore: true, report: "", passed: ["T"], protectedBranches: ["main"] })).entry, undefined);
+});
+
+test("recordJudged: an unchanged HEAD that only reached the remote during the task is recorded", async () => {
+	const run = stub({ branch: "main", trees: { HEAD: "c1", "HEAD^{tree}": "T" }, remote: "origin/main" });
+	assert.deepEqual((await recordJudged(run, ".", { startBranch: "main", headBefore: "c1", remoteBefore: false, report: "", passed: ["T"], protectedBranches: ["main"] })).entry, { commit: "c1", tree: "T" });
 });
 
 test("recordJudged: a protected push of a passed tree that is on the remote is recorded", async () => {

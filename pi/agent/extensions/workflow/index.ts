@@ -2671,9 +2671,11 @@ export default function workflow(pi: ExtensionAPI) {
 			// A merge with --delete-branch leaves the checkout on the default branch, so the branch is read first.
 			const branchBefore = new Map<string, string>();
 			const headBefore = new Map<string, string>();
+			const remoteBefore = new Map<string, boolean>();
 			for (const r of repoList) {
 				branchBefore.set(r.root, (await git(r.dir, "rev-parse", "--abbrev-ref", "HEAD")).stdout.trim());
 				headBefore.set(r.root, (await git(r.dir, "rev-parse", "HEAD")).stdout.trim());
+				remoteBefore.set(r.root, !!(await git(r.dir, "branch", "-r", "--contains", "HEAD")).stdout.trim());
 			}
 			const progress = toolProgress(onUpdate);
 			const prevStage = view.stage;
@@ -2701,7 +2703,7 @@ export default function workflow(pi: ExtensionAPI) {
 				const branch = (await git(r.dir, "rev-parse", "--abbrev-ref", "HEAD")).stdout.trim();
 				const base = state.reviewBase?.[key];
 				const n = base ? (await git(r.dir, "rev-list", "--count", `${base}..HEAD`)).stdout.trim() : "?";
-				const rec = await recordJudged(defaultRunner, r.dir, { startBranch: branchBefore.get(r.root) ?? "", headBefore: headBefore.get(r.root), report: text, passed: state.passedTrees?.[key] ?? [], protectedBranches: cfg.protectedBranches });
+				const rec = await recordJudged(defaultRunner, r.dir, { startBranch: branchBefore.get(r.root) ?? "", headBefore: headBefore.get(r.root), remoteBefore: remoteBefore.get(r.root), report: text, passed: state.passedTrees?.[key] ?? [], protectedBranches: cfg.protectedBranches });
 				const pr = rec.pr;
 				const existing = state.judgedMerges?.[key];
 				if (rec.entry && !(rec.entry.commit && existing?.pr && existing.stage === state.stage)) {
