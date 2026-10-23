@@ -12,7 +12,7 @@ you <-> plan (Opus 5.5, high) -> approve -> final plan (Opus) -> execute (Sonnet
                                              judge says the plan is flawed -> you decide, or the arbiter (Fable 5.1) does
 escalation (manual): /flow escalate -> Fable 5.1 (high), /flow back
 context guard:       compacts at ~140k tokens on every model, after the run settles
-handover:            compacts (and sends a short plan card) when handing over to execute, a fix round, the next stage or the commit step, above 30k tokens
+handover:            compacts (and sends a short plan card) when handing over to execute, a fix round, or the next stage, above 30k tokens
 plan is read-only:   bash refuses commands that change files, git or GitHub
 ```
 
@@ -25,7 +25,7 @@ plan is read-only:   bash refuses commands that change files, git or GitHub
 | `advisor` | `advisor` tool, sub-`pi` with the whole transcript | choosing an approach, after an error repeats (auto-nudged after `repeatedErrorThreshold` failures), before "done" |
 | `judge` | `judge` tool, sub-`pi` with the git diff | the diff is ready; when a run ends with an unreviewed diff it asks (`autoJudge`) |
 | `arbiter` | sub-`pi` with the plan, the judge's report and the diff | the judge questions the plan and `planFlaw` is `auto`, or a passed review has a major plan flaw (whatever `planFlaw` is) (or you pick "Let the arbiter decide", or you picked *Approve, arbiter solves plan flaws* for this flow) |
-| `commit` | sub-`pi` with bash only, the plan's goal and Commits section and the delivery instruction, and its own push guard (`commit-guard.ts`) | after the judge passes; `delivery.runner: "main"` runs it in the main session instead (compacted first at the handover) |
+| `git_task` (`commit` role) | sub-`pi` with bash only, a git helper prompt, and its own git guard (`git-guard.ts`) with the same judge gate as the main session | when the executor calls `git_task` to delegate commit, push, pull request or merge work; default model `claude-bridge/claude-haiku-5-5`, thinking `medium` |
 | `escalate` | main session model | `/flow escalate` |
 | `test` | main session model; edit/write/judge off, bash read-only plus `test.supervisorBashAllow`, plus `test_run` | `/flow test <scope>`: plans tests, sends runners, writes the test report (see Test and fix) |
 | `runner` | `test_run` tool, parallel sub-`pi` processes with `bash, read, grep, find, ls` and their own guard (`runner-guard.ts`) | one per test task card; reports facts only |
@@ -33,10 +33,10 @@ plan is read-only:   bash refuses commands that change files, git or GitHub
 ## Hands-off run
 
 You discuss the plan with the planner. After every finished planner reply, an **Approve** menu
-pops up (`planPrompt`): one `Approve → <delivery>` entry per delivery (see below), the default first, then
-Show the full plan (prints the whole current plan, approves nothing; with `planRecap: "changes"`), Keep discussing. With `planFlaw: "ask"` the menu also has `Approve, arbiter solves plan flaws →`: it opens the
-delivery menu, and in that flow plan flaws go straight to the arbiter. A typed approval uses the config. Right after such a reply you can also type a short approval
-as the whole message (a second menu then asks for the delivery; Escape takes the default):
+pops up (`planPrompt`): an `Approve` entry, then
+Show the full plan (prints the whole current plan, approves nothing; with `planRecap: "changes"`), Keep discussing. With `planFlaw: "ask"` the menu also has `Approve, arbiter solves plan flaws →`: in that flow
+plan flaws go straight to the arbiter. A typed approval uses the config. Right after such a reply you can also type a short approval
+as the whole message:
 "go", "ok go", "lgtm", "do it", "do it for me", "yeah do that", "implement the plan", "ship it" and
 the like; see `approvePattern`. Longer messages ("do it but skip step 3") keep planning, and so does "yes, do that" when the last
 reply ended with a question (it answers a question). With `planRecap: "changes"` (default, needs `finalizePlan`) an approval works after any finished reply once a plan was proposed in this discussion; with `"always"` or `finalizePlan: false` the last reply needs a "Plan:" section. Everything
@@ -44,7 +44,7 @@ after approval runs on its own:
 
 ```
 "go" -> final plan (Opus) -> execute (Sonnet) -> judge (auto) -> FAIL: fix and judge again (menu after 5 rounds)
-                                                              -> PASS: commit, split by function [-> push -> pull request -> merge, as chosen at approval]
+                                                              -> PASS: the executor commits, pushes, opens the pull request and merges it (unless the plan says Delivery: no merge)
 ```
 
 - **Plan files:** every flow writes its approved plan to `<repo>/.git/pi/plans/<flowId>/plan.md` (plus `status.json`) at approval, after each amendment, at each stage end and when the flow ends. It lives inside the git folder (the first repo's, or `~/.pi/agent/workflow/plans/` without git), so it never shows in `git status`, diffs, branches or PRs. The plan card after a compaction names this file; a missing file is rewritten before its path is given out. Below the plan the file lists the checklist, and a finished flow gets an `## Outcome` footer (`ok` or `failed: ...`; a flow left by switching phase is `abandoned`).
@@ -59,37 +59,19 @@ after approval runs on its own:
   `Plan:` section before you approve, and the final plan groups its steps under
   `### Stage N: <title>` headings (numbers 1, 2, 3, ... in order, at least two). The flow then loops: execute
   stage 1, judge, deliver it (commit, push, pull request, merge), then the executor gets stage 2, and so on. The
-  flow ends after the last stage. A heading may end in `(delivery: commit|push|pr|merge)` to deliver that stage
-  differently; otherwise the flow's delivery applies, and `off` for the flow wins (nothing is delivered, the
-  stages still follow one another after each judge pass). If a stage's delivery is incomplete (push failed, merge
-  blocked, no commit), a menu asks to continue with the next stage or stop; without a UI it stops. The judge is told
-  which stage it reviews. A stage heading may also end in `(after: <what>; check: <command>)`: the stage then starts
+  flow ends after the last stage. Each stage is judged and delivered by the executor (commit, push, pull request, merge) before the next starts; if a stage's pull request is not merged, a menu asks to continue with the next stage or stop; without a UI it stops. The judge is told
   with a wait point (see below). Both tags work in either order.
-- **Delivery** (chosen for each flow at approval; `delivery` in workflow.json): `commit` only (default),
-  `push`, `pr` (also opens a pull request, or reuses the branch's open one), `merge` (also waits for the
-  checks with `gh pr checks --watch`, then `gh pr merge --merge --delete-branch`), or `off`. Commits are split by
-  function (`splitCommits`): one per feature, fix, refactor, config or docs change, with its tests; the
-  final plan lists them in its Commits section. In `pr`/`merge` mode on a protected branch or a detached
-  HEAD the commits go on a new branch, `branchPrefix` + a slug of the plan title, and the pull request
-  targets the branch the flow started on (`base` overrides it). In `push` mode on a protected branch or a detached HEAD it only commits, and the commit instruction and the final report say why ("push skipped: master is protected"). It never approves a pull request and never
-  uses `--admin` or `--auto`: a merge GitHub blocks (review required, conflict, failed check) stops and is
-  reported. `/flow delivery <commit|push|pr|merge|off>` changes it for the current flow.
-  `mergeMethod` (`merge`), `deleteBranch` (`true`), `ask` (`true`) and `default` (`commit`) are configurable.
-  With several repositories, the commit step opens their pull requests and waits for their checks in parallel, then merges them in order and stops at the first failure.
-  `runner` (`subagent`) says where the commit step runs: a fresh `commit`-role subagent that does not carry the session's context, or `main` (the main session, compacted first at the handover).
-- **Push guard:** it never pushes `protectedBranches` (`main`, `master`) or a detached HEAD. It
-  commits there and tells you. It never force-pushes or uses `--no-verify`, and stops if a hook fails.
-  This is enforced, not only asked for: while executing, a `git push` is refused unless it is the
-  workflow's own commit-and-push step, a plain `git commit` is refused unless it is the workflow's commit step, and force pushes, deletes, `+refspec`s, pushes to a protected
-  branch, `--no-verify` and changes to `core.hooksPath` / `GIT_CONFIG_*` are always refused (`push-guard.ts`).
-  `gh pr create` and `gh pr merge` (and `gh api` calls that open or merge one) are refused unless the flow's
-  delivery includes them and its commit step is running; `gh pr merge --admin` / `--auto` and `gh pr review --approve`
-  are always refused.
-  `git merge`, `cherry-pick`, `revert`, `pull`, `rebase` and `am` create commits no judge has seen, so they are refused too
-  unless told not to commit (`merge --no-commit`/`--squash`, `cherry-pick -n`, `revert -n`, `pull --ff-only`, or `--abort`); `rebase` and `am` only to abort. The workflow's commit step may use them, never with `--no-verify`.
-  Like the plan-phase checks it reads the command text: a guard against a drifting executor, not a sandbox.
+- **Delivery:** the executor delivers its own work; there is no commit step and no delivery question at approval.
+  - **Free:** `git commit`, `git push` to a non-protected branch, `gh pr create`, `git pull`, `git merge`, `git rebase` and `git cherry-pick` are never refused (commits are split by function with `splitCommits`; on a protected branch or detached HEAD it works on a new branch, `branchPrefix` + a slug of the plan title; `base`, `mergeMethod` and `deleteBranch` apply to the merge).
+  - **Gated:** `gh pr merge`, a push to a protected branch and `publish_packages` are refused until the judge has passed the exact tree being merged, pushed or published (`merge-gate.ts`). A later commit that changes the tree needs another pass. The refusal says to run `judge`, then retry.
+  - **`Delivery: no merge`:** a plan line of that form turns merge, protected pushes and publish off for the flow.
+  - **Hand-offs:** the executor never asks you to commit, push, open or merge a pull request, or publish. It stops only for failing CI, a required human review, or missing credentials or registry token.
+  - **`git_task {task, repo?}`:** delegates routine git work to the `commit` role (default `claude-bridge/claude-haiku-5-5`, thinking `medium`). It runs in a fresh subagent under the same guard and gate (`git-guard.ts`, settings in `PI_WORKFLOW_GIT_GUARD`), returns in the same turn with the report and a line per repo (`<repo>: branch <b>, <n> commits since review base, PR #<n> <STATE> <url>`), and a failure comes back as the tool result.
+- **Review base:** the judge diffs from a per-repo review base, a commit taken when the flow enters execute (a repo that joins later gets the fork point or its HEAD then), kept in the local ref `refs/pi/review-base/<flowId>`. The ref is never pushed, is deleted when the flow ends and is swept by the plan prune. Commits do not change what was judged. When `origin/<base>` has been merged into the branch, the base moves forward with an in-memory `git merge-tree`, so the merged `main` does not show up in the review; if that fails the base stays and the judge gets a note.
+- **Push guard:** it never force-pushes, deletes or mirrors, uses `+`/`:` refspecs, `--all` or `--no-verify`, and changes to `core.hooksPath` / `GIT_CONFIG_*` are refused (`push-guard.ts`). `gh pr merge --admin` / `--auto` and `gh pr review --approve` are always refused. A merge or protected push must be its own command line. Like the plan-phase checks it reads the command text: a guard against a drifting executor, not a sandbox.
+- **Removed config keys:** `delivery.ask`, `delivery.default`, `delivery.runner` and `test.delivery` (and `/flow delivery`) are ignored if still in `workflow.json`; the other `delivery` keys (`splitCommits`, `branchPrefix`, `base`, `mergeMethod`, `deleteBranch`) stay.
 - **Minor findings:** a passed review with fixable minor findings goes back to the executor for up to `maxMinorRounds`
-  (default 1, `0` commits at once) fix rounds, then commits anyway. Fix them, or dispute a wrong one. `[knowledge ...]` and
+  (default 1, `0` ends the stage at once) fix rounds, then the stage ends anyway. Fix them, or dispute a wrong one. `[knowledge ...]` and
   `[plan-flaw]` findings never start a round.
 - **Where it stops for you:** when the judge fails `maxJudgeRounds` (5; 0 means no limit) times in a
   row it asks: keep fixing, escalate and keep fixing, or stop. It also stops when something errors.
@@ -103,13 +85,13 @@ after approval runs on its own:
   (`judge.finalFullReviewNewFilesOnly: false` runs it every time); the judge tool's `full: true` forces one. That final review is skipped when a full review already passed in this stage and the changes since are at most `judge.finalFullReviewRepeatMaxShare` (10%) of the whole diff; `0` turns the skip off. `"judge": { "recheck": false }` turns it off.
 - **Knowledge on re-reviews:** when the last round's knowledge check passed, a re-review runs `get_rule_pack` only for the files changed since that round and carries over the other files' deviation notes. Otherwise it checks the whole change. Full reviews always check everything.
 - **Judge read budget:** the judge prompts ask for about 15 read/grep/find/ls calls on a full review and about 8 on a re-review (knowledge calls excluded). A soft aim, not a limit.
-- **Commit calls:** the commit instruction asks the model to chain dependent steps with `&&` to keep the call count low.
-- **Handover compaction:** when a run hands over to the next step (final plan to execute, a minor-fix round, the next stage, the commit step) and the context is over `handoverCompactTokens` (30,000; `0` turns it off), the session is compacted first and the handover message carries a plan card (goal, user decisions, done-when, amendments and the open steps) instead of the full plan. The 140k context guard sends the same card after its compaction. A failed compaction still sends the message. An aborted run holds the handover: nothing is sent, except the commit step, which is sent without compaction so the pending commit is not lost.
+- **Commit calls:** the `git_task` helper prompt asks the model to chain dependent steps with `&&` to keep the call count low.
+- **Handover compaction:** when a run hands over to the next step (final plan to execute, a minor-fix round, the next stage) and the context is over `handoverCompactTokens` (30,000; `0` turns it off), the session is compacted first and the handover message carries a plan card (goal, user decisions, done-when, amendments and the open steps) instead of the full plan. The 140k context guard sends the same card after its compaction. A failed compaction still sends the message. An aborted run holds the handover: nothing is sent.
 - **Disputes:** if the executor thinks a finding is wrong it passes the finding and its file:line
   evidence in the judge tool's `disputes` parameter. The judge treats that as a claim, decides it from
   the code, and drops the finding only if the code shows the executor is right.
-- **Turning steps back to manual:** set `"autoJudge": "ask"`, `"delivery": { "default": "off" }`
-  (nothing is committed unless you pick it at approval), and `"planPrompt": false` for a "say go" hint instead of the Approve menu.
+- **Turning steps back to manual:** set `"autoJudge": "ask"`
+  and `"planPrompt": false` for a "say go" hint instead of the Approve menu.
   `"autopilot": true` skips the routine menus and lets the agent resolve waits itself (see "Autopilot"). `"handoverCompactTokens": 0` turns off compaction at handovers. `"addedFolderRules": "full"` loads the rules files of added folders into the prompt (default `"paths"`: only their paths and sizes are listed). `"explore": { "contextFiles": true }` gives explore subagents the context files. `"returnToPlan": false` stays in execute after a flow ends. `"planRecap": "always"` makes every planner reply repeat the plan. `"stageAdvance": "auto"` (default) starts the next stage at once, even after an incomplete delivery or a stage with no changes, with a warning (not after a run you aborted, and never while the stage has open steps, no changes and no judge call); `"ask"` asks first. When `gh` is not on PATH, the workflow looks in the standard GitHub CLI install folders and adds the one it finds to pi's PATH; when there is none, outcomes say the PR state is unknown. `"stagedPlans": "onRequest"` makes the planner use stages only when you ask for delivery in parts.
 
 ## The plan, the judge and the arbiter
@@ -121,7 +103,7 @@ after approval runs on its own:
   contracts, not code: what to change, why and how it must behave. The execute model writes the code
   and the judge checks the result against it. With `finalizePlan: false` the last `Plan:` reply is used.
 - **Execute** follows the plan in order and writes the code within its contracts.
-  It stops and says so when a step cannot be done as written. It never runs `git commit` or `git push` itself (the push guard refuses them): at a delivery point it ends its turn after the judge passes, or it calls `deliver` (see Checkpoints).
+  It stops and says so when a step cannot be done as written. It does the delivery itself: commits as it goes, pushes, opens the pull request and, after a judge PASS on the exact tree, merges it (see "Delivery"). It never asks you to commit, push, open or merge a pull request, or publish; it stops only for failing CI, a required human review or missing credentials.
   When the flow ends it switches to the phase `returnTo` names (default `"discuss"`; `"plan"` or `"off"`). The old boolean `returnToPlan` is still read when `returnTo` is not set (`true` = `"plan"`, `false` = `"off"`).
 - **The judge** runs in its own session. It sees the approved plan and the diff, not the discussion,
   and assumes the change is wrong. It is asked to stay within about 15 read/grep/find/ls calls on a full review and about 8 on a re-review (knowledge calls excluded), a soft aim, not a limit. What it trusts:
@@ -166,18 +148,16 @@ These let one plan deliver or pause partway through, without replanning and with
 **Autopilot.** `"autopilot": true` (default `false`) or `/flow autopilot [on|off]` for the session (no argument toggles; `/flow status` and the `workflow-autopilot` status show it; a restart falls back to the config).
 - **Approve waits:** `wait_for_user {kind: "approve"}` doesn't pause. The tool tells the agent to review the item and, if it holds, post a comment where approval was asked (`gh issue comment <n> -R <repo> --body "approved (workflow autopilot): <reason>"`), run the check, and continue. The plan gets an `## Amendment N (executor: autopilot)`.
 - **Act waits:** the agent does the step when a non-interactive command can and the repo's `AGENTS.md`/`CLAUDE.md` allow it; otherwise it calls `wait_for_user` with `manual: true`, which pauses and polls as usual.
-- **Menus skipped:** the delivery menu (the config's `delivery.default` applies), the plan-end approval's delivery choices (it shows only the mode that applies, labelled with why; `/flow delivery <mode>` changes it), `autoJudge: "ask"` (runs the judge), the plan-flaw menu (the arbiter decides), the stage-advance questions, and the "knowledge not checked" question (a warning, then commit).
+- **Menus skipped:** `autoJudge: "ask"` (runs the judge), the plan-flaw menu (the arbiter decides), the stage-advance questions, and the "knowledge not checked" question (a notice only).
 - **Still asks:** plan approval, judge failure, the judge round cap, an arbiter result of "ask", open plan steps, the test-phase menus and stage-start `(after: …)` waits.
-- **Limits:** it never scripts around a confirmation a person must type and never overrides a repo's `AGENTS.md`/`CLAUDE.md`. It pushes or opens a PR only if `delivery.default` says `push`, `pr` or `merge`.
+- **Limits:** it never scripts around a confirmation a person must type and never overrides a repo's `AGENTS.md`/`CLAUDE.md`. It does the delivery itself (commit, push, pull request, merge after the judge passed) unless the plan says `Delivery: no merge`.
 
-**Checkpoints.** `deliver {mode?, tag?, step?, reason?}` delivers inside the executor's turn and then continues the same stage.
-- **Limit:** `mode` (`commit`, `push`, `pr`, `merge`) may not go beyond the stage's delivery (the flow's, or the heading's `(delivery: …)`); `off` allows none.
-- **Gate:** the diff must pass the judge first (an unchanged passed diff is reused). The commit subagent does the delivery; the executor's own shell still cannot commit or push.
-- **Plan:** a step `**S4.** Deliver: <mode> — <what>` (mode commit, push, pr or merge) is a planned checkpoint. Plans contain no raw `git push`, `gh pr create`, `gh pr merge` or `git push --delete`; a merge is `git merge --no-commit` plus a `Deliver: commit` step. The workflow shows each open Deliver step as `→ call deliver {mode, step}` (in `plan_check`, the start and stage messages and the judge reminders), warns when the plan is accepted if a step is beyond the delivery or spells out a raw publish command, and every publish refusal names the next Deliver call (or says to end the turn) and tells the executor never to ask the user to run it. A call without one adds `## Amendment N (executor: checkpoint)`; a retried call adds no second amendment.
-- **Publishing:** a later `deliver` with `push`, `pr` or `merge` publishes commits an earlier commit step made (recorded per repo, kept over `/flow resume`), without a new judge run; so does the end of a flow or stage with nothing left to review. A repo whose HEAD no longer descends from the recorded head, or is on another branch, is refused with a `git switch` hint. Judged commits in repos with no uncommitted changes go out in the same commit step as the changed repos. Commits after the recorded head that the commit step did not make and that are on no remote are refused, with the `git reset --soft <head>` that sends them through the judge.
-- **Outcomes:** each checkpoint is recorded (kept over `/flow resume`) and listed in the stage and flow outcome (`checkpoint S4: …`); the judge is told which checkpoints were delivered earlier. An unstaged flow whose remaining changes were all delivered at checkpoints ends with that outcome.
+**Tags.** `deliver {tag, step?, reason?}` creates or moves a tag inside the executor's turn and then continues the same stage.
+- **Scope:** `deliver` creates or moves tags only. Commit, push, pull requests and merges are done with git and gh directly, or with `git_task`; see "Delivery".
+- **Plan:** a step `**S4.** Deliver: <what>` is a plain checklist item for the executor (a tag, a merge). The executor does it with git, gh, `git_task` or `deliver {tag}`; a merge or protected push still needs the judge to have passed that exact tree.
+- **Outcomes:** each tag is recorded (kept over `/flow resume`) and listed in the stage and flow outcome.
 
-**Publish and Mirror steps.** `**S<n>.** Publish: <package>[, <package>…]` (after the `Deliver: merge` step that lands the packages) and `**S<n>.** Mirror: <folder>|all[; extras <name@version,…>]` are run with `publish_packages {step}` (execute phase only), on this computer with the person's registry token, so nobody types `publish`. Plans name packages, never versions: the version is the one this flow merged (read from the merged head, recorded per repo in `mergedHeads`). The tool refuses a step the plan doesn't name, skips versions the registry already has (tagged and no longer a candidate), records the merged head only when the merge delivery succeeded, fails the step when a version is superseded or not on origin/main (nothing published), and waits (`waiting for <tags> to be published`, check `update-packages.mjs publish --only … --dry-run --unblocked`) while an older version of the package or a pinned `com.iecgames.*` dependency is unpublished; call it again after the wait resumes. The wait's time limit counts from the first block of the step. A lock file `iec-publish.lock` in the clone's git common dir keeps two sessions from publishing at once (stale after 30 minutes with a dead pid). The guard refuses `npm publish`, `updates.bat publish|mirror`, `update-packages.mjs publish` (without `--dry-run`), `maintenance.mjs mirror --confirm` and `publish-package.mjs` in bash and `run_code`.
+**Publish and Mirror steps.** `**S<n>.** Publish: <package>[, <package>…]` (after the step that merges the packages) and `**S<n>.** Mirror: <folder>|all[; extras <name@version,…>]` are run with `publish_packages {step}` (execute phase only), on this computer with the person's registry token, so nobody types `publish`. Plans name packages, never versions: the version is the one this flow merged (read from the merged head, recorded per repo in `judgedMerges`). The tool refuses a step the plan doesn't name, skips versions the registry already has (tagged and no longer a candidate), refuses until a judged merge is recorded (`gh pr merge` after a judge PASS, or a protected push of a passed tree) and refuses under `Delivery: no merge`, fails the step when a version is superseded or not on origin/main (nothing published), and waits (`waiting for <tags> to be published`, check `update-packages.mjs publish --only … --dry-run --unblocked`) while an older version of the package or a pinned `com.iecgames.*` dependency is unpublished; call it again after the wait resumes. The wait's time limit counts from the first block of the step. A lock file `iec-publish.lock` in the clone's git common dir keeps two sessions from publishing at once (stale after 30 minutes with a dead pid). The guard refuses `npm publish`, `updates.bat publish|mirror`, `update-packages.mjs publish` (without `--dry-run`), `maintenance.mjs mirror --confirm` and `publish-package.mjs` in bash and `run_code`.
 
 **Tags.** Tags are made only when the plan has a `Deliver:` step for them or the executor asks through `deliver {tag}`; the workflow never tags on its own, and never publishes packages.
 - **Create:** a plain push of a new tag; an existing tag is never overwritten.
@@ -187,7 +167,7 @@ These let one plan deliver or pause partway through, without replanning and with
 
 ## Desktop notifications
 
-A session shows a desktop notification (Windows toast, `osascript` on macOS, `notify-send` on Linux) when it needs you: a workflow menu opens (the plan is waiting for approval, a question, a failure), the session stays idle for `idleMs` after a turn, a wait's check passes without `autoResume` or its polling stops, or a flow finishes. Turns the workflow continues by itself (judge, commit step, next stage, auto-resume) never notify, and one session notifies at most every 15 s. There is no focus check. Config: `notify: { enabled: true, idleMs: 10000 }`; `enabled: false` turns it off.
+A session shows a desktop notification (Windows toast, `osascript` on macOS, `notify-send` on Linux) when it needs you: a workflow menu opens (the plan is waiting for approval, a question, a failure), the session stays idle for `idleMs` after a turn, a wait's check passes without `autoResume` or its polling stops, or a flow finishes. Turns the workflow continues by itself (judge, next stage, auto-resume) never notify, and one session notifies at most every 15 s. There is no focus check. Config: `notify: { enabled: true, idleMs: 10000 }`; `enabled: false` turns it off.
 
 ## Discuss and plan phases are read-only
 
@@ -228,7 +208,7 @@ its plan and hand over, even when you said "fix it" or "do it for me".
 - It is a guard against the planner drifting into execution, not a sandbox. The code checks are
   regexes: a determined disguise (a computed lookup on an alias of `require('fs')`, say) can still get
   past them.
-- Tests: `node --experimental-strip-types --test agent-end.test.ts folder-add.test.ts readonly-bash.test.ts readonly-tools.test.ts plan-tools.test.ts tokens.test.ts push-guard.test.ts knowledge.test.ts registry-publish.test.ts mcp-forward.test.ts subagent.test.ts delivery.test.ts notify.test.ts repos.test.ts stages.test.ts commit-guard.test.ts repo-diff.test.ts prompts.test.ts config.test.ts metrics.test.ts plan-store.test.ts boundary.test.ts plan-doc.test.ts runner-guard.test.ts test-report.test.ts test-run.test.ts test-flow.test.ts flow-report.test.ts view.test.ts waits.test.ts checkpoints.test.ts tags.test.ts`.
+- Tests: `node --experimental-strip-types --test agent-end.test.ts delivery.test.ts merge-gate.test.ts folder-add.test.ts readonly-bash.test.ts readonly-tools.test.ts plan-tools.test.ts tokens.test.ts push-guard.test.ts knowledge.test.ts registry-publish.test.ts mcp-forward.test.ts subagent.test.ts notify.test.ts repos.test.ts stages.test.ts git-guard.test.ts repo-diff.test.ts prompts.test.ts config.test.ts metrics.test.ts plan-store.test.ts boundary.test.ts plan-doc.test.ts runner-guard.test.ts test-report.test.ts test-run.test.ts test-flow.test.ts flow-report.test.ts view.test.ts waits.test.ts checkpoints.test.ts tags.test.ts`.
 
 ## Test and fix
 
@@ -256,7 +236,7 @@ VERDICT: CLEAN | BUGS
 - **Fix loop** (`test-flow.ts`, pure; `index.ts` drives it). After a valid report:
   1. Open `[bug]` items start a **fix round** by themselves, with no approval and no delivery menu: the plan is regenerated from the bugs (steps S<n> with Repro, Expected, Fix direction; arbiter amendments are kept), the session switches to the execute model, and the executor gets the fix-round rules (root cause, regression test, never weaken an existing test, only the listed steps).
   2. The judge reviews it with the test-flow addendum (weakened tests, special-cased repro input and changes beyond the steps are major). The arbiter decides plan flaws; when it hands one to the user, the flow does not stop: the question is queued and the plan notes the choice as upheld.
-  3. The commit step commits (`test.delivery`, default `commit`), then the supervisor tests again: it re-runs the fixed items' repros and the `Ran:` checks and reports each as `[fixed]` or `[bug]`, then continues with the rest of the scope.
+  3. The executor commits its fixes itself, then the supervisor tests again: it re-runs the fixed items' repros and the `Ran:` checks and reports each as `[fixed]` or `[bug]`, then continues with the rest of the scope.
   4. A bug that fails again after its fix makes the next fix round run on the escalate model. After `test.refails` (2) failed fixes it becomes a question.
   5. At most `test.maxRounds` (3) fix rounds; then a menu offers that many more or Stop (`maxRounds: 0` = no limit).
 - **When it asks the user**, in one batch at the end of a test round, one prompt per question; Escape skips a question: an `[ask]` item (its Options, "Other", Skip), a `[blocked]` item ("It's available now", Skip, Stop), a bug that failed `test.refails` times (keep trying escalated, skip it, stop) and a plan question the arbiter could not settle (the test's Expected is right, the fix is right, skip). Skipped items are never asked or fixed again. Any other answer is recorded as a decision (`D2…`) and the supervisor tests again with it.
@@ -336,7 +316,7 @@ are equal. Counts saved by an older version are dropped when a session is resume
 counts the current flow; `/flow status` lists the whole session. Both survive a restart.
 
 When a flow ends, a summary card goes into the transcript. It is display-only and never sent to the
-model. A flow ends when the commit step finishes, when the judge passes and nothing gets committed, or
+model. A flow ends when the judge passes and the delivery is done, or
 when you stop at the judge-rounds or plan-flaw menu. Then the widget starts again
 from zero:
 
@@ -373,7 +353,6 @@ next run starts.
 | `/flow discuss` / `plan` / `execute` / `off` | switch phase (`off` leaves the model alone). `/flow plan` from discuss also asks the planner for the `Plan:`; `/flow approve` in discuss does the same |
 | `/flow test [scope]` | test phase: a strong supervisor plans tests, cheap runners run them, the report lists the bugs (without a scope, type it as the next message) |
 | `/flow approve` | approve the plan: switch to execute and start (also offered when a plan ends) |
-| `/flow delivery <commit\|push\|pr\|merge\|off>` | what happens after the judge passes, for the current flow |
 | `/flow escalate` (`fable`) / `/flow back` (`opusplan`) | manual escalation and return |
 | `/flow judge` | review the current diff now |
 | `/flow tokens` | token breakdown of the current flow so far |
@@ -393,7 +372,7 @@ and any repo where the executor changed a file with `edit` or `write`.
   `AGENTS.md`/`CLAUDE.md` files are not loaded: the prompt lists their paths and sizes and tells the agent to read a folder's files before it plans or changes anything there (`addedFolderRules: "full"` loads them as before). Skills and prompts are loaded.
 - The judge reviews every repo of the flow in one diff, each part headed `=== repo: <root> ===`, and
   re-reviews compare each repo with its last round.
-- After a pass, each repo with changes gets its own commits and its own push/PR/merge. Each command
+- The executor commits, pushes and opens a pull request per repo; a merge or protected push is gated on that repo's own passed tree. Each command
   is checked against the branch of the repo it runs in: the one named by `git -C` or the last `cd`,
   otherwise the working folder's.
 - With only the working folder's repo, nothing changes.
