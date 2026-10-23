@@ -1,15 +1,33 @@
 {
   "v": 1,
   "flowId": "20261023-1055-drop-the-forced-commit-step-the-executor-2460",
-  "rev": 1,
-  "updated": "2026-10-23T03:55:14.835Z",
+  "rev": 2,
+  "updated": "2026-10-23T04:46:54.638Z",
   "title": "Drop the forced commit step; the executor delivers itself, and merge and publish are judge-gated",
-  "stage": 1,
+  "stage": 2,
   "delivery": "merge",
-  "done": [],
+  "done": [
+    "S1",
+    "S2",
+    "S3",
+    "S4",
+    "S5",
+    "S6",
+    "S7",
+    "S8",
+    "S9",
+    "S10"
+  ],
+  "judgedHeads": {
+    "d:/projects/pi-config": {
+      "base": "3657d0dd89e092934273b23da5a5e3b5687ee794",
+      "head": "362e8b6b2e2e6c6aab88623cfbb6c837668b23e6",
+      "branch": "flow/judge-gated-self-delivery-replaces-the-c"
+    }
+  },
   "repos": [
     {
-      "branch": "master",
+      "branch": "flow/judge-gated-self-delivery-replaces-the-c",
       "remote": "github-personal/Unknownow/pi-config",
       "primary": true
     }

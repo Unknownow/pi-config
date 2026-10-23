@@ -463,16 +463,16 @@ Stage 2:
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 `push-guard.ts`: rework the guard (D2, D4, D8).
-- [ ] S2 New `merge-gate.ts`: `gateProblem`, `noMerge` and the refusal texts exactly as in Design.
-- [ ] S3 `index.ts` state and the review base (D9, D10).
-- [ ] S4 `index.ts` execute guard (`:2967-3000`).
-- [ ] S5 `agent-end.ts` and the agent-end path in `index.ts` (D1).
-- [ ] S6 Remove the delivery menu (D5).
-- [ ] S7 `deliver` (`index.ts:2755-2880`) keeps only `tag`.
-- [ ] S8 `publish_packages`/`runPublish` (`index.ts:2467`, `:2555`): the `noMerge` check, and the head from `judgedMerges` as in 
-- [ ] S9 Config (D6).
-- [ ] S10 `prompts.ts` (D7).
+- [x] S1 `push-guard.ts`: rework the guard (D2, D4, D8).
+- [x] S2 New `merge-gate.ts`: `gateProblem`, `noMerge` and the refusal texts exactly as in Design.
+- [x] S3 `index.ts` state and the review base (D9, D10).
+- [x] S4 `index.ts` execute guard (`:2967-3000`).
+- [x] S5 `agent-end.ts` and the agent-end path in `index.ts` (D1).
+- [x] S6 Remove the delivery menu (D5).
+- [x] S7 `deliver` (`index.ts:2755-2880`) keeps only `tag`.
+- [x] S8 `publish_packages`/`runPublish` (`index.ts:2467`, `:2555`): the `noMerge` check, and the head from `judgedMerges` as in 
+- [x] S9 Config (D6).
+- [x] S10 `prompts.ts` (D7).
 - [ ] S11 Rename `commit-guard.ts` to `git-guard.ts`.
 - [ ] S12 Register `git_task` in `index.ts`, next to `publish_packages`.
 - [ ] S13 `README.md`: rewrite the parts about the commit step, the delivery menu and the checkpoint modes in "Hands-off run" (`:3
