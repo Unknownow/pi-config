@@ -12,7 +12,7 @@ registerHooks({
 		return next(specifier, context);
 	},
 });
-const { summaryLines, progressLine } = await import("./view.ts");
+const { summaryLines, progressLine, STAGES, emptyStageTokens } = await import("./view.ts");
 
 test("a flow summary saved before the test stage existed still renders, without a test row", () => {
 	const stage = () => ({ tokens: { raw: 10, cost: 10 }, main: { raw: 10, cost: 10 }, models: [], subs: {} });
@@ -104,4 +104,9 @@ test("a summary without per-model data renders as before", () => {
 	const lines = summaryLines(old as never, theme as never);
 	assert.ok(lines[0].includes("tokens"));
 	assert.ok(lines.find((l) => l.trim().startsWith("plan"))!.includes("opus-5-5 10 · explore ×2 5"));
+});
+
+test("discuss is the first stage", () => {
+	assert.equal(STAGES[0], "discuss");
+	assert.ok("discuss" in emptyStageTokens());
 });

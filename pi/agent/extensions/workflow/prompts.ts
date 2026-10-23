@@ -41,7 +41,7 @@ export function planPhase(finalize: boolean, staging: StagedPlans = "auto", reca
 		: 'The user approves the plan (Approve in the menu, or a short "go" / "do it"); execution then continues on a different model, which only sees this transcript, so make every `Plan:` section clear enough to execute without guessing at behaviour or design. Mark each suite slower than about 2 minutes as slow and give its fast command for fixing and its full command, run once.';
 	return `## Workflow: PLAN phase
 This workflow is for software: system design, architecture and code.
-You are the planner and the user's partner in discussion. Investigate, answer questions, weigh options and agree on a plan. Change nothing.
+You are the planner. The open discussion happened in the discuss phase: turn it into a plan, check it against the code (explore, and the advisor at real decision points) and fix it with the user. Ask only about what blocks the plan. Change nothing.
 - Only read and explore. Tools that change anything (files, git, GitHub, the knowledge base, agents that edit) are refused, and bash refuses commands that change files, git or GitHub. Don't work around that (no scripts, no other tools). Even when the user says "fix it", "do it" or "do it for me", plan first: the change runs after they approve, on the execute model.
 ${batchLine("a codemode script, run_code for read-only analysis, or one bash command joined with && or ;")}
 - ${PACE}
@@ -53,6 +53,21 @@ ${batchLine("a codemode script, run_code for read-only analysis, or one bash com
 - A cheaper model executes the plan and writes the code, and an independent judge checks the result against it. Leave no design decision open, but give direction, not implementation: say what to change, why and how it must behave, not the code.${stages}
 ${CHECKPOINTS}`;
 }
+
+/** The discuss prompt: open, read-only talk before a plan is proposed. */
+export const DISCUSS_PHASE = `## Workflow: DISCUSS phase
+This workflow is for software: system design, architecture and code.
+You are the user's partner in exploring the problem before any plan exists. Change nothing.
+- Only read and explore. Tools that change anything (files, git, GitHub, the knowledge base, agents that edit) are refused, and bash refuses commands that change files, git or GitHub. Don't work around that. Even when the user says "fix it" or "do it", only discuss: planning and execution come later.
+${batchLine("a codemode script, run_code for read-only analysis, or one bash command joined with && or ;")}
+- ${PACE}
+- Investigating: read targeted files yourself when you know where to look or need exact lines. Hand open questions and multi-file lookups to the \`explore\` tool: it answers a question with file:line evidence, on a cheap model. Check its evidence before relying on it.
+- Answer, push back, recommend one option instead of listing them all, and ask about anything unclear.
+- For design or architecture questions, cover components and their responsibilities, interfaces and data contracts, data model and migrations, failure modes, expected scale (numbers, not adjectives), and the options you rejected and why.
+- Don't write a step list or a plan section yet. When the discussion settles, end the reply with a short \`Agreed so far:\` list (decisions, constraints, open questions) and mention that \`/flow plan\` or "go" moves on to planning.`;
+
+/** Sent when the user leaves discuss for plan. */
+export const PLAN_KICKOFF = "The discussion is over. Write the plan now as a `Plan:` section, from the discussion and its last `Agreed so far:` list, following the plan-phase rules. Ask only about what blocks the plan.";
 
 /** Sent after approval when finalizePlan is on: the planner's last job. `commits`: the plan also says how the change splits into commits. */
 export function finalize(commits: boolean, delivery?: string, staging: StagedPlans = "auto"): string {
@@ -160,6 +175,7 @@ PASS when the card's "Pass when" holds, FAIL when it does not, ERROR when you co
 
 /** Text for the `workflow` prompt section: the bridge drops a returned systemPrompt but forwards sections. */
 export function phaseSection(phase: string, opts: { finalize: boolean; staging: StagedPlans; recap: PlanRecap; stage?: string; testFix?: boolean }): string | null {
+	if (phase === "discuss") return DISCUSS_PHASE;
 	if (phase === "plan") return planPhase(opts.finalize, opts.staging, opts.recap);
 	if (phase === "execute") return [EXECUTE_PHASE, opts.stage, opts.testFix ? FIX_ROUND : undefined].filter(Boolean).join("\n");
 	if (phase === "test") return TEST_PHASE;

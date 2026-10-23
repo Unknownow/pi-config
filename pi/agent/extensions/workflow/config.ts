@@ -14,7 +14,7 @@ import type { TokenWeights } from "./tokens.ts";
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 export type Thinking = (typeof THINKING_LEVELS)[number];
 
-export const ROLES = ["plan", "execute", "explore", "advisor", "judge", "arbiter", "commit", "escalate", "test", "runner"] as const;
+export const ROLES = ["discuss", "plan", "execute", "explore", "advisor", "judge", "arbiter", "commit", "escalate", "test", "runner"] as const;
 export type Role = (typeof ROLES)[number];
 
 export interface RoleSpec {
@@ -120,7 +120,7 @@ export interface TestConfig {
 export interface WorkflowConfig {
 	roles: Record<Role, RoleSpec>;
 	/** Phase a new session starts in. */
-	startPhase: "plan" | "execute" | "off";
+	startPhase: "discuss" | "plan" | "execute" | "test" | "off";
 	/** Compact once context crosses this many tokens, whatever the model's window, when the run settles (never mid-run). 0 disables. */
 	contextGuardTokens: number;
 	/** At a handover to execute, a minor-fix round or the next stage, compact first when the context is over this many tokens (the plan is re-sent). 0 disables. */
@@ -131,8 +131,10 @@ export interface WorkflowConfig {
 	maxJudgeRounds: number;
 	/** After approval the planner writes one more reply, the final execution plan, which is stored and given to the judge. */
 	finalizePlan: boolean;
-	/** When a flow ends (delivered, passed without a commit, or stopped), switch back to the plan phase. */
-	returnToPlan: boolean;
+	/** When a flow ends (delivered, passed without a commit, or stopped), switch to this phase ("off" stays in execute). */
+	returnTo: "discuss" | "plan" | "off";
+	/** Legacy: read only when `returnTo` is unset in the file (true = "plan", false = "off"). */
+	returnToPlan?: boolean;
 	/** The judge says the approved plan itself is flawed: "ask" you, or let the "auto" arbiter decide. */
 	planFlaw: "ask" | "auto";
 	/** The agent resolves waits itself (approves with a comment, acts when a non-interactive command may) and the workflow skips its routine menus; see README "Autopilot". */
@@ -215,6 +217,7 @@ export interface WorkflowConfig {
 
 export const DEFAULTS: WorkflowConfig = {
 	roles: {
+		discuss: { model: "claude-bridge/claude-opus-5-5", thinking: "high" },
 		plan: { model: "claude-bridge/claude-opus-5-5", thinking: "high" },
 		execute: { model: "claude-bridge/claude-sonnet-5-5", thinking: "medium" },
 		explore: { model: "claude-bridge/claude-haiku-5-5", thinking: "off" },
@@ -226,14 +229,14 @@ export const DEFAULTS: WorkflowConfig = {
 		test: { model: "claude-bridge/claude-opus-5-5", thinking: "medium" },
 		runner: { model: "claude-bridge/claude-haiku-5-5", thinking: "low" },
 	},
-	startPhase: "plan",
+	startPhase: "discuss",
 	contextGuardTokens: 140_000,
 	handoverCompactTokens: 30_000,
 	autoJudge: "auto",
 	maxJudgeRounds: 5,
 	maxMinorRounds: 1,
 	finalizePlan: true,
-	returnToPlan: true,
+	returnTo: "discuss",
 	planFlaw: "ask",
 	autopilot: false,
 	stagedPlans: "auto",
@@ -337,7 +340,15 @@ export function loadConfig(file = CONFIG_PATH): Loaded {
 
 function parseConfig(file: string): Loaded {
 	try {
-		const config = merge(DEFAULTS, JSON.parse(fs.readFileSync(file, "utf8")));
+		const raw: unknown = JSON.parse(fs.readFileSync(file, "utf8"));
+		const config = merge(DEFAULTS, raw);
+		const rawObj = isObject(raw) ? (raw as Record<string, unknown>) : {};
+		const isReturn = (v: unknown): v is WorkflowConfig["returnTo"] => v === "discuss" || v === "plan" || v === "off";
+		if (isReturn(rawObj.returnTo)) config.returnTo = rawObj.returnTo;
+		else if (typeof rawObj.returnToPlan === "boolean") config.returnTo = rawObj.returnToPlan ? "plan" : "off";
+		else config.returnTo = DEFAULTS.returnTo;
+		delete config.returnToPlan;
+		if (!["discuss", "plan", "execute", "test", "off"].includes(config.startPhase)) config.startPhase = DEFAULTS.startPhase;
 		// A delivery that is not an object (the old autoCommit style, null) would crash the first approval.
 		if (!isObject(config.delivery)) config.delivery = DEFAULTS.delivery;
 		for (const k of ["base", "branchPrefix"] as const) if (typeof config.delivery[k] !== "string") config.delivery[k] = DEFAULTS.delivery[k];

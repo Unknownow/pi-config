@@ -108,7 +108,7 @@ import {
 	summaryLines,
 } from "./view.ts";
 
-type Phase = "off" | "plan" | "execute" | "test";
+type Phase = "off" | "discuss" | "plan" | "execute" | "test";
 
 interface FlowState {
 	phase: Phase;
@@ -362,7 +362,7 @@ export default function workflow(pi: ExtensionAPI) {
 	});
 
 	pi.registerFlag("flow", {
-		description: "Workflow phase to start in: plan, execute, test or off (default from workflow.json)",
+		description: "Workflow phase to start in: discuss, plan, execute, test or off (default from workflow.json)",
 		type: "string",
 	});
 
@@ -422,7 +422,7 @@ export default function workflow(pi: ExtensionAPI) {
 		return true;
 	}
 
-	/** A flow has ended: back to the plan phase when returnToPlan says so. */
+	/** A flow has ended: on to the phase `returnTo` names. */
 	async function endFlow(ctx: ExtensionContext): Promise<void> {
 		notifyUser(ctx, "flow finished");
 		state.waiting = undefined;
@@ -434,9 +434,10 @@ export default function workflow(pi: ExtensionAPI) {
 			persist();
 		}
 		updateStatus(ctx);
-		if (phaseAfterFlow(cfg.returnToPlan, state.phase) !== "plan") return;
-		await setPhase(ctx, "plan");
-		ctx.ui.notify(`workflow: flow done, back to planning on ${describeRole(cfg.roles.plan)}`, "info");
+		const next = phaseAfterFlow(cfg.returnTo, state.phase);
+		if (!next) return;
+		await setPhase(ctx, next);
+		ctx.ui.notify(`workflow: flow done, back to ${next === "discuss" ? "discussion" : "planning"} on ${describeRole(cfg.roles[next])}`, "info");
 	}
 
 	function updateStatus(ctx: ExtensionContext): void {
@@ -445,9 +446,10 @@ export default function workflow(pi: ExtensionAPI) {
 		view.weights = cfg.tokenWeights;
 		view.phase = state.phase;
 		view.escalated = state.escalated;
-		if (state.phase === "plan") view.stage = "plan";
+		if (state.phase === "discuss") view.stage = "discuss";
+		else if (state.phase === "plan") view.stage = "plan";
 		else if (state.phase === "test") view.stage = "test";
-		else if (view.stage === "plan" || view.stage === "test") view.stage = "execute";
+		else if (view.stage === "discuss" || view.stage === "plan" || view.stage === "test") view.stage = "execute";
 		if (ctx.hasUI) view.mount(ctx.ui);
 		const n = existingFolders().length + (state.touchedRepos?.length ?? 0);
 		const cl = state.checklist;
@@ -521,8 +523,8 @@ export default function workflow(pi: ExtensionAPI) {
 
 	/** Tools that registered after the phase began (an MCP server that connected late) get the same filter. */
 	function refilterTools(): void {
-		if ((state.phase !== "plan" && state.phase !== "test") || !state.toolsBeforePlan) return;
-		const phase = state.phase;
+		if ((state.phase !== "discuss" && state.phase !== "plan" && state.phase !== "test") || !state.toolsBeforePlan) return;
+		const phase = state.phase === "test" ? "test" : "plan";
 		try {
 			refilterPlanTools(pi, state.toolsBeforePlan, (t) => planToolRefusedIn(phase, t));
 		} catch {
@@ -540,7 +542,7 @@ export default function workflow(pi: ExtensionAPI) {
 
 	/** The widget stage the main session is in. */
 	function phaseStage(): Stage {
-		return state.phase === "plan" ? "plan" : state.phase === "test" ? "test" : "execute";
+		return state.phase === "discuss" ? "discuss" : state.phase === "plan" ? "plan" : state.phase === "test" ? "test" : "execute";
 	}
 
 	function restorePlanTools(): void {
@@ -553,13 +555,17 @@ export default function workflow(pi: ExtensionAPI) {
 	async function setPhase(ctx: ExtensionContext, phase: Phase): Promise<void> {
 		const leavingFlow = (state.phase === "execute" || state.phase === "test") && phase !== state.phase;
 		if (leavingFlow && state.approvedPlan && !state.flowSummarized) {
-			summarizeFlow(stoppedSummary(phase === "plan" ? "back to planning" : "abandoned"), false);
+			summarizeFlow(stoppedSummary(phase === "plan" ? "back to planning" : phase === "discuss" ? "back to discussion" : "abandoned"), false);
 		}
 		planReady = false;
 		planProposed = false;
-		const readOnly = (p: Phase) => p === "plan" || p === "test";
-		if (readOnly(state.phase) && phase !== state.phase) restorePlanTools();
-		if (readOnly(phase) && phase !== state.phase) blockPlanTools(phase as "plan" | "test");
+		const readOnly = (p: Phase) => p === "discuss" || p === "plan" || p === "test";
+		// Discuss and plan share one tool set, so moving between them keeps the snapshot.
+		const toolSet = (p: Phase) => (p === "test" ? "test" : "plan");
+		if (phase !== state.phase && !(readOnly(state.phase) && readOnly(phase) && toolSet(state.phase) === toolSet(phase))) {
+			if (readOnly(state.phase)) restorePlanTools();
+			if (readOnly(phase)) blockPlanTools(toolSet(phase));
+		}
 		if (leavingFlow && state.planDoc && !state.planDoc.finished) planMilestone(ctx, { at: new Date().toISOString(), ok: false, text: "abandoned" });
 		const leftTest = state.phase === "test";
 		state.testFlow = undefined;
@@ -581,7 +587,7 @@ export default function workflow(pi: ExtensionAPI) {
 		state.stage = undefined;
 		state.stageJudged = undefined;
 		state.stageOutcomes = undefined;
-		if (phase === "plan" || leftTest) {
+		if (phase === "discuss" || phase === "plan" || leftTest) {
 			state.approvedPlan = undefined;
 			state.checklist = undefined;
 			state.planDoc = undefined;
@@ -592,6 +598,10 @@ export default function workflow(pi: ExtensionAPI) {
 		if (phase !== "off") await applyRole(ctx, phase);
 		persist();
 		updateStatus(ctx);
+	}
+
+	function sendPlanKickoff(): void {
+		pi.sendMessage({ customType: "workflow-plan-kickoff", content: prompts.PLAN_KICKOFF, display: true }, { triggerTurn: true, deliverAs: "followUp" });
 	}
 
 	/** Re-reads the steps from the approved plan (after an amendment too), keeping the ticks of the steps still in it. */
@@ -2811,7 +2821,7 @@ Nothing was delivered.`);
 			if (problem) return blocked(problem);
 			return;
 		}
-		if (state.phase !== "plan") return;
+		if (state.phase !== "plan" && state.phase !== "discuss") return;
 		const refused = planToolRefused(event.toolName, planAllowedTools(), cfg.planBlockedTools);
 		if (refused) return { block: true, reason: planBlocked(refused) };
 		if (!cfg.planReadOnlyBash) return;
@@ -3052,6 +3062,12 @@ Nothing was delivered.`);
 			await startTestFlow(ctx, event.text.trim());
 			return { action: "continue" };
 		}
+		// In discuss, a typed "go" only moves to planning: it never approves or executes.
+		if (state.phase === "discuss" && event.source !== "extension" && !event.streamingBehavior && approveRe().test(event.text.trim())) {
+			await setPhase(ctx, "plan");
+			ctx.ui.notify(`workflow: planning on ${describeRole(cfg.roles.plan)}`, "info");
+			return { action: "transform", text: `${event.text.trim()}\n\n${prompts.PLAN_KICKOFF}` };
+		}
 		if (state.phase !== "plan" || event.source === "extension" || event.streamingBehavior) return { action: "continue" };
 		// Without a plan on screen, "yes, do that" answers a question; it doesn't approve anything.
 		if (!planReady || !approveRe().test(event.text.trim())) return { action: "continue" };
@@ -3176,7 +3192,12 @@ Nothing was delivered.`);
 			const labels = options.map((d) => `Approve → ${single ? fixedDeliveryLabel(d, fixedReason) : deliveryMenuLabel(d, def)}`);
 			const arbiterLabel = "Approve, arbiter solves plan flaws →";
 			const showLabel = "Show the full plan";
-			const choice = await askUser(ctx, `Plan phase · execute on ${describeRole(cfg.roles.execute)}`, [...labels, ...(cfg.planFlaw === "ask" ? [arbiterLabel] : []), ...(recapChanges ? [showLabel] : []), "Keep discussing"]);
+			const choice = await askUser(ctx, `Plan phase · execute on ${describeRole(cfg.roles.execute)}`, [...labels, ...(cfg.planFlaw === "ask" ? [arbiterLabel] : []), ...(recapChanges ? [showLabel] : []), "Back to discussion", "Keep discussing"]);
+			if (choice === "Back to discussion") {
+				await setPhase(ctx, "discuss");
+				ctx.ui.notify(`workflow: back to discussion on ${describeRole(cfg.roles.discuss)}`, "info");
+				return;
+			}
 			if (recapChanges && choice === showLabel) {
 				pi.sendMessage({ customType: "workflow-show-plan", content: prompts.SHOW_PLAN, display: true }, { triggerTurn: true, deliverAs: "followUp" });
 				return;
@@ -4208,7 +4229,7 @@ ${judged.text}`, instruction, chosen);
 			view.flow = { ...emptyFlowUsage(), ...structuredClone(state.flow) };
 			view.flowStarted = state.flowStarted;
 			if (state.commitPending) view.stage = "commit";
-			if (state.phase === "plan" || state.phase === "test") blockPlanTools(state.phase);
+			if (state.phase === "discuss" || state.phase === "plan" || state.phase === "test") blockPlanTools(state.phase === "test" ? "test" : "plan");
 			if (event.reason !== "reload") {
 				await followWorkingFolder(ctx);
 				// --add-dir is a launch flag: only the first session of the process applies it, not a later switch or resume.
@@ -4225,7 +4246,7 @@ ${judged.text}`, instruction, chosen);
 		if (event.reason === "reload") return;
 
 		const flag = pi.getFlag("flow");
-		const start = (typeof flag === "string" && ["plan", "execute", "test", "off"].includes(flag) ? flag : cfg.startPhase) as Phase;
+		const start = (typeof flag === "string" && ["discuss", "plan", "execute", "test", "off"].includes(flag) ? flag : cfg.startPhase) as Phase;
 		state = { phase: "off", escalated: false, judgeRounds: 0 };
 		view.used = emptyStageTokens();
 		view.flow = emptyFlowUsage();
@@ -4262,6 +4283,7 @@ ${judged.text}`, instruction, chosen);
 	const SUBCOMMANDS = [
 		{ value: "status", label: "status - phase, models, config path" },
 		{ value: "board", label: "board - live view of every flow on this machine" },
+		{ value: "discuss", label: "discuss - discuss phase (read-only, talk before planning)" },
 		{ value: "plan", label: "plan - plan phase (read-only, planner model)" },
 		{ value: "approve", label: "approve - approve the plan, switch to execute and start" },
 		{ value: "delivery", label: "delivery <commit|push|pr|merge|off> - what happens after the judge passes, this flow" },
@@ -4450,12 +4472,16 @@ ${judged.text}`, instruction, chosen);
 				case "status":
 					ctx.ui.notify(statusText(), "info");
 					return;
+				case "discuss":
 				case "plan":
 				case "execute":
-				case "off":
+				case "off": {
+					const from = state.phase;
 					await setPhase(ctx, sub.toLowerCase() as Phase);
 					ctx.ui.notify(`workflow: ${state.phase}`, "info");
+					if (from === "discuss" && state.phase === "plan") sendPlanKickoff();
 					return;
+				}
 				case "test": {
 					const scope = rest.join(" ").trim();
 					if (state.testFlow || (state.phase === "execute" && state.approvedPlan && !state.flowSummarized)) {
@@ -4476,6 +4502,12 @@ ${judged.text}`, instruction, chosen);
 					return;
 				}
 				case "approve":
+					if (state.phase === "discuss") {
+						ctx.ui.notify("workflow: discuss phase; moving to planning first", "info");
+						await setPhase(ctx, "plan");
+						sendPlanKickoff();
+						return;
+					}
 					if (state.phase === "test") {
 						ctx.ui.notify("workflow: approve is not used in the test phase", "info");
 						return;

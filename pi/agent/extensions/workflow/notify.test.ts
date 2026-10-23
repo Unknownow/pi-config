@@ -26,6 +26,7 @@ test("notifyCommand per platform", () => {
 test("idleReason", () => {
 	assert.equal(idleReason({ phase: "execute", waiting: "publish core" }), "waiting for you: publish core");
 	assert.equal(idleReason({ phase: "plan" }), "plan reply ready");
+	assert.equal(idleReason({ phase: "discuss" }), "discuss reply ready");
 	assert.equal(idleReason({ phase: "execute" }), "turn finished");
 	assert.equal(idleReason({ phase: "off" }), "turn finished");
 });
