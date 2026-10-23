@@ -1,0 +1,17 @@
+{
+  "v": 1,
+  "flowId": "20261023-1055-drop-the-forced-commit-step-the-executor-2460",
+  "rev": 1,
+  "updated": "2026-10-23T03:55:14.835Z",
+  "title": "Drop the forced commit step; the executor delivers itself, and merge and publish are judge-gated",
+  "stage": 1,
+  "delivery": "merge",
+  "done": [],
+  "repos": [
+    {
+      "branch": "master",
+      "remote": "github-personal/Unknownow/pi-config",
+      "primary": true
+    }
+  ]
+}
