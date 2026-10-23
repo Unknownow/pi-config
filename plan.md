@@ -323,6 +323,24 @@ Add `registryPublishProblem` to `push-guard.ts` as described in the design.
 - When it is called again for the same step while it is still blocked, the new wait keeps the earlier wait's `since`. Store it per step, for example in `state.waiting.since` carried over, or in a `publishWaitSince[step]` value that is persisted and cleared when the step finishes. This way the existing 1-hour timeout counts across re-blocks and notifies the user instead of looping.
 - Tests: the second blocked call for the same step keeps the first `since`.
 
+## Amendment 2 (arbiter)
+**S9 (amended, Publish step "already published" rule).** In `index.ts` `runPublish`:
+- **What changes:** stop dropping an item just because its tag is on origin before the dry run.
+- **Dry run:** pass every item read from the merged head to the `--dry-run --only … --json` run.
+- **Reading the result:**
+  - An item in the result's `items`, including `kind: "missing"`, is published normally. The tag is already there, so the script only re-uploads it.
+  - An item in `notCandidates` whose tag `<name>/v<version>` exists on origin (`git ls-remote --tags origin <tag>` is not empty) counts as "already published". It is dropped from the run and listed in the reply. The script leaves a tagged version out of the candidates only when the registry already has it, or a newer version, so there is nothing left to publish.
+  - An item in `notCandidates` without a tag on origin fails the step as now: "superseded or not on origin/main; nothing published".
+  - If every item is "already published", the reply is "already published; tick the step", and `publishWaitSince` for the step is cleared.
+  - Blockers and the real run then use only the remaining items.
+- **Why:** a tag on origin is not proof that the registry has the version. The script's candidate list, which comes from the registry, is the proof.
+- **Tests:**
+  - Move the decision into a pure helper in `registry-publish.ts`: `classifyPublish(items, dryResult, taggedOnOrigin: Set<string>): { publish: Item[]; alreadyPublished: Item[]; notPublishable: string[] }`.
+  - Case 1: a tagged item that is in the dry run's `items` goes to `publish`.
+  - Case 2: a tagged item in `notCandidates` goes to `alreadyPublished`.
+  - Case 3: an untagged item in `notCandidates` goes to `notPublishable`.
+- **README:** in the "Publish and Mirror steps" paragraph, replace "drops versions whose tag is already on origin" with "skips versions the registry already has (tagged and no longer a candidate)".
+
 <!-- pi-workflow:status -->
 ## Checklist
 - [x] S1 In `unity-packages/scripts/lib/sdk-updates.mjs`, next to `orderItems` (`:192`), add the pure exported function `publishS
