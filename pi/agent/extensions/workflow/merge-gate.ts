@@ -119,11 +119,11 @@ export async function mergedBase(run: Runner, dir: string, base: string, upstrea
 	return baseFromTree(run, dir, tree, base);
 }
 
-/** What a finished git task left behind that counts as a judged merge: a MERGED pull request whose head tree passed (looked up by the starting branch and by PR numbers in the report), else a protected branch whose HEAD tree passed and is on a remote. `pr` is the text to show. */
+/** What a finished git task left behind that counts as a judged merge: a MERGED pull request whose head tree passed (looked up by the starting branch and by PR numbers in the report), else a protected branch whose HEAD tree passed and is on a remote (HEAD must have moved, or have reached a remote, during the task). `pr` is the text to show. */
 export async function recordJudged(
 	run: Runner,
 	dir: string,
-	opts: { startBranch: string; headBefore?: string; report: string; passed: string[]; protectedBranches: string[] },
+	opts: { startBranch: string; headBefore?: string; remoteBefore?: boolean; report: string; passed: string[]; protectedBranches: string[] },
 ): Promise<{ entry?: { pr?: string; commit?: string; tree: string }; pr: string }> {
 	const out = async (...args: string[]) => (await run("git", args, dir).catch(() => ({ code: 1, stdout: "", stderr: "" }))).stdout.trim();
 	const candidates = [opts.startBranch, ...[...opts.report.matchAll(/(?:\/pull\/|#)(\d+)/g)].map((m) => m[1])].filter((c, i, all) => c && c !== "HEAD" && all.indexOf(c) === i);
@@ -146,7 +146,7 @@ export async function recordJudged(
 	if (opts.protectedBranches.includes(branch)) {
 		const head = await out("rev-parse", "HEAD");
 		const tree = await out("rev-parse", "HEAD^{tree}");
-		if (head && head !== opts.headBefore && tree && opts.passed.includes(tree) && (await out("branch", "-r", "--contains", "HEAD"))) return { entry: { commit: head, tree }, pr };
+		if (head && (head !== opts.headBefore || !opts.remoteBefore) && tree && opts.passed.includes(tree) && (await out("branch", "-r", "--contains", "HEAD"))) return { entry: { commit: head, tree }, pr };
 	}
 	return { pr };
 }
