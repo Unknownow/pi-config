@@ -350,11 +350,13 @@ Add `registryPublishProblem` to `push-guard.ts` as described in the design.
 - [x] S5 `unity-packages/AGENTS.md`, rule 5. Replace it with:
 - [x] S6 Knowledge:
 - [x] S7 Run the stage 1 tests (section 6).
-- [ ] S8 Add a new pure module, `pi-config/pi/agent/extensions/workflow/registry-publish.ts`, modelled on `checkpoints.ts` and `w
-- [ ] S9 In `index.ts`:
-- [ ] S10 Prompts and docs:
-- [ ] S11 Tests (section 6):
-- [ ] S12 `docs/workflow-improvements.md`:
-- [ ] S13 Run the stage 2 tests (section 6).
+- [x] S8 Add a new pure module, `pi-config/pi/agent/extensions/workflow/registry-publish.ts`, modelled on `checkpoints.ts` and `w
+- [x] S9 In `index.ts`:
+- [x] S10 Prompts and docs:
+- [x] S11 Tests (section 6):
+- [x] S12 `docs/workflow-improvements.md`:
+- [x] S13 Run the stage 2 tests (section 6).
 ## For you after the flow
 - S14 Verify: after both stages are merged, run a `Publish:` step in the next real package release flow. Look for:
+## Outcome
+2026-10-23T02:47:31.480Z — failed: stage 1: unity-packages: committed, PR #289 merged; knowledge: committed, PR #163 merged; stage 2: pi-config: committed (1 commit), pushed, no open pull request · 1 human check(s) for you (see the card)

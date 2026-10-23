@@ -1,11 +1,9 @@
 {
   "v": 1,
   "flowId": "20261023-0923-agents-publish-and-mirror-unity-packages-764a",
-  "rev": 4,
-  "updated": "2026-10-23T02:42:21.785Z",
+  "rev": 5,
+  "updated": "2026-10-23T02:47:31.702Z",
   "title": "Agents publish and mirror unity-packages from approved plans",
-  "stage": 2,
-  "delivery": "merge",
   "done": [
     "S1",
     "S2",
@@ -13,8 +11,26 @@
     "S4",
     "S5",
     "S6",
-    "S7"
+    "S7",
+    "S8",
+    "S9",
+    "S10",
+    "S11",
+    "S12",
+    "S13"
   ],
+  "finished": {
+    "at": "2026-10-23T02:47:31.480Z",
+    "ok": false,
+    "text": "stage 1: unity-packages: committed, PR #289 merged; knowledge: committed, PR #163 merged; stage 2: pi-config: committed (1 commit), pushed, no open pull request · 1 human check(s) for you (see the card)"
+  },
+  "judgedHeads": {
+    "d:/projects/pi-config": {
+      "base": "de6c91661d82f01d5051a574183d2ebe7782eecb",
+      "head": "3df03c3fd17bfa703e06e9e9f1390260ba33c3b1",
+      "branch": "flow/the-extension-s-publish-and-mirror-steps"
+    }
+  },
   "repos": [
     {
       "branch": "main",
@@ -37,7 +53,7 @@
       "primary": false
     },
     {
-      "branch": "master",
+      "branch": "flow/the-extension-s-publish-and-mirror-steps",
       "remote": "github-personal/Unknownow/pi-config",
       "primary": false
     }
