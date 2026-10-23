@@ -2,7 +2,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { followFolders, parseWorktreeList, combineRepoTexts, parseAddDir, repoKey, fallbackTexts, repoTexts, shellText, uniqueRoots } from "./repos.ts";
-import { pushProblem } from "./push-guard.ts";
+import { pushProblem as checkPush, type GateRequest } from "./push-guard.ts";
+
+/** A command counts as blocked when the pure check refuses it or hands it to the gate. */
+const pushProblem = (cmd: string, o: { branch?: string; protectedBranches: string[] }) => {
+	const gates: GateRequest[] = [];
+	return checkPush(cmd, { branch: "", ...o, gates }) ?? (gates.length ? "gated" : null);
+};
 
 test("repoKey normalizes", () => {
 	assert.equal(repoKey("D:\\a\\b\\", "win32"), "d:/a/b");
@@ -48,14 +54,14 @@ test("repoTexts", () => {
 	assert.equal(A, "D:/projects/a");
 	const bash = t("bash -c 'git push'");
 	assert.equal(bash[0].text, "bash -c 'git push'");
-	assert.ok(pushProblem(bash[0].text, { branch: "feat", protectedBranches: ["main"], pushAllowed: false, prAllowed: false, mergeAllowed: false, commitAllowed: false }));
+	assert.ok(pushProblem(bash[0].text, { branch: "main", protectedBranches: ["main"] }));
 	assert.equal(t("git commit -m 'a; b'").length, 1);
 	assert.equal(t("git commit -m 'a; b'")[0].text, "git commit -m 'a; b'");
 });
 
 test("repoTexts keeps backslash paths and subshells guarded", () => {
 	const roots = ["D:/projects/a", "D:/projects/b"];
-	const guard = { branch: "main", protectedBranches: ["main"], pushAllowed: true, prAllowed: false, mergeAllowed: false, commitAllowed: false };
+	const guard = { branch: "main", protectedBranches: ["main"] };
 	for (const text of ["cd 'D:\\projects\\b\\' && git push", "git -C 'D:\\b\\' push"]) {
 		const groups = repoTexts(text, roots, "D:/projects/a", "win32");
 		assert.ok(groups.some((g) => pushProblem(g.text, guard)), text);
@@ -81,12 +87,12 @@ test("repoTexts reads PowerShell backslash paths", () => {
 	assert.deepEqual(repoTexts("cd D:\\projects\\b; git push", roots, "D:/projects/a", "win32").map((g) => g.root), [undefined]);
 	const tick = repoTexts("cd D:\\projects\\b; git commit -m `\"x`\"; git push", roots, "D:/projects/a", "win32", { powershell: true });
 	assert.ok(!tick.some((g) => g.root === "D:/projects/b" && g.text.includes("push")));
-	assert.ok(pushProblem(ps[0].text, { branch: "main", protectedBranches: ["main"], pushAllowed: true, prAllowed: false, mergeAllowed: false, commitAllowed: false }));
+	assert.ok(pushProblem(ps[0].text, { branch: "main", protectedBranches: ["main"] }));
 });
 
 test("repoTexts guards each command against its own repo", () => {
 	const groups = repoTexts("git -C D:/projects/b commit -m x && git push", ["D:/projects/a", "D:/projects/b"], "D:/projects/a", "win32");
-	const ctx = { protectedBranches: ["main"], pushAllowed: true, prAllowed: false, mergeAllowed: false, commitAllowed: true };
+	const ctx = { protectedBranches: ["main"] };
 	assert.ok(pushProblem(groups[1].text, { ...ctx, branch: "main" }));
 	assert.equal(pushProblem(groups[0].text, { ...ctx, branch: "feat" }), null);
 });
@@ -99,7 +105,7 @@ test("parseAddDir", () => {
 });
 
 test("shellText reads PowerShell backslashes as separators", () => {
-	const opts = { branch: "feat", protectedBranches: ["main"], pushAllowed: false, prAllowed: false, mergeAllowed: false, commitAllowed: false };
+	const opts = { branch: "main", protectedBranches: ["main"] };
 	assert.equal(shellText("cd D:\\b\\; git push", true), "cd D:/b/; git push");
 	assert.equal(shellText("cd D:\\b\\; git push", false), "cd D:\\b\\; git push");
 	assert.ok(pushProblem(shellText("cd D:\\b\\; git push", true), opts));
@@ -109,7 +115,7 @@ test("shellText reads PowerShell backslashes as separators", () => {
 });
 
 test("fallbackTexts checks PowerShell text converted and as written", () => {
-	const opts = { branch: "feat", protectedBranches: ["main"], pushAllowed: false, prAllowed: false, mergeAllowed: false, commitAllowed: false };
+	const opts = { branch: "main", protectedBranches: ["main"] };
 	const both = fallbackTexts("bash -c 'git pu\\sh'", true);
 	assert.equal(both.length, 2);
 	assert.ok(both.some((t) => pushProblem(t, opts)));
