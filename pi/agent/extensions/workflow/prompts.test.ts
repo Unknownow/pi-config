@@ -86,6 +86,8 @@ test("planner prompts teach Deliver and Wait steps", async () => {
 		assert.ok(text.includes("Deliver:"));
 		assert.ok(text.includes("Wait:"));
 		assert.ok(text.includes("(after:"));
+		assert.ok(text.includes("no backticks around it"));
+		assert.ok(text.includes("never for a merge or publish that an earlier stage does itself"));
 	}
 });
 

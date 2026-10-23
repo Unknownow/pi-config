@@ -1,7 +1,7 @@
 // node --test waits.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { autopilotAmendment, autopilotReply, checkTitle, checkVerdict, humanChecks, parseVerifyStep, parseWaitStep, pollDecision, resumePrefix, verifyAmendment, waitAmendment } from "./waits.ts";
+import { cleanCheck, waitCheckProblem, autopilotAmendment, autopilotReply, checkTitle, checkVerdict, humanChecks, parseVerifyStep, parseWaitStep, pollDecision, resumePrefix, verifyAmendment, waitAmendment } from "./waits.ts";
 
 const CHECK = "git ls-remote --exit-code --tags origin com.iecgames.core/v0.17.0";
 const plan = `## 5. Steps\n\n**S6.** Edit the code\n**S7.** Wait: publish core 0.17.0 (check: ${CHECK})\n- **S8.** Wait: open the Editor\n**S9.** Do it and write a long line that is more than one hundred and twenty characters long so the checklist text would cut it short, see?\n`;
@@ -102,4 +102,27 @@ test("humanChecks lists Verify steps first and drops a duplicated step", () => {
 	const p = "**S1.** Edit\n**S2.** Verify: play\n\n## Amendment 1 (executor: verify)\nlook at HUD\n\n## Amendment 2 (executor: verify)\nplay again (step S2)\n";
 	const cl = [{ id: "S1", text: "Edit", done: false }, { id: "S2", text: "Verify: play", done: false, human: true as const }];
 	assert.deepEqual(humanChecks(p, cl), [{ id: "S2", text: "play" }, { text: "look at HUD" }]);
+});
+
+test("cleanCheck strips wrapping backticks", () => {
+	assert.equal(cleanCheck("`git ls-remote x`"), "git ls-remote x");
+	assert.equal(cleanCheck("``a `b` c``"), "a `b` c");
+	assert.equal(cleanCheck("  plain  "), "plain");
+	for (const v of [undefined, "", "``"]) assert.equal(cleanCheck(v), undefined);
+});
+
+test("waitCheckProblem", () => {
+	assert.equal(waitCheckProblem("git ls-remote --exit-code --tags origin x/v<new set version>"), "has a placeholder");
+	assert.equal(waitCheckProblem("a `b`"), "uses command substitution");
+	assert.equal(waitCheckProblem("echo $(x)"), "uses command substitution");
+	assert.equal(waitCheckProblem("git -C D:/r ls-remote --exit-code --tags origin a/v1"), null);
+	assert.equal(waitCheckProblem("git log 2>&1 | head"), null);
+});
+
+test("parseWaitStep backticked check", () => {
+	assert.deepEqual(parseWaitStep("**S7.** Wait: open the Editor (check: `ls x`)", "S7"), { reason: "open the Editor", check: "ls x" });
+});
+
+test("parseWaitStep keeps a check with nested parentheses", () => {
+	assert.deepEqual(parseWaitStep("**S4.** Wait: open the Editor (check: echo $(x))", "S4"), { reason: "open the Editor", check: "echo $(x)" });
 });

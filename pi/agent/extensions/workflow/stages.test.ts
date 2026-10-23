@@ -1,7 +1,7 @@
 // node --test stages.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { nextStage, parseStages, stageNote, stageStart, stagesOutcome } from "./stages.ts";
+import { nextStage, parseStages, planWaitProblems, stageNote, stageStart, stagesOutcome } from "./stages.ts";
 
 test("parses stage headings", () => {
 	assert.deepEqual(parseStages("## Plan: X\n### Stage 1: Core\ntext\n### Stage 2: UI (delivery: merge)\n"), [
@@ -91,4 +91,41 @@ test("parseStages: an after tag without a check", () => {
 	const s = parseStages("### Stage 1: a\n### Stage 2: b (after: open the Editor)\n")[1];
 	assert.equal(s.after?.reason, "open the Editor");
 	assert.equal(s.after?.check, undefined);
+});
+
+test("parseStages strips backticks from an after check", () => {
+	const s = parseStages("### Stage 1: a\n### Stage 2: b (after: published; check: `git ls-remote --exit-code --tags origin p/v1`)\n");
+	assert.equal(s[1].after?.check, "git ls-remote --exit-code --tags origin p/v1");
+});
+
+test("planWaitProblems reports the reward-ads checks", () => {
+	const plan = [
+		"### Stage 1: core",
+		"### Stage 2: set (after: Stage 1 published; check: `git -C D:/r ls-remote --exit-code --tags origin s/v<new set version>`)",
+		"### Stage 3: template (after: Stage 1 published; check: the same `ls-remote` as Stage 2)",
+	].join("\n");
+	const out = planWaitProblems(plan, (c) => (c.startsWith("the") ? "not read-only" : null));
+	assert.equal(out.length, 2);
+	assert.ok(out[0].startsWith("Stage 2 check: has a placeholder"));
+	assert.ok(out[1].startsWith("Stage 3 check:"));
+});
+
+test("planWaitProblems checks Wait steps", () => {
+	const out = planWaitProblems("**S4.** Wait: open the Editor (check: echo a`b`)", () => null);
+	assert.equal(out.length, 1);
+	assert.ok(out[0].startsWith("S4 check: uses command substitution"));
+});
+
+test("planWaitProblems clean plan", () => {
+	const plan = "### Stage 1: a\n### Stage 2: b (after: x; check: git ls-remote --exit-code --tags origin p/v1)\n**S3.** Wait: y (check: git ls-remote origin q)";
+	assert.deepEqual(planWaitProblems(plan, () => null), []);
+});
+
+test("planWaitProblems catches $( ) in a Wait step and a stage check", () => {
+	const w = planWaitProblems("**S4.** Wait: open the Editor (check: echo $(x))", () => null);
+	assert.equal(w.length, 1);
+	assert.ok(w[0].startsWith("S4 check: uses command substitution"));
+	const s = planWaitProblems("### Stage 1: a\n### Stage 2: b (after: x; check: echo $(x))", () => null);
+	assert.equal(s.length, 1);
+	assert.ok(s[0].startsWith("Stage 2 check: uses command substitution"));
 });

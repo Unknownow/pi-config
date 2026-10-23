@@ -8,7 +8,23 @@ export interface WaitSpec {
 	check?: string;
 }
 
-const CHECK = /\s*\(\s*check\s*:\s*([^)]*)\)\s*\.?\s*$/i;
+const CHECK = /\s*\(\s*check\s*:\s*((?:[^()]|\([^()]*\))*)\)\s*\.?\s*$/i;
+
+/** A check as the planner wrote it, without the Markdown backticks around it (bash would run them as command substitution). */
+export function cleanCheck(s: string | undefined): string | undefined {
+	let t = (s ?? "").trim();
+	if (/^`+$/.test(t)) return undefined;
+	const m = /^(`{1,2})([\s\S]*)\1$/.exec(t);
+	if (m && m[2].length > 0) t = m[2].trim();
+	return t || undefined;
+}
+
+/** Why a check can never work as a command, or null. */
+export function waitCheckProblem(check: string): string | null {
+	if (/<[A-Za-z][^<>|]*>/.test(check)) return "has a placeholder";
+	if (check.includes("`") || check.includes("$(")) return "uses command substitution";
+	return null;
+}
 
 /** The wait a plan step declares: its full line (not the shortened checklist text) must read `**S<n>.** Wait: <what> [(check: <command>)]`. */
 export function parseWaitStep(plan: string, id: string): WaitSpec | null {
@@ -22,7 +38,7 @@ export function parseWaitStep(plan: string, id: string): WaitSpec | null {
 	const c = CHECK.exec(text);
 	if (c) {
 		text = text.slice(0, c.index).trim();
-		check = c[1].trim() || undefined;
+		check = cleanCheck(c[1]);
 	}
 	if (!text) return null;
 	return { reason: text, ...(check ? { check } : {}) };
