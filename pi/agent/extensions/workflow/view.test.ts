@@ -110,3 +110,38 @@ test("discuss is the first stage", () => {
 	assert.equal(STAGES[0], "discuss");
 	assert.ok("discuss" in emptyStageTokens());
 });
+
+const flowLine = (v: unknown) => (v as { render(t: unknown): string[] }).render(theme).find((l) => l.startsWith("flow"))!;
+
+test("flow line hides the commit node when git_task did not run", async () => {
+	const { FlowView } = await import("./view.ts");
+	const v = new FlowView(roles);
+	v.phase = "execute";
+	v.stage = "execute";
+	const line = flowLine(v);
+	assert.ok(line.includes("judge"));
+	assert.ok(!line.toLowerCase().includes("commit"));
+	assert.ok(!line.trim().endsWith("▸"));
+});
+
+test("flow line shows the commit node while git_task runs or after it spent tokens", async () => {
+	const { FlowView } = await import("./view.ts");
+	const a = new FlowView(roles);
+	a.phase = "execute";
+	a.stage = "commit";
+	assert.ok(flowLine(a).includes("COMMIT"));
+	const b = new FlowView(roles);
+	b.weights = w;
+	b.phase = "execute";
+	b.stage = "commit";
+	b.mainUsage({ raw: 10, cost: 10 }, true, "claude-opus-5-5", usage(10));
+	b.stage = "execute";
+	assert.ok(flowLine(b).includes("commit"));
+});
+
+test("summary card hides a zero commit row and keeps a used one", () => {
+	const stage = (main: number) => ({ tokens: { raw: main, cost: main }, main: { raw: main, cost: main }, models: [], subs: {} });
+	const mk = (c: number) => ({ ok: true, outcome: "done", ended: 1, stages: { plan: stage(10), execute: stage(5), judge: stage(1), commit: stage(c) } });
+	assert.ok(!summaryLines(mk(0) as never, theme as never).some((l) => l.trim().startsWith("commit")));
+	assert.ok(summaryLines(mk(7) as never, theme as never).some((l) => l.trim().startsWith("commit")));
+});

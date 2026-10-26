@@ -3,7 +3,7 @@
  * (active stage highlighted, with its model) and one row per subagent run,
  * showing what each one is doing right now.
  *
- *   ● flow  plan opus-5-5·high 48,120 (9,800) ▸ EXECUTE sonnet-5-5·medium 1,204,331 (310,200) ▸ judge opus-5-5·high 90,004 (21,300) ▸ commit · Σ 1,342,455 (341,300)
+ *   ● flow  plan opus-5-5·high 48,120 (9,800) ▸ EXECUTE sonnet-5-5·medium 1,204,331 (310,200) ▸ judge opus-5-5·high 90,004 (21,300) · Σ 1,342,455 (341,300)
  *     ├ ⠹ explore  haiku-5-5  where is average defined?   grep /average/ in src · 3 tools · 12,004 (2,100) tok · 12s
  *     └ ✓ judge    opus-5-5   FAIL · 3 findings · 90,004 (21,300) tok · 41s
  *
@@ -239,8 +239,8 @@ export function runLine(run: RunView, theme: Theme, opts: { showRole: boolean })
 export function summaryLines(s: FlowSummary, theme: Theme): string[] {
 	const stageTokens = (st: Stage) => asTok(s.stages[st]?.tokens);
 	const total = STAGES.reduce((n, st) => add(n, stageTokens(st)), zero());
-	// The discuss and test rows show only for flows that used them.
-	const rows = STAGES.filter((st) => (st !== "test" && st !== "discuss") || !isZero(stageTokens(st)));
+	// The discuss, test and commit rows show only for flows that used them.
+	const rows = STAGES.filter((st) => (st !== "test" && st !== "discuss" && st !== "commit") || !isZero(stageTokens(st)));
 	const unit = s.weighted ? "cost-weighted tokens" : "tokens";
 	// Summaries from before the per-model breakdown render as they always did.
 	const perModel = new Map<string, ModelTotal>();
@@ -567,8 +567,9 @@ export class FlowView {
 			const total = STAGES.reduce((sum, s) => add(sum, this.stageTokens(s)), zero());
 			const discussNode = this.stage === "discuss" || !isZero(this.stageTokens("discuss")) ? `${node("discuss", "discuss")}${sep}` : "";
 			const testNode = this.stage === "test" || !isZero(this.stageTokens("test")) ? `${node("test", "test")}${sep}` : "";
+			const commitNode = this.stage === "commit" || !isZero(this.stageTokens("commit")) ? `${sep}${node("commit", null)}` : "";
 			lines.push(
-				`${theme.fg("muted", "flow ")} ${discussNode}${node("plan", "plan")}${sep}${testNode}${node("execute", "execute")}${sep}${node("judge", "judge")}${sep}${node("commit", null)}${isZero(total) ? "" : theme.fg("dim", ` · Σ ${fmtTok(total)}`)}`,
+				`${theme.fg("muted", "flow ")} ${discussNode}${node("plan", "plan")}${sep}${testNode}${node("execute", "execute")}${sep}${node("judge", "judge")}${commitNode}${isZero(total) ? "" : theme.fg("dim", ` · Σ ${fmtTok(total)}`)}`,
 			);
 			if (this.progress) lines.push(progressLine(this.progress, theme));
 		}

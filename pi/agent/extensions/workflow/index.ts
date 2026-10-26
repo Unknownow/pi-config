@@ -4270,7 +4270,7 @@ export default function workflow(pi: ExtensionAPI) {
 			state.planFlaw === "auto" ? "flaws     arbiter (this flow)" : `flaws     ${cfg.planFlaw === "auto" ? "arbiter" : "ask"} (config)`,
 			`autopilot ${autopilotOn() ? "on" : "off"} (${autopilotOverride === undefined ? "config" : "session"})`,
 			`guard     compact at ${cfg.contextGuardTokens || "off"} tokens`,
-			`tokens    ${STAGES.map((s) => `${s} ${fmtTok(view.sessionTokens(s))}`).join(" · ")} · session total ${fmtTok(STAGES.reduce((n, s) => ({ raw: n.raw + view.sessionTokens(s).raw, cost: n.cost + view.sessionTokens(s).cost }), { raw: 0, cost: 0 }))}`,
+			`tokens    ${STAGES.filter((s) => !["discuss", "test", "commit"].includes(s) || view.sessionTokens(s).raw + view.sessionTokens(s).cost > 0).map((s) => `${s} ${fmtTok(view.sessionTokens(s))}`).join(" · ")} · session total ${fmtTok(STAGES.reduce((n, s) => ({ raw: n.raw + view.sessionTokens(s).raw, cost: n.cost + view.sessionTokens(s).cost }), { raw: 0, cost: 0 }))}`,
 			"",
 			...ROLES.map((r) => `${r.padEnd(9)} ${describeRole(cfg.roles[r])}`),
 			"",
