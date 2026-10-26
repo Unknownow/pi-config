@@ -15,13 +15,14 @@
 #   ./pi-config.sh help         show this help
 set -euo pipefail
 
-cd "$(dirname "$0")"
+SCRIPT="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+cd "$(dirname "$SCRIPT")"
 NPMDIR="$HOME/.pi/agent/npm"
 NVM_VERSION="v0.40.3"
 ASSUME_YES=0
 
 usage() {
-  sed -n '2,/^set -e/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'
+  sed -n '2,/^set -e/p' "$SCRIPT" | sed '$d' | sed 's/^# \{0,1\}//'
 }
 
 need() {
@@ -45,10 +46,10 @@ confirm() {
 load_nvm() {
   export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
   if [ -s "$NVM_DIR/nvm.sh" ]; then
-    set +u
+    set +euo pipefail
     # shellcheck disable=SC1091
     . "$NVM_DIR/nvm.sh"
-    set -u
+    set -euo pipefail
   fi
   return 0
 }
@@ -62,11 +63,13 @@ install_node() {
     load_nvm
   fi
   type nvm >/dev/null 2>&1 || { echo "ERROR: nvm could not be loaded from $NVM_DIR."; return 1; }
-  set +u
-  nvm install --lts
-  nvm alias default 'lts/*'
-  nvm use default
-  set -u
+  local rc=0
+  set +euo pipefail
+  nvm install --lts && nvm alias default 'lts/*' && nvm use default
+  rc=$?
+  set -euo pipefail
+  [ "$rc" = 0 ] || { echo "ERROR: nvm could not install the latest LTS."; return 1; }
+  node_ok || { echo "ERROR: Node >= 22.19 is still not available."; return 1; }
   echo "Node $(node -v) is ready."
   echo "Open a new terminal (or source your shell rc) to use node outside this script."
 }
@@ -169,16 +172,16 @@ menu() {
     echo
     select choice in "Status" "Preview" "Import" "Export" "Sync" "Install extensions" "Setup" "VS Code bridge" "Install Node" "Install Pi" "Quit"; do
       case "$choice" in
-        Status)               bash "$0" status || true ;;
-        Preview)              bash "$0" preview || true ;;
-        Import)               bash "$0" import || true ;;
-        Export)               bash "$0" export || true ;;
-        Sync)                 bash "$0" sync || true ;;
-        "Install extensions") bash "$0" install || true ;;
-        Setup)                bash "$0" setup || true ;;
-        "VS Code bridge")     bash "$0" vscode || true ;;
-        "Install Node")       bash "$0" node || true ;;
-        "Install Pi")         bash "$0" pi || true ;;
+        Status)               bash "$SCRIPT" status || true ;;
+        Preview)              bash "$SCRIPT" preview || true ;;
+        Import)               bash "$SCRIPT" import || true ;;
+        Export)               bash "$SCRIPT" export || true ;;
+        Sync)                 bash "$SCRIPT" sync || true ;;
+        "Install extensions") bash "$SCRIPT" install || true ;;
+        Setup)                bash "$SCRIPT" setup || true ;;
+        "VS Code bridge")     bash "$SCRIPT" vscode || true ;;
+        "Install Node")       bash "$SCRIPT" node || true ;;
+        "Install Pi")         bash "$SCRIPT" pi || true ;;
         Quit)                 exit 0 ;;
         *)                    echo "Not a valid choice."; continue ;;
       esac

@@ -34,6 +34,7 @@ goto collect
 REM ---------------------------------------------------------------------------
 :menu
 set "INTERACTIVE=1"
+set "ARGS="
 echo.
 echo   ================================================
 echo     pi-config
@@ -207,7 +208,7 @@ goto done
 
 :do_setup
 set "YES="
-if not "%ARGS:--yes=%"=="%ARGS%" set "YES=1"
+for %%A in (%ARGS%) do if /i "%%~A"=="--yes" set "YES=1"
 echo.
 echo   === Step 1 of 5: Node ===
 call :node_ok
@@ -221,6 +222,11 @@ if errorlevel 1 (
     )
     call :install_node
     if errorlevel 1 goto failed
+    call :node_ok
+    if errorlevel 1 (
+        echo   ERROR: Node ^>= 22.19 is still not on PATH.
+        goto failed
+    )
 )
 echo.
 echo   === Step 2 of 5: Pi ===
