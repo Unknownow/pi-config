@@ -187,6 +187,6 @@ tells you it did.
 
 ## Cross-platform caveat
 
-`settings.json` can contain Windows-style relative extension paths such as `"+src\\index.ts"`. If the
-other machine is Linux or macOS and an extension fails to load, change it to `"+src/index.ts"` there.
-Both machines being Windows means nothing to do.
+Import and export convert relative extension paths in `settings.json` (including those inside
+`packages[]`) to forward slashes, so `"+src\\index.ts"` becomes `"+src/index.ts"` and loads on every OS.
+Absolute paths are left as they are.
