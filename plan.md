@@ -234,13 +234,15 @@
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 Create the branch `feat/bootstrap-node-pi` from `master`.
-- [ ] S2 In `bin/lib.js`, near `scrubSettings` (line 146), add `normalizeSettingsPaths(json)` as described in §4.
-- [ ] S3 In `pi/agent/settings.json:17`, change `"+src\\index.ts"` to `"+src/index.ts"`.
-- [ ] S4 Add the tests from §6 to `bin/sync.test.js`, then run them.
-- [ ] S5 Rewrite `pi-config.sh`, keeping the existing commands' behaviour.
-- [ ] S6 Run `git update-index --chmod=+x pi-config.sh`.
-- [ ] S7 Edit `pi-config.bat`.
-- [ ] S8 Update `README.md`.
-- [ ] S9 Run all the checks in §6.
+- [x] S1 Create the branch `feat/bootstrap-node-pi` from `master`.
+- [x] S2 In `bin/lib.js`, near `scrubSettings` (line 146), add `normalizeSettingsPaths(json)` as described in §4.
+- [x] S3 In `pi/agent/settings.json:17`, change `"+src\\index.ts"` to `"+src/index.ts"`.
+- [x] S4 Add the tests from §6 to `bin/sync.test.js`, then run them.
+- [x] S5 Rewrite `pi-config.sh`, keeping the existing commands' behaviour.
+- [x] S6 Run `git update-index --chmod=+x pi-config.sh`.
+- [x] S7 Edit `pi-config.bat`.
+- [x] S8 Update `README.md`.
+- [x] S9 Run all the checks in §6.
 - [ ] S10 Deliver: merge — the whole change, after a judge pass.
+## Outcome
+2026-10-26T17:20:16.700Z — ok: feat/bootstrap-node-pi, 4 commits since the review base

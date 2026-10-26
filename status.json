@@ -1,16 +1,36 @@
 {
   "v": 1,
   "flowId": "20261027-0011-cross-platform-bootstrap-node-pi-install-2c25",
-  "rev": 1,
-  "updated": "2026-10-26T17:11:08.568Z",
+  "rev": 2,
+  "updated": "2026-10-26T17:20:16.839Z",
   "title": "Cross-platform bootstrap: Node + Pi install and interactive menu in pi-config.sh/.bat, OS-neutral extension paths",
-  "done": [],
+  "done": [
+    "S1",
+    "S2",
+    "S3",
+    "S4",
+    "S5",
+    "S6",
+    "S7",
+    "S8",
+    "S9"
+  ],
+  "finished": {
+    "at": "2026-10-26T17:20:16.700Z",
+    "ok": true,
+    "text": "feat/bootstrap-node-pi, 4 commits since the review base"
+  },
   "reviewBase": {
-    "d:/projects/pi-config": "d93b8fe7a9d15e0f61680eb087a198cc7b41eb9f"
+    "d:/projects/pi-config": "8c642bf232d72bc8180e21ea8d24898676e8f0be"
+  },
+  "passedTrees": {
+    "d:/projects/pi-config": [
+      "29c93d9872e1508cd37f860707fdd19c9a0482ed"
+    ]
   },
   "repos": [
     {
-      "branch": "master",
+      "branch": "feat/bootstrap-node-pi",
       "remote": "github-personal/Unknownow/pi-config",
       "primary": true
     }
