@@ -5,7 +5,7 @@ The workflow is for software: system design, architecture and code. (The name st
 pi-config sync never deletes, so renaming the folder would leave the old extension loaded beside the new one.)
 
 ```
-you <-> plan (Opus 5.5, high) -> approve -> final plan (Opus) -> execute (Sonnet 5.5, medium) -> judge (Opus 5.5) -> commit (subagent, Sonnet 5.5 low)
+you <-> plan (Opus 5.5, high) -> approve -> final plan (Opus) -> execute (Sonnet 5.5, medium) -> judge (Opus 5.5) -> PASS: executor delivers (commit, push, PR, merge; git_task helper optional)
                                                               ^                          |-- explore (Haiku 5.5, parallel): answer + file:line
                                                               |                          `-- advisor (Opus 5.5): reads the full transcript
                                                               `-- fix findings <------- judge (separate session; sees the plan and the diff, not the discussion)
