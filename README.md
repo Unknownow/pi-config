@@ -12,13 +12,15 @@ rules and gitignored in three patterns on top of that. Log in separately on each
 ```bat
 git clone git@github.com:Unknownow/pi-config.git
 cd pi-config
-pi-config setup          :: import the config, npm install the extensions, install the VS Code bridge
+pi-config setup          :: install Node LTS and Pi if missing, import the config, npm install the extensions, install the VS Code bridge
 ```
 
 Restart Pi and log in. That's it — the sync extension registers itself as part of the import, so
 from then on this machine keeps itself in step.
 
-On macOS or Linux use `./pi-config.sh setup`, or call the scripts directly:
+`setup` asks before installing Node (latest LTS) or Pi; add `--yes` to skip the questions. Run `pi-config` with no arguments for an interactive menu.
+
+On macOS or Linux use `./pi-config.sh setup` (Node comes from nvm; the script also has a menu when run with no arguments), or call the scripts directly:
 
 ```bash
 node bin/import.js --dry-run   # see what would change
@@ -42,6 +44,8 @@ When you want to drive it yourself:
 | `/pi-config sync` | `pi-config sync` | export, commit, push (also pushes earlier unpushed commits) |
 | `/pi-config push` | `pi-config sync` | same as `sync` |
 | `/pi-config pull` | `git pull` | fetch the other machine's changes |
+| — | `pi-config node` | install the latest Node LTS (nvm on macOS/Linux, winget on Windows) |
+| — | `pi-config pi` | install Pi with its official installer, or run `pi update` when it is already installed |
 | — | `pi-config install` | `npm install` the extensions |
 | — | `pi-config vscode` | build and install the VS Code terminal bridge used by `/wt new` (skipped by `setup` when `code` is not on PATH) |
 
@@ -187,6 +191,6 @@ tells you it did.
 
 ## Cross-platform caveat
 
-`settings.json` can contain Windows-style relative extension paths such as `"+src\\index.ts"`. If the
-other machine is Linux or macOS and an extension fails to load, change it to `"+src/index.ts"` there.
-Both machines being Windows means nothing to do.
+Import and export convert relative extension paths in `settings.json` (including those inside
+`packages[]`) to forward slashes, so `"+src\\index.ts"` becomes `"+src/index.ts"` and loads on every OS.
+Absolute paths are left as they are.

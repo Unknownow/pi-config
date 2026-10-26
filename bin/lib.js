@@ -143,7 +143,28 @@ const PATH_ARRAYS = ['extensions', 'skills', 'prompts', 'themes'];
  */
 const MACHINE_KEYS = ['lastChangelogVersion'];
 
+/**
+ * Relative resource paths are written with `/`: Windows accepts it, POSIX needs it.
+ * Absolute paths and repo placeholders are left alone; a leading +, - or ! marker is kept.
+ */
+function normalizeSettingsPaths(json) {
+  const fix = (list) => list.map((entry) => {
+    if (typeof entry !== 'string') return entry;
+    const bare = entry.replace(/^[+!-]/, '');
+    if (path.isAbsolute(bare) || /^[A-Za-z]:[\\/]|^\\\\/.test(bare) || bare.startsWith(REPO_PLACEHOLDER)) return entry;
+    return entry.replace(/\\/g, '/');
+  });
+  const apply = (obj) => {
+    for (const key of PATH_ARRAYS) if (Array.isArray(obj[key])) obj[key] = fix(obj[key]);
+  };
+  apply(json);
+  if (Array.isArray(json.packages)) {
+    for (const pkg of json.packages) if (pkg && typeof pkg === 'object') apply(pkg);
+  }
+}
+
 function scrubSettings(json, notes) {
+  normalizeSettingsPaths(json);
   for (const key of MACHINE_KEYS) delete json[key];
   for (const key of PATH_ARRAYS) {
     if (!Array.isArray(json[key])) continue;
@@ -157,6 +178,7 @@ function scrubSettings(json, notes) {
 }
 
 function resolveSettings(json, log) {
+  normalizeSettingsPaths(json);
   for (const key of PATH_ARRAYS) {
     if (!Array.isArray(json[key])) continue;
     json[key] = json[key].map((entry) => {
@@ -409,5 +431,5 @@ module.exports = {
   MIRROR_DIRS, DENY_FILES, DENY_DIRS, isSecretName, secretsIn,
   CLAUDE_PLACEHOLDER, REPO_PLACEHOLDER,
   inventory, walk, scrub, resolvePlaceholders, keepMachineKeys, detectClaude,
-  readJson, sameJson, samePath, insideRepo, isJunk,
+  normalizeSettingsPaths, readJson, sameJson, samePath, insideRepo, isJunk,
 };

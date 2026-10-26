@@ -209,3 +209,35 @@ test('the real mirror and config hold no secrets', () => {
   }
   assert.deepEqual(bad, []);
 });
+
+test('normalizeSettingsPaths converts package extension paths', () => {
+  const { normalizeSettingsPaths } = require('./lib');
+  const json = { packages: [{ source: 'npm:x', extensions: ['+src\\index.ts', '-a\\b.ts', '!c\\d'] }] };
+  normalizeSettingsPaths(json);
+  assert.deepEqual(json.packages[0].extensions, ['+src/index.ts', '-a/b.ts', '!c/d']);
+});
+
+test('normalizeSettingsPaths leaves absolute, placeholder and non-string entries', () => {
+  const { normalizeSettingsPaths } = require('./lib');
+  const json = { extensions: ['C:\\x\\y', '+C:\\x\\y', '__PI_CONFIG_REPO__\\extension', 42, 'rel\\p'], packages: ['npm:y'] };
+  normalizeSettingsPaths(json);
+  assert.deepEqual(json.extensions, ['C:\\x\\y', '+C:\\x\\y', '__PI_CONFIG_REPO__\\extension', 42, 'rel/p']);
+  assert.deepEqual(json.packages, ['npm:y']);
+});
+
+test('normalizeSettingsPaths is idempotent', () => {
+  const { normalizeSettingsPaths } = require('./lib');
+  const json = { skills: ['a\\b'], packages: [{ extensions: ['+src\\i.ts'] }] };
+  normalizeSettingsPaths(json);
+  const once = JSON.stringify(json);
+  normalizeSettingsPaths(json);
+  assert.equal(JSON.stringify(json), once);
+});
+
+test('export writes forward-slash package extension paths', () => {
+  const env = setup();
+  write(path.join(env.agent, 'settings.json'), JSON.stringify({ theme: 'dark', packages: [{ source: 'npm:x', extensions: ['+src\\index.ts'] }] }));
+  run(env, 'export.js');
+  const out = JSON.parse(read(path.join(env.mirror, 'settings.json')));
+  assert.deepEqual(out.packages[0].extensions, ['+src/index.ts']);
+});

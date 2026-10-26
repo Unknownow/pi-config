@@ -14,7 +14,7 @@
     {
       "source": "npm:pi-claude-bridge",
       "extensions": [
-        "+src\\index.ts"
+        "+src/index.ts"
       ]
     }
   ],
