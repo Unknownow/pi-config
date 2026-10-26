@@ -121,10 +121,12 @@ Commands, from `pi/agent/extensions/workflow` (fast, under 2 minutes):
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 `view.ts`, `FlowView.render` (`view.ts:549-575`): draw the commit node only when it is used.
-- [ ] S2 `view.ts`, `summaryLines` (`view.ts:242-243`): hide a zero commit row on the end-of-flow card.
-- [ ] S3 `view.ts:6`, header comment: remove ` ▸ commit` from the example line so it ends `▸ judge opus-5-5·high 90,004 (21,300) 
-- [ ] S4 `index.ts:4273`, `/flow status` tokens line: leave out zero optional stages.
-- [ ] S5 `README.md:8`: change the diagram's main line so it ends at judge. For example `… -> judge (Opus 5.5) -> PASS: executor 
-- [ ] S6 `view.test.ts`: add the tests in section 6. Model them on the `FlowView` tests at `view.test.ts:44-60`.
-- [ ] S7 `docs/workflow-improvements.md`: record D22 (follow the rules at line 7 and following).
+- [x] S1 `view.ts`, `FlowView.render` (`view.ts:549-575`): draw the commit node only when it is used.
+- [x] S2 `view.ts`, `summaryLines` (`view.ts:242-243`): hide a zero commit row on the end-of-flow card.
+- [x] S3 `view.ts:6`, header comment: remove ` ▸ commit` from the example line so it ends `▸ judge opus-5-5·high 90,004 (21,300) 
+- [x] S4 `index.ts:4273`, `/flow status` tokens line: leave out zero optional stages.
+- [x] S5 `README.md:8`: change the diagram's main line so it ends at judge. For example `… -> judge (Opus 5.5) -> PASS: executor 
+- [x] S6 `view.test.ts`: add the tests in section 6. Model them on the `FlowView` tests at `view.test.ts:44-60`.
+- [x] S7 `docs/workflow-improvements.md`: record D22 (follow the rules at line 7 and following).
+## Outcome
+2026-10-26T05:21:20.472Z — ok: flow/show-commit-stage-only-when-used, 1 commit since the review base
