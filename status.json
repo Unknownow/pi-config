@@ -1,0 +1,18 @@
+{
+  "v": 1,
+  "flowId": "20261026-1219-show-the-visualizer-s-commit-stage-only-41ee",
+  "rev": 1,
+  "updated": "2026-10-26T05:19:01.779Z",
+  "title": "Show the visualizer's commit stage only when git_task ran",
+  "done": [],
+  "reviewBase": {
+    "d:/projects/pi-config": "ebaac0be12e86f681468853f0d918cae37b06417"
+  },
+  "repos": [
+    {
+      "branch": "master",
+      "remote": "github-personal/Unknownow/pi-config",
+      "primary": true
+    }
+  ]
+}
