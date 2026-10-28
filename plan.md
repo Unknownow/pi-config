@@ -161,13 +161,15 @@ Run `gh auth login -h github.com -s admin:public_key`, log in as Unknownow in th
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 Wait: the user runs `gh auth login -h github.com -s admin:public_key`, logs in as Unknownow in the browser, then runs `g
-- [ ] S2 Confirm the starting state:
-- [ ] S3 Back up the files edited later into the new folder `~/ssh-cleanup-backup-2026-10-28/`, which is outside `~/.ssh` so the 
-- [ ] S4 Switch the 11 work remotes in §3 to HTTPS with `git remote set-url`:
-- [ ] S5 Delete the work key on `cuongbpt-iec`, with the active account:
-- [ ] S6 Delete the orphan key on Unknownow (`GH_TOKEN` for Unknownow, set inline and never echoed):
-- [ ] S7 Delete the local files `~/.ssh/id_ed25519`, `~/.ssh/id_ed25519.pub` and `~/.ssh/cuongbpt.pub`. Remove every line startin
-- [ ] S8 Rewrite `~/.ssh/config` per §3:
-- [ ] S9 Set up the git identities:
-- [ ] S10 Run the checks in §6 and report each command with its output in the final message. Delivery has nothing to commit, so th
+- [x] S1 Wait: the user runs `gh auth login -h github.com -s admin:public_key`, logs in as Unknownow in the browser, then runs `g
+- [x] S2 Confirm the starting state:
+- [x] S3 Back up the files edited later into the new folder `~/ssh-cleanup-backup-2026-10-28/`, which is outside `~/.ssh` so the 
+- [x] S4 Switch the 11 work remotes in §3 to HTTPS with `git remote set-url`:
+- [x] S5 Delete the work key on `cuongbpt-iec`, with the active account:
+- [x] S6 Delete the orphan key on Unknownow (`GH_TOKEN` for Unknownow, set inline and never echoed):
+- [x] S7 Delete the local files `~/.ssh/id_ed25519`, `~/.ssh/id_ed25519.pub` and `~/.ssh/cuongbpt.pub`. Remove every line startin
+- [x] S8 Rewrite `~/.ssh/config` per §3:
+- [x] S9 Set up the git identities:
+- [x] S10 Run the checks in §6 and report each command with its output in the final message. Delivery has nothing to commit, so th
+## Outcome
+2026-10-28T12:12:27.069Z — failed: back to discussion
