@@ -155,6 +155,10 @@ There's no code and no test suite, so these are the verification commands. Each 
 ### 9. Commits
 None. Every change is in machine config (`~/.ssh`, `~/.gitconfig`, `~/.gitconfig-personal`), untracked repo config (`.git/config`) or GitHub account settings. There's nothing to commit, push or merge in pi-config. The §6 report is the delivery evidence.
 
+## Amendment 1 (executor: autopilot)
+Run `gh auth login -h github.com -s admin:public_key`, log in as Unknownow in the browser, then run `gh auth switch -u cuongbpt-iec`. (step S1, act)
+
+
 <!-- pi-workflow:status -->
 ## Checklist
 - [ ] S1 Wait: the user runs `gh auth login -h github.com -s admin:public_key`, logs in as Unknownow in the browser, then runs `g
