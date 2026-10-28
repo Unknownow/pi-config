@@ -729,6 +729,10 @@ Batch checks on the template project (slow, about 1–2 min each, same resource)
 19. `feat(studio): Unity engine plugin`: `tools/gamestudio/engines/unity.py`, `tests/test_engine_unity.py`.
 20. `feat(package): com.unknownow.studio-tools 0.1.0`: `Packages/com.unknownow.studio-tools/**`, including its tests.
 
+## Amendment 1 (executor: autopilot)
+Install Python 3.12 (e.g. `winget install Python.Python.3.12`) and make `python` on PATH run it, ahead of C:\Program Files\Python39. Then open a new shell. (step S1, act)
+
+
 <!-- pi-workflow:status -->
 ## Checklist
 - [ ] S1 Wait: the user installs Python 3.12 (for example `winget install Python.Python.3.12`) and makes sure `python` on PATH ru
