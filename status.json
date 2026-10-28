@@ -1,10 +1,16 @@
 {
   "v": 1,
   "flowId": "20261028-1705-ssh-and-github-account-cleanup-work-on-h-36fa",
-  "rev": 2,
-  "updated": "2026-10-28T10:06:04.624Z",
+  "rev": 3,
+  "updated": "2026-10-28T10:06:08.231Z",
   "title": "SSH and GitHub account cleanup (work on HTTPS via gh, SSH only for Unknownow)",
   "done": [],
+  "waiting": {
+    "reason": "Run `gh auth login -h github.com -s admin:public_key`, log in as Unknownow in the browser, then run `gh auth switch -u cuongbpt-iec`.",
+    "check": "gh auth status --hostname github.com 2>&1 | grep \"Logged in to github.com account Unknownow\"",
+    "since": "2026-10-28T10:06:08.019Z",
+    "planned": true
+  },
   "reviewBase": {
     "d:/projects/pi-config": "47f33d97aff523e415e320e5c9371ac48743a540"
   },
