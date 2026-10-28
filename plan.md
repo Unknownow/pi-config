@@ -735,20 +735,20 @@ Install Python 3.12 (e.g. `winget install Python.Python.3.12`) and make `python`
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 Wait: the user installs Python 3.12 (for example `winget install Python.Python.3.12`) and makes sure `python` on PATH ru
-- [ ] S2 Prepare the source and the repo.
-- [ ] S3 Root files:
-- [ ] S4 `tools/studio.py` and the core of `tools/gamestudio/`:
-- [ ] S5 `check.py` with every check in 4.5 (the plugin hook included), plus `--staged`. `claude-hook pre-bash` reuses it.
-- [ ] S6 `status.py`, `manifest.py` (`update`) and `upstream.py` (`upstream-diff`, `--coverage`), per 4.4.
-- [ ] S7 `claude_sync.py` plus `data/claude-deny.json`, copied verbatim from the `permissions.deny` array of CCGS's `.claude/sett
-- [ ] S8 Hooks and CI:
-- [ ] S9 `AGENTS.md` with the sections in 4.1. Port `coordination-rules.md`, `workflow-modes.md`, `director-gates.md` (the index)
-- [ ] S10 Port the 8 core skills (`start`, `help`, `setup-engine`, `brainstorm`, `create-stories`, `dev-story`, `story-done`, `set
-- [ ] S11 Port every role, gate, rule and template that the S10 skills reference. Find them by grepping the ported skills for `rol
-- [ ] S12 Write the `UPSTREAM.toml` entries for everything ported so far, plus all `[[ignore]]` entries (the hooks, `statusline.sh
-- [ ] S13 Unit tests for S4–S8 and the S11 helpers (§6). Run them, then run `python tools/studio.py check`, both clean.
-- [ ] S14 Deliver: commit per §9 and make the first push straight to `main` of `game-studio-base` (D14), after a judge pass.
+- [x] S1 Wait: the user installs Python 3.12 (for example `winget install Python.Python.3.12`) and makes sure `python` on PATH ru
+- [x] S2 Prepare the source and the repo.
+- [x] S3 Root files:
+- [x] S4 `tools/studio.py` and the core of `tools/gamestudio/`:
+- [x] S5 `check.py` with every check in 4.5 (the plugin hook included), plus `--staged`. `claude-hook pre-bash` reuses it.
+- [x] S6 `status.py`, `manifest.py` (`update`) and `upstream.py` (`upstream-diff`, `--coverage`), per 4.4.
+- [x] S7 `claude_sync.py` plus `data/claude-deny.json`, copied verbatim from the `permissions.deny` array of CCGS's `.claude/sett
+- [x] S8 Hooks and CI:
+- [x] S9 `AGENTS.md` with the sections in 4.1. Port `coordination-rules.md`, `workflow-modes.md`, `director-gates.md` (the index)
+- [x] S10 Port the 8 core skills (`start`, `help`, `setup-engine`, `brainstorm`, `create-stories`, `dev-story`, `story-done`, `set
+- [x] S11 Port every role, gate, rule and template that the S10 skills reference. Find them by grepping the ported skills for `rol
+- [x] S12 Write the `UPSTREAM.toml` entries for everything ported so far, plus all `[[ignore]]` entries (the hooks, `statusline.sh
+- [x] S13 Unit tests for S4–S8 and the S11 helpers (§6). Run them, then run `python tools/studio.py check`, both clean.
+- [x] S14 Deliver: commit per §9 and make the first push straight to `main` of `game-studio-base` (D14), after a judge pass.
 - [ ] S16 Create branch `flow/base-full-port` in `game-studio-base`. Port the remaining 66 skills, with all their `references/` an
 - [ ] S17 Port the rest of the base content:
 - [ ] S18 Complete `UPSTREAM.toml` so that `python tools/studio.py upstream-diff --clone D:/scratch/ccgs-v1.2.0 --to v1.2.0 --cove
