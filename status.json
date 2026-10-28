@@ -1,0 +1,18 @@
+{
+  "v": 1,
+  "flowId": "20261028-1705-ssh-and-github-account-cleanup-work-on-h-36fa",
+  "rev": 1,
+  "updated": "2026-10-28T10:05:26.189Z",
+  "title": "SSH and GitHub account cleanup (work on HTTPS via gh, SSH only for Unknownow)",
+  "done": [],
+  "reviewBase": {
+    "d:/projects/pi-config": "47f33d97aff523e415e320e5c9371ac48743a540"
+  },
+  "repos": [
+    {
+      "branch": "master",
+      "remote": "github-personal/Unknownow/pi-config",
+      "primary": true
+    }
+  ]
+}
