@@ -171,4 +171,3 @@ Run `gh auth login -h github.com -s admin:public_key`, log in as Unknownow in th
 - [ ] S8 Rewrite `~/.ssh/config` per §3:
 - [ ] S9 Set up the git identities:
 - [ ] S10 Run the checks in §6 and report each command with its output in the final message. Delivery has nothing to commit, so th
-**Waiting for:** Run `gh auth login -h github.com -s admin:public_key`, log in as Unknownow in the browser, then run `gh auth switch -u cuongbpt-iec`.
