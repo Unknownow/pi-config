@@ -1,0 +1,19 @@
+{
+  "v": 1,
+  "flowId": "20261029-1000-stage-3-base-engine-layer-fixes-then-the-980f",
+  "rev": 1,
+  "updated": "2026-10-29T03:00:36.670Z",
+  "title": "Stage 3: base engine-layer fixes, then the `game-studio-unity` fork and the `com.unknownow.studio-tools` 0.1.0 package",
+  "stage": 1,
+  "done": [],
+  "reviewBase": {
+    "d:/projects/pi-config": "47f33d97aff523e415e320e5c9371ac48743a540"
+  },
+  "repos": [
+    {
+      "branch": "master",
+      "remote": "github-personal/Unknownow/pi-config",
+      "primary": true
+    }
+  ]
+}
