@@ -1,0 +1,19 @@
+{
+  "v": 1,
+  "flowId": "20261029-0901-game-studio-templates-game-studio-base-a-f0de",
+  "rev": 1,
+  "updated": "2026-10-29T02:01:45.069Z",
+  "title": "Game Studio templates: `game-studio-base` and `game-studio-unity` (with `com.unknownow.studio-tools`)",
+  "stage": 1,
+  "done": [],
+  "reviewBase": {
+    "d:/projects/pi-config": "47f33d97aff523e415e320e5c9371ac48743a540"
+  },
+  "repos": [
+    {
+      "branch": "master",
+      "remote": "github-personal/Unknownow/pi-config",
+      "primary": true
+    }
+  ]
+}
