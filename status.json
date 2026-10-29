@@ -1,0 +1,19 @@
+{
+  "v": 1,
+  "flowId": "20261029-1408-test-the-gate-s-protected-push-wording-m-e17f",
+  "rev": 1,
+  "updated": "2026-10-29T07:08:01.911Z",
+  "title": "Test the gate's protected-push wording, merge base PR #3, ship the Unity fork v0.1.0",
+  "stage": 1,
+  "done": [],
+  "reviewBase": {
+    "d:/projects/pi-config": "db7e5632a59b61a8678133ae24e972f78a48234f"
+  },
+  "repos": [
+    {
+      "branch": "fix/workflow-gate-minor",
+      "remote": "github-personal/Unknownow/pi-config",
+      "primary": true
+    }
+  ]
+}
