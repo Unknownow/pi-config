@@ -374,7 +374,7 @@ and any repo where the executor changed a file with `edit` or `write`.
   re-reviews compare each repo with its last round.
 - The executor commits, pushes and opens a pull request per repo; a merge or protected push is gated on that repo's own passed tree. Each command
   is checked against the branch of the repo it runs in: the one named by `git -C` or the last `cd`,
-  otherwise the working folder's.
+  otherwise the working folder's. A merge with no `cd`/`git -C` that names `--repo owner/name` is gated on the flow repo whose origin remote (else its first remote) is that repo, and is refused when none matches.
 - With only the working folder's repo, nothing changes.
 
 Limits: `cd` does not move the guard when the command text has `$(…)`, backticks, or parentheses
