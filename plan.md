@@ -299,12 +299,15 @@ Rerun the slow suites only if a later fix changes `Packages/` or `ProjectSetting
 - `feat(studio): Unity engine plugin`: `tools/gamestudio/engines/unity.py`, `tools/gamestudio/tests/test_engine_unity.py`.
 - `feat(package): com.unknownow.studio-tools 0.1.0`: `Packages/com.unknownow.studio-tools/**`.
 
+## Plan choices upheld at a pass
+tools/gamestudio/check.py:309 - minor - [plan-flaw] A plain base project with files only under `Assets/` (and no `src/`) now gets the warning "code root unresolved; hardcoded-value and TODO scans did not run" on every `check`.
+
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 In `D:/personal/game-studio-base`, check `git status` (expect clean) and confirm the branch is `fix/assets-root-and-laye
-- [ ] S2 Implement D13 as in §4, in three places:
-- [ ] S3 Clean up after the bulk replace:
-- [ ] S4 Add the tests in §6 (base part) and run the base commands in §6. Then call `judge(full=true, base=48ccc4c)`, fix its fin
+- [x] S1 In `D:/personal/game-studio-base`, check `git status` (expect clean) and confirm the branch is `fix/assets-root-and-laye
+- [x] S2 Implement D13 as in §4, in three places:
+- [x] S3 Clean up after the bulk replace:
+- [x] S4 Add the tests in §6 (base part) and run the base commands in §6. Then call `judge(full=true, base=48ccc4c)`, fix its fin
 - [ ] S5 Deliver: base PR #3.
 - [ ] S6 In `D:/personal/game-studio-unity`, check `git status` and confirm the branch is `main`, then:
 - [ ] S7 Run the fork checks in §6 in order. Then:

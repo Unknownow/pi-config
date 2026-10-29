@@ -1,19 +1,30 @@
 {
   "v": 1,
   "flowId": "20261029-1132-base-pr-3-asset-root-assets-then-finish-79d4",
-  "rev": 1,
-  "updated": "2026-10-29T04:32:44.870Z",
+  "rev": 2,
+  "updated": "2026-10-29T04:41:35.319Z",
   "title": "Base PR #3 (asset root `Assets/`), then finish and ship the Unity fork",
   "stage": 1,
-  "done": [],
+  "done": [
+    "S1",
+    "S2",
+    "S3",
+    "S4"
+  ],
   "reviewBase": {
-    "d:/projects/pi-config": "47f33d97aff523e415e320e5c9371ac48743a540"
+    "d:/projects/pi-config": "47f33d97aff523e415e320e5c9371ac48743a540",
+    "d:/personal/game-studio-base": "85debdf753aa10772ea0ad57b18867624338c09b"
   },
   "repos": [
     {
       "branch": "master",
       "remote": "github-personal/Unknownow/pi-config",
       "primary": true
+    },
+    {
+      "branch": "fix/assets-root-and-layer-tests",
+      "remote": "github-personal/Unknownow/game-studio-base",
+      "primary": false
     }
   ]
 }
