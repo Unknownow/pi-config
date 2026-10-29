@@ -742,7 +742,7 @@ Plus the delivered `chore: normalise line endings to LF for all text files` and 
 - [x] S17 Port the rest of the base content.
 - [x] S18 Close coverage and harden.
 - [x] S19 Deliver: open a pull request for `flow/base-full-port` into `main` of `Unknownow/game-studio-base` (using the Unknownow 
-- [ ] S20 Deliver: tag `v0.1.0` on `game-studio-base` `main` → call `deliver {tag: {name: "v0.1.0", repo: "D:/personal/game-studio
+- [x] S20 Deliver: tag `v0.1.0` on `game-studio-base` `main` → call `deliver {tag: {name: "v0.1.0", repo: "D:/personal/game-studio
 - [ ] S21 Clone `game-studio-base` (at `v0.1.0`) into `D:/personal/game-studio-unity`. Rename `origin` to `base`, add `origin` = `
 - [ ] S22 Create the Unity project:
 - [ ] S23 The Unity content:
