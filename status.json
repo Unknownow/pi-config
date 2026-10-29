@@ -1,19 +1,49 @@
 {
   "v": 1,
   "flowId": "20261029-1000-stage-3-base-engine-layer-fixes-then-the-980f",
-  "rev": 1,
-  "updated": "2026-10-29T03:00:36.670Z",
+  "rev": 2,
+  "updated": "2026-10-29T03:10:02.793Z",
   "title": "Stage 3: base engine-layer fixes, then the `game-studio-unity` fork and the `com.unknownow.studio-tools` 0.1.0 package",
-  "stage": 1,
-  "done": [],
+  "stage": 2,
+  "done": [
+    "S1",
+    "S2",
+    "S3",
+    "S4",
+    "S5",
+    "S6",
+    "S7",
+    "S8"
+  ],
   "reviewBase": {
-    "d:/projects/pi-config": "47f33d97aff523e415e320e5c9371ac48743a540"
+    "d:/projects/pi-config": "8ab3ca910f7cd19bb06c8220c83406dda3587a55",
+    "d:/personal/game-studio-base": "414cbfdc0cddca5844f99a83e4ccea3d4349ecf0"
+  },
+  "passedTrees": {
+    "d:/projects/pi-config": [
+      "29c93d9872e1508cd37f860707fdd19c9a0482ed"
+    ],
+    "d:/personal/game-studio-base": [
+      "1f620f57dd5097a424481313f0c8f39d08538fd8"
+    ]
+  },
+  "judgedMerges": {
+    "d:/personal/game-studio-base": {
+      "pr": "2",
+      "tree": "1f620f57dd5097a424481313f0c8f39d08538fd8",
+      "stage": 1
+    }
   },
   "repos": [
     {
       "branch": "master",
       "remote": "github-personal/Unknownow/pi-config",
       "primary": true
+    },
+    {
+      "branch": "main",
+      "remote": "github-personal/Unknownow/game-studio-base",
+      "primary": false
     }
   ]
 }

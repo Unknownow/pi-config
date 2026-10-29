@@ -532,14 +532,14 @@ Never execute CCGS scripts. Never commit `D:/scratch/**`, `.claude/`, `Library/`
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 In `D:/personal/game-studio-base`, confirm `main` = `origin/main` = `063372c` and a clean tree. Create the branch `fix/e
-- [ ] S2 `tools/gamestudio/check.py:221` `check_engine_hooks`: add `roles/*.md` to the scanned files and change the warning text,
-- [ ] S3 `tools/gamestudio/upstream.py:32` `classify`: apply the 4.1 precedence. Model it on the existing two loops.
-- [ ] S4 `tools/gamestudio/tests/test_repo_content.py`:
-- [ ] S5 `.gitignore` "Engine folders" (:38): append the 4.1 patterns.
-- [ ] S6 Remove the leftovers in the §3 list by the 4.1 policy. Afterwards, `test_no_other_engine_leftovers` passes and the meani
-- [ ] S7 Run the fast suite, `check`, and `upstream-diff --clone D:/scratch/ccgs-v1.2.0 --to v1.2.0 --coverage`. Then call `judge
-- [ ] S8 Deliver: merge the base engine-layer fixes. PR `fix/engine-layer-support` → `main` of `Unknownow/game-studio-base`, with
+- [x] S1 In `D:/personal/game-studio-base`, confirm `main` = `origin/main` = `063372c` and a clean tree. Create the branch `fix/e
+- [x] S2 `tools/gamestudio/check.py:221` `check_engine_hooks`: add `roles/*.md` to the scanned files and change the warning text,
+- [x] S3 `tools/gamestudio/upstream.py:32` `classify`: apply the 4.1 precedence. Model it on the existing two loops.
+- [x] S4 `tools/gamestudio/tests/test_repo_content.py`:
+- [x] S5 `.gitignore` "Engine folders" (:38): append the 4.1 patterns.
+- [x] S6 Remove the leftovers in the §3 list by the 4.1 policy. Afterwards, `test_no_other_engine_leftovers` passes and the meani
+- [x] S7 Run the fast suite, `check`, and `upstream-diff --clone D:/scratch/ccgs-v1.2.0 --to v1.2.0 --coverage`. Then call `judge
+- [x] S8 Deliver: merge the base engine-layer fixes. PR `fix/engine-layer-support` → `main` of `Unknownow/game-studio-base`, with
 - [ ] S9 Clone base `main` (after S8) into `D:/personal/game-studio-unity`:
 - [ ] S10 Unity project per 4.6:
 - [ ] S11 Unity content, per 4.2 and 4.3:
