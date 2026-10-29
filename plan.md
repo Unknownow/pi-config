@@ -183,3 +183,5 @@ Restart pi to load the reverted extension; run /flow end; then start the port se
 ## For you after the flow
 - S7 Verify: restart pi so the reverted workflow extension loads — look for: no error on startup, and a `gh pr merge` refusal
 - S8 Verify: run `/flow end` in this session, then open a new session in `D:/personal/game-studio-base` and `D:/personal/game
+## Outcome
+2026-10-29T07:31:34.042Z — ok: master, 3 commits since the review base, PR #16 MERGED https://github.com/Unknownow/pi-config/pull/16 · 3 human check(s) for you (see the card)
