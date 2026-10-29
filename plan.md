@@ -724,20 +724,20 @@ Plus the delivered `chore: normalise line endings to LF for all text files` and 
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 Wait: the user installs Python 3.12 and makes `python` run it ahead of `C:\Program Files\Python39` (check: python -c "im
-- [ ] S2 Clone CCGS `v1.2.0` to `D:/scratch/ccgs-v1.2.0` and record its hash. `git init -b main` the base repo with `origin` = `g
-- [ ] S3 The root files and skeleton READMEs. Done.
-- [ ] S4 `tools/studio.py` plus `cli`, `config`, `toml_edit`, `frontmatter` and `engines/__init__`. Done.
-- [ ] S5 `check.py` and `claude-hook pre-bash`. Done.
-- [ ] S6 `status.py`, `manifest.py` and `upstream.py`. Done.
-- [ ] S7 `claude_sync.py` and `data/claude-deny.json` (130 entries), and `setup`. Done.
-- [ ] S8 The hooks (executable) and `check.yml`. Done.
-- [ ] S9 `AGENTS.md` and the first `docs/studio/` docs. Done.
-- [ ] S10 The 8 core skills. Done.
-- [ ] S11 The roles, gates, rules, templates and helpers the core skills use. Done.
-- [ ] S12 `UPSTREAM.toml` for the core, plus all ignores. Done.
-- [ ] S13 The unit tests and `check`. Done.
-- [ ] S14 Deliver: commit per §9 and push straight to `main` of `game-studio-base` (D14) after a judge pass. Done.
+- [x] S1 Wait: the user installs Python 3.12 and makes `python` run it ahead of `C:\Program Files\Python39` (check: python -c "im
+- [x] S2 Clone CCGS `v1.2.0` to `D:/scratch/ccgs-v1.2.0` and record its hash. `git init -b main` the base repo with `origin` = `g
+- [x] S3 The root files and skeleton READMEs. Done.
+- [x] S4 `tools/studio.py` plus `cli`, `config`, `toml_edit`, `frontmatter` and `engines/__init__`. Done.
+- [x] S5 `check.py` and `claude-hook pre-bash`. Done.
+- [x] S6 `status.py`, `manifest.py` and `upstream.py`. Done.
+- [x] S7 `claude_sync.py` and `data/claude-deny.json` (130 entries), and `setup`. Done.
+- [x] S8 The hooks (executable) and `check.yml`. Done.
+- [x] S9 `AGENTS.md` and the first `docs/studio/` docs. Done.
+- [x] S10 The 8 core skills. Done.
+- [x] S11 The roles, gates, rules, templates and helpers the core skills use. Done.
+- [x] S12 `UPSTREAM.toml` for the core, plus all ignores. Done.
+- [x] S13 The unit tests and `check`. Done.
+- [x] S14 Deliver: commit per §9 and push straight to `main` of `game-studio-base` (D14) after a judge pass. Done.
 - [ ] S16 Port the remaining 66 skills and add `upstream-sync`.
 - [ ] S17 Port the rest of the base content.
 - [ ] S18 Close coverage and harden.
