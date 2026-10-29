@@ -1,16 +1,20 @@
 {
   "v": 1,
   "flowId": "20261029-1132-base-pr-3-asset-root-assets-then-finish-79d4",
-  "rev": 3,
-  "updated": "2026-10-29T04:42:42.512Z",
+  "rev": 4,
+  "updated": "2026-10-29T04:47:08.727Z",
   "title": "Base PR #3 (asset root `Assets/`), then finish and ship the Unity fork",
-  "stage": 2,
   "done": [
     "S1",
     "S2",
     "S3",
     "S4"
   ],
+  "finished": {
+    "at": "2026-10-29T04:47:07.207Z",
+    "ok": false,
+    "text": "stage 1: game-studio-base: fix/assets-root-and-layer-tests, 5 commits since the review base, PR #3 OPEN https://github.com/Unknownow/game-studio-base/pull/3; back to planning · 2 human check(s) for you (see the card)"
+  },
   "reviewBase": {
     "d:/projects/pi-config": "82c2275341c6151e5d6bb9d5abf6acee5544a632",
     "d:/personal/game-studio-base": "dbfff01a7d5ffad3f3f2aa55e5e1b00e9abfda7f"

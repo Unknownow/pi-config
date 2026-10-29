@@ -318,3 +318,5 @@ tools/gamestudio/check.py:309 - minor - [plan-flaw] A plain base project with fi
 ## For you after the flow
 - S12 Verify: open a case-sensitive clone of `Unknownow/game-studio-unity` (macOS or Linux) in Unity 6000.3. Look for:
 - S13 Verify: create a game repo from the template, clone it, and run `python tools/studio.py setup`. Look for:
+## Outcome
+2026-10-29T04:47:07.207Z — failed: stage 1: game-studio-base: fix/assets-root-and-layer-tests, 5 commits since the review base, PR #3 OPEN https://github.com/Unknownow/game-studio-base/pull/3; back to planning · 2 human check(s) for you (see the card)
