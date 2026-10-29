@@ -1,16 +1,34 @@
 {
   "v": 1,
   "flowId": "20261029-1428-revert-the-workflow-repo-merge-gate-work-b813",
-  "rev": 1,
-  "updated": "2026-10-29T07:28:31.119Z",
+  "rev": 2,
+  "updated": "2026-10-29T07:31:28.000Z",
   "title": "Revert the workflow `--repo` merge-gate work (pi-config PRs #13, #14, #15)",
-  "done": [],
+  "done": [
+    "S1",
+    "S2",
+    "S3",
+    "S4",
+    "S5",
+    "S6"
+  ],
   "reviewBase": {
-    "d:/projects/pi-config": "6b651c549e38942a05e4721ff491d20d45d283a0"
+    "d:/projects/pi-config": "5f8a8d1e456d0c206329703e75ce15666e68f923"
+  },
+  "passedTrees": {
+    "d:/projects/pi-config": [
+      "791a35312ac0a84169ae31b2e1f8585985d6a7f4"
+    ]
+  },
+  "judgedMerges": {
+    "d:/projects/pi-config": {
+      "pr": "16",
+      "tree": "791a35312ac0a84169ae31b2e1f8585985d6a7f4"
+    }
   },
   "repos": [
     {
-      "branch": "flow/gate-push-wording-test",
+      "branch": "master",
       "remote": "github-personal/Unknownow/pi-config",
       "primary": true
     }

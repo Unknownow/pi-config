@@ -168,14 +168,18 @@ No test is added or changed by hand. The revert removes the tests that PRs #13�
   - `pi/agent/extensions/workflow/{README.md,git-guard.ts,index.ts,merge-gate.ts,merge-gate.test.ts,push-guard.ts,push-guard.test.ts}`
   - `docs/workflow-improvements.md`
 
+## Amendment 1 (executor: verify)
+Restart pi to load the reverted extension; run /flow end; then start the port session in the two game-studio folders with the handoff.
+
+
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 In `D:/projects/pi-config`:
-- [ ] S2 Run `git revert --no-commit -m 1 98f4c57 2164d75 e1490fa`, in that order, newest first.
-- [ ] S3 Edit `docs/workflow-improvements.md` with the `edit` tool. Don't use a heredoc.
-- [ ] S4 Run the tests:
-- [ ] S5 Deliver: merge — PR `revert/workflow-gate-repo` → `master` on `Unknownow/pi-config`.
-- [ ] S6 Return to `master` and check the result:
+- [x] S1 In `D:/projects/pi-config`:
+- [x] S2 Run `git revert --no-commit -m 1 98f4c57 2164d75 e1490fa`, in that order, newest first.
+- [x] S3 Edit `docs/workflow-improvements.md` with the `edit` tool. Don't use a heredoc.
+- [x] S4 Run the tests:
+- [x] S5 Deliver: merge — PR `revert/workflow-gate-repo` → `master` on `Unknownow/pi-config`.
+- [x] S6 Return to `master` and check the result:
 ## For you after the flow
 - S7 Verify: restart pi so the reverted workflow extension loads — look for: no error on startup, and a `gh pr merge` refusal
 - S8 Verify: run `/flow end` in this session, then open a new session in `D:/personal/game-studio-base` and `D:/personal/game
