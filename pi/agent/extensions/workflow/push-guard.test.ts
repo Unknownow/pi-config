@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import * as path from "node:path";
-import { codePublishProblem, mergeTarget, pushProblem, pushSource, repoMatches, shellProblem, type GateRequest } from "./push-guard.ts";
+import { codePublishProblem, mergeTarget, pushProblem, pushSource, shellProblem, type GateRequest } from "./push-guard.ts";
 import { repoKey } from "./repos.ts";
 
 const feature = { branch: "feat", protectedBranches: ["main", "master"] };
@@ -221,54 +221,4 @@ test("a push to a name that is a tag is refused through isTag", async () => {
 	assert.equal(await shellProblem("git push origin release/v2", false, g), null);
 	assert.equal(await shellProblem("git push -u origin feat", false, g), null);
 	assert.deepEqual(asked, ["unity-build/v1.0.9", "release/v2", "feat"]);
-});
-
-test("repoMatches: the owner/name of the remote, any host, any case", () => {
-	const r = "github-personal/Unknownow/game-studio-base";
-	assert.equal(repoMatches(r, "Unknownow/game-studio-base"), true);
-	assert.equal(repoMatches(r, "github.com/Unknownow/game-studio-base"), true);
-	assert.equal(repoMatches(r, "https://github.com/unknownow/Game-Studio-Base.git"), true);
-	assert.equal(repoMatches("git@github-personal:Unknownow/game-studio-base.git", "Unknownow/game-studio-base"), true);
-	assert.equal(repoMatches(r, "Unknownow/game-studio-unity"), false);
-	assert.equal(repoMatches(r, "Other/game-studio-base"), false);
-	assert.equal(repoMatches(r, "game-studio-base"), false);
-});
-
-test("shellProblem: a merge named with --repo is gated in the repo it names", async () => {
-	const seen: [string | undefined, string | undefined][] = [];
-	const g = { ...single(), gate: async (_k: string, root: string | undefined, target: string | undefined) => (seen.push([root, target]), null), repoRoot: async (repo: string) => (repo === "Unknownow/game-studio-base" ? "/r/base" : null) };
-	assert.equal(await shellProblem("GH_CONFIG_DIR=/tmp/x gh pr merge 3 --repo Unknownow/game-studio-base --merge", false, g), null);
-	assert.equal(await shellProblem("gh pr merge 3 -R Unknownow/game-studio-base --merge", false, g), null);
-	assert.deepEqual(seen, [["/r/base", "3"], ["/r/base", "3"]]);
-});
-
-test("shellProblem: a --repo outside the flow is refused before the gate", async () => {
-	let gated = 0;
-	const g = { ...single(), gate: async () => (gated++, null), repoRoot: async () => null };
-	const p = (await shellProblem("gh pr merge 3 --repo Other/x --merge", false, g)) ?? "";
-	assert.match(p, /of this flow/);
-	assert.doesNotMatch(p, /not judged/);
-	assert.equal(gated, 0);
-});
-
-test("shellProblem: cd wins over --repo", async () => {
-	const A = path.resolve("ra").replace(/\\/g, "/");
-	const B = path.resolve("rb").replace(/\\/g, "/");
-	const seen: (string | undefined)[] = [];
-	let asked = 0;
-	const g = { roots: [A, B], cwd: A, protectedBranches: ["main"], branchOf, gate: async (_k: string, root: string | undefined) => (seen.push(root), null), repoRoot: async () => (asked++, A) };
-	assert.equal(await shellProblem(`cd ${B} && gh pr merge 3 --repo Unknownow/game-studio-base --merge`, false, g), null);
-	assert.equal(seen.length, 1);
-	assert.equal(repoKey(seen[0] as string), repoKey(B));
-	assert.equal(asked, 0);
-});
-
-test("shellProblem: without --repo or repoRoot nothing changes", async () => {
-	const seen: (string | undefined)[] = [];
-	let asked = 0;
-	const gate = async (_k: string, root: string | undefined) => (seen.push(root), null);
-	assert.equal(await shellProblem("gh pr merge 12 --merge", false, { ...single(), gate, repoRoot: async () => (asked++, "/r") }), null);
-	assert.equal(await shellProblem("gh pr merge 12 --repo O/x --merge", false, { ...single(), gate }), null);
-	assert.deepEqual(seen, [undefined, undefined]);
-	assert.equal(asked, 0);
 });

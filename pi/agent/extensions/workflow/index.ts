@@ -62,7 +62,7 @@ import { GIT_GUARD_ENV, type GitGuardSpec } from "./git-guard.ts";
 import { forkBase, mergedInStage, baseFromTree, defaultRunner, recordJudged, gateCheck, mergedBase, noMerge } from "./merge-gate.ts";
 import { combineRepoTexts, followFolders, parseAddDir, parseWorktreeList, repoKey, uniqueRoots } from "./repos.ts";
 import { askFolderAdd } from "./folder-add.ts";
-import { codePublishProblem, registryPublishCodeProblem, registryPublishProblem, repoMatches, shellProblem } from "./push-guard.ts";
+import { codePublishProblem, registryPublishCodeProblem, registryPublishProblem, shellProblem } from "./push-guard.ts";
 import { blockedWaitCheck, classifyPublish, lockDecision, lockWaitCheck, NO_JUDGED_MERGE, waitSince, mirrorArgs, parseMirrorStep, parsePublishStep, publishArgs } from "./registry-publish.ts";
 import { RUNNER_GUARD_ENV, type RunnerGuardSpec } from "./runner-guard.ts";
 import { parseTestReport } from "./test-report.ts";
@@ -3155,15 +3155,8 @@ export default function workflow(pi: ExtensionAPI) {
 				return null;
 			};
 			const isTag = async (root: string | undefined, name: string) => (await git(root ?? ctx.cwd, "show-ref", "--verify", "--quiet", `refs/tags/${name}`)).code === 0;
-			const repoRoot = async (repo: string): Promise<string | null> => {
-				for (const ref of await flowRepos(ctx)) {
-					const remote = await remoteOf(gitEnv, ref.root).catch(() => null);
-					if (remote && repoMatches(remote.url, repo)) return ref.root;
-				}
-				return null;
-			};
 			for (const { text, powershell } of gitTexts) {
-				const problem = await shellProblem(text, powershell, { roots: multi ? roots : undefined, cwd: ctx.cwd, protectedBranches: cfg.protectedBranches, branchOf, gate, isTag, repoRoot });
+				const problem = await shellProblem(text, powershell, { roots: multi ? roots : undefined, cwd: ctx.cwd, protectedBranches: cfg.protectedBranches, branchOf, gate, isTag });
 				if (problem) return { block: true, reason: publishRefuse(problem) };
 			}
 			return;

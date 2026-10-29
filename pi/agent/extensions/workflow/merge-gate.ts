@@ -15,8 +15,6 @@ export interface GateFacts {
 	tree: string | null;
 	/** Paths that differ between the last passed tree and `tree`. */
 	diffNames?: string[];
-	/** The commit about to be merged, pushed or published, when known; names it when its tree is missing from the repo. */
-	commit?: string;
 	/** What is being gated, e.g. "merging pull request 12". */
 	what: string;
 }
@@ -27,10 +25,9 @@ export function noMerge(plan: string): boolean {
 }
 
 /** Why this merge, protected push or publish is refused, or null when its tree has passed the judge. */
-export function gateProblem(kind: GateKind, f: GateFacts): string | null {
+export function gateProblem(_kind: GateKind, f: GateFacts): string | null {
 	if (f.noMerge) return `this plan says Delivery: no merge; ${f.what} is not allowed`;
 	if (f.tree && f.passedTrees.includes(f.tree)) return null;
-	if (!f.tree && f.commit) return `${f.what}: its head ${f.commit.slice(0, 7)} is not in this repo; ${kind === "merge" ? "run the merge in the repo it belongs to, or " : ""}fetch that commit first`;
 	const names = f.diffNames ?? [];
 	const list = names.length ? `; differs from the last passed tree in: ${names.slice(0, 10).join(", ")}${names.length > 10 ? ", …" : ""}` : "";
 	return `${f.what} is not judged: run judge, then retry${list}`;
@@ -93,7 +90,7 @@ export async function gateCheck(run: Runner, kind: "merge" | "protected-push", d
 		const d = await run("git", ["diff", "--name-only", o.passedTrees[o.passedTrees.length - 1], tree], dir);
 		if (d.code === 0) diffNames = d.stdout.split(/\r?\n/).filter(Boolean);
 	}
-	return { problem: gateProblem(kind, { noMerge: false, passedTrees: o.passedTrees, tree, diffNames, what, commit }), tree, commit };
+	return { problem: gateProblem(kind, { noMerge: false, passedTrees: o.passedTrees, tree, diffNames, what }), tree, commit };
 }
 
 /** Where HEAD left `upstream`: the review base of a repo whose start nobody noticed, so commits made since are reviewed too. Null when there is none. */
