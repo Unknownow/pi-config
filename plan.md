@@ -239,3 +239,5 @@ Rerun the slow suites only if a later fix changes `Packages/`, `ProjectSettings/
 ## For you after the flow
 - S10 Verify: open a case-sensitive clone of `Unknownow/game-studio-unity` (macOS or Linux) in Unity 6000.3 — look for:
 - S11 Verify: create a game repo from the template, clone it, and run `python tools/studio.py setup` — look for:
+## Outcome
+2026-10-29T04:54:01.410Z — failed: stage 1: no changes; back to planning · 2 human check(s) for you (see the card)

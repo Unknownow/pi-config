@@ -1,11 +1,15 @@
 {
   "v": 1,
   "flowId": "20261029-1151-merge-base-pr-3-then-finish-and-ship-the-eca5",
-  "rev": 2,
-  "updated": "2026-10-29T04:52:47.093Z",
+  "rev": 3,
+  "updated": "2026-10-29T04:54:01.617Z",
   "title": "Merge base PR #3, then finish and ship the Unity fork v0.1.0",
-  "stage": 2,
   "done": [],
+  "finished": {
+    "at": "2026-10-29T04:54:01.410Z",
+    "ok": false,
+    "text": "stage 1: no changes; back to planning · 2 human check(s) for you (see the card)"
+  },
   "reviewBase": {
     "d:/projects/pi-config": "47f33d97aff523e415e320e5c9371ac48743a540",
     "d:/personal/game-studio-base": "2dcc797853495e136d92a289961af448888074aa"
