@@ -223,16 +223,18 @@
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 In `D:/projects/pi-config`, check `git status` and the branch: expect it clean on `master`. Create branch `fix/workflow-
-- [ ] S2 `pi/agent/extensions/workflow/push-guard.ts`:
-- [ ] S3 `pi/agent/extensions/workflow/merge-gate.ts`:
-- [ ] S4 `pi/agent/extensions/workflow/index.ts`, execute-phase `tool_call` guard: define `repoRoot` next to `gate` (`:3141`), us
-- [ ] S5 `pi/agent/extensions/workflow/git-guard.ts`: define `repoRoot` next to `gate` (`:62`) as in §4 and add it to the `shellP
-- [ ] S6 Add the tests in §6.
-- [ ] S7 Docs:
-- [ ] S8 Run the tests in §6. Call `judge(full=true)`. Fix every blocker and major finding with code changes and run `judge` agai
-- [ ] S9 Make the commit in §9.
-- [ ] S10 Deliver: merge — branch `fix/workflow-merge-gate-repo` into `master` of `Unknownow/pi-config`, as a pull request merged 
+- [x] S1 In `D:/projects/pi-config`, check `git status` and the branch: expect it clean on `master`. Create branch `fix/workflow-
+- [x] S2 `pi/agent/extensions/workflow/push-guard.ts`:
+- [x] S3 `pi/agent/extensions/workflow/merge-gate.ts`:
+- [x] S4 `pi/agent/extensions/workflow/index.ts`, execute-phase `tool_call` guard: define `repoRoot` next to `gate` (`:3141`), us
+- [x] S5 `pi/agent/extensions/workflow/git-guard.ts`: define `repoRoot` next to `gate` (`:62`) as in §4 and add it to the `shellP
+- [x] S6 Add the tests in §6.
+- [x] S7 Docs:
+- [x] S8 Run the tests in §6. Call `judge(full=true)`. Fix every blocker and major finding with code changes and run `judge` agai
+- [x] S9 Make the commit in §9.
+- [x] S10 Deliver: merge — branch `fix/workflow-merge-gate-repo` into `master` of `Unknownow/pi-config`, as a pull request merged 
 ## For you after the flow
 - S11 Verify: restart pi so the new extension loads. In the resumed game-studio flow, after a judge pass on base `2dcc797`, ru
 - S12 Verify: run one pi session with `CLAUDE_BRIDGE_DEBUG=1` until `~/.pi/agent/claude-bridge-diag.log` gets a new `prompt_ca
+## Outcome
+2026-10-29T06:50:51.199Z — ok: fix/workflow-gate-minor, 3 commits since the review base, PR #14 MERGED https://github.com/Unknownow/pi-config/pull/14 · 2 human check(s) for you (see the card)
