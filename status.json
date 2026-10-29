@@ -1,10 +1,10 @@
 {
   "v": 1,
   "flowId": "20261029-1408-test-the-gate-s-protected-push-wording-m-e17f",
-  "rev": 2,
-  "updated": "2026-10-29T07:09:59.682Z",
+  "rev": 3,
+  "updated": "2026-10-29T07:13:51.141Z",
   "title": "Test the gate's protected-push wording, merge base PR #3, ship the Unity fork v0.1.0",
-  "stage": 2,
+  "stage": 3,
   "done": [
     "S1",
     "S2",
@@ -12,11 +12,15 @@
     "S4"
   ],
   "reviewBase": {
-    "d:/projects/pi-config": "48720de5068b7f09b4ea846584d3b5425633cf34"
+    "d:/projects/pi-config": "e273ba9fc6c064ed0f0d54cfc3ec9c1eaf500303",
+    "d:/personal/game-studio-base": "a15259314ddadb304fe4873d369c70931ac82427"
   },
   "passedTrees": {
     "d:/projects/pi-config": [
       "46271b03a4252150344c5bc9c5a0ea272771ba25"
+    ],
+    "d:/personal/game-studio-base": [
+      "113d91023e54776ee59274e9fa4c8dfb9b802e7e"
     ]
   },
   "judgedMerges": {
@@ -31,6 +35,11 @@
       "branch": "flow/gate-push-wording-test",
       "remote": "github-personal/Unknownow/pi-config",
       "primary": true
+    },
+    {
+      "branch": "fix/assets-root-and-layer-tests",
+      "remote": "github-personal/Unknownow/game-studio-base",
+      "primary": false
     }
   ]
 }
