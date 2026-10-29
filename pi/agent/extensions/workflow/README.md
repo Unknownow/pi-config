@@ -174,7 +174,7 @@ A session shows a desktop notification (Windows toast, `osascript` on macOS, `no
 The discuss phase uses exactly the same rules as plan.
 
 Only tools matching `planAllowedTools` (regexes over the tool name) can be called: read, grep, find,
-ls, bash, codemode, explore, advisor, judge, `run_code`, `fetch_url` and MCP tools named search/get/list/...
+ls, bash, codemode, explore, advisor, judge, `run_code`, `fetch_url`, `video_frames` and MCP tools named search/get/list/...
 Everything else (AskClaude, `propose_entry`, edit, write) is hidden and refused.
 MCP tools whose name has a write word (create, update, delete, set, add, run, save, post, ...) are refused even when they start with a read verb
 (`get_or_create`, `get_post`); `planAllowedTools` cannot override this.
@@ -191,15 +191,19 @@ its plan and hand over, even when you said "fix it" or "do it for me".
   commands that change the repo (`commit`, `push`, `checkout`, `tag v1`, ...), `gh` commands that
   change GitHub (`pr create/merge`, `issue edit/close/comment`, `gh api -X POST` or `-f`), scripts
   (`node -e`, `python`), and any command not on the list.
-- **More commands:** add regexes over the command's words to `planBashAllow` (default: `unity cmd
-  editor_status` / `console_status`). `"planReadOnlyBash": false` turns the check off.
+- **Unity Editor** (`UNITY_PLAN_ALLOW`, the default `planBashAllow`): `unity cmd` with `*_status`,
+  `get_*`, `find_*`, `list_*`, `search`, `console`, `read_text_file`, `package_list`/`package_search`, the
+  captures (`capture_scene_view`, `capture_game_view`, `screenshot`; they may save a PNG), play mode
+  (`editor_play`/`editor_stop`/`editor_pause`) and the command listings (`unity cmd`, `unity list`).
+  Edits, `eval`, `run_script`, `menu`, `batch`, bakes, builds, tests, `wait_for` and `simulate_*` stay refused.
+- **More commands:** add regexes over the command's words to `planBashAllow`. `"planReadOnlyBash": false` turns the check off.
 - Also allowed on purpose: `git fetch` (it only updates remote-tracking refs). `git help <topic>` is refused (it opens a viewer), as are `rg --pre`,
   `ag --pager`, `less -o`, `date -s`, `hostname <name>`, `git diff --ext-diff` / `--textconv`.
 - A repository's own git config (`core.fsmonitor`, `diff.external`, textconv) can still run programs on a
   plain `git status` / `git diff`: plan an untrusted repo in a throwaway clone.
 - **`run_code`** (the sandbox extension, `readonly-tools.ts`) is checked too: its JavaScript is refused
   when the code writes, deletes, runs programs, `eval`s, or sends a POST, PUT, PATCH or DELETE
-  request, or builds names at runtime (`fs['wri'+'te']`, `require(x)`). `fetch_url` only reads. MCP tools
+  request, or builds names at runtime (`fs['wri'+'te']`, `require(x)`). `fetch_url` only reads; `video_frames` (sandbox) only writes frames into the temp folder. MCP tools
   are also refused when an argument holds a statement that changes data (`INSERT`, `UPDATE ... SET`,
   `DELETE FROM`, `DROP`, a GraphQL `mutation`, ...).
 - **Tools that register later** (an MCP server that connects after the phase began) get the same filter:

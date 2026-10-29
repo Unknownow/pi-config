@@ -20,6 +20,7 @@ export const PLAN_TOOLS = [
 	"^(read|grep|find|ls|bash|codemode|explore|advisor|judge)$",
 	"(^|__)run_code$",
 	"(^|__)fetch_url$",
+	"(^|__)video_frames$",
 	// MCP tools named for reading: mcp__knowledge__search, mcp__knowledge__get_entry, ...
 	"^mcp__.+__(search|get|list|read|view|status|fetch|find|query|describe|show|lookup)(_\\w+)?$",
 ];

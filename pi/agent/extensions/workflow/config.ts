@@ -7,6 +7,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { UNITY_PLAN_ALLOW } from "./readonly-bash.ts";
 import { PLAN_TOOLS } from "./readonly-tools.ts";
 import type { MergeMethod } from "./delivery.ts";
 import type { TokenWeights } from "./tokens.ts";
@@ -248,7 +249,7 @@ export const DEFAULTS: WorkflowConfig = {
 	planBlockedTools: ["edit", "write"],
 	planAllowedTools: PLAN_TOOLS,
 	planReadOnlyBash: true,
-	planBashAllow: ["^unity (cmd )?(editor_status|console_status)\\b"],
+	planBashAllow: UNITY_PLAN_ALLOW,
 	tokenWeights: { input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1.25 },
 	test: {
 		concurrency: 4,

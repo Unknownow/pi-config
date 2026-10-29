@@ -87,11 +87,14 @@
     "^(read|grep|find|ls|bash|codemode|explore|advisor|judge)$",
     "(^|__)run_code$",
     "(^|__)fetch_url$",
+    "(^|__)video_frames$",
     "^mcp__.+__(search|get|list|read|view|status|fetch|find|query|describe|show|lookup)(_\\w+)?$"
   ],
   "planReadOnlyBash": true,
   "planBashAllow": [
-    "^unity (cmd )?(editor_status|console_status)\\b"
+    "^unity( --(json|no-banner|no-pager|quiet|verbose|non-interactive|no-color)| --(format|color) \\S+)* (cmd|command)( --(project-path|timeout|runtime|runtime-path|caller|skill) \\S+| --(project-path|timeout|runtime|runtime-path|caller|skill)=\\S+| --(detach|result-only))* (\\w+_status|console|get_\\w+|find_\\w+|list_\\w+|search|read_text_file|package_list|package_search|capture_scene_view|capture_game_view|screenshot|editor_play|editor_stop|editor_pause)( |$)",
+    "^unity( --(json|no-banner|no-pager|quiet|verbose|non-interactive|no-color)| --(format|color) \\S+)* (cmd|command)( --(detail|query|tag|group_by|sort|order|offset|limit)( [^-\\s]\\S*)?| --tags| --(project-path|timeout) \\S+)*$",
+    "^unity( --(json|no-banner|no-pager|quiet|verbose|non-interactive|no-color)| --(format|color) \\S+)* (list|commands)( --[\\w-]+( [^-\\s]\\S*)?)*$"
   ],
   "tokenWeights": {
     "input": 1,
