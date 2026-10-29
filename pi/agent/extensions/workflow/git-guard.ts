@@ -7,7 +7,7 @@
 import { spawnSync } from "node:child_process";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { defaultRunner, gateCheck } from "./merge-gate.ts";
-import { registryPublishProblem, repoMatches, shellProblem } from "./push-guard.ts";
+import { registryPublishProblem, shellProblem } from "./push-guard.ts";
 import { repoKey } from "./repos.ts";
 
 export const GIT_GUARD_ENV = "PI_WORKFLOW_GIT_GUARD";
@@ -67,16 +67,6 @@ export default function gitGuard(pi: ExtensionAPI): void {
 			return res.problem;
 		};
 		const isTag = async (root: string | undefined, name: string) => gitOut(root ?? ctx.cwd, ["tag", "--list", name]) === name;
-		const repoRoot = async (repo: string): Promise<string | null> => {
-			const candidates = spec.roots.length ? spec.roots : [gitOut(ctx.cwd, ["rev-parse", "--show-toplevel"])];
-			for (const root of candidates.filter(Boolean)) {
-				const names = gitOut(root, ["remote"]).split("\n").map((s) => s.trim()).filter(Boolean);
-				const name = names.includes("origin") ? "origin" : names[0];
-				const url = name ? gitOut(root, ["remote", "get-url", name]) : "";
-				if (url && repoMatches(url, repo)) return root;
-			}
-			return null;
-		};
 		const problem = await shellProblem(command, false, {
 			roots: spec.roots.length ? spec.roots : undefined,
 			cwd: ctx.cwd,
@@ -84,7 +74,6 @@ export default function gitGuard(pi: ExtensionAPI): void {
 			branchOf,
 			gate,
 			isTag,
-			repoRoot,
 		});
 		if (problem) return { block: true, reason: `Refused: ${problem}. Never force-push, skip hooks, or merge or push to a protected branch before the judge has passed this tree.` };
 	});

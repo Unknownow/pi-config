@@ -8,7 +8,6 @@
  */
 import { gitSubcommand, KEYWORDS, parseCommands, WRAPPERS } from "./readonly-bash.ts";
 import * as path from "node:path";
-import { normalizeRemote } from "./plan-doc.ts";
 import { fallbackTexts, repoKey, repoTexts } from "./repos.ts";
 
 /** A command the pure check cannot decide: the caller's gate must (a merge, or a push to a protected branch). */
@@ -76,7 +75,6 @@ function leavesWorkingFolder(text: string, cwd: string): boolean {
 }
 
 const ELSEWHERE = "a merge or a push to a protected branch must run in the working folder or in a folder of this flow, without cd, pushd or git -C to another place";
-const REPO_UNKNOWN = "a merge with --repo must name a repo of this flow (its origin remote, else its first remote); run it in that repo's folder after the repo has joined the flow";
 const SWITCHED = "a push to the current branch must be its own command after a branch switch (git switch, git checkout, gh pr merge ... change the branch the push goes to)";
 const CHAINED = "a merge or a push to a protected branch must be its own command, run after everything it ships is committed and judged (not chained with commands that change files, commits or branches)";
 const SAFE_GH_PR = new Set(["checks", "view", "status", "list", "diff", "merge"]);
@@ -153,14 +151,6 @@ function siblingOk(cmd: { words: string[]; writes: string[] }): boolean {
 	return false;
 }
 
-/** Whether a remote URL and a `--repo` argument name the same owner/name; the host and the case are ignored. */
-export function repoMatches(remoteUrl: string, repoArg: string): boolean {
-	const tail = (s: string) => normalizeRemote(s).split("/").filter(Boolean).slice(-2);
-	const a = tail(remoteUrl);
-	const b = tail(repoArg);
-	return a.length === 2 && b.length === 2 && a[0].toLowerCase() === b[0].toLowerCase() && a[1].toLowerCase() === b[1].toLowerCase();
-}
-
 export interface ShellGuard {
 	/** The flow's repos; undefined means a single repo. */
 	roots?: string[];
@@ -171,8 +161,6 @@ export interface ShellGuard {
 	gate(kind: "merge" | "protected-push", root: string | undefined, target: string | undefined, repo?: string): Promise<string | null>;
 	/** Whether `name` is a tag in the repo (undefined root: the working folder). Without it, a push to a bare name is not checked for being a tag. */
 	isTag?(root: string | undefined, name: string): Promise<boolean>;
-	/** The root of the flow repo whose origin remote (else first remote) is the `--repo` a merge names, or null. Without it, `--repo` does not move the gate. */
-	repoRoot?(repo: string): Promise<string | null>;
 }
 
 /** Why this shell text may not run, checking each command against the repo it runs in, or null. */
@@ -192,13 +180,7 @@ export async function shellProblem(text: string, powershell: boolean, g: ShellGu
 				if (g.isTag && req.target && (await g.isTag(group.root, req.target))) return TAG_PUSH;
 				continue;
 			}
-			let root = group.root;
-			if (req.kind === "merge" && root === undefined && req.repo && g.repoRoot) {
-				const found = await g.repoRoot(req.repo);
-				if (found === null) return REPO_UNKNOWN;
-				root = found;
-			}
-			const refusal = await g.gate(req.kind, root, req.target, req.repo);
+			const refusal = await g.gate(req.kind, group.root, req.target, req.repo);
 			if (refusal) return refusal;
 		}
 	}

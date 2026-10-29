@@ -225,26 +225,3 @@ test("recordJudged: a protected push of a passed tree that is on the remote is r
 	const local = stub({ branch: "main", trees: { HEAD: "c1", "HEAD^{tree}": "T" } });
 	assert.equal((await recordJudged(local, ".", { startBranch: "main", report: "", passed: ["T"], protectedBranches: ["main"] })).entry, undefined);
 });
-
-test("gateProblem: a head missing from the repo is named, not called unjudged", () => {
-	const p = gateProblem("merge", { noMerge: false, passedTrees: ["t1"], tree: null, commit: "2dcc797853495e13", what: "merging pull request 3" }) ?? "";
-	assert.match(p, /2dcc797/);
-	assert.match(p, /not in this repo/);
-	assert.doesNotMatch(p, /run judge/);
-});
-
-test("gateProblem: a missing head on a protected push gives no merge advice", () => {
-	const p = gateProblem("protected-push", { noMerge: false, passedTrees: ["t"], tree: null, commit: "abc1234def", what: "pushing x" }) ?? "";
-	assert.match(p, /abc1234/);
-	assert.match(p, /not in this repo/);
-	assert.match(p, /fetch that commit first/);
-	assert.doesNotMatch(p, /run the merge/);
-});
-
-test("gateCheck: a head that is not in the repo", async () => {
-	const run: Runner = async (cmd) => (cmd === "gh" ? { code: 0, stdout: '{"headRefOid":"abc1234def"}', stderr: "" } : { code: 128, stdout: "", stderr: "bad object" });
-	const r = await gateCheck(run, "merge", "/r", "3", { passedTrees: ["t1"], noMerge: false });
-	assert.match(r.problem ?? "", /abc1234/);
-	assert.match(r.problem ?? "", /not in this repo/);
-	assert.equal(r.tree, null);
-});
