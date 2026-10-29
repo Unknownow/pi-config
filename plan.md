@@ -578,12 +578,12 @@ Never execute CCGS scripts. Never commit `D:/scratch/**`, `.claude/`, `Library/`
 - [x] S6 Done: leftovers removed.
 - [x] S7 Done: suite 216 OK, `check` 0 errors, `--coverage` exit 0, judge PASS.
 - [x] S8 Done: PR #2 merged, base `main` = `48ccc4c`. No action in this stage beyond confirming that base `main` = `48ccc4c`.
-- [ ] S9 Clone base `main` into `D:/personal/game-studio-unity`:
-- [ ] S10 Unity project per 4.6:
-- [ ] S11 Unity content, per 4.2 and 4.3:
-- [ ] S12 Write `ENGINE.md` per 4.3: one section per hook ID, filled from the CCGS Unity branches, `engine-checks.md` and `D:/scra
-- [ ] S13 Write `tools/gamestudio/engines/unity.py` per 4.4, and `tools/gamestudio/tests/test_engine_unity.py` (§6).
-- [ ] S14 Create `Packages/com.unknownow.studio-tools/` per 4.5, with the 4 EditMode test classes (§6).
+- [x] S9 Clone base `main` into `D:/personal/game-studio-unity`:
+- [x] S10 Unity project per 4.6:
+- [x] S11 Unity content, per 4.2 and 4.3:
+- [x] S12 Write `ENGINE.md` per 4.3: one section per hook ID, filled from the CCGS Unity branches, `engine-checks.md` and `D:/scra
+- [x] S13 Write `tools/gamestudio/engines/unity.py` per 4.4, and `tools/gamestudio/tests/test_engine_unity.py` (§6).
+- [x] S14 Create `Packages/com.unknownow.studio-tools/` per 4.5, with the 4 EditMode test classes (§6).
 - [ ] S15 Run the §6 commands in order:
 - [ ] S16 Deliver: the first push of the §9 commits straight to `main` of `game-studio-unity` (D14), after a judge pass. CI on `ma
 - [ ] S17 Deliver: tag `v0.1.0` on `game-studio-unity` `main` → call `deliver {tag: {name: "v0.1.0", repo: "D:/personal/game-studi
@@ -591,3 +591,5 @@ Never execute CCGS scripts. Never commit `D:/scratch/**`, `.claude/`, `Library/`
 ## For you after the flow
 - S19 Verify: create a scratch game from the template, run `python tools/studio.py setup`, open it in Unity 6000.3.25f1, and t
 - S20 Verify: open pi in `D:/personal/game-studio-unity`, accept project trust, run `/skill:help`, and ask "what is the first 
+## Outcome
+2026-10-29T04:10:29.907Z — failed: stage 1: no changes; back to planning · 2 human check(s) for you (see the card)

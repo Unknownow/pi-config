@@ -1,10 +1,9 @@
 {
   "v": 1,
   "flowId": "20261029-1023-stage-3-base-engine-layer-fixes-delivere-759e",
-  "rev": 2,
-  "updated": "2026-10-29T03:24:40.723Z",
+  "rev": 3,
+  "updated": "2026-10-29T04:10:30.187Z",
   "title": "Stage 3: base engine-layer fixes (delivered), then the `game-studio-unity` fork and the `com.unknownow.studio-tools` 0.1.0 package",
-  "stage": 2,
   "done": [
     "S1",
     "S2",
@@ -13,16 +12,33 @@
     "S5",
     "S6",
     "S7",
-    "S8"
+    "S8",
+    "S9",
+    "S10",
+    "S11",
+    "S12",
+    "S13",
+    "S14"
   ],
+  "finished": {
+    "at": "2026-10-29T04:10:29.907Z",
+    "ok": false,
+    "text": "stage 1: no changes; back to planning · 2 human check(s) for you (see the card)"
+  },
   "reviewBase": {
-    "d:/projects/pi-config": "47f33d97aff523e415e320e5c9371ac48743a540"
+    "d:/projects/pi-config": "47f33d97aff523e415e320e5c9371ac48743a540",
+    "d:/personal/game-studio-unity": "48ccc4c2946036f07fe8d238c5de68d445dc468a"
   },
   "repos": [
     {
       "branch": "master",
       "remote": "github-personal/Unknownow/pi-config",
       "primary": true
+    },
+    {
+      "branch": "main",
+      "remote": "github-personal/Unknownow/game-studio-unity",
+      "primary": false
     }
   ]
 }
