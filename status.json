@@ -1,19 +1,25 @@
 {
   "v": 1,
   "flowId": "20261029-1151-merge-base-pr-3-then-finish-and-ship-the-eca5",
-  "rev": 1,
-  "updated": "2026-10-29T04:51:36.428Z",
+  "rev": 2,
+  "updated": "2026-10-29T04:52:47.093Z",
   "title": "Merge base PR #3, then finish and ship the Unity fork v0.1.0",
-  "stage": 1,
+  "stage": 2,
   "done": [],
   "reviewBase": {
-    "d:/projects/pi-config": "47f33d97aff523e415e320e5c9371ac48743a540"
+    "d:/projects/pi-config": "47f33d97aff523e415e320e5c9371ac48743a540",
+    "d:/personal/game-studio-base": "2dcc797853495e136d92a289961af448888074aa"
   },
   "repos": [
     {
       "branch": "master",
       "remote": "github-personal/Unknownow/pi-config",
       "primary": true
+    },
+    {
+      "branch": "fix/assets-root-and-layer-tests",
+      "remote": "github-personal/Unknownow/game-studio-base",
+      "primary": false
     }
   ]
 }
