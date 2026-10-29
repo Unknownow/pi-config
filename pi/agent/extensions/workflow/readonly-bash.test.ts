@@ -1,7 +1,7 @@
 // node --test readonly-bash.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { commandReadOnlyProblem, parseCommands, readOnlyProblem, unwrapCommand } from "./readonly-bash.ts";
+import { commandReadOnlyProblem, parseCommands, readOnlyProblem, UNITY_PLAN_ALLOW, unwrapCommand } from "./readonly-bash.ts";
 
 test("commandReadOnlyProblem checks one parsed command", () => {
 	assert.ok(commandReadOnlyProblem(parseCommands("git push")[0]));
@@ -78,6 +78,49 @@ test("planBashAllow patterns let extra commands through", () => {
 	const allow = [/^unity (cmd )?(editor_status|console_status)\b/];
 	assert.equal(readOnlyProblem("unity cmd editor_status --project-path unity", allow), null);
 	assert.match(readOnlyProblem("unity cmd build", allow) ?? "allowed", /read-only list/);
+});
+
+test("UNITY_PLAN_ALLOW: reads, captures and play mode pass; edits, code and input do not", () => {
+	const allow = UNITY_PLAN_ALLOW.map((p) => new RegExp(p));
+	for (const cmd of [
+		"unity cmd editor_status --project-path unity",
+		"unity --no-banner cmd --project-path D:/game/unity --result-only get_scene_hierarchy",
+		"unity cmd --timeout=60 get_component_properties target=Player",
+		"unity command find_gameobjects name=Enemy",
+		"unity cmd console --tail 50 | grep Error",
+		"unity cmd build_status",
+		"unity cmd capture_game_view save_path=Temp/shot.png",
+		"unity cmd screenshot",
+		"unity cmd editor_play && unity cmd editor_stop",
+		"unity cmd",
+		"unity cmd --query animator --detail compact",
+		"unity --json list",
+		"unity commands",
+		'unity cmd find_gameobjects name="Main Camera"',
+	]) {
+		assert.equal(readOnlyProblem(cmd, allow), null, cmd);
+	}
+	for (const cmd of [
+		"unity cmd eval code=1",
+		"unity cmd run_script path=x",
+		"unity cmd menu path=File/Save",
+		"unity cmd batch ops=[]",
+		"unity cmd set_transform target=x",
+		"unity cmd create_gameobject",
+		"unity cmd delete_asset confirm=true",
+		"unity cmd simulate_key key=Space",
+		"unity cmd build",
+		"unity cmd wait_for",
+		"unity cmd --detach eval code=1",
+		"unity cmd get_selection; unity cmd save_all",
+		"unity build",
+		"unity cmd console > log.txt",
+		'unity cmd --caller "x get_scene" eval code=1',
+		'unity cmd --timeout "5 get_x" menu path=File/Save',
+		'unity --format "x cmd get_x" cmd batch ops=[]',
+	]) {
+		assert.ok(readOnlyProblem(cmd, allow), cmd);
+	}
 });
 
 test("parser: quotes, substitutions and heredoc bodies", () => {

@@ -3216,7 +3216,7 @@ export default function workflow(pi: ExtensionAPI) {
 		return [
 			`Plan phase is read-only: ${problem}.`,
 			"Do not work around this (no other tool, no script). Put the step in the plan instead: it runs after the user approves, on the execute model.",
-			"Reading is fine: ls, cat, grep, find, git status/log/diff/show, gh ... view/list/checks, gh api GET.",
+			"Reading is fine: ls, cat, grep, find, git status/log/diff/show, gh ... view/list/checks, gh api GET, unity cmd *_status/get_*/find_*/list_*/search/console/captures/editor_play|stop|pause, video_frames.",
 		].join(" ");
 	}
 

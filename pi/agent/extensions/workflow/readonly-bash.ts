@@ -280,6 +280,20 @@ export const WRAPPERS: Record<string, string[]> = {
 	stdbuf: ["-i", "-o", "-e"],
 };
 
+const UNITY_GLOBALS = "( --(json|no-banner|no-pager|quiet|verbose|non-interactive|no-color)| --(format|color) \\S+)*";
+const UNITY_CMD_OPTS = "( --(project-path|timeout|runtime|runtime-path|caller|skill) \\S+| --(project-path|timeout|runtime|runtime-path|caller|skill)=\\S+| --(detach|result-only))*";
+/**
+ * Unity Editor commands plan phase may run (the default planBashAllow): the ones that read
+ * (status, get_*, find_*, list_*, search, console), the captures (they save PNGs), play mode
+ * (editor_play/stop/pause), and the command listings. Edits, eval, menu, batch, bakes, builds,
+ * tests and simulated input stay refused.
+ */
+export const UNITY_PLAN_ALLOW = [
+	`^unity${UNITY_GLOBALS} (cmd|command)${UNITY_CMD_OPTS} (\\w+_status|console|get_\\w+|find_\\w+|list_\\w+|search|read_text_file|package_list|package_search|capture_scene_view|capture_game_view|screenshot|editor_play|editor_stop|editor_pause)( |$)`,
+	`^unity${UNITY_GLOBALS} (cmd|command)( --(detail|query|tag|group_by|sort|order|offset|limit)( [^-\\s]\\S*)?| --tags| --(project-path|timeout) \\S+)*$`,
+	`^unity${UNITY_GLOBALS} (list|commands)( --[\\w-]+( [^-\\s]\\S*)?)*$`,
+];
+
 /** Variables that make git, pagers or shells run other programs. */
 const RISKY_ENV = /^(GIT_\w*|PAGER|LESSOPEN|LESSCLOSE|EDITOR|VISUAL|BASH_ENV|ENV|LD_PRELOAD|PROMPT_COMMAND)$/;
 
@@ -308,7 +322,9 @@ function commandProblem(cmd: ParsedCommand, allow: RegExp[]): string | null {
 	let words = cmd.words;
 	while (words.length && KEYWORDS.has(words[0])) words = words.slice(1);
 	if (!words.length || ["for", "case", "select", "in"].includes(words[0])) return null;
-	if (allow.some((re) => re.test(words.join(" ")))) return null;
+	// Whitespace inside a quoted word becomes ␣, so `--caller "x get_x" eval` stays one option value and cannot pose as a reading verb.
+	const joined = words.map((w) => w.replace(/\s/g, "\u2423")).join(" ");
+	if (allow.some((re) => re.test(joined))) return null;
 	const why = wordsProblem(words, allow);
 	return why ? `\`${short(words.join(" "))}\` ${why}` : null;
 }
