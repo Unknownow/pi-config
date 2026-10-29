@@ -1,16 +1,20 @@
 {
   "v": 1,
   "flowId": "20261029-1408-test-the-gate-s-protected-push-wording-m-e17f",
-  "rev": 3,
-  "updated": "2026-10-29T07:13:51.141Z",
+  "rev": 4,
+  "updated": "2026-10-29T07:15:57.789Z",
   "title": "Test the gate's protected-push wording, merge base PR #3, ship the Unity fork v0.1.0",
-  "stage": 3,
   "done": [
     "S1",
     "S2",
     "S3",
     "S4"
   ],
+  "finished": {
+    "at": "2026-10-29T07:15:57.443Z",
+    "ok": false,
+    "text": "stage 1: flow/gate-push-wording-test, 2 commits since the review base, PR #15 MERGED https://github.com/Unknownow/pi-config/pull/15; stage 2: pi-config: flow/gate-push-wording-test, 0 commits since the review base, PR #15 MERGED https://github.com/Unknownow/pi-config/pull/15; game-studio-base: fix/assets-root-and-layer-tests, 0 commits since the review base, PR #3 OPEN https://github.com/Unknownow/game-studio-base/pull/3; back to planning · 3 human check(s) for you (see the card)"
+  },
   "reviewBase": {
     "d:/projects/pi-config": "e273ba9fc6c064ed0f0d54cfc3ec9c1eaf500303",
     "d:/personal/game-studio-base": "a15259314ddadb304fe4873d369c70931ac82427"

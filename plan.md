@@ -281,3 +281,5 @@ Rerun the slow suites only if a later fix touches `Packages/`, `ProjectSettings/
 - S16 Verify: open a case-sensitive clone of `Unknownow/game-studio-unity` (macOS or Linux) in Unity 6000.3 — look for:
 - S17 Verify: create a game repo from the template, clone it, and run `python tools/studio.py setup` — look for:
 - S18 Verify: start pi with `CLAUDE_BRIDGE_DEBUG=1` and work until a new `prompt_capture_unresolved` line appears in `~/.pi/ag
+## Outcome
+2026-10-29T07:15:57.443Z — failed: stage 1: flow/gate-push-wording-test, 2 commits since the review base, PR #15 MERGED https://github.com/Unknownow/pi-config/pull/15; stage 2: pi-config: flow/gate-push-wording-test, 0 commits since the review base, PR #15 MERGED https://github.com/Unknownow/pi-config/pull/15; game-studio-base: fix/assets-root-and-layer-tests, 0 commits since the review base, PR #3 OPEN https://github.com/Unknownow/game-studio-base/pull/3; back to planning · 3 human check(s) for you (see the card)
