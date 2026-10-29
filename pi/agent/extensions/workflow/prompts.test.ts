@@ -1,7 +1,7 @@
 // node --experimental-strip-types --test prompts.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { ADVISOR, ARBITER, COMMIT, EXECUTE_PHASE, EXPLORE, FIX_ROUND, JUDGE, JUDGE_KNOWLEDGE_ONLY, NO_SLEEP, PACE, deliveryGuidance, finalize, phaseSection, PLAN_KICKOFF, planPhase, RUNNER, TEST_PHASE, workspaceSection } from "./prompts.ts";
+import { ADVISOR, ARBITER, COMMIT, EXECUTE_PHASE, EXPLORE, FIX_MESSAGE, FIX_ROUND, FIX_TESTS, JUDGE, JUDGE_KNOWLEDGE_ONLY, NO_SLEEP, PACE, deliveryGuidance, finalize, minorFixMessage, phaseSection, PLAN_KICKOFF, planPhase, RUNNER, TEST_PHASE, workspaceSection } from "./prompts.ts";
 
 const BATCH = `- Batch tool calls. Each call re-sends the whole conversation, so ten small calls at 150k context re-send 1.5M tokens. Put independent reads and commands in one call (a codemode script, run_code, or one bash command joined with && or ;) and print only what you need. Don't spend a call on something you could have added to the previous one.`;
 const PLAN_BATCH = `- Batch tool calls. Each call re-sends the whole conversation, so ten small calls at 150k context re-send 1.5M tokens. Put independent reads and commands in one call (a codemode script, run_code for read-only analysis, or one bash command joined with && or ;) and print only what you need. Don't spend a call on something you could have added to the previous one.`;
@@ -165,4 +165,12 @@ test("Publish and Mirror steps are in the planner and executor prompts", () => {
 	assert.ok(planPhase(true).includes("Mirror: <folder>|all"));
 	assert.ok(!planPhase(true).includes("publish with `updates.bat`"));
 	assert.ok(EXECUTE_PHASE.includes("publish_packages {step}"));
+});
+
+test("fix messages scope the tests to what the fix touched", () => {
+	assert.match(FIX_TESTS, /Test only what the fix touched/);
+	assert.match(FIX_TESTS, /cite its last passing run/);
+	assert.match(EXECUTE_PHASE, /never the full suite after each edit/);
+	assert.ok(FIX_MESSAGE.includes(FIX_TESTS));
+	assert.ok(minorFixMessage("**Judge: PASS**", 2).includes(FIX_TESTS));
 });

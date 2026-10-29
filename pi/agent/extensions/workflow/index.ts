@@ -210,8 +210,6 @@ const FOLDERS_ENTRY = "session-folders";
 const SUMMARY_ENTRY = "workflow-summary";
 const APPROVED = "Plan approved. Execute it now, step by step, following the workflow rules.";
 const APPROVED_FINAL = "The final plan is approved. Execute it exactly, step by step, following the workflow rules.";
-const FIX_MESSAGE =
-	"Fix every blocker and major finding by following its Fix directions, and the minor ones too (except [knowledge ...] deviations: give your reason in `disputes` to keep the code). If a finding is wrong, put it in the `disputes` parameter of your next judge call instead of changing code. Then call judge again.";
 /** The judge reads at most this much of the plan; the end (the arbiter's amendments) is kept. */
 const MAX_PLAN_CHARS = 60_000;
 const OWN_TOOLS = new Set(["explore", "advisor", "judge"]);
@@ -3824,7 +3822,7 @@ export default function workflow(pi: ExtensionAPI) {
 				if (choice !== "Keep fixing") await escalate(ctx);
 				state.judgeRounds = 0;
 				persist();
-				pi.sendMessage({ customType: "workflow-fix", content: FIX_MESSAGE, display: true }, { triggerTurn: true, deliverAs: "followUp" });
+				pi.sendMessage({ customType: "workflow-fix", content: prompts.FIX_MESSAGE, display: true }, { triggerTurn: true, deliverAs: "followUp" });
 				return;
 			}
 			ctx.ui.notify(`workflow: stopped after ${state.judgeRounds} failed judge rounds`, "warning");
@@ -3833,7 +3831,7 @@ export default function workflow(pi: ExtensionAPI) {
 			return;
 		}
 		pi.sendMessage(
-			{ customType: "workflow-fix", content: report ? `${report}\n\n${FIX_MESSAGE}` : FIX_MESSAGE, display: true },
+			{ customType: "workflow-fix", content: report ? `${report}\n\n${prompts.FIX_MESSAGE}` : prompts.FIX_MESSAGE, display: true },
 			{ triggerTurn: true, deliverAs: "followUp" },
 		);
 	}
@@ -3988,7 +3986,7 @@ export default function workflow(pi: ExtensionAPI) {
 		const shown = report ?? `**Judge: PASS**\n\n${text}`;
 		handover(
 			"workflow-fix",
-			`${shown}\n\nThe judge passed with ${findings} finding(s) to fix (knowledge deviations excluded; give a reason in \`disputes\` to keep one). Fix them by following their Fix directions, or put a wrong one in the \`disputes\` parameter of your next judge call instead of changing code. Then call judge again.`,
+			prompts.minorFixMessage(shown, findings),
 		);
 		return true;
 	}
