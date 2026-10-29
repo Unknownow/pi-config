@@ -27,10 +27,10 @@ export function noMerge(plan: string): boolean {
 }
 
 /** Why this merge, protected push or publish is refused, or null when its tree has passed the judge. */
-export function gateProblem(_kind: GateKind, f: GateFacts): string | null {
+export function gateProblem(kind: GateKind, f: GateFacts): string | null {
 	if (f.noMerge) return `this plan says Delivery: no merge; ${f.what} is not allowed`;
 	if (f.tree && f.passedTrees.includes(f.tree)) return null;
-	if (!f.tree && f.commit) return `${f.what}: its head ${f.commit.slice(0, 7)} is not in this repo; run the merge in the repo it belongs to, or fetch that commit first`;
+	if (!f.tree && f.commit) return `${f.what}: its head ${f.commit.slice(0, 7)} is not in this repo; ${kind === "merge" ? "run the merge in the repo it belongs to, or " : ""}fetch that commit first`;
 	const names = f.diffNames ?? [];
 	const list = names.length ? `; differs from the last passed tree in: ${names.slice(0, 10).join(", ")}${names.length > 10 ? ", …" : ""}` : "";
 	return `${f.what} is not judged: run judge, then retry${list}`;
