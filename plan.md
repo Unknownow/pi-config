@@ -262,10 +262,10 @@ Rerun the slow suites only if a later fix touches `Packages/`, `ProjectSettings/
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 In `D:/projects/pi-config`:
-- [ ] S2 In `pi/agent/extensions/workflow/merge-gate.test.ts`, add the test from §6 right after the test at `:229-234`, in the sa
-- [ ] S3 Run the commands in §6 for Stage 1. Then call `judge`, and fix any blocker or major findings.
-- [ ] S4 Deliver: merge — branch `flow/gate-push-wording-test` into `master` of `Unknownow/pi-config`, as a pull request merged w
+- [x] S1 In `D:/projects/pi-config`:
+- [x] S2 In `pi/agent/extensions/workflow/merge-gate.test.ts`, add the test from §6 right after the test at `:229-234`, in the sa
+- [x] S3 Run the commands in §6 for Stage 1. Then call `judge`, and fix any blocker or major findings.
+- [x] S4 Deliver: merge — branch `flow/gate-push-wording-test` into `master` of `Unknownow/pi-config`, as a pull request merged w
 - [ ] S5 In `D:/personal/game-studio-base`, confirm three things, all read-only:
 - [ ] S6 Make the base repo join the flow:
 - [ ] S7 Deliver: merge — PR #3 of `Unknownow/game-studio-base` into `main`, as a merge commit with delete-branch, through the D4
