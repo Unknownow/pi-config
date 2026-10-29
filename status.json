@@ -1,10 +1,9 @@
 {
   "v": 1,
   "flowId": "20261029-0023-game-studio-templates-game-studio-base-a-37de",
-  "rev": 4,
-  "updated": "2026-10-28T18:00:56.183Z",
+  "rev": 5,
+  "updated": "2026-10-29T01:54:39.726Z",
   "title": "Game Studio templates — `game-studio-base` and `game-studio-unity` (with `com.unknownow.studio-tools`)",
-  "stage": 2,
   "done": [
     "S1",
     "S2",
@@ -21,6 +20,11 @@
     "S13",
     "S14"
   ],
+  "finished": {
+    "at": "2026-10-29T01:54:39.574Z",
+    "ok": false,
+    "text": "stage 1: pi-config: master, 0 commits since the review base; game-studio-base: main, 1 commit since the review base; back to planning · 2 human check(s) for you (see the card)"
+  },
   "reviewBase": {
     "d:/projects/pi-config": "33418ddc380dfecb343b0de2f49cc11620e0b19d",
     "d:/personal/game-studio-base": "0b42e582ccf69bac7d68aa1214c5453e7ba5a892"
