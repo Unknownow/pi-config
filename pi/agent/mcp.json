@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "ww-kanboard": {
+      "command": "C:\\Program Files\\nodejs\\node.exe",
+      "args": [
+        "C:\\Users\\IEC-WW\\.ww-kanboard-mcp\\dist\\server.js"
+      ],
+      "env": {
+        "KANBOARD_URL": "https://kanboard.game.ieccorp.vn",
+        "KANBOARD_USERNAME": "cuongbpt",
+        "KANBOARD_API_TOKEN": "0dcac70bafd84517a4535dafd3f6cb30e9cdcece66bc8e4817c4c9bc9e23"
+      },
+      "description": "IEC Kanboard: find, read, comment on and move bug tasks"
+    }
+  }
+}
