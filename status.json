@@ -1,10 +1,9 @@
 {
   "v": 1,
   "flowId": "20261029-0901-game-studio-templates-game-studio-base-a-f0de",
-  "rev": 4,
-  "updated": "2026-10-29T02:46:18.432Z",
+  "rev": 5,
+  "updated": "2026-10-29T02:49:52.188Z",
   "title": "Game Studio templates: `game-studio-base` and `game-studio-unity` (with `com.unknownow.studio-tools`)",
-  "stage": 3,
   "done": [
     "S1",
     "S2",
@@ -26,6 +25,11 @@
     "S19",
     "S20"
   ],
+  "finished": {
+    "at": "2026-10-29T02:49:52.007Z",
+    "ok": false,
+    "text": "stage 1: no changes; stage 2: checkpoint S20: tag v0.1.0 created at 063372c3f; pi-config: master, 0 commits since the review base; game-studio-base: main, 14 commits since the review base, PR #1 MERGED https://github.com/Unknownow/game-studio-base/pull/1; back to planning · 2 human check(s) for you (see the card)"
+  },
   "checkpoints": [
     {
       "step": "S20",
