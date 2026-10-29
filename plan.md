@@ -570,14 +570,14 @@ Never execute CCGS scripts. Never commit `D:/scratch/**`, `.claude/`, `Library/`
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 Done: branch `fix/engine-layer-support` from `063372c`.
-- [ ] S2 Done: `check_engine_hooks` scans `roles/` (`check.py:227`).
-- [ ] S3 Done: `classify` precedence with `_layer` (`upstream.py:18`, `:32-51`).
-- [ ] S4 Done: `test_repo_content.py` engine-layer exclusion and the leftover test.
-- [ ] S5 Done: `.gitignore` patterns.
-- [ ] S6 Done: leftovers removed.
-- [ ] S7 Done: suite 216 OK, `check` 0 errors, `--coverage` exit 0, judge PASS.
-- [ ] S8 Done: PR #2 merged, base `main` = `48ccc4c`. No action in this stage beyond confirming that base `main` = `48ccc4c`.
+- [x] S1 Done: branch `fix/engine-layer-support` from `063372c`.
+- [x] S2 Done: `check_engine_hooks` scans `roles/` (`check.py:227`).
+- [x] S3 Done: `classify` precedence with `_layer` (`upstream.py:18`, `:32-51`).
+- [x] S4 Done: `test_repo_content.py` engine-layer exclusion and the leftover test.
+- [x] S5 Done: `.gitignore` patterns.
+- [x] S6 Done: leftovers removed.
+- [x] S7 Done: suite 216 OK, `check` 0 errors, `--coverage` exit 0, judge PASS.
+- [x] S8 Done: PR #2 merged, base `main` = `48ccc4c`. No action in this stage beyond confirming that base `main` = `48ccc4c`.
 - [ ] S9 Clone base `main` into `D:/personal/game-studio-unity`:
 - [ ] S10 Unity project per 4.6:
 - [ ] S11 Unity content, per 4.2 and 4.3:

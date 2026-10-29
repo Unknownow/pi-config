@@ -1,11 +1,20 @@
 {
   "v": 1,
   "flowId": "20261029-1023-stage-3-base-engine-layer-fixes-delivere-759e",
-  "rev": 1,
-  "updated": "2026-10-29T03:23:51.089Z",
+  "rev": 2,
+  "updated": "2026-10-29T03:24:40.723Z",
   "title": "Stage 3: base engine-layer fixes (delivered), then the `game-studio-unity` fork and the `com.unknownow.studio-tools` 0.1.0 package",
-  "stage": 1,
-  "done": [],
+  "stage": 2,
+  "done": [
+    "S1",
+    "S2",
+    "S3",
+    "S4",
+    "S5",
+    "S6",
+    "S7",
+    "S8"
+  ],
   "reviewBase": {
     "d:/projects/pi-config": "47f33d97aff523e415e320e5c9371ac48743a540"
   },
