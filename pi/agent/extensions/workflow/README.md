@@ -71,7 +71,7 @@ after approval runs on its own:
 - **Push guard:** it never force-pushes, deletes or mirrors, uses `+`/`:` refspecs, `--all` or `--no-verify`, and changes to `core.hooksPath` / `GIT_CONFIG_*` are refused (`push-guard.ts`). `gh pr merge --admin` / `--auto` and `gh pr review --approve` are always refused. A merge or protected push must be its own command line. Like the plan-phase checks it reads the command text: a guard against a drifting executor, not a sandbox.
 - **Removed config keys:** `delivery.ask`, `delivery.default`, `delivery.runner` and `test.delivery` (and `/flow delivery`) are ignored if still in `workflow.json`; the other `delivery` keys (`splitCommits`, `branchPrefix`, `base`, `mergeMethod`, `deleteBranch`) stay.
 - **Minor findings:** a passed review with fixable minor findings goes back to the executor for up to `maxMinorRounds`
-  (default 1, `0` ends the stage at once) fix rounds, then the stage ends anyway. Fix them, or dispute a wrong one. `[knowledge ...]` and
+  (default 3, `0` ends the stage at once) fix rounds, then the stage ends anyway. Fix them, or dispute a wrong one. `[knowledge ...]` and
   `[plan-flaw]` findings never start a round.
 - **Where it stops for you:** when the judge fails `maxJudgeRounds` (5; 0 means no limit) times in a
   row it asks: keep fixing, escalate and keep fixing, or stop. It also stops when something errors.

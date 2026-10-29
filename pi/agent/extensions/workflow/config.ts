@@ -228,7 +228,7 @@ export const DEFAULTS: WorkflowConfig = {
 	handoverCompactTokens: 30_000,
 	autoJudge: "auto",
 	maxJudgeRounds: 5,
-	maxMinorRounds: 1,
+	maxMinorRounds: 3,
 	finalizePlan: true,
 	returnTo: "discuss",
 	planFlaw: "ask",

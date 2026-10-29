@@ -188,3 +188,7 @@ test("keys of the removed delivery menu and commit step load and are dropped", (
 	assert.equal(c.delivery.base, "dev");
 	assert.equal("delivery" in c.test, false);
 });
+
+test("minor findings get up to three fix rounds by default", () => {
+	assert.equal(DEFAULTS.maxMinorRounds, 3);
+});
