@@ -11,7 +11,7 @@
         "KANBOARD_API_TOKEN": "0081a30a02a4372e69408bf1c59f5fe133f5d2ccbe195729dafb1b1712c6"
       },
       "description": "IEC Kanboard: find, read, comment on and move bug tasks",
-      "enabled": false
+      "enabled": true
     }
   }
 }
