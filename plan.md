@@ -528,16 +528,16 @@ A persisted state with `phase: "test"`, or with `tokens.test`, loads as `off` wi
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 Create the gitignored `D:\works\pi-config\local\sync.json`:
-- [ ] S2 Rewrite `pi/agent/AGENTS.md` per D3, keeping the title and the "Applies in every repo. Project `AGENTS.md` files add to 
-- [ ] S3 Deliver: merge — AGENTS.md rulebook.
-- [ ] S4 Minor-fix rounds (D15):
-- [ ] S5 Single plan (D16, D18), as defined in Design:
-- [ ] S6 `workflow.json`:
-- [ ] S7 Handover compaction (D20):
-- [ ] S8 Commits (D21):
-- [ ] S9 Update `README.md` and `docs/workflow-improvements.md` with new rows for S4–S8 (next free IDs per category), the Status 
-- [ ] S10 Deliver: merge — flow speed 5a.
+- [x] S1 Create the gitignored `D:\works\pi-config\local\sync.json`:
+- [x] S2 Rewrite `pi/agent/AGENTS.md` per D3, keeping the title and the "Applies in every repo. Project `AGENTS.md` files add to 
+- [x] S3 Deliver: merge — AGENTS.md rulebook.
+- [x] S4 Minor-fix rounds (D15):
+- [x] S5 Single plan (D16, D18), as defined in Design:
+- [x] S6 `workflow.json`:
+- [x] S7 Handover compaction (D20):
+- [x] S8 Commits (D21):
+- [x] S9 Update `README.md` and `docs/workflow-improvements.md` with new rows for S4–S8 (next free IDs per category), the Status 
+- [x] S10 Deliver: merge — flow speed 5a.
 - [ ] S11 `bin/lib.js`: delete detection per D9–D11, next to the record code (`lib.js:361-426`), modelled on `editedInRepo`.
 - [ ] S12 `bin/export.js` and `bin/import.js`: apply the deletions after copying.
 - [ ] S13 `extension/ready.ts` and `extension/index.ts`:
