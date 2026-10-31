@@ -679,7 +679,7 @@ export default function workflow(pi: ExtensionAPI) {
 		await setPhase(ctx, "execute");
 		const extra = startExecution(ctx, plan);
 		persist();
-		handover("workflow-execute", APPROVED_FINAL + extra);
+		handover("workflow-execute", APPROVED_FINAL + extra, ctx);
 	}
 
 	async function escalate(ctx: ExtensionContext): Promise<void> {
@@ -3294,39 +3294,7 @@ export default function workflow(pi: ExtensionAPI) {
 		if (pendingHandover) {
 			const msg = pendingHandover;
 			pendingHandover = undefined;
-			const send = (content: string) => {
-				pi.sendMessage({ customType: msg.customType, content, display: true }, { triggerTurn: true, deliverAs: "followUp" });
-			};
-			const held = ctx.getContextUsage()?.tokens ?? null;
-			const plan = state.approvedPlan;
-			const action = handoverAction({ aborted: event.aborted, kind: handoverKind(msg.customType), idle: ctx.isIdle(), compacting, hasPlan: !!plan, tokens: held, threshold: cfg.handoverCompactTokens });
-			if (action === "hold") {
-				ctx.ui.notify("workflow: handover held: the run was aborted. Send a message or use /flow to continue.", "warning");
-				return;
-			}
-			if (action !== "compact" || !plan) {
-				send(msg.content);
-				return;
-			}
-			compactPending = false;
-			compacting = true;
-			const compactStart = Date.now();
-			ctx.ui.notify(`workflow: handing over at ${Math.round((held ?? 0) / 1000)}k tokens, compacting first`, "info");
-			ctx.compact({
-				customInstructions: prompts.HANDOVER_COMPACT,
-				onComplete: () => {
-					recordMetric({ kind: "compaction", at: new Date().toISOString(), reason: "handover", tokensBefore: held ?? null, ms: Date.now() - compactStart, ok: true });
-					compacting = false;
-					guardTokens = null;
-					void planCardReady().then((card) => send(`${msg.content}\n\n${card}`));
-				},
-				onError: (e) => {
-					recordMetric({ kind: "compaction", at: new Date().toISOString(), reason: "handover", tokensBefore: held ?? null, ms: Date.now() - compactStart, ok: false, error: e.message });
-					compacting = false;
-					ctx.ui.notify(`workflow: compaction failed: ${e.message}`, "error");
-					send(msg.content);
-				},
-			});
+			deliverHandover(ctx, msg, event.aborted);
 			return;
 		}
 		if (!compactPending || compacting || event.aborted || !ctx.isIdle()) return;
@@ -3416,13 +3384,9 @@ export default function workflow(pi: ExtensionAPI) {
 		if (state.phase !== "plan" || event.source === "extension" || event.streamingBehavior) return { action: "continue" };
 		// Without a plan on screen, "yes, do that" answers a question; it doesn't approve anything.
 		if (!planReady || !approveRe().test(event.text.trim())) return { action: "continue" };
-		state.planFlaw = undefined;
-		const plan = composePlan(planDraft);
-		await setPhase(ctx, "execute");
-		const extra = startExecution(ctx, plan);
-		persist();
 		ctx.ui.notify(`workflow: plan approved, executing on ${describeRole(cfg.roles.execute)}`, "info");
-		return { action: "transform", text: `${event.text.trim()}\n\n${APPROVED_FINAL}${extra}` };
+		await approve(ctx);
+		return { action: "handled" };
 	});
 
 	pi.on("session_compact", async (event, ctx) => {
@@ -3444,8 +3408,50 @@ export default function workflow(pi: ExtensionAPI) {
 		}
 	});
 
+	/** Sends a handover now, after compacting the session first when it starts execute or a stage and the context is over the threshold. */
+	function deliverHandover(ctx: ExtensionContext, msg: { customType: string; content: string }, aborted: boolean): void {
+		const send = (content: string) => {
+			pi.sendMessage({ customType: msg.customType, content, display: true }, { triggerTurn: true, deliverAs: "followUp" });
+		};
+		const held = ctx.getContextUsage()?.tokens ?? null;
+		const plan = state.approvedPlan;
+		const action = handoverAction({ aborted: aborted, kind: handoverKind(msg.customType), idle: ctx.isIdle(), compacting, hasPlan: !!plan, tokens: held, threshold: cfg.handoverCompactTokens });
+		if (action === "hold") {
+			ctx.ui.notify("workflow: handover held: the run was aborted. Send a message or use /flow to continue.", "warning");
+			return;
+		}
+		if (action !== "compact" || !plan) {
+			send(msg.content);
+			return;
+		}
+		compactPending = false;
+		compacting = true;
+		const compactStart = Date.now();
+		ctx.ui.notify(`workflow: handing over at ${Math.round((held ?? 0) / 1000)}k tokens, compacting first`, "info");
+		ctx.compact({
+			customInstructions: prompts.HANDOVER_COMPACT,
+			onComplete: () => {
+				recordMetric({ kind: "compaction", at: new Date().toISOString(), reason: "handover", tokensBefore: held ?? null, ms: Date.now() - compactStart, ok: true });
+				compacting = false;
+				guardTokens = null;
+				void planCardReady().then((card) => send(`${msg.content}\n\n${card}`));
+			},
+			onError: (e) => {
+				recordMetric({ kind: "compaction", at: new Date().toISOString(), reason: "handover", tokensBefore: held ?? null, ms: Date.now() - compactStart, ok: false, error: e.message });
+				compacting = false;
+				ctx.ui.notify(`workflow: compaction failed: ${e.message}`, "error");
+				send(msg.content);
+			},
+		});
+		return;
+	}
+
 	/** Sends a workflow message that starts the next executor turn. From agent_end it waits for the run to settle, so the session can be compacted first. */
-	function handover(customType: string, content: string): void {
+	function handover(customType: string, content: string, ctx?: ExtensionContext): void {
+		if (!inAgentEnd && ctx) {
+			deliverHandover(ctx, { customType, content }, false);
+			return;
+		}
 		if (inAgentEnd) {
 			pendingHandover = { customType, content };
 			return;
@@ -3509,7 +3515,7 @@ export default function workflow(pi: ExtensionAPI) {
 				if (!planWaitRetried) {
 					planWaitRetried = true;
 					planReady = false;
-					pi.sendMessage({ customType: "workflow-plan-waits", content: `The plan has wait checks that can't run:\n${planWaitNow.map((p) => `- ${p}`).join("\n")}\nFix them: reply with the changed steps in a \`## Plan changes\` section. A check is one plain read-only command: no backticks around it, no placeholders like <version>, no command substitution. If a value is only known after an earlier stage (a version a script picks), drop that check or the wait itself.`, display: true }, { triggerTurn: true, deliverAs: "followUp" });
+					pi.sendMessage({ customType: "workflow-plan-waits", content: `The plan has wait checks that can't run:\n${planWaitNow.map((p) => `- ${p}`).join("\n")}\nFix them: reply with the whole plan again as a new \`## Plan:\`, the fixed wait checks included. A check is one plain read-only command: no backticks around it, no placeholders like <version>, no command substitution. If a value is only known after an earlier stage (a version a script picks), drop that check or the wait itself.`, display: true }, { triggerTurn: true, deliverAs: "followUp" });
 					return;
 				}
 				ctx.ui.notify(`workflow: the plan still has wait checks that can't run (${planWaitNow[0]}). Fix them with the planner before approving.`, "warning");

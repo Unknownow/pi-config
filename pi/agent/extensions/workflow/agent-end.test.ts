@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { handoverAction, approvalBlock, handoverKind, addPlanReply, composePlan, afterPass, noChangeStage, arbiterFirst, fixableFindings, hasPlanFlaw, planFlawLines, planFlawOnPass, canApprove, hasPlanLine, isPlanReady, judgeCapReached, minorFixOpen, passPending, stageEndAction, parseArbiter, phaseAfterFlow, shouldResume, skipJudge } from "./agent-end.ts";
+import { planWaitProblems } from "./stages.ts";
 
 const empty = { role: "assistant", content: [] };
 
@@ -227,4 +228,16 @@ test("approvalBlock refuses an empty draft and wait problems", () => {
 	assert.ok(approvalBlock({ full: "", changes: [] }, []));
 	assert.ok(approvalBlock({ full: "## Plan: x", changes: [] }, ["S2 check"])?.includes("S2 check"));
 	assert.equal(approvalBlock({ full: "## Plan: x", changes: [] }, []), undefined);
+});
+
+test("a wait check broken in the full plan stays broken in a change section; a new full plan clears it", () => {
+	const bad = "## Plan: x\n**S2.** Wait: act (check: echo `date`)";
+	const fix = "## Plan changes\n**S2.** Wait: act (check: test -f a)";
+	const problems = (d: { full: string; changes: string[] }) => planWaitProblems(composePlan(d), () => null);
+	let d = addPlanReply({ full: "", changes: [] }, bad);
+	assert.ok(problems(d).length > 0);
+	d = addPlanReply(d, fix);
+	assert.ok(problems(d).length > 0);
+	d = addPlanReply(d, "## Plan: x\n**S2.** Wait: act (check: test -f a)");
+	assert.equal(problems(d).length, 0);
 });
