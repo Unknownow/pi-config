@@ -50,7 +50,7 @@ import {
 	type Thinking,
 	type WorkflowConfig,
 } from "./config.ts";
-import { handoverAction, afterPass, noChangeStage, arbiterFirst, fixableFindings, canApprove, hasPlanFlaw, planFlawLines, planFlawOnPass, hasPlanLine, isPlanReady, judgeCapReached, minorFixOpen, passPending, stageEndAction, parseArbiter, phaseAfterFlow, shouldResume, skipJudge } from "./agent-end.ts";
+import { handoverAction, handoverKind, afterPass, noChangeStage, arbiterFirst, fixableFindings, canApprove, addPlanReply, composePlan, type PlanDraft, hasPlanFlaw, planFlawLines, planFlawOnPass,  judgeCapReached, minorFixOpen, passPending, stageEndAction, parseArbiter, phaseAfterFlow, shouldResume, skipJudge } from "./agent-end.ts";
 import { countTokens, type Tok } from "./tokens.ts";
 import { idleReason, notifyCommand, notifyDue } from "./notify.ts";
 import * as prompts from "./prompts.ts";
@@ -149,8 +149,6 @@ interface FlowState {
 	flowSummarized?: boolean;
 	/** The plan's file in the repo's git folder: its flow ID, how many milestones wrote it, the repos it covers, and how the flow ended. */
 	planDoc?: { flowId: string; rev: number; roots: string[]; finished?: Finished };
-	/** The planner is writing the final execution plan; its reply becomes approvedPlan. */
-	finalizing?: boolean;
 	/** Amendments the arbiter added in this flow. */
 	planRevisions?: number;
 	/** A judge report that questions the plan, waiting for the end of the executor's turn. */
@@ -300,12 +298,12 @@ export default function workflow(pi: ExtensionAPI) {
 	let consecutiveErrors = 0;
 	/** The planner's last reply has a "Plan:" section and no open question; only then does a typed "go" / "do it" approve. */
 	let planReady = false;
-	/** The final plan's broken wait checks were already sent back to the planner once for this approval. */
-	let finalizeWaitRetried = false;
-	/** A planner reply in the current plan discussion had a plan line; with planRecap "changes" a typed "go" then approves later replies without one. Reset when the phase changes. */
+	/** The plan's broken wait checks were already sent back to the planner once. */
+	let planWaitRetried = false;
+	/** A planner reply in the current plan phase was a full `## Plan:`; a typed "go" then approves later replies without one. Reset when the phase changes. */
 	let planProposed = false;
-	/** The planner's last finished reply, kept as the approved plan when finalizePlan is off. */
-	let lastPlanText = "";
+	/** The full plan and the change sections after it; the approved plan. */
+	let planDraft: PlanDraft = { full: "", changes: [] };
 	let guardTokens: number | null = null;
 	let compacting = false;
 	/** The guard threshold was crossed during a run; compact when the run settles. */
@@ -564,6 +562,8 @@ export default function workflow(pi: ExtensionAPI) {
 		}
 		planReady = false;
 		planProposed = false;
+		planDraft = { full: "", changes: [] };
+		planWaitRetried = false;
 		const readOnly = (p: Phase) => p === "discuss" || p === "plan" || p === "test";
 		// Discuss and plan share one tool set, so moving between them keeps the snapshot.
 		const toolSet = (p: Phase) => (p === "test" ? "test" : "plan");
@@ -591,7 +591,6 @@ export default function workflow(pi: ExtensionAPI) {
 		}
 		publishWaitSince.clear();
 		stopWaitTimer();
-		state.finalizing = undefined;
 		state.planRevisions = undefined;
 		state.pendingPlanFlaw = undefined;
 		state.unresolvedPlanFlaws = undefined;
@@ -669,19 +668,11 @@ export default function workflow(pi: ExtensionAPI) {
 
 	async function approve(ctx: ExtensionContext, arbiterOnFlaw = false): Promise<void> {
 		state.planFlaw = arbiterOnFlaw ? "auto" : undefined;
-		if (cfg.finalizePlan) {
-			// One more planner reply, the final execution plan, before the execute model starts.
-			planReady = false;
-			state.finalizing = true;
-			finalizeWaitRetried = false;
-			persist();
-			pi.sendMessage({ customType: "workflow-finalize", content: prompts.finalize(cfg.delivery.splitCommits, cfg.stagedPlans), display: true }, { triggerTurn: true, deliverAs: "followUp" });
-			return;
-		}
+		const plan = composePlan(planDraft);
 		await setPhase(ctx, "execute");
-		const extra = startExecution(ctx, lastPlanText);
+		const extra = startExecution(ctx, plan);
 		persist();
-		pi.sendMessage({ customType: "workflow-execute", content: APPROVED + extra, display: true }, { triggerTurn: true, deliverAs: "followUp" });
+		handover("workflow-execute", APPROVED_FINAL + extra);
 	}
 
 	async function escalate(ctx: ExtensionContext): Promise<void> {
@@ -1902,7 +1893,7 @@ export default function workflow(pi: ExtensionAPI) {
 		const prevChecked = plan.kind === "recheck" && state.lastKnowledge?.status === "checked" && state.lastKnowledge.hash === plan.prev.hash;
 		const { files: knowledgeFiles, scoped } = plan.kind === "recheck" ? recheckKnowledgeFiles(prevChecked, plan.changed, diff.checkNames) : { files: diff.checkNames, scoped: false };
 		const max = cfg.judge.maxDiffChars;
-		const testJudge = state.testFlow ? prompts.JUDGE_TEST : "";
+		const testJudge = (state.testFlow ? prompts.JUDGE_TEST : "") + ((state.minorRounds ?? 0) > 0 ? "\n" + prompts.JUDGE_MAJOR_ONLY : "");
 		const systemPrompts = recheck
 			? [
 					prompts.JUDGE + testJudge,
@@ -2118,7 +2109,6 @@ export default function workflow(pi: ExtensionAPI) {
 		state.judgeRounds = 0;
 		state.minorRounds = 0;
 		state.minorSentFor = undefined;
-		state.finalizing = undefined;
 		state.pendingPlanFlaw = undefined;
 		state.stageJudged = undefined;
 		state.stageNudgedFor = undefined;
@@ -2127,6 +2117,8 @@ export default function workflow(pi: ExtensionAPI) {
 		state.lastFullPass = undefined;
 		planReady = false;
 		planProposed = false;
+		planDraft = { full: "", changes: [] };
+		planWaitRetried = false;
 		consecutiveErrors = 0;
 		await applyRole(ctx, phase);
 		persist();
@@ -2645,8 +2637,8 @@ export default function workflow(pi: ExtensionAPI) {
 		name: "git_task",
 		label: "Git task",
 		description:
-			"Delegate routine git work (commit, push, open a pull request, merge) to a cheaper model and get its report back in the same turn. It runs under the same guard as you: a merge or a push to a protected branch is refused until the exact tree has passed judge. Give the exact task (repo, branch, commit messages, base). If it fails, do the work yourself.",
-		promptSnippet: "git_task: delegate commit/push/PR/merge work to a cheap model; returns its report",
+			"Delegate messy git work (merge conflicts, rebases, a long sequence of split commits) to a cheaper model and get its report back in the same turn. Plain commits, pushes and pull requests are faster in bash with git and gh. It runs under the same guard as you: a merge or a push to a protected branch is refused until the exact tree has passed judge. Give the exact task (repo, branch, commit messages, base). If it fails, do the work yourself.",
+		promptSnippet: "git_task: delegate messy git work (conflicts, rebases, long split-commit sequences) to a cheap model; plain commit/push/PR go through bash",
 		parameters: Type.Object({
 			task: Type.String({ description: "What to do, e.g. 'commit the staged changes as \"feat: x\", push the branch, open a PR against main'" }),
 			repo: Type.Optional(Type.String({ description: "Folder of the repo to work in; default the working folder" })),
@@ -3007,7 +2999,7 @@ export default function workflow(pi: ExtensionAPI) {
 		name: "deliver",
 		label: "Deliver",
 		description:
-			"Create or move a tag on the remote default branch (`tag`), inside the plan, then carry on in the same turn. Commit, push, pull requests and merges are done with git and gh directly or with git_task, not with this tool. Name the plan's `Deliver:` step as `step`; a call without one is added to the plan as an amendment. Tags are created or moved only for a named plan step or when you need them to continue; a move needs a plan step that names the tag and the word move.",
+			"Create or move a tag on the remote default branch (`tag`), inside the plan, then carry on in the same turn. Commit, push, pull requests and merges are done with git and gh directly, not with this tool. Name the plan's `Deliver:` step as `step`; a call without one is added to the plan as an amendment. Tags are created or moved only for a named plan step or when you need them to continue; a move needs a plan step that names the tag and the word move.",
 		promptSnippet: "deliver: create or move a tag inside the plan, then continue",
 		parameters: Type.Object({
 			tag: Type.Optional(
@@ -3098,9 +3090,7 @@ export default function workflow(pi: ExtensionAPI) {
 		opts.sections.workspace = prompts.workspaceSection(ctx.cwd, folders, touched, listed);
 		const staged = state.phase === "execute" ? currentStages() : undefined;
 		const phaseText = prompts.phaseSection(state.phase, {
-			finalize: cfg.finalizePlan,
 			staging: cfg.stagedPlans,
-			recap: cfg.planRecap,
 			stage: staged ? stageLine(staged.stages, staged.current) : undefined,
 			testFix: state.phase === "execute" && !!state.testFlow,
 			delivery: state.phase === "execute" ? prompts.deliveryGuidance(cfg.delivery) + (noMerge(state.approvedPlan ?? "") ? "\n- This plan says Delivery: no merge: do not merge, push to a protected branch or publish; commit, push your branch and open the pull request, then stop there." : "") : undefined,
@@ -3302,7 +3292,7 @@ export default function workflow(pi: ExtensionAPI) {
 			};
 			const held = ctx.getContextUsage()?.tokens ?? null;
 			const plan = state.approvedPlan;
-			const action = handoverAction({ aborted: event.aborted, idle: ctx.isIdle(), compacting, hasPlan: !!plan, tokens: held, threshold: cfg.handoverCompactTokens });
+			const action = handoverAction({ aborted: event.aborted, kind: handoverKind(msg.customType), idle: ctx.isIdle(), compacting, hasPlan: !!plan, tokens: held, threshold: cfg.handoverCompactTokens });
 			if (action === "hold") {
 				ctx.ui.notify("workflow: handover held: the run was aborted. Send a message or use /flow to continue.", "warning");
 				return;
@@ -3420,20 +3410,12 @@ export default function workflow(pi: ExtensionAPI) {
 		// Without a plan on screen, "yes, do that" answers a question; it doesn't approve anything.
 		if (!planReady || !approveRe().test(event.text.trim())) return { action: "continue" };
 		state.planFlaw = undefined;
-		if (cfg.finalizePlan) {
-			// Same as the menu: the planner writes the final plan first, in its reply to this message.
-			planReady = false;
-			state.finalizing = true;
-			finalizeWaitRetried = false;
-			persist();
-			ctx.ui.notify(`workflow: plan approved, the planner writes the final plan`, "info");
-			return { action: "transform", text: `${event.text.trim()}\n\n${prompts.finalize(cfg.delivery.splitCommits, cfg.stagedPlans)}` };
-		}
+		const plan = composePlan(planDraft);
 		await setPhase(ctx, "execute");
-		const extra = startExecution(ctx, lastPlanText);
+		const extra = startExecution(ctx, plan);
 		persist();
 		ctx.ui.notify(`workflow: plan approved, executing on ${describeRole(cfg.roles.execute)}`, "info");
-		return { action: "transform", text: `${event.text.trim()}\n\n${APPROVED}${extra}` };
+		return { action: "transform", text: `${event.text.trim()}\n\n${APPROVED_FINAL}${extra}` };
 	});
 
 	pi.on("session_compact", async (event, ctx) => {
@@ -3502,34 +3484,6 @@ export default function workflow(pi: ExtensionAPI) {
 			}
 		}
 
-		if (state.phase === "plan" && state.finalizing) {
-			state.finalizing = false;
-			const finalText = assistantText(last).trim();
-			if (last?.role === "assistant" && last.stopReason === "stop" && /^##\s*Plan:/m.test(finalText)) {
-				const waitProblems = planWaitProblems(finalText, (c) => readOnlyProblem(c));
-				if (waitProblems.length && !finalizeWaitRetried) {
-					finalizeWaitRetried = true;
-					state.finalizing = true;
-					persist();
-					pi.sendMessage({ customType: "workflow-finalize", content: `The final plan has wait checks that can't run:\n${waitProblems.map((p) => `- ${p}`).join("\n")}\nFix them and reply with the whole final plan again. A check is one plain read-only command: no backticks around it, no placeholders like <version>, no command substitution. If a value is only known after an earlier stage (a version a script picks), drop that check or the wait itself.`, display: true }, { triggerTurn: true, deliverAs: "followUp" });
-					return;
-				}
-				if (waitProblems.length) {
-					persist();
-					ctx.ui.notify(`workflow: the final plan still has wait checks that can't run (${waitProblems[0]}). Approve again to retry.`, "warning");
-					return;
-				}
-				await setPhase(ctx, "execute");
-				const extra = startExecution(ctx, finalText);
-				persist();
-				handover("workflow-execute", APPROVED_FINAL + extra);
-				return;
-			}
-			// Not a final plan (error, abort, or a question back): nothing starts; the normal plan handling below offers the menu again.
-			persist();
-			ctx.ui.notify("workflow: that reply is not a final plan (a '## Plan:' section). Approve again to retry.", "warning");
-		}
-
 		if (!ctx.hasUI) return;
 		const stoppedNormally = last?.role === "assistant" && last.stopReason === "stop" && assistantText(last).trim().length > 0;
 
@@ -3537,26 +3491,36 @@ export default function workflow(pi: ExtensionAPI) {
 			// Every finished reply offers the choice; aborted or errored ones do not.
 			// A typed "go" approves only a finished plan that is not waiting on an answer.
 			const text = assistantText(last).trim();
-			const recapChanges = cfg.finalizePlan && cfg.planRecap === "changes";
-			if (stoppedNormally && hasPlanLine(text)) planProposed = true;
-			planReady = recapChanges ? canApprove(text, stoppedNormally, planProposed) : isPlanReady(text, stoppedNormally);
+			if (stoppedNormally) {
+				planDraft = addPlanReply(planDraft, text);
+				planProposed = !!planDraft.full;
+			}
+			planReady = canApprove(text, stoppedNormally, planProposed);
 			if (!stoppedNormally) return;
-			lastPlanText = text;
+			if (planReady && /^##\s*Plan(?::| changes)/m.test(text)) {
+				const waitProblems = planWaitProblems(composePlan(planDraft), (c) => readOnlyProblem(c));
+				if (waitProblems.length && !planWaitRetried) {
+					planWaitRetried = true;
+					planReady = false;
+					pi.sendMessage({ customType: "workflow-plan-waits", content: `The plan has wait checks that can't run:\n${waitProblems.map((p) => `- ${p}`).join("\n")}\nFix them: reply with the changed steps in a \`## Plan changes\` section. A check is one plain read-only command: no backticks around it, no placeholders like <version>, no command substitution. If a value is only known after an earlier stage (a version a script picks), drop that check or the wait itself.`, display: true }, { triggerTurn: true, deliverAs: "followUp" });
+					return;
+				}
+				if (waitProblems.length) {
+					planReady = false;
+					ctx.ui.notify(`workflow: the plan still has wait checks that can't run (${waitProblems[0]}). Fix them with the planner before approving.`, "warning");
+					return;
+				}
+			}
 			if (!cfg.planPrompt) {
 				ctx.ui.notify(`workflow: say "go" to execute on ${describeRole(cfg.roles.execute)}, or keep discussing.`, "info");
 				return;
 			}
 			const approveLabel = "Approve";
 			const arbiterLabel = "Approve, arbiter solves plan flaws →";
-			const showLabel = "Show the full plan";
-			const choice = await askUser(ctx, `Plan phase · execute on ${describeRole(cfg.roles.execute)}`, [approveLabel, ...(cfg.planFlaw === "ask" ? [arbiterLabel] : []), ...(recapChanges ? [showLabel] : []), "Back to discussion", "Keep discussing"]);
+			const choice = await askUser(ctx, `Plan phase · execute on ${describeRole(cfg.roles.execute)}`, [approveLabel, ...(cfg.planFlaw === "ask" ? [arbiterLabel] : []), "Back to discussion", "Keep discussing"]);
 			if (choice === "Back to discussion") {
 				await setPhase(ctx, "discuss");
 				ctx.ui.notify(`workflow: back to discussion on ${describeRole(cfg.roles.discuss)}`, "info");
-				return;
-			}
-			if (recapChanges && choice === showLabel) {
-				pi.sendMessage({ customType: "workflow-show-plan", content: prompts.SHOW_PLAN, display: true }, { triggerTurn: true, deliverAs: "followUp" });
 				return;
 			}
 			if (choice === arbiterLabel && cfg.planFlaw === "ask") {

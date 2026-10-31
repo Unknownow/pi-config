@@ -54,9 +54,6 @@ export interface DeliveryConfig {
 /** "auto": the planner proposes stages itself when the work warrants them; "onRequest": only when the user asks for delivery in parts. */
 export type StagedPlans = "auto" | "onRequest";
 
-/** "changes": after a plan is proposed, planner replies repeat only what changed; "always": every reply ends with the full plan. */
-export type PlanRecap = "changes" | "always";
-
 /** Desktop notifications when a session needs the user. */
 export interface NotifyConfig {
 	enabled: boolean;
@@ -123,12 +120,8 @@ export interface WorkflowConfig {
 	autoJudge: "ask" | "auto" | "off";
 	/** Judge -> fix rounds in a row before the flow asks you what to do. 0 means no limit. */
 	maxJudgeRounds: number;
-	/** After approval the planner writes one more reply, the final execution plan, which is stored and given to the judge. */
-	finalizePlan: boolean;
 	/** When a flow ends (delivered, passed without a commit, or stopped), switch to this phase ("off" stays in execute). */
 	returnTo: "discuss" | "plan" | "off";
-	/** Legacy: read only when `returnTo` is unset in the file (true = "plan", false = "off"). */
-	returnToPlan?: boolean;
 	/** The judge says the approved plan itself is flawed: "ask" you, or let the "auto" arbiter decide. */
 	planFlaw: "ask" | "auto";
 	/** The agent resolves waits itself (approves with a comment, acts when a non-interactive command may) and the workflow skips its routine menus; see README "Autopilot". */
@@ -137,8 +130,6 @@ export interface WorkflowConfig {
 	stagedPlans: StagedPlans;
 	/** Staged plans: "auto" starts the next stage at once, even after an incomplete delivery or a stage with no changes; "ask" asks you first. */
 	stageAdvance: "auto" | "ask";
-	/** How much of the plan the planner repeats in later discussion replies (needs finalizePlan; otherwise it always repeats it). */
-	planRecap: PlanRecap;
 	/** Amendments the arbiter may add to the plan in one flow before it asks you instead. */
 	maxPlanRevisions: number;
 	/** Extra judge -> fix rounds spent on minor findings after a pass, before committing anyway. 0 commits at once. */
@@ -228,14 +219,12 @@ export const DEFAULTS: WorkflowConfig = {
 	handoverCompactTokens: 30_000,
 	autoJudge: "auto",
 	maxJudgeRounds: 5,
-	maxMinorRounds: 3,
-	finalizePlan: true,
+	maxMinorRounds: 1,
 	returnTo: "discuss",
 	planFlaw: "ask",
 	autopilot: false,
 	stagedPlans: "auto",
 	stageAdvance: "auto",
-	planRecap: "changes",
 	maxPlanRevisions: 2,
 	delivery: { splitCommits: true, mergeMethod: "merge", deleteBranch: true, base: "", branchPrefix: "flow/" },
 	protectedBranches: ["main", "master"],
@@ -338,9 +327,9 @@ function parseConfig(file: string): Loaded {
 		const rawObj = isObject(raw) ? (raw as Record<string, unknown>) : {};
 		const isReturn = (v: unknown): v is WorkflowConfig["returnTo"] => v === "discuss" || v === "plan" || v === "off";
 		if (isReturn(rawObj.returnTo)) config.returnTo = rawObj.returnTo;
-		else if (typeof rawObj.returnToPlan === "boolean") config.returnTo = rawObj.returnToPlan ? "plan" : "off";
 		else config.returnTo = DEFAULTS.returnTo;
-		delete config.returnToPlan;
+		// Keys of removed settings (the finalize rewrite, the plan recap, the old boolean returnToPlan) are dropped silently.
+		for (const old of ["finalizePlan", "planRecap", "returnToPlan"]) delete (config as unknown as Record<string, unknown>)[old];
 		if (!["discuss", "plan", "execute", "test", "off"].includes(config.startPhase)) config.startPhase = DEFAULTS.startPhase;
 		// A delivery that is not an object (the old autoCommit style, null) would crash the first approval.
 		if (!isObject(config.delivery)) config.delivery = DEFAULTS.delivery;
@@ -365,7 +354,6 @@ function parseConfig(file: string): Loaded {
 		if (typeof config.notify.idleMs !== "number" || !Number.isFinite(config.notify.idleMs) || config.notify.idleMs <= 0) config.notify.idleMs = DEFAULTS.notify.idleMs;
 		if (config.stagedPlans !== "auto" && config.stagedPlans !== "onRequest") config.stagedPlans = DEFAULTS.stagedPlans;
 		if (config.stageAdvance !== "auto" && config.stageAdvance !== "ask") config.stageAdvance = DEFAULTS.stageAdvance;
-		if (config.planRecap !== "changes" && config.planRecap !== "always") config.planRecap = DEFAULTS.planRecap;
 		const t = (config.test = isObject(config.test) ? config.test : DEFAULTS.test);
 		const num = (v: unknown, min: number, max = Infinity): v is number => typeof v === "number" && Number.isInteger(v) && v >= min && v <= max;
 		if (!num(t.concurrency, 1)) t.concurrency = DEFAULTS.test.concurrency;

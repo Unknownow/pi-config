@@ -1,7 +1,7 @@
 // node --test agent-end.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { handoverAction, afterPass, noChangeStage, arbiterFirst, fixableFindings, hasPlanFlaw, planFlawLines, planFlawOnPass, canApprove, hasPlanLine, isPlanReady, judgeCapReached, minorFixOpen, passPending, stageEndAction, parseArbiter, phaseAfterFlow, shouldResume, skipJudge } from "./agent-end.ts";
+import { handoverAction, handoverKind, addPlanReply, composePlan, afterPass, noChangeStage, arbiterFirst, fixableFindings, hasPlanFlaw, planFlawLines, planFlawOnPass, canApprove, hasPlanLine, isPlanReady, judgeCapReached, minorFixOpen, passPending, stageEndAction, parseArbiter, phaseAfterFlow, shouldResume, skipJudge } from "./agent-end.ts";
 
 const empty = { role: "assistant", content: [] };
 
@@ -14,10 +14,23 @@ test("resume only after an overflow retry with an empty reply, at most twice", (
 	assert.equal(shouldResume(true, undefined, 0), false);
 });
 
+test("a plan is the last full reply plus the change sections after it", () => {
+	let d = { full: "", changes: [] as string[] };
+	d = addPlanReply(d, "Let me think.\n\n## Plan changes\n- S2 now x");
+	assert.equal(composePlan(d), "");
+	d = addPlanReply(d, "Intro\n## Plan: A\n1. s1");
+	d = addPlanReply(d, "ok\n## Plan changes\n- S1 changed");
+	d = addPlanReply(d, "## Plan changes\n- S3 new");
+	d = addPlanReply(d, "just talk");
+	assert.equal(composePlan(d), "## Plan: A\n1. s1\n\n## Plan changes\n- S1 changed\n\n## Plan changes\n- S3 new");
+	d = addPlanReply(d, "## Plan: B\n1. t");
+	assert.equal(composePlan(d), "## Plan: B\n1. t");
+});
+
 test("canApprove after a proposed plan", () => {
 	assert.equal(canApprove("Sounds good, step 2 uses the cache.", true, true), true);
 	assert.equal(canApprove("Sounds good, step 2 uses the cache.", true, false), false);
-	assert.equal(canApprove("Plan:\n1. x", true, false), true);
+	assert.equal(canApprove("## Plan: x\n1. y", true, false), false);
 	assert.equal(canApprove("Which db do you want?", true, true), false);
 	assert.equal(canApprove("Fine.", false, true), false);
 	assert.equal(hasPlanLine("## Plan: x\n1. y"), true);
@@ -187,12 +200,17 @@ test("a no-change stage advances only when judged", () => {
 	assert.equal(noChangeStage(false, false), "wait");
 });
 
-test("handoverAction compacts only an idle, unaborted run over the threshold with a plan", () => {
-	const ok = { aborted: false, idle: true, compacting: false, hasPlan: true, tokens: 50_000, threshold: 30_000 };
+test("handoverAction compacts at a start handover only an idle, unaborted run over the threshold with a plan", () => {
+	const ok = { aborted: false, kind: "start" as const, idle: true, compacting: false, hasPlan: true, tokens: 50_000, threshold: 30_000 };
 	assert.equal(handoverAction(ok), "compact");
 	for (const o of [{ idle: false }, { compacting: true }, { hasPlan: false }, { tokens: null }, { tokens: 30_000 }, { threshold: 0 }]) {
 		assert.equal(handoverAction({ ...ok, ...o }), "send");
 	}
+	assert.equal(handoverAction({ ...ok, kind: "continue" }), "send");
+	assert.equal(handoverKind("workflow-execute"), "start");
+	assert.equal(handoverKind("workflow-stage"), "start");
+	assert.equal(handoverKind("workflow-open-steps"), "continue");
+	assert.equal(handoverKind("workflow-test-fix"), "continue");
 	assert.equal(handoverAction({ ...ok, aborted: true }), "hold");
 	assert.equal(handoverAction({ ...ok, aborted: true, tokens: 1000 }), "hold");
 	assert.equal(handoverAction({ ...ok, aborted: true, hasPlan: false }), "hold");

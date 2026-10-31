@@ -5,7 +5,7 @@ The workflow is for software: system design, architecture and code. (The name st
 pi-config sync never deletes, so renaming the folder would leave the old extension loaded beside the new one.)
 
 ```
-you <-> plan (Opus 5.5, high) -> approve -> final plan (Opus) -> execute (Sonnet 5.5, medium) -> judge (Opus 5.5) -> PASS: executor delivers (commit, push, PR, merge; git_task helper optional)
+you <-> plan (Opus 5.5, high) -> approve (the plan is final) -> execute (Sonnet 5.5, medium) -> judge (Opus 5.5) -> PASS: executor delivers (commit, push, PR, merge; git_task helper optional)
                                                               ^                          |-- explore (Haiku 5.5, parallel): answer + file:line
                                                               |                          `-- advisor (Opus 5.5): reads the full transcript
                                                               `-- fix findings <------- judge (separate session; sees the plan and the diff, not the discussion)
@@ -19,7 +19,7 @@ plan is read-only:   bash refuses commands that change files, git or GitHub
 | Role | Runs as | When |
 |---|---|---|
 | `discuss` | main session model; same read-only rules as `plan` | new sessions start here (`startPhase`). Open talk before a plan: investigate, answer, agree; no `Plan:` sections and no menus. `/flow plan` or a typed "go" moves to `plan` (it never executes) |
-| `plan` | main session model; edit/write off, bash read-only | turns the discussion into a `Plan:`, checks it and fixes it with you; `/flow discuss` or "Back to discussion" in the menu returns to talk; after approval it writes the final execution plan (`finalizePlan`) |
+| `plan` | main session model; edit/write off, bash read-only | turns the discussion into a `Plan:`, checks it and fixes it with you; `/flow discuss` or "Back to discussion" in the menu returns to talk; its first `## Plan:` reply is the final plan; changes come as `## Plan changes` sections |
 | `execute` | main session model | after you approve the plan; when the flow ends (delivered, passed without a commit, or stopped) it goes back to `discuss` (`returnTo`: `discuss`, `plan` or `off`) |
 | `explore` | `explore` tool, parallel sub-`pi` processes | plan and execute send open questions and multi-file searches to it; it decides how much to read and answers with `Answer:` plus `Evidence:` (file:line). Known files are read directly. Judge and advisor do not use it. It runs with thinking low, without `AGENTS.md`/`CLAUDE.md` files (`explore.contextFiles: true` loads them) and with a budget of about 10 tool calls per question, after which it answers with what it has and says what it did not verify |
 | `advisor` | `advisor` tool, sub-`pi` with the whole transcript | choosing an approach, after an error repeats (auto-nudged after `repeatedErrorThreshold` failures), before "done" |
@@ -34,12 +34,12 @@ plan is read-only:   bash refuses commands that change files, git or GitHub
 
 You discuss the plan with the planner. After every finished planner reply, an **Approve** menu
 pops up (`planPrompt`): an `Approve` entry, then
-Show the full plan (prints the whole current plan, approves nothing; with `planRecap: "changes"`), Keep discussing. With `planFlaw: "ask"` the menu also has `Approve, arbiter solves plan flaws →`: in that flow
+Back to discussion, Keep discussing. With `planFlaw: "ask"` the menu also has `Approve, arbiter solves plan flaws →`: in that flow
 plan flaws go straight to the arbiter. A typed approval uses the config. Right after such a reply you can also type a short approval
 as the whole message:
 "go", "ok go", "lgtm", "do it", "do it for me", "yeah do that", "implement the plan", "ship it" and
 the like; see `approvePattern`. Longer messages ("do it but skip step 3") keep planning, and so does "yes, do that" when the last
-reply ended with a question (it answers a question). With `planRecap: "changes"` (default, needs `finalizePlan`) an approval works after any finished reply once a plan was proposed in this discussion; with `"always"` or `finalizePlan: false` the last reply needs a "Plan:" section. Everything
+reply ended with a question (it answers a question). An approval works after any finished reply once a full `## Plan:` reply exists in this plan phase. Everything
 after approval runs on its own:
 
 ```
@@ -66,12 +66,12 @@ after approval runs on its own:
   - **Gated:** `gh pr merge`, a push to a protected branch and `publish_packages` are refused until the judge has passed the exact tree being merged, pushed or published (`merge-gate.ts`). A later commit that changes the tree needs another pass. The refusal says to run `judge`, then retry.
   - **`Delivery: no merge`:** a plan line of that form turns merge, protected pushes and publish off for the flow.
   - **Hand-offs:** the executor never asks you to commit, push, open or merge a pull request, or publish. It stops only for failing CI, a required human review, or missing credentials or registry token.
-  - **`git_task {task, repo?}`:** delegates routine git work to the `commit` role (default `claude-bridge/claude-haiku-5-5`, thinking `medium`). It runs in a fresh subagent under the same guard and gate (`git-guard.ts`, settings in `PI_WORKFLOW_GIT_GUARD`), returns in the same turn with the report and a line per repo (`<repo>: branch <b>, <n> commits since review base, PR #<n> <STATE> <url>`), and a failure comes back as the tool result.
+  - **`git_task {task, repo?}`:** delegates messy git work (conflicts, rebases, long split-commit sequences; plain commits, pushes and pull requests go through bash) to the `commit` role (default `claude-bridge/claude-haiku-5-5`, thinking `medium`). It runs in a fresh subagent under the same guard and gate (`git-guard.ts`, settings in `PI_WORKFLOW_GIT_GUARD`), returns in the same turn with the report and a line per repo (`<repo>: branch <b>, <n> commits since review base, PR #<n> <STATE> <url>`), and a failure comes back as the tool result.
 - **Review base:** the judge diffs from a per-repo review base, a commit taken when the flow enters execute (a repo that joins later gets the fork point or its HEAD then), kept in the local ref `refs/pi/review-base/<flowId>`. The ref is never pushed, is deleted when the flow ends and is swept by the plan prune. Commits do not change what was judged. When `origin/<base>` has been merged into the branch, the base moves forward with an in-memory `git merge-tree`, so the merged `main` does not show up in the review; if that fails the base stays and the judge gets a note.
 - **Push guard:** it never force-pushes, deletes or mirrors, uses `+`/`:` refspecs, `--all` or `--no-verify`, and changes to `core.hooksPath` / `GIT_CONFIG_*` are refused (`push-guard.ts`). `gh pr merge --admin` / `--auto` and `gh pr review --approve` are always refused. A merge or protected push must be its own command line. Like the plan-phase checks it reads the command text: a guard against a drifting executor, not a sandbox.
 - **Removed config keys:** `delivery.ask`, `delivery.default`, `delivery.runner` and `test.delivery` (and `/flow delivery`) are ignored if still in `workflow.json`; the other `delivery` keys (`splitCommits`, `branchPrefix`, `base`, `mergeMethod`, `deleteBranch`) stay.
 - **Minor findings:** a passed review with fixable minor findings goes back to the executor for up to `maxMinorRounds`
-  (default 3, `0` ends the stage at once) fix rounds, then the stage ends anyway. Fix them, or dispute a wrong one. `[knowledge ...]` and
+  (default 1, `0` ends the stage at once) fix rounds, then the stage ends anyway; the review after a minor-fix round reports only blockers and majors. Fix them, or dispute a wrong one. `[knowledge ...]` and
   `[plan-flaw]` findings never start a round.
 - **Where it stops for you:** when the judge fails `maxJudgeRounds` (5; 0 means no limit) times in a
   row it asks: keep fixing, escalate and keep fixing, or stop. It also stops when something errors.
@@ -86,25 +86,24 @@ after approval runs on its own:
 - **Knowledge on re-reviews:** when the last round's knowledge check passed, a re-review runs `get_rule_pack` only for the files changed since that round and carries over the other files' deviation notes. Otherwise it checks the whole change. Full reviews always check everything.
 - **Judge read budget:** the judge prompts ask for about 15 read/grep/find/ls calls on a full review and about 8 on a re-review (knowledge calls excluded). A soft aim, not a limit.
 - **Commit calls:** the `git_task` helper prompt asks the model to chain dependent steps with `&&` to keep the call count low.
-- **Handover compaction:** when a run hands over to the next step (final plan to execute, a minor-fix round, the next stage) and the context is over `handoverCompactTokens` (30,000; `0` turns it off), the session is compacted first and the handover message carries a plan card (goal, user decisions, done-when, amendments and the open steps) instead of the full plan. The 140k context guard sends the same card after its compaction. A failed compaction still sends the message. An aborted run holds the handover: nothing is sent.
+- **Handover compaction:** when a run hands over to the start of execute or of the next stage and the context is over `handoverCompactTokens` (30,000; `0` turns it off), the session is compacted first and the handover message carries a plan card (goal, user decisions, done-when, amendments and the open steps) instead of the full plan. The 140k context guard sends the same card after its compaction. A failed compaction still sends the message. An aborted run holds the handover: nothing is sent.
 - **Disputes:** if the executor thinks a finding is wrong it passes the finding and its file:line
   evidence in the judge tool's `disputes` parameter. The judge treats that as a claim, decides it from
   the code, and drops the finding only if the code shows the executor is right.
 - **Turning steps back to manual:** set `"autoJudge": "ask"`
   and `"planPrompt": false` for a "say go" hint instead of the Approve menu.
-  `"autopilot": true` skips the routine menus and lets the agent resolve waits itself (see "Autopilot"). `"handoverCompactTokens": 0` turns off compaction at handovers. `"addedFolderRules": "full"` loads the rules files of added folders into the prompt (default `"paths"`: only their paths and sizes are listed). `"explore": { "contextFiles": true }` gives explore subagents the context files. `"returnToPlan": false` stays in execute after a flow ends. `"planRecap": "always"` makes every planner reply repeat the plan. `"stageAdvance": "auto"` (default) starts the next stage at once, even after an incomplete delivery or a stage with no changes, with a warning (not after a run you aborted, and never while the stage has open steps, no changes and no judge call); `"ask"` asks first. When `gh` is not on PATH, the workflow looks in the standard GitHub CLI install folders and adds the one it finds to pi's PATH; when there is none, outcomes say the PR state is unknown. `"stagedPlans": "onRequest"` makes the planner use stages only when you ask for delivery in parts.
+  `"autopilot": true` skips the routine menus and lets the agent resolve waits itself (see "Autopilot"). `"handoverCompactTokens": 0` turns off compaction at handovers. `"addedFolderRules": "full"` loads the rules files of added folders into the prompt (default `"paths"`: only their paths and sizes are listed). `"explore": { "contextFiles": true }` gives explore subagents the context files. `"returnToPlan": false` stays in execute after a flow ends. `"stageAdvance": "auto"` (default) starts the next stage at once, even after an incomplete delivery or a stage with no changes, with a warning (not after a run you aborted, and never while the stage has open steps, no changes and no judge call); `"ask"` asks first. When `gh` is not on PATH, the workflow looks in the standard GitHub CLI install folders and adds the one it finds to pi's PATH; when there is none, outcomes say the PR state is unknown. `"stagedPlans": "onRequest"` makes the planner use stages only when you ask for delivery in parts.
 
 ## The plan, the judge and the arbiter
 
-- **Plan phase** is for discussion: investigate, answer questions, weigh options, agree. The planner proposes the plan in a short `Plan:` section once the talk is heading toward a change, then continues from the context: later replies carry a `Plan:` section only for what changed (`planRecap: "changes"`, default; `"always"` repeats the plan in every reply). When you approve, the
-  planner writes the **final plan** in one more reply (`finalizePlan`, default on): goal and
+- **Plan phase** is for discussion: investigate, answer questions, weigh options, agree. There is one plan: once the talk is heading toward a change, the planner writes the **final plan** as a `## Plan: <title>` reply (a short template for small changes: goal, decisions, steps, tests, done when; the full template for changes that add or reshape components or are staged): goal and
   non-goals, your decisions (D1, D2, ...), facts with file:line, a design section for changes that
   add or reshape components, steps, tests, "done when", risks. The plan gives direction and
   contracts, not code: what to change, why and how it must behave. The execute model writes the code
-  and the judge checks the result against it. With `finalizePlan: false` the last `Plan:` reply is used.
+  and the judge checks the result against it. A requested change is written as a `## Plan changes` section listing only the changed steps; approval runs the last full plan followed by those sections, with no rewrite. Wait checks that cannot run are sent back to the planner once.
 - **Execute** follows the plan in order and writes the code within its contracts.
   It stops and says so when a step cannot be done as written. It does the delivery itself: commits as it goes, pushes, opens the pull request and, after a judge PASS on the exact tree, merges it (see "Delivery"). It never asks you to commit, push, open or merge a pull request, or publish; it stops only for failing CI, a required human review or missing credentials.
-  When the flow ends it switches to the phase `returnTo` names (default `"discuss"`; `"plan"` or `"off"`). The old boolean `returnToPlan` is still read when `returnTo` is not set (`true` = `"plan"`, `false` = `"off"`).
+  When the flow ends it switches to the phase `returnTo` names (default `"discuss"`; `"plan"` or `"off"`).
 - **The judge** runs in its own session. It sees the approved plan and the diff, not the discussion,
   and assumes the change is wrong. It is asked to stay within about 15 read/grep/find/ls calls on a full review and about 8 on a re-review (knowledge calls excluded), a soft aim, not a limit. What it trusts:
 
@@ -120,8 +119,8 @@ after approval runs on its own:
   (coupling, interfaces, migrations), and each finding has a `Why:` and a `Fix:` a weaker model can follow.
   Limits: it reads but cannot run code, and it shares a model with the planner by default.
 - **`[plan-flaw]`** findings mean the approved plan itself is wrong. They do not count toward FAIL and
-  are never fixed by the executor. `planFlaw: "ask"` (default) shows a menu: back to planning, let the
-  arbiter decide, ignore and continue, stop. `"auto"` lets the **arbiter** (Fable 5.1 by default, a
+  are never fixed by the executor. `planFlaw: "ask"` shows a menu: back to planning, let the
+  arbiter decide, ignore and continue, stop. `"auto"` (the shipped `workflow.json`) lets the **arbiter** (Fable 5.1 by default, a
   different model from the planner) decide from the code: `REVISE` appends a numbered amendment to the
   plan (at most `maxPlanRevisions`, 2), `KEEP` records why the plan stands, `ASK_USER` shows the menu.
   Picking *Approve, arbiter solves plan flaws* in the plan menu gives `auto` for that flow only.
@@ -153,7 +152,7 @@ These let one plan deliver or pause partway through, without replanning and with
 - **Limits:** it never scripts around a confirmation a person must type and never overrides a repo's `AGENTS.md`/`CLAUDE.md`. It does the delivery itself (commit, push, pull request, merge after the judge passed) unless the plan says `Delivery: no merge`.
 
 **Tags.** `deliver {tag, step?, reason?}` creates or moves a tag inside the executor's turn and then continues the same stage.
-- **Scope:** `deliver` creates or moves tags only. Commit, push, pull requests and merges are done with git and gh directly, or with `git_task`; see "Delivery".
+- **Scope:** `deliver` creates or moves tags only. Commit, push, pull requests and merges are done with git and gh directly (`git_task` only for messy git jobs); see "Delivery".
 - **Plan:** a step `**S4.** Deliver: <what>` is a plain checklist item for the executor (a tag, a merge). The executor does it with git, gh, `git_task` or `deliver {tag}`; a merge or protected push still needs the judge to have passed that exact tree.
 - **Outcomes:** each tag is recorded (kept over `/flow resume`) and listed in the stage and flow outcome.
 
