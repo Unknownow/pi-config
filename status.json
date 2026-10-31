@@ -1,8 +1,8 @@
 {
   "v": 1,
   "flowId": "20261031-2354-remove-dead-config-leftovers-c869",
-  "rev": 1,
-  "updated": "2026-10-31T16:54:40.658Z",
+  "rev": 2,
+  "updated": "2026-10-31T16:55:10.323Z",
   "title": "Remove dead config leftovers",
   "done": [],
   "reviewBase": {
@@ -10,7 +10,7 @@
   },
   "repos": [
     {
-      "branch": "master",
+      "branch": "flow/remove-dead-config",
       "remote": "github.com/Unknownow/pi-config",
       "primary": true
     }

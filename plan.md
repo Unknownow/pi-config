@@ -77,6 +77,10 @@
 9. **Commits**
    - `chore(config): remove leftover hermes-memory config`: `pi/agent/hermes-memory-config.json` (deleted).
 
+## Amendment 1 (executor: autopilot)
+OK to delete (irreversible): ~/.pi/agent/hermes-memory-config.json; ~/.pi/context-mode/ (28 MB); ~/.pi/agent/projects-memory/ (3 hermes sqlite lock files + empty puzzoo-ku/skills); and 48 top-level ~/.pi/agent/*.bak-* files (AGENTS.md x3, mcp.json x1, settings.json x37, workflow.json x7) (step S2, approve)
+
+
 <!-- pi-workflow:status -->
 ## Checklist
 - [ ] S1 Create the branch `flow/remove-dead-config` from `master`.
