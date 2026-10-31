@@ -3,7 +3,7 @@
   "roles": {
     "discuss": {
       "model": "claude-bridge/claude-opus-5-5",
-      "thinking": "medium"
+      "thinking": "high"
     },
     "plan": {
       "model": "claude-bridge/claude-opus-5-5",
