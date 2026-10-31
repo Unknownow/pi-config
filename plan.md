@@ -144,13 +144,15 @@ All in `pi/agent/extensions/workflow/prompts.test.ts`. Import `NO_WORKFLOW` in t
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 In `pi/agent/extensions/workflow/prompts.ts:196-202`:
-- [ ] S2 In `pi/agent/extensions/workflow/index.ts:3075-3108` (`before_agent_start`):
-- [ ] S3 Update the tests in `pi/agent/extensions/workflow/prompts.test.ts`. Details in §6.
-- [ ] S4 Update `docs/workflow-improvements.md` per its rules (`:7-11`):
-- [ ] S5 Run the tests in §6 and fix any failures.
-- [ ] S6 Deliver: merge — the stable prompt sections fix and the D24 backlog update, on a feature branch such as `fix/workflow-st
-- [ ] S7 Install the merged change on this machine with `./pi-config.sh import`. Then run `./pi-config.sh status` and confirm tha
-- [ ] S9 Inventory (read-only, a report to the user, no file changes). List with paths:
+- [x] S1 In `pi/agent/extensions/workflow/prompts.ts:196-202`:
+- [x] S2 In `pi/agent/extensions/workflow/index.ts:3075-3108` (`before_agent_start`):
+- [x] S3 Update the tests in `pi/agent/extensions/workflow/prompts.test.ts`. Details in §6.
+- [x] S4 Update `docs/workflow-improvements.md` per its rules (`:7-11`):
+- [x] S5 Run the tests in §6 and fix any failures.
+- [x] S6 Deliver: merge — the stable prompt sections fix and the D24 backlog update, on a feature branch such as `fix/workflow-st
+- [x] S7 Install the merged change on this machine with `./pi-config.sh import`. Then run `./pi-config.sh status` and confirm tha
+- [x] S9 Inventory (read-only, a report to the user, no file changes). List with paths:
 ## For you after the flow
 - S8 Verify: start a new pi session (`/new`), switch the flow to discuss (`/flow`), send a message, switch the flow off, send
+## Outcome
+2026-10-31T06:11:29.266Z — ok: master, 2 commits since the review base, PR #19 MERGED https://github.com/Unknownow/pi-config/pull/19 · 1 human check(s) for you (see the card)

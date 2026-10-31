@@ -1,12 +1,37 @@
 {
   "v": 1,
   "flowId": "20261031-1306-keep-the-workflow-prompt-sections-stable-a59a",
-  "rev": 1,
-  "updated": "2026-10-31T06:06:42.050Z",
+  "rev": 2,
+  "updated": "2026-10-31T06:11:29.568Z",
   "title": "Keep the workflow prompt sections stable so pi-claude-bridge finds its saved prompt",
-  "done": [],
+  "done": [
+    "S1",
+    "S2",
+    "S3",
+    "S4",
+    "S5",
+    "S6",
+    "S7",
+    "S9"
+  ],
+  "finished": {
+    "at": "2026-10-31T06:11:29.266Z",
+    "ok": true,
+    "text": "master, 2 commits since the review base, PR #19 MERGED https://github.com/Unknownow/pi-config/pull/19 · 1 human check(s) for you (see the card)"
+  },
   "reviewBase": {
-    "d:/projects/pi-config": "b2d7e22cb325e74ac2fb1278f3456266e6fa7933"
+    "d:/projects/pi-config": "ac9ae0bdfb358aa129267656bad9f5fa34b846fc"
+  },
+  "passedTrees": {
+    "d:/projects/pi-config": [
+      "1b1afd6a9c584aafe1e807312bc6aa85f1229418"
+    ]
+  },
+  "judgedMerges": {
+    "d:/projects/pi-config": {
+      "pr": "19",
+      "tree": "1b1afd6a9c584aafe1e807312bc6aa85f1229418"
+    }
   },
   "repos": [
     {
