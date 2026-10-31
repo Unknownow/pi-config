@@ -1,0 +1,19 @@
+{
+  "v": 1,
+  "flowId": "20261101-0128-trim-and-speed-up-the-pi-setup-normal-mo-921c",
+  "rev": 1,
+  "updated": "2026-10-31T18:28:53.757Z",
+  "title": "Trim and speed up the Pi setup (normal mode first, agents extension, sync deletes, faster flows)",
+  "stage": 1,
+  "done": [],
+  "reviewBase": {
+    "d:/works/pi-config": "c31903dce023c56f8c1f8decde4fcc100321fb76"
+  },
+  "repos": [
+    {
+      "branch": "master",
+      "remote": "github.com/Unknownow/pi-config",
+      "primary": true
+    }
+  ]
+}
