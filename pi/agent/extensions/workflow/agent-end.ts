@@ -73,6 +73,13 @@ export function addPlanReply(draft: PlanDraft, text: string): PlanDraft {
 	return draft;
 }
 
+/** Why a plan can't be approved yet, or undefined: no full `## Plan:` reply, or wait checks that can't run. */
+export function approvalBlock(draft: PlanDraft, waitProblems: string[]): string | undefined {
+	if (!draft.full) return "there is no `## Plan:` reply yet; ask the planner for the plan first";
+	if (waitProblems.length) return `the plan has wait checks that can't run (${waitProblems[0]})`;
+	return undefined;
+}
+
 /** The approved plan text: the full plan followed by its change sections. */
 export function composePlan(draft: PlanDraft): string {
 	return [draft.full, ...draft.changes].filter(Boolean).join("\n\n");

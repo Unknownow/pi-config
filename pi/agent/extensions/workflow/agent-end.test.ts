@@ -1,7 +1,7 @@
 // node --test agent-end.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { handoverAction, handoverKind, addPlanReply, composePlan, afterPass, noChangeStage, arbiterFirst, fixableFindings, hasPlanFlaw, planFlawLines, planFlawOnPass, canApprove, hasPlanLine, isPlanReady, judgeCapReached, minorFixOpen, passPending, stageEndAction, parseArbiter, phaseAfterFlow, shouldResume, skipJudge } from "./agent-end.ts";
+import { handoverAction, approvalBlock, handoverKind, addPlanReply, composePlan, afterPass, noChangeStage, arbiterFirst, fixableFindings, hasPlanFlaw, planFlawLines, planFlawOnPass, canApprove, hasPlanLine, isPlanReady, judgeCapReached, minorFixOpen, passPending, stageEndAction, parseArbiter, phaseAfterFlow, shouldResume, skipJudge } from "./agent-end.ts";
 
 const empty = { role: "assistant", content: [] };
 
@@ -221,4 +221,10 @@ test("noChangeStage keeps a stage with open steps", () => {
 	assert.equal(noChangeStage(false, false, true, 2), "wait");
 	assert.equal(noChangeStage(true, true, true, 2), "advance");
 	assert.equal(noChangeStage(false, true, true, 0), "advance");
+});
+
+test("approvalBlock refuses an empty draft and wait problems", () => {
+	assert.ok(approvalBlock({ full: "", changes: [] }, []));
+	assert.ok(approvalBlock({ full: "## Plan: x", changes: [] }, ["S2 check"])?.includes("S2 check"));
+	assert.equal(approvalBlock({ full: "## Plan: x", changes: [] }, []), undefined);
 });

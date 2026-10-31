@@ -50,7 +50,7 @@ import {
 	type Thinking,
 	type WorkflowConfig,
 } from "./config.ts";
-import { handoverAction, handoverKind, afterPass, noChangeStage, arbiterFirst, fixableFindings, canApprove, addPlanReply, composePlan, type PlanDraft, hasPlanFlaw, planFlawLines, planFlawOnPass,  judgeCapReached, minorFixOpen, passPending, stageEndAction, parseArbiter, phaseAfterFlow, shouldResume, skipJudge } from "./agent-end.ts";
+import { handoverAction, handoverKind, afterPass, noChangeStage, arbiterFirst, fixableFindings, canApprove, approvalBlock, addPlanReply, composePlan, type PlanDraft, hasPlanFlaw, planFlawLines, planFlawOnPass,  judgeCapReached, minorFixOpen, passPending, stageEndAction, parseArbiter, phaseAfterFlow, shouldResume, skipJudge } from "./agent-end.ts";
 import { countTokens, type Tok } from "./tokens.ts";
 import { idleReason, notifyCommand, notifyDue } from "./notify.ts";
 import * as prompts from "./prompts.ts";
@@ -300,6 +300,8 @@ export default function workflow(pi: ExtensionAPI) {
 	let planReady = false;
 	/** The plan's broken wait checks were already sent back to the planner once. */
 	let planWaitRetried = false;
+	/** Wait checks of the current plan that can't run; they block approval. */
+	let planWaitNow: string[] = [];
 	/** A planner reply in the current plan phase was a full `## Plan:`; a typed "go" then approves later replies without one. Reset when the phase changes. */
 	let planProposed = false;
 	/** The full plan and the change sections after it; the approved plan. */
@@ -563,7 +565,7 @@ export default function workflow(pi: ExtensionAPI) {
 		planReady = false;
 		planProposed = false;
 		planDraft = { full: "", changes: [] };
-		planWaitRetried = false;
+		planWaitRetried = false; planWaitNow = [];
 		const readOnly = (p: Phase) => p === "discuss" || p === "plan" || p === "test";
 		// Discuss and plan share one tool set, so moving between them keeps the snapshot.
 		const toolSet = (p: Phase) => (p === "test" ? "test" : "plan");
@@ -667,6 +669,11 @@ export default function workflow(pi: ExtensionAPI) {
 	}
 
 	async function approve(ctx: ExtensionContext, arbiterOnFlaw = false): Promise<void> {
+		const blocked = approvalBlock(planDraft, planWaitNow);
+		if (blocked) {
+			ctx.ui.notify(`workflow: can't approve: ${blocked}.`, "warning");
+			return;
+		}
 		state.planFlaw = arbiterOnFlaw ? "auto" : undefined;
 		const plan = composePlan(planDraft);
 		await setPhase(ctx, "execute");
@@ -2118,7 +2125,7 @@ export default function workflow(pi: ExtensionAPI) {
 		planReady = false;
 		planProposed = false;
 		planDraft = { full: "", changes: [] };
-		planWaitRetried = false;
+		planWaitRetried = false; planWaitNow = [];
 		consecutiveErrors = 0;
 		await applyRole(ctx, phase);
 		persist();
@@ -3497,27 +3504,25 @@ export default function workflow(pi: ExtensionAPI) {
 			}
 			planReady = canApprove(text, stoppedNormally, planProposed);
 			if (!stoppedNormally) return;
-			if (planReady && /^##\s*Plan(?::| changes)/m.test(text)) {
-				const waitProblems = planWaitProblems(composePlan(planDraft), (c) => readOnlyProblem(c));
-				if (waitProblems.length && !planWaitRetried) {
+			planWaitNow = planDraft.full ? planWaitProblems(composePlan(planDraft), (c) => readOnlyProblem(c)) : [];
+			if (planWaitNow.length && /^##\s*Plan(?::| changes)/m.test(text)) {
+				if (!planWaitRetried) {
 					planWaitRetried = true;
 					planReady = false;
-					pi.sendMessage({ customType: "workflow-plan-waits", content: `The plan has wait checks that can't run:\n${waitProblems.map((p) => `- ${p}`).join("\n")}\nFix them: reply with the changed steps in a \`## Plan changes\` section. A check is one plain read-only command: no backticks around it, no placeholders like <version>, no command substitution. If a value is only known after an earlier stage (a version a script picks), drop that check or the wait itself.`, display: true }, { triggerTurn: true, deliverAs: "followUp" });
+					pi.sendMessage({ customType: "workflow-plan-waits", content: `The plan has wait checks that can't run:\n${planWaitNow.map((p) => `- ${p}`).join("\n")}\nFix them: reply with the changed steps in a \`## Plan changes\` section. A check is one plain read-only command: no backticks around it, no placeholders like <version>, no command substitution. If a value is only known after an earlier stage (a version a script picks), drop that check or the wait itself.`, display: true }, { triggerTurn: true, deliverAs: "followUp" });
 					return;
 				}
-				if (waitProblems.length) {
-					planReady = false;
-					ctx.ui.notify(`workflow: the plan still has wait checks that can't run (${waitProblems[0]}). Fix them with the planner before approving.`, "warning");
-					return;
-				}
+				ctx.ui.notify(`workflow: the plan still has wait checks that can't run (${planWaitNow[0]}). Fix them with the planner before approving.`, "warning");
 			}
+			const blocked = approvalBlock(planDraft, planWaitNow);
+			if (blocked) planReady = false;
 			if (!cfg.planPrompt) {
 				ctx.ui.notify(`workflow: say "go" to execute on ${describeRole(cfg.roles.execute)}, or keep discussing.`, "info");
 				return;
 			}
 			const approveLabel = "Approve";
 			const arbiterLabel = "Approve, arbiter solves plan flaws →";
-			const choice = await askUser(ctx, `Plan phase · execute on ${describeRole(cfg.roles.execute)}`, [approveLabel, ...(cfg.planFlaw === "ask" ? [arbiterLabel] : []), "Back to discussion", "Keep discussing"]);
+			const choice = await askUser(ctx, `Plan phase · execute on ${describeRole(cfg.roles.execute)}`, [...(blocked ? [] : [approveLabel, ...(cfg.planFlaw === "ask" ? [arbiterLabel] : [])]), "Back to discussion", "Keep discussing"]);
 			if (choice === "Back to discussion") {
 				await setPhase(ctx, "discuss");
 				ctx.ui.notify(`workflow: back to discussion on ${describeRole(cfg.roles.discuss)}`, "info");
