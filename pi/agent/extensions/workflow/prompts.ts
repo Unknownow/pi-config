@@ -66,6 +66,9 @@ ${batchLine("a codemode script, run_code for read-only analysis, or one bash com
 ${CHECKPOINTS}`;
 }
 
+/** Text of the `workflow` section when no phase is active; the section is never empty so it is never deleted. */
+export const NO_WORKFLOW = "No workflow is active. Instructions from an earlier workflow phase no longer apply.";
+
 /** The discuss prompt: open, read-only talk before a plan is proposed. */
 export const DISCUSS_PHASE = `## Workflow: DISCUSS phase
 This workflow is for software: system design, architecture and code.
@@ -193,12 +196,12 @@ export function deliveryGuidance(d: { splitCommits: boolean; mergeMethod: string
 }
 
 /** Text for the `workflow` prompt section: the bridge drops a returned systemPrompt but forwards sections. */
-export function phaseSection(phase: string, opts: { finalize: boolean; staging: StagedPlans; recap: PlanRecap; stage?: string; testFix?: boolean; delivery?: string }): string | null {
+export function phaseSection(phase: string, opts: { finalize: boolean; staging: StagedPlans; recap: PlanRecap; stage?: string; testFix?: boolean; delivery?: string }): string {
 	if (phase === "discuss") return DISCUSS_PHASE;
 	if (phase === "plan") return planPhase(opts.finalize, opts.staging, opts.recap);
 	if (phase === "execute") return [EXECUTE_PHASE, opts.delivery, opts.stage, opts.testFix ? FIX_ROUND : undefined].filter(Boolean).join("\n");
 	if (phase === "test") return TEST_PHASE;
-	return null;
+	return NO_WORKFLOW;
 }
 
 export const EXPLORE = `You are the explorer: a fast, read-only helper for the planner and the executor.

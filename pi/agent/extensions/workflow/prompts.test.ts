@@ -1,7 +1,7 @@
 // node --experimental-strip-types --test prompts.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { ADVISOR, ARBITER, COMMIT, EXECUTE_PHASE, EXPLORE, FIX_MESSAGE, FIX_ROUND, FIX_TESTS, JUDGE, JUDGE_KNOWLEDGE_ONLY, NO_SLEEP, PACE, deliveryGuidance, finalize, minorFixMessage, phaseSection, PLAN_KICKOFF, planPhase, RUNNER, TEST_PHASE, workspaceSection } from "./prompts.ts";
+import { ADVISOR, ARBITER, COMMIT, EXECUTE_PHASE, EXPLORE, FIX_MESSAGE, FIX_ROUND, FIX_TESTS, JUDGE, JUDGE_KNOWLEDGE_ONLY, NO_SLEEP, NO_WORKFLOW, PACE, deliveryGuidance, finalize, minorFixMessage, phaseSection, PLAN_KICKOFF, planPhase, RUNNER, TEST_PHASE, workspaceSection } from "./prompts.ts";
 
 const BATCH = `- Batch tool calls. Each call re-sends the whole conversation, so ten small calls at 150k context re-send 1.5M tokens. Put independent reads and commands in one call (a codemode script, run_code, or one bash command joined with && or ;) and print only what you need. Don't spend a call on something you could have added to the previous one.`;
 const PLAN_BATCH = `- Batch tool calls. Each call re-sends the whole conversation, so ten small calls at 150k context re-send 1.5M tokens. Put independent reads and commands in one call (a codemode script, run_code for read-only analysis, or one bash command joined with && or ;) and print only what you need. Don't spend a call on something you could have added to the previous one.`;
@@ -47,8 +47,20 @@ test("the runner prompt names its reply format", () => {
 	assert.ok(RUNNER.includes("RESULT: PASS | FAIL | ERROR"));
 });
 
-test("phaseSection is null outside plan, execute and test", () => {
-	assert.equal(phaseSection("off", SECTION_OPTS), null);
+test("phaseSection gives the inactive note outside discuss, plan, execute and test", () => {
+	assert.ok(NO_WORKFLOW.length > 0);
+	assert.equal(phaseSection("off", SECTION_OPTS), NO_WORKFLOW);
+	assert.equal(phaseSection("", SECTION_OPTS), NO_WORKFLOW);
+});
+
+test("phaseSection is never empty, so the workflow section is never deleted", () => {
+	for (const phase of ["off", "discuss", "plan", "execute", "test"]) assert.ok(phaseSection(phase, SECTION_OPTS).length > 0);
+});
+
+test("workspaceSection with no folders still gives the working folder", () => {
+	const text = workspaceSection("/w", [], [], []);
+	assert.ok(text.startsWith("Working folder: /w"));
+	assert.ok(!text.includes("Added folders"));
 });
 
 test("the test report template parses", async () => {
