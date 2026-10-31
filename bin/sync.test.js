@@ -308,3 +308,36 @@ test('deletes over the cap need --allow-deletes and exit with code 2', () => {
   run(env, 'export.js', '--allow-deletes');
   assert.ok(!fs.existsSync(path.join(env.mirror, 'extensions', 'demo', 'f0.ts')));
 });
+
+test('25% of the recorded files is refused even with few candidates', () => {
+  const env = setup();
+  const dir = path.join(env.agent, 'extensions', 'demo');
+  for (let i = 0; i < 12; i++) write(path.join(dir, `f${i}.ts`), `${i}\n`);
+  run(env, 'export.js');
+  for (let i = 0; i < 4; i++) fs.unlinkSync(path.join(dir, `f${i}.ts`));
+  assert.throws(() => run(env, 'export.js'), (e) => e.status === 2);
+  assert.ok(fs.existsSync(path.join(env.mirror, 'extensions', 'demo', 'f0.ts')));
+});
+
+test('import --dry-run deletes nothing, and a real delete leaves no .bak', () => {
+  const { env, a, ma } = syncedPair();
+  fs.unlinkSync(ma);
+  assert.match(run(env, 'import.js', '--dry-run'), /WOULD delete extensions\/demo\/a\.ts/);
+  assert.ok(fs.existsSync(a));
+  run(env, 'import.js');
+  assert.ok(!fs.existsSync(a));
+  assert.deepEqual(fs.readdirSync(path.dirname(a)).filter((f) => f.includes('.bak-')), []);
+});
+
+test('import deletes a JSON file that Pi reformatted', () => {
+  const env = setup();
+  const local = path.join(env.agent, 'workflow.json');
+  write(local, JSON.stringify({ a: 1, b: 2 }));
+  for (let i = 0; i < 8; i++) write(path.join(env.agent, 'extensions', 'demo', `k${i}.ts`), `${i}\n`);
+  run(env, 'export.js');
+  // Pi rewrites the file with its own formatting; it is still the recorded content.
+  write(local, '{\n"a": 1,\n"b": 2\n}');
+  fs.unlinkSync(path.join(env.mirror, 'workflow.json'));
+  run(env, 'import.js');
+  assert.ok(!fs.existsSync(local));
+});

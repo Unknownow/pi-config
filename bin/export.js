@@ -129,8 +129,13 @@ function main() {
         continue;
       }
       const f = path.join(lib.MIRROR, k);
-      fs.unlinkSync(f);
-      lib.pruneEmptyParents(path.dirname(f), lib.MIRROR);
+      try {
+        fs.unlinkSync(f);
+        lib.pruneEmptyParents(path.dirname(f), lib.MIRROR);
+      } catch (e) {
+        console.log(`  WARNING  could not delete ${k}: ${e.message}`);
+        continue;
+      }
       state[k] = { deleted: true };
       console.log(`  delete  ${k}`);
     }

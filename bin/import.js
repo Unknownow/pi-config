@@ -128,8 +128,13 @@ function main() {
         continue;
       }
       const f = path.join(lib.AGENT, k);
-      fs.unlinkSync(f);
-      lib.pruneEmptyParents(path.dirname(f), lib.AGENT);
+      try {
+        fs.unlinkSync(f);
+        lib.pruneEmptyParents(path.dirname(f), lib.AGENT);
+      } catch (e) {
+        console.log(`  WARNING  could not delete ${k}: ${e.message}`);
+        continue;
+      }
       delete state[k];
       console.log(`  delete  ${k}`);
     }

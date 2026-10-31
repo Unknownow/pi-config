@@ -231,13 +231,18 @@ export default function piConfigSync(pi: ExtensionAPI) {
 		}
 		if (!/^\s*WOULD\s/m.test(preview.stdout)) return "config already matches the repo";
 
+		const overCap = preview.code === DELETE_CAP_EXIT;
+		if (overCap) capWarning(ctx, "import", preview.stdout);
+		// Over the cap the deletions are refused; run the import only when it has other changes.
+		if (overCap && !/^\s*WOULD\s+(?!delete\s)/m.test(preview.stdout)) return "import held: deletions over the safety cap";
+
 		const applied = await runScript("import.js");
 		log(repo, `import:\n${applied.stdout.trim()}`);
-		if (applied.code === DELETE_CAP_EXIT) capWarning(ctx, "import", applied.stdout);
-		else if (applied.code !== 0) return "import failed — see local/sync.log";
+		if (applied.code !== 0 && applied.code !== DELETE_CAP_EXIT) return "import failed — see local/sync.log";
 
-		importedThisSession = true;
 		const written = (applied.stdout.match(/^\s*(write|delete)\s/gm) ?? []).length;
+		if (written === 0) return "import held: deletions over the safety cap";
+		importedThisSession = true;
 		say(ctx, cfg, `pi-config: imported ${written} file(s) from the repo — restart Pi to apply`, "warning");
 		return `imported ${written} file(s); restart Pi to apply`;
 	}
