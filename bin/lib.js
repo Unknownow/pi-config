@@ -7,10 +7,10 @@
  * do not exist yet. Anything secret, machine-local or rebuildable is excluded
  * by name below.
  *
- * Neither direction ever deletes. A file you have and the other machine does
- * not is added; a file you removed stays in the repo until you `git rm` it.
- * Mirroring deletions would mean machine A wiping machine B's config simply by
- * never having installed that extension.
+ * Deletions are mirrored only for files this machine's sync record knows (see
+ * planDeletes below): a file that was synced, is now gone on one side and is
+ * unchanged on the other is deleted there too. A file with no record is never
+ * deleted, so a machine that never had an extension cannot wipe it elsewhere.
  */
 'use strict';
 const fs = require('fs');
@@ -406,6 +406,12 @@ function headShas(rel) {
   return out;
 }
 
+/** The recorded hash of a mirror file; a file marked deleted has none. */
+function recordedHash(state, rel) {
+  const v = state[key(rel)];
+  return typeof v === 'string' ? v : undefined;
+}
+
 /**
  * True when a mirror file (`prev`, its current bytes) was changed in the repo by hand: its
  * bytes differ from the last sync record. With no record, the committed file is the baseline.
@@ -413,7 +419,7 @@ function headShas(rel) {
 function editedInRepo(state, rel, prev) {
   if (prev === null) return false;
   const current = sha(prev);
-  const recorded = state[key(rel)];
+  const recorded = recordedHash(state, rel);
   return recorded !== undefined ? current !== recorded : !headShas(rel).has(current);
 }
 
@@ -425,7 +431,53 @@ function recordable(state, rel, prev) {
   return !editedInRepo(state, rel, prev) || headShas(rel).has(sha(prev));
 }
 
+/** Mirroring more deletions than this at once needs --allow-deletes. */
+function tooMany(n, recorded) {
+  return n > 20 || n > 0.25 * recorded;
+}
+
+/**
+ * Which recorded files to delete on the target side. Pure: the caller supplies
+ *   state       the sync record
+ *   direction   'export' (target is the repo) or 'import' (target is this machine)
+ *   onSource    (key) => true while the file still exists on the source side
+ *   targetHash  (key) => hash of the target copy in the form the record holds
+ *               (JSON scrubbed like the export writes it), or null when absent
+ * A file goes only when it has a record, is gone from the source and the target copy
+ * still matches the record; an edited target copy is kept (keptEdited).
+ */
+function planDeletes({ state, direction, onSource, targetHash }) {
+  const toDelete = [];
+  const keptEdited = [];
+  let recorded = 0;
+  for (const k of Object.keys(state)) {
+    if (typeof state[k] !== 'string') continue;
+    recorded++;
+    if (onSource(k)) continue;
+    const h = targetHash(k);
+    if (h === null) continue;
+    (h === state[k] ? toDelete : keptEdited).push(k);
+  }
+  return { toDelete: toDelete.sort(), keptEdited: keptEdited.sort(), recorded, direction };
+}
+
+/** Remove empty folders from `dir` upwards, stopping before `stop`. */
+function pruneEmptyParents(dir, stop) {
+  let d = path.resolve(dir);
+  const end = path.resolve(stop);
+  while (d !== end && d.startsWith(end + path.sep)) {
+    try {
+      if (fs.readdirSync(d).length > 0) return;
+      fs.rmdirSync(d);
+    } catch (_) {
+      return;
+    }
+    d = path.dirname(d);
+  }
+}
+
 module.exports = {
+  planDeletes, tooMany, pruneEmptyParents, recordedHash,
   AGENT, REPO, MIRROR, STATE,
   readState, writeState, editedInRepo, recordable, sha, key,
   MIRROR_DIRS, DENY_FILES, DENY_DIRS, isSecretName, secretsIn,

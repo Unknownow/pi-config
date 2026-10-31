@@ -241,3 +241,70 @@ test('export writes forward-slash package extension paths', () => {
   const out = JSON.parse(read(path.join(env.mirror, 'settings.json')));
   assert.deepEqual(out.packages[0].extensions, ['+src/index.ts']);
 });
+
+function syncedPair() {
+  const env = setup();
+  const a = path.join(env.agent, 'extensions', 'demo', 'a.ts');
+  const b = path.join(env.agent, 'extensions', 'demo', 'b.ts');
+  write(a, 'a\n');
+  write(b, 'b\n');
+  for (let i = 0; i < 8; i++) write(path.join(env.agent, 'extensions', 'demo', `keep${i}.ts`), `${i}\n`);
+  run(env, 'export.js');
+  return { env, a, b, ma: path.join(env.mirror, 'extensions', 'demo', 'a.ts'), mb: path.join(env.mirror, 'extensions', 'demo', 'b.ts') };
+}
+
+test('export deletes a repo file that is gone locally and marks the record deleted', () => {
+  const { env, a, ma } = syncedPair();
+  fs.unlinkSync(a);
+  assert.match(run(env, 'export.js', '--dry-run'), /WOULD delete extensions\/demo\/a\.ts/);
+  assert.ok(fs.existsSync(ma));
+  run(env, 'export.js');
+  assert.ok(!fs.existsSync(ma));
+  assert.deepEqual(JSON.parse(read(path.join(env.repo, 'local', 'sync-state.json')))['extensions/demo/a.ts'], { deleted: true });
+});
+
+test('export keeps a repo file edited by hand and a file with no record', () => {
+  const { env, a, mb, b } = syncedPair();
+  fs.unlinkSync(a);
+  write(path.join(env.mirror, 'extensions', 'demo', 'a.ts'), 'edited\n');
+  write(path.join(env.mirror, 'extensions', 'demo', 'norecord.ts'), 'x\n');
+  const out = run(env, 'export.js');
+  assert.match(out, /keep\s+extensions\/demo\/a\.ts/);
+  assert.equal(read(path.join(env.mirror, 'extensions', 'demo', 'a.ts')), 'edited\n');
+  assert.ok(fs.existsSync(path.join(env.mirror, 'extensions', 'demo', 'norecord.ts')));
+  assert.ok(fs.existsSync(mb) && fs.existsSync(b));
+});
+
+test('import deletes a local file gone from the repo, removes empty folders, keeps edited ones', () => {
+  const { env, a, b, ma, mb } = syncedPair();
+  fs.unlinkSync(ma);
+  fs.unlinkSync(mb);
+  write(b, 'edited locally\n');
+  const out = run(env, 'import.js');
+  assert.ok(!fs.existsSync(a));
+  assert.match(out, /keep\s+extensions\/demo\/b\.ts/);
+  assert.equal(read(b), 'edited locally\n');
+  fs.unlinkSync(b);
+  fs.mkdirSync(path.join(env.mirror, 'extensions', 'only'), { recursive: true });
+  write(path.join(env.mirror, 'extensions', 'only', 'o.ts'), 'o\n');
+  env.git('add', '-A');
+  env.git('commit', '-qm', 'add o');
+  run(env, 'import.js');
+  fs.unlinkSync(path.join(env.mirror, 'extensions', 'only', 'o.ts'));
+  run(env, 'import.js');
+  assert.ok(!fs.existsSync(path.join(env.agent, 'extensions', 'only')));
+  assert.ok(fs.existsSync(path.join(env.agent, 'extensions')));
+});
+
+test('deletes over the cap need --allow-deletes and exit with code 2', () => {
+  const env = setup();
+  const dir = path.join(env.agent, 'extensions', 'demo');
+  write(path.join(dir, 'stay.ts'), 'stay\n');
+  for (let i = 0; i < 25; i++) write(path.join(dir, `f${i}.ts`), `${i}\n`);
+  run(env, 'export.js');
+  for (let i = 0; i < 25; i++) fs.unlinkSync(path.join(dir, `f${i}.ts`));
+  assert.throws(() => run(env, 'export.js'), (e) => e.status === 2 && /over the cap/.test(e.stdout));
+  assert.ok(fs.existsSync(path.join(env.mirror, 'extensions', 'demo', 'f0.ts')));
+  run(env, 'export.js', '--allow-deletes');
+  assert.ok(!fs.existsSync(path.join(env.mirror, 'extensions', 'demo', 'f0.ts')));
+});

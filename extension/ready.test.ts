@@ -57,3 +57,11 @@ test("ready and kept split a mixed list", () => {
 		kept: ["pi/agent/extensions/b.ts"],
 	});
 });
+
+test("a missing file is committable only when its record is marked deleted", () => {
+	const repo = repoWith({}, { "extensions/gone.ts": { deleted: true } as never, "extensions/lost.ts": sha("x") });
+	assert.deepEqual(committableMirror(repo, ["pi/agent/extensions/gone.ts", "pi/agent/extensions/lost.ts", "pi/agent/extensions/none.ts"]), {
+		ready: ["pi/agent/extensions/gone.ts"],
+		kept: ["pi/agent/extensions/lost.ts", "pi/agent/extensions/none.ts"],
+	});
+});

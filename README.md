@@ -89,9 +89,7 @@ Outside the mirror:
 | `npm/node_modules/` | Rebuilt by `npm install`. |
 | `*.db`, `*.sqlite`, `*-shm`, `*-wal` | Live SQLite. Git or cloud sync corrupts it, and two machines writing to it diverge with no sane merge. |
 
-**Neither direction ever deletes.** A file you have and the other machine doesn't is added; a file
-you removed stays in the repo until you `git rm` it. Mirroring deletions would let machine A wipe
-machine B's config simply by never having installed that extension.
+**Deletions follow the sync record.** `local/sync-state.json` remembers the hash of every file that moved between this machine and the repo. A recorded file that is gone on one side and unchanged on the other is deleted there too (export deletes in the repo, import deletes on this machine, with no `.bak`). An edited copy is kept with a warning, and a file with no record is never deleted, so a machine that never had an extension cannot wipe it elsewhere. More than 20 deletions, or over 25% of the recorded files, need `--allow-deletes`; without it nothing is deleted and the script exits with code 2. `--dry-run` prints `WOULD delete <path>`.
 
 ## Automatic sync
 
