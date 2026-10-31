@@ -241,7 +241,7 @@ export default function piConfigSync(pi: ExtensionAPI) {
 		if (applied.code !== 0 && applied.code !== DELETE_CAP_EXIT) return "import failed — see local/sync.log";
 
 		const written = (applied.stdout.match(/^\s*(write|delete)\s/gm) ?? []).length;
-		if (written === 0) return "import held: deletions over the safety cap";
+		if (written === 0) return overCap ? "import held: deletions over the safety cap" : "import changed nothing — see local/sync.log";
 		importedThisSession = true;
 		say(ctx, cfg, `pi-config: imported ${written} file(s) from the repo — restart Pi to apply`, "warning");
 		return `imported ${written} file(s); restart Pi to apply`;
