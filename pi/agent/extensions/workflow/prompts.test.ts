@@ -1,21 +1,21 @@
 // node --experimental-strip-types --test prompts.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { ADVISOR, ARBITER, COMMIT, EXECUTE_PHASE, EXPLORE, FIX_MESSAGE, FIX_ROUND, FIX_TESTS, JUDGE, JUDGE_KNOWLEDGE_ONLY, NO_SLEEP, NO_WORKFLOW, PACE, deliveryGuidance, finalize, minorFixMessage, phaseSection, PLAN_KICKOFF, planPhase, RUNNER, TEST_PHASE, workspaceSection } from "./prompts.ts";
+import { ADVISOR, ARBITER, COMMIT, EXECUTE_PHASE, EXPLORE, FIX_MESSAGE, FIX_ROUND, FIX_TESTS, JUDGE, JUDGE_KNOWLEDGE_ONLY, NO_SLEEP, NO_WORKFLOW, PACE, deliveryGuidance, JUDGE_MAJOR_ONLY, minorFixMessage, phaseSection, PLAN_KICKOFF, planPhase, RUNNER, TEST_PHASE, workspaceSection } from "./prompts.ts";
 
 const BATCH = `- Batch tool calls. Each call re-sends the whole conversation, so ten small calls at 150k context re-send 1.5M tokens. Put independent reads and commands in one call (a codemode script, run_code, or one bash command joined with && or ;) and print only what you need. Don't spend a call on something you could have added to the previous one.`;
 const PLAN_BATCH = `- Batch tool calls. Each call re-sends the whole conversation, so ten small calls at 150k context re-send 1.5M tokens. Put independent reads and commands in one call (a codemode script, run_code for read-only analysis, or one bash command joined with && or ;) and print only what you need. Don't spend a call on something you could have added to the previous one.`;
 
 test("plan phase keeps its batch line", () => {
-	assert.ok(planPhase(true).includes(PLAN_BATCH));
-	assert.ok(planPhase(false, "onRequest", "always").includes(PLAN_BATCH));
+	assert.ok(planPhase().includes(PLAN_BATCH));
+	assert.ok(planPhase("onRequest").includes(PLAN_BATCH));
 });
 
 test("execute phase keeps its batch line", () => {
 	assert.ok(EXECUTE_PHASE.includes(BATCH));
 });
 
-const SECTION_OPTS = { finalize: true, staging: "auto", recap: "changes" } as const;
+const SECTION_OPTS = { staging: "auto" } as const;
 
 test("discuss prompt asks for no plan; the plan prompt no longer calls the planner a discussion partner", () => {
 	const d = phaseSection("discuss", SECTION_OPTS) ?? "";
@@ -23,12 +23,12 @@ test("discuss prompt asks for no plan; the plan prompt no longer calls the plann
 	assert.ok(!/end the reply with a short `Plan:`|propose the plan in a short/.test(d));
 	const p = phaseSection("plan", SECTION_OPTS) ?? "";
 	assert.ok(p.includes("## Workflow: PLAN phase") && p.includes("Staged delivery") && !p.includes("partner in discussion"));
-	assert.ok(PLAN_KICKOFF.includes("Plan:"));
+	assert.ok(PLAN_KICKOFF.includes("## Plan:"));
 });
 
 test("phaseSection gives the plan prompt in the plan phase", () => {
 	const text = phaseSection("plan", SECTION_OPTS);
-	assert.equal(text, planPhase(true, "auto", "changes"));
+	assert.equal(text, planPhase("auto"));
 	assert.ok(text?.includes("## Workflow: PLAN phase"));
 });
 
@@ -75,7 +75,7 @@ test("the test report template parses", async () => {
 
 test("fix round prompts", async () => {
 	const p = await import("./prompts.ts");
-	const opts = { finalize: false, staging: "off", recap: "off" } as never;
+	const opts = { staging: "off" } as never;
 	assert.ok(!p.phaseSection("execute", opts)!.includes("Fix round of a test flow"));
 	assert.ok(p.phaseSection("execute", { ...(opts as object), testFix: true } as never)!.includes("regression test"));
 	assert.ok(!p.JUDGE.includes("test flow"));
@@ -93,8 +93,7 @@ test("execute prompt names deliver and wait_for_user", () => {
 });
 
 test("planner prompts teach Deliver and Wait steps", async () => {
-	const { finalize } = await import("./prompts.ts");
-	for (const text of [planPhase(true, "auto"), finalize(false)]) {
+	for (const text of [planPhase("auto")]) {
 		assert.ok(text.includes("Deliver:"));
 		assert.ok(text.includes("Wait:"));
 		assert.ok(text.includes("(after:"));
@@ -104,7 +103,7 @@ test("planner prompts teach Deliver and Wait steps", async () => {
 });
 
 test("every role carries the keep-working and parallel rule", () => {
-	for (const [name, text] of Object.entries({ plan: planPhase(true), execute: EXECUTE_PHASE, test: TEST_PHASE, JUDGE, ARBITER, EXPLORE, ADVISOR, RUNNER, JUDGE_KNOWLEDGE_ONLY })) assert.ok(text.includes(PACE), name);
+	for (const [name, text] of Object.entries({ plan: planPhase(), execute: EXECUTE_PHASE, test: TEST_PHASE, JUDGE, ARBITER, EXPLORE, ADVISOR, RUNNER, JUDGE_KNOWLEDGE_ONLY })) assert.ok(text.includes(PACE), name);
 	assert.ok(!COMMIT.includes(PACE));
 });
 
@@ -114,27 +113,26 @@ test("execute and test prompts forbid fixed long sleeps", () => {
 });
 
 test("slow suites run once and rerun only when touched", async () => {
-	const { finalize } = await import("./prompts.ts");
 	for (const x of ["While fixing, run the narrowest check that covers the change", "Run each slow suite in full once, before your first judge call", "After a judge round, rerun a slow suite only if the fix changed files it builds or reads; otherwise cite its last passing run", "then call `judge`"])
 		assert.ok(EXECUTE_PHASE.includes(x), x);
-	assert.ok(finalize(false).includes("Mark each suite slower than about 2 minutes as slow"));
-	assert.ok(planPhase(false, "onRequest", "always").includes("Mark each suite slower than about 2 minutes as slow"));
+	assert.ok(planPhase().includes("Mark each suite slower than about 2 minutes as slow"));
+	assert.ok(planPhase("onRequest").includes("Mark each suite slower than about 2 minutes as slow"));
 	assert.ok(EXECUTE_PHASE.includes("When done, run the plan's tests as above"));
 	assert.ok(FIX_ROUND.includes("rerun a slow suite only if the fix changed files it builds or reads"));
 });
 
 test("human checks are Verify steps, never Wait", () => {
-	assert.ok(planPhase(true).includes("Verify:") && planPhase(true).includes("Wait:"));
+	assert.ok(planPhase().includes("Verify:") && planPhase().includes("Wait:"));
 	assert.ok(EXECUTE_PHASE.includes('kind: "verify"'));
 	assert.ok(TEST_PHASE.includes("after the flow"));
 });
 
 test("delivery guidance in the prompts", () => {
-	assert.match(finalize(false), /Deliver: <what>/);
-	assert.match(finalize(false), /never contains .*git push/);
-	assert.match(finalize(false), /Delivery: no merge/);
-	assert.match(planPhase(false), /Deliver: <what>/);
-	assert.doesNotMatch(finalize(true), /\(delivery:/);
+	assert.match(planPhase(), /Deliver: <what>/);
+	assert.match(planPhase(), /never contains .*git push/);
+	assert.match(planPhase(), /Delivery: no merge/);
+	assert.match(planPhase(), /Deliver: <what>/);
+	assert.doesNotMatch(planPhase(), /\(delivery:/);
 });
 
 test("the execute prompt makes delivery the executor's job and never the user's", () => {
@@ -173,9 +171,9 @@ test("workspaceSection without rules equals the three-argument output", () => {
 });
 
 test("Publish and Mirror steps are in the planner and executor prompts", () => {
-	assert.ok(planPhase(true).includes("Publish: <package>"));
-	assert.ok(planPhase(true).includes("Mirror: <folder>|all"));
-	assert.ok(!planPhase(true).includes("publish with `updates.bat`"));
+	assert.ok(planPhase().includes("Publish: <package>"));
+	assert.ok(planPhase().includes("Mirror: <folder>|all"));
+	assert.ok(!planPhase().includes("publish with `updates.bat`"));
 	assert.ok(EXECUTE_PHASE.includes("publish_packages {step}"));
 });
 
@@ -185,4 +183,8 @@ test("fix messages scope the tests to what the fix touched", () => {
 	assert.match(EXECUTE_PHASE, /never the full suite after each edit/);
 	assert.ok(FIX_MESSAGE.includes(FIX_TESTS));
 	assert.ok(minorFixMessage("**Judge: PASS**", 2).includes(FIX_TESTS));
+});
+
+test("the major-only note for the review after a minor-fix round", () => {
+	assert.match(JUDGE_MAJOR_ONLY, /only blocker and major/);
 });

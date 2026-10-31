@@ -3,7 +3,7 @@
   "roles": {
     "discuss": {
       "model": "claude-bridge/claude-opus-5-5",
-      "thinking": "high"
+      "thinking": "medium"
     },
     "plan": {
       "model": "claude-bridge/claude-opus-5-5",
@@ -50,14 +50,12 @@
   "contextGuardTokens": 140000,
   "autoJudge": "auto",
   "maxJudgeRounds": 5,
-  "maxMinorRounds": 3,
-  "finalizePlan": true,
+  "maxMinorRounds": 1,
   "returnTo": "discuss",
-  "planFlaw": "ask",
+  "planFlaw": "auto",
   "autopilot": true,
   "stagedPlans": "auto",
   "stageAdvance": "auto",
-  "planRecap": "changes",
   "maxPlanRevisions": 2,
   "delivery": {
     "splitCommits": true,

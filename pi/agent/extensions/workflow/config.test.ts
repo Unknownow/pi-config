@@ -172,8 +172,10 @@ test("legacy returnToPlan and invalid values", () => {
 		fs.writeFileSync(f, json);
 		return loadConfig(f).config;
 	};
-	assert.equal(get('{"returnToPlan":false}').returnTo, "off");
-	assert.equal(get('{"returnToPlan":true}').returnTo, "plan");
+	// The old boolean is ignored and dropped; so are the removed finalizePlan and planRecap.
+	const old = get('{"returnToPlan":false,"finalizePlan":false,"planRecap":"always"}') as unknown as Record<string, unknown>;
+	assert.equal(old.returnTo, "discuss");
+	for (const k of ["returnToPlan", "finalizePlan", "planRecap"]) assert.ok(!(k in old), k);
 	assert.equal(get('{"returnTo":"plan","returnToPlan":false}').returnTo, "plan");
 	assert.equal(get('{"returnTo":"bogus"}').returnTo, "discuss");
 	assert.equal(get('{"startPhase":"x"}').startPhase, "discuss");
@@ -189,6 +191,6 @@ test("keys of the removed delivery menu and commit step load and are dropped", (
 	assert.equal("delivery" in c.test, false);
 });
 
-test("minor findings get up to three fix rounds by default", () => {
-	assert.equal(DEFAULTS.maxMinorRounds, 3);
+test("minor findings get one fix round by default", () => {
+	assert.equal(DEFAULTS.maxMinorRounds, 1);
 });

@@ -50,9 +50,39 @@ export function hasPlanLine(text: string): boolean {
 
 const ENDS_IN_QUESTION = /\?[\s*_)"'`]*$/;
 
-/** A typed approval works after a finished reply that does not end on a question, if it has a plan line or a plan was proposed earlier in this discussion. */
-export function canApprove(text: string, stoppedNormally: boolean, planProposed: boolean): boolean {
-	return stoppedNormally && !ENDS_IN_QUESTION.test(text.trim()) && (hasPlanLine(text) || planProposed);
+/** Approval needs a finished reply that does not end on a question, and a `## Plan:` reply since the plan phase started. */
+export function canApprove(text: string, stoppedNormally: boolean, hasFullPlan: boolean): boolean {
+	return stoppedNormally && !ENDS_IN_QUESTION.test(text.trim()) && hasFullPlan;
+}
+
+const FULL_PLAN = /^##\s*Plan:/m;
+const PLAN_CHANGES = /^##\s*Plan changes/m;
+
+/** The plan so far: the last full `## Plan:` reply and the `## Plan changes` sections written after it. */
+export interface PlanDraft {
+	full: string;
+	changes: string[];
+}
+
+/** Folds one planner reply into the draft: a full plan replaces it, a change section is appended, anything else leaves it as it is. */
+export function addPlanReply(draft: PlanDraft, text: string): PlanDraft {
+	const full = FULL_PLAN.exec(text);
+	if (full) return { full: text.slice(full.index).trim(), changes: [] };
+	const change = PLAN_CHANGES.exec(text);
+	if (change && draft.full) return { full: draft.full, changes: [...draft.changes, text.slice(change.index).trim()] };
+	return draft;
+}
+
+/** Why a plan can't be approved yet, or undefined: no full `## Plan:` reply, or wait checks that can't run. */
+export function approvalBlock(draft: PlanDraft, waitProblems: string[]): string | undefined {
+	if (!draft.full) return "there is no `## Plan:` reply yet; ask the planner for the plan first";
+	if (waitProblems.length) return `the plan has wait checks that can't run (${waitProblems[0]})`;
+	return undefined;
+}
+
+/** The approved plan text: the full plan followed by its change sections. */
+export function composePlan(draft: PlanDraft): string {
+	return [draft.full, ...draft.changes].filter(Boolean).join("\n\n");
 }
 
 /** A passed diff is sent back for a minor-fix round only once: not after its flow ended, or when a fix message already went out for it. */
@@ -90,10 +120,15 @@ export function phaseAfterFlow(returnTo: "discuss" | "plan" | "off", phase: "off
 	return returnTo !== "off" && (phase === "execute" || phase === "test") ? returnTo : undefined;
 }
 
+/** Handovers that start a new piece of work (execute, a stage) may compact first; the others ("continue": fix rounds, open steps) never do. */
+export function handoverKind(customType: string): "start" | "continue" {
+	return customType === "workflow-execute" || customType === "workflow-stage" ? "start" : "continue";
+}
+
 /** Whether a pending handover message is sent after compacting the session first. An aborted run holds it (the user stopped the flow). */
-export function handoverAction(s: { aborted: boolean; idle: boolean; compacting: boolean; hasPlan: boolean; tokens: number | null; threshold: number }): "compact" | "send" | "hold" {
+export function handoverAction(s: { aborted: boolean; kind: "start" | "continue"; idle: boolean; compacting: boolean; hasPlan: boolean; tokens: number | null; threshold: number }): "compact" | "send" | "hold" {
 	if (s.aborted) return "hold";
-	return s.idle && !s.compacting && s.hasPlan && s.threshold > 0 && s.tokens !== null && s.tokens > s.threshold ? "compact" : "send";
+	return s.kind === "start" && s.idle && !s.compacting && s.hasPlan && s.threshold > 0 && s.tokens !== null && s.tokens > s.threshold ? "compact" : "send";
 }
 
 /** The judge reports that the approved plan itself is flawed: a finding line tagged [plan-flaw]. */
