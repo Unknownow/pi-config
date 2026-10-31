@@ -83,12 +83,14 @@ OK to delete (irreversible): ~/.pi/agent/hermes-memory-config.json; ~/.pi/contex
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 Create the branch `flow/remove-dead-config` from `master`.
-- [ ] S2 List every path you will delete outside the repo and get the user's OK before deleting (D4):
-- [ ] S3 Run `git rm pi/agent/hermes-memory-config.json` in the repo.
-- [ ] S4 Delete the local `C:/Users/unkno/.pi/agent/hermes-memory-config.json`. Without this, the sync extension's next export wo
-- [ ] S5 Delete `C:/Users/unkno/.pi/context-mode/` recursively.
-- [ ] S6 Delete `C:/Users/unkno/.pi/agent/projects-memory/` recursively.
-- [ ] S7 Delete the files matching `C:/Users/unkno/.pi/agent/*.bak-*`. Only files that match this exact pattern at the top level 
-- [ ] S8 Deliver: merge the repo change from S3. The local deletions are not in git.
-- [ ] S9 At the end, tell the user:
+- [x] S1 Create the branch `flow/remove-dead-config` from `master`.
+- [x] S2 List every path you will delete outside the repo and get the user's OK before deleting (D4):
+- [x] S3 Run `git rm pi/agent/hermes-memory-config.json` in the repo.
+- [x] S4 Delete the local `C:/Users/unkno/.pi/agent/hermes-memory-config.json`. Without this, the sync extension's next export wo
+- [x] S5 Delete `C:/Users/unkno/.pi/context-mode/` recursively.
+- [x] S6 Delete `C:/Users/unkno/.pi/agent/projects-memory/` recursively.
+- [x] S7 Delete the files matching `C:/Users/unkno/.pi/agent/*.bak-*`. Only files that match this exact pattern at the top level 
+- [x] S8 Deliver: merge the repo change from S3. The local deletions are not in git.
+- [x] S9 At the end, tell the user:
+## Outcome
+2026-10-31T16:56:13.506Z — ok: master, 2 commits since the review base, PR #20 MERGED https://github.com/Unknownow/pi-config/pull/20

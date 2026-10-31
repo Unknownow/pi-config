@@ -1,16 +1,42 @@
 {
   "v": 1,
   "flowId": "20261031-2354-remove-dead-config-leftovers-c869",
-  "rev": 2,
-  "updated": "2026-10-31T16:55:10.323Z",
+  "rev": 3,
+  "updated": "2026-10-31T16:56:13.627Z",
   "title": "Remove dead config leftovers",
-  "done": [],
+  "done": [
+    "S1",
+    "S2",
+    "S3",
+    "S4",
+    "S5",
+    "S6",
+    "S7",
+    "S8",
+    "S9"
+  ],
+  "finished": {
+    "at": "2026-10-31T16:56:13.506Z",
+    "ok": true,
+    "text": "master, 2 commits since the review base, PR #20 MERGED https://github.com/Unknownow/pi-config/pull/20"
+  },
   "reviewBase": {
-    "d:/works/pi-config": "1c85d1e587ee5762c0347af336e4f21cfc257699"
+    "d:/works/pi-config": "8aac4c7713c548ce4c4e565a31ebc147e4626b96"
+  },
+  "passedTrees": {
+    "d:/works/pi-config": [
+      "5eaa9fc0079344140ebc613f1955f1c0925d3818"
+    ]
+  },
+  "judgedMerges": {
+    "d:/works/pi-config": {
+      "pr": "20",
+      "tree": "5eaa9fc0079344140ebc613f1955f1c0925d3818"
+    }
   },
   "repos": [
     {
-      "branch": "flow/remove-dead-config",
+      "branch": "master",
       "remote": "github.com/Unknownow/pi-config",
       "primary": true
     }
