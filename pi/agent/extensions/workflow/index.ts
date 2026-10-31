@@ -3076,10 +3076,10 @@ export default function workflow(pi: ExtensionAPI) {
 		refilterTools();
 		const folders = existingFolders();
 		const touched = state.touchedRepos ?? [];
+		const opts = event.systemPromptOptions;
+		const listed: { path: string; size: number }[] = [];
 		if (folders.length || touched.length) {
-			const opts = event.systemPromptOptions;
 			const have = new Set(opts.contextFiles.map((f) => repoKey(f.path)));
-			const listed: { path: string; size: number }[] = [];
 			for (const folder of folders) {
 				try {
 					for (const f of loadProjectContextFiles({ cwd: folder, agentDir: getAgentDir() })) {
@@ -3092,8 +3092,10 @@ export default function workflow(pi: ExtensionAPI) {
 					// an unreadable folder just adds no context files
 				}
 			}
-			opts.sections.workspace = prompts.workspaceSection(ctx.cwd, folders, touched, listed);
 		}
+		// A section deleted and re-added moves to the end in pi's patch replay, which then no longer matches the prompt
+		// pi-claude-bridge saved (prompt_capture_unresolved). So both sections are always set, in this order.
+		opts.sections.workspace = prompts.workspaceSection(ctx.cwd, folders, touched, listed);
 		const staged = state.phase === "execute" ? currentStages() : undefined;
 		const phaseText = prompts.phaseSection(state.phase, {
 			finalize: cfg.finalizePlan,
@@ -3103,8 +3105,7 @@ export default function workflow(pi: ExtensionAPI) {
 			testFix: state.phase === "execute" && !!state.testFlow,
 			delivery: state.phase === "execute" ? prompts.deliveryGuidance(cfg.delivery) + (noMerge(state.approvedPlan ?? "") ? "\n- This plan says Delivery: no merge: do not merge, push to a protected branch or publish; commit, push your branch and open the pull request, then stop there." : "") : undefined,
 		});
-		if (phaseText) event.systemPromptOptions.sections.workflow = phaseText;
-		else delete event.systemPromptOptions.sections.workflow;
+		opts.sections.workflow = phaseText;
 	});
 
 	// Plan phase is read-only: the planner settles the approach, the execute model changes things.
