@@ -526,6 +526,10 @@ A persisted state with `phase: "test"`, or with `tokens.test`, loads as `off` wi
 13. `workflow: activate only each phase's tools` — `index.ts`, tests, `README.md`, docs
 14. `workflow: trim duplicate prompt text; publish syntax only where configured` — `prompts.ts`, `prompts.test.ts`, docs
 
+## Amendment 1 (executor: autopilot)
+Read local/delete-preview.txt (0 WOULD delete lines today) and create local/deletes-reviewed.txt to approve the sync-deletes merge (PR #22). (step S15, act)
+
+
 <!-- pi-workflow:status -->
 ## Checklist
 - [x] S1 Create the gitignored `D:\works\pi-config\local\sync.json`:
