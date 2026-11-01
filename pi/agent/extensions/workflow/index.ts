@@ -45,7 +45,7 @@ import {
 	type WorkflowConfig,
 } from "./config.ts";
 import { describeRole, parseRoleSpec, pickRoleSpec, roleCompletions, type Thinking } from "../shared/roles.ts";
-import { judgeAddenda, handoverAction, handoverKind, preFlowModelAction, gitTaskAllowed, migrateSavedState, afterPass, noChangeStage, arbiterFirst, fixableFindings, canApprove, approvalBlock, addPlanReply, composePlan, type PlanDraft, hasPlanFlaw, planFlawLines, planFlawOnPass,  judgeCapReached, minorFixOpen, passPending, stageEndAction, parseArbiter, phaseAfterFlow, shouldResume, skipJudge } from "./agent-end.ts";
+import { judgeAddenda, profileRole, handoverAction, handoverKind, preFlowModelAction, gitTaskAllowed, migrateSavedState, afterPass, noChangeStage, arbiterFirst, fixableFindings, canApprove, approvalBlock, addPlanReply, composePlan, type PlanDraft, hasPlanFlaw, planFlawLines, planFlawOnPass,  judgeCapReached, minorFixOpen, passPending, stageEndAction, parseArbiter, phaseAfterFlow, shouldResume, skipJudge } from "./agent-end.ts";
 import { countTokens, fmtTok, type Tok } from "../shared/tokens.ts";
 import { idleReason, notifyCommand, notifyDue } from "./notify.ts";
 import * as prompts from "./prompts.ts";
@@ -131,6 +131,10 @@ interface FlowState {
 	flowStarted?: number;
 	/** Plan flaws go straight to the arbiter in this flow, chosen at approval; unset means `cfg.planFlaw`. */
 	planFlaw?: "auto";
+	/** A quick flow (`/flow quick`): scope card on the `quick` role, judge on `quick-judge` with `cfg.quick` limits. Kept from plan into execute. */
+	profile?: "quick";
+	/** The phase `/flow quick` started from; a quick flow goes back there when it ends. */
+	quickFrom?: Phase;
 	/** Passed diffs whose flow already ended (or will, at the stage's end). */
 	summarizedPasses?: string[];
 	/** The plan the user approved (the final plan, plus arbiter amendments); the judge and the arbiter read it. */
@@ -255,6 +259,10 @@ export default function workflow(pi: ExtensionAPI) {
 	/** The model of a role from workflow.json or, for explore, advisor and runner, agents.json. */
 	const roleSpecOf = (r: string): RoleSpec => (cfg.roles as Record<string, RoleSpec>)[r];
 	let state: FlowState = { phase: "off", escalated: false, judgeRounds: 0 };
+	/** The model a role runs on in this flow (a quick flow has its own plan and judge roles). */
+	const flowSpec = (role: Role): RoleSpec => cfg.roles[profileRole(state.profile, role)];
+	/** The judge round limits of this flow. */
+	const judgeLimits = (): { maxJudgeRounds: number; maxMinorRounds: number } => (state.profile === "quick" ? cfg.quick : cfg);
 	/** Diffs already judged or declined this session, so agent_end doesn't ask twice. */
 	const seenDiffs = new Set<string>();
 	let consecutiveErrors = 0;
@@ -374,14 +382,14 @@ export default function workflow(pi: ExtensionAPI) {
 		if (!view.hasFlowUsage() && !steps && !findings && !human.length) {
 			if (flowId) {
 				const empty = view.peekFlow(outcome, ok);
-				recordMetric({ kind: "flow", at: new Date().toISOString(), flowId, outcome, ok, started: empty.started, ended: empty.ended, stages: empty.stages });
+				recordMetric({ kind: "flow", at: new Date().toISOString(), flowId, outcome, ok, started: empty.started, ended: empty.ended, stages: empty.stages, ...(state.profile ? { profile: state.profile } : {}) });
 			}
 			persist();
 			return false;
 		}
 		const summary = view.endFlow(outcome, ok);
 		pi.appendEntry(SUMMARY_ENTRY, { ...summary, steps, findings, ...(human.length ? { humanChecks: human } : {}) });
-		if (flowId) recordMetric({ kind: "flow", at: new Date().toISOString(), flowId, outcome, ok, started: summary.started, ended: summary.ended, stages: summary.stages });
+		if (flowId) recordMetric({ kind: "flow", at: new Date().toISOString(), flowId, outcome, ok, started: summary.started, ended: summary.ended, stages: summary.stages, ...(state.profile ? { profile: state.profile } : {}) });
 		persist();
 		return true;
 	}
@@ -396,6 +404,12 @@ export default function workflow(pi: ExtensionAPI) {
 		state.waiting = undefined;
 		stopWaitTimer();
 		updateStatus(ctx);
+		if (state.profile === "quick") {
+			const back = state.quickFrom ?? "off";
+			await setPhase(ctx, back);
+			ctx.ui.notify(`workflow: quick flow done, back to ${back === "off" ? "normal mode" : back}`, "info");
+			return;
+		}
 		const next = phaseAfterFlow(cfg.returnTo, state.phase);
 		if (!next) {
 			if (cfg.returnTo === "off" && state.phase === "execute") await setPhase(ctx, "off"); // restores the model from before the flow
@@ -419,6 +433,7 @@ export default function workflow(pi: ExtensionAPI) {
 		const cl = state.checklist;
 		if (ctx.hasUI) ctx.ui.setStatus("workflow-plan", cl?.length && state.phase === "execute" ? `plan ${cl.filter((i) => !isHuman(i) && i.done).length}/${cl.filter((i) => !isHuman(i)).length}` : undefined);
 		if (ctx.hasUI) ctx.ui.setStatus("workflow-wait", state.waiting && state.phase === "execute" ? `waiting: ${state.waiting.reason.slice(0, 40)}` : undefined);
+		if (ctx.hasUI) ctx.ui.setStatus("workflow-quick", state.profile === "quick" && state.phase !== "off" ? "quick" : undefined);
 		if (ctx.hasUI) ctx.ui.setStatus("workflow-autopilot", autopilotOn() ? "autopilot" : undefined);
 		if (ctx.hasUI) ctx.ui.setStatus("workflow-folders", n ? `+${n} folder${n === 1 ? "" : "s"}` : undefined);
 		if (state.approvedPlan && cl?.length && state.phase === "execute") {
@@ -458,7 +473,7 @@ export default function workflow(pi: ExtensionAPI) {
 
 	/** Switches the main session to a role's model and thinking level. */
 	async function applyRole(ctx: ExtensionContext, role: Role): Promise<boolean> {
-		const spec = cfg.roles[role];
+		const spec = flowSpec(role);
 		const slash = spec.model.indexOf("/");
 		const model = slash > 0 ? ctx.modelRegistry.find(spec.model.slice(0, slash), spec.model.slice(slash + 1)) : undefined;
 		if (!model) {
@@ -518,7 +533,8 @@ export default function workflow(pi: ExtensionAPI) {
 		state.toolsBeforePlan = undefined;
 	}
 
-	async function setPhase(ctx: ExtensionContext, phase: Phase): Promise<void> {
+	/** `profile`: "quick" starts a quick flow (plan phase only); execute keeps the flow's profile, every other switch ends it. */
+	async function setPhase(ctx: ExtensionContext, phase: Phase, profile?: "quick"): Promise<void> {
 		const leavingFlow = state.phase === "execute" && phase !== state.phase;
 		if (leavingFlow && state.approvedPlan && !state.flowSummarized) {
 			summarizeFlow(stoppedSummary(phase === "plan" ? "back to planning" : phase === "discuss" ? "back to discussion" : "abandoned"), false);
@@ -568,6 +584,8 @@ export default function workflow(pi: ExtensionAPI) {
 			state.planDoc = undefined;
 			state.planFlaw = undefined;
 		}
+		if (phase !== "execute") state.profile = phase === "plan" ? profile : undefined;
+		if (!state.profile) state.quickFrom = undefined;
 		consecutiveErrors = 0;
 		if (phase === "execute" && !(samePhase && state.reviewBase)) await initReviewBase(ctx);
 		if (phase !== "off") await applyRole(ctx, phase);
@@ -579,6 +597,28 @@ export default function workflow(pi: ExtensionAPI) {
 
 	function sendPlanKickoff(): void {
 		pi.sendMessage({ customType: "workflow-plan-kickoff", content: prompts.PLAN_KICKOFF, display: true }, { triggerTurn: true, deliverAs: "followUp" });
+	}
+
+	/** Starts a quick flow at its scope card; `request` (optional) is sent as the user's message. */
+	async function startQuick(ctx: ExtensionContext, request: string): Promise<void> {
+		if (state.phase === "execute" && state.approvedPlan) {
+			ctx.ui.notify("workflow: a flow is running; finish it or /flow off first", "warning");
+			return;
+		}
+		const from = state.profile === "quick" ? state.quickFrom : state.phase === "execute" ? "off" : state.phase;
+		await setPhase(ctx, "plan", "quick");
+		state.quickFrom = from;
+		persist();
+		updateStatus(ctx);
+		ctx.ui.notify(`workflow: quick flow, scope card on ${describeRole(flowSpec("plan"))}, judge on ${describeRole(flowSpec("judge"))}${request ? "" : ". Type the request."}`, "info");
+		if (request) pi.sendUserMessage(request, { deliverAs: "followUp" });
+	}
+
+	/** Turns a quick flow's scope card into a full flow: the planner model writes a full plan. */
+	async function toFullFlow(ctx: ExtensionContext): Promise<void> {
+		await setPhase(ctx, "plan");
+		ctx.ui.notify(`workflow: full flow, planning on ${describeRole(cfg.roles.plan)}`, "info");
+		pi.sendMessage({ customType: "workflow-plan-kickoff", content: prompts.QUICK_TO_FULL, display: true }, { triggerTurn: true, deliverAs: "followUp" });
 	}
 
 	/** Re-reads the steps from the approved plan (after an amendment too), keeping the ticks of the steps still in it. */
@@ -660,7 +700,7 @@ export default function workflow(pi: ExtensionAPI) {
 		if (state.phase !== "off") await applyRole(ctx, state.phase);
 		persist();
 		updateStatus(ctx);
-		ctx.ui.notify(`workflow: back to ${state.phase}${state.phase === "off" ? "" : ` on ${describeRole(cfg.roles[state.phase])}`}`, "info");
+		ctx.ui.notify(`workflow: back to ${state.phase}${state.phase === "off" ? "" : ` on ${describeRole(flowSpec(state.phase))}`}`, "info");
 	}
 
 	// ----------------------------------------------------------------------
@@ -677,6 +717,7 @@ export default function workflow(pi: ExtensionAPI) {
 
 	/** The server whose check the judge must run, or undefined. */
 	function judgeKnowledgeServer(): string | undefined {
+		if (state.profile === "quick" && !cfg.quick.knowledgeCheck) return undefined;
 		return cfg.knowledge.judgeCheck && knowledgeFor("judge") ? cfg.knowledge.server : undefined;
 	}
 
@@ -687,7 +728,8 @@ export default function workflow(pi: ExtensionAPI) {
 		opts: { systemPrompts: string[]; tools: string[]; task: string; cwd: string; signal?: AbortSignal; thinking?: Thinking; env?: Record<string, string>; extensions?: string[]; timeoutMs?: number },
 		onChange?: (run: FlowRun) => void,
 	): Promise<{ result: RunResult; run: FlowRun }> {
-		const run = view.start(role, label, cfg.roles[role].model);
+		const spec = flowSpec(role);
+		const run = view.start(role, label, spec.model);
 		onChange?.(run);
 		const { thinking, extensions, timeoutMs, ...rest } = opts;
 		const k = knowledgeFor(role);
@@ -697,7 +739,7 @@ export default function workflow(pi: ExtensionAPI) {
 			tools: k ? [...rest.tools, ...k.tools] : rest.tools,
 			systemPrompts: k && role !== "judge" ? [...rest.systemPrompts, prompts.knowledgeTools(k.tools)] : rest.systemPrompts,
 			mcp: k ? { servers: k.servers, extension: FORWARD_EXTENSION } : undefined,
-			role: thinking ? { ...cfg.roles[role], thinking } : cfg.roles[role],
+			role: thinking ? { ...spec, thinking } : spec,
 			extensions: extensions ? [...cfg.subagent.extensions, ...extensions] : cfg.subagent.extensions,
 			timeoutMs: timeoutMs ?? cfg.subagent.timeoutMs,
 			idleTimeoutMs: cfg.subagent.idleTimeoutMs,
@@ -706,7 +748,7 @@ export default function workflow(pi: ExtensionAPI) {
 				onChange?.(run);
 			},
 		});
-		recordMetric(subagentMetric(role, label, run.stage, result.model ?? cfg.roles[role].model, started, Date.now(), result));
+		recordMetric(subagentMetric(role, label, run.stage, result.model ?? spec.model, started, Date.now(), result));
 		if (!result.ok) view.finish(run, false, result.error ?? "failed");
 		return { result, run };
 	}
@@ -938,7 +980,7 @@ export default function workflow(pi: ExtensionAPI) {
 		}
 		let r = await judgeOnce(ctx, diff, focus, plan, signal, onChange, disputes);
 		const limit = cfg.judge.finalFullReviewOverChars;
-		if (r.verdict === "PASS" && plan.kind === "recheck" && limit > 0 && diff.chars > limit && needsFinalFullReview(cfg.judge.finalFullReviewNewFilesOnly, plan.prev.text, plan.cites)) {
+		if (r.verdict === "PASS" && plan.kind === "recheck" && limit > 0 && state.profile !== "quick" && diff.chars > limit && needsFinalFullReview(cfg.judge.finalFullReviewNewFilesOnly, plan.prev.text, plan.cites)) {
 			const share = await repeatShare(diff, plan.snaps);
 			if (share !== undefined) {
 				r = { ...r, text: `${r.text}\n\nFinal full review skipped: a full review passed this stage and the changes since are ${Math.round(share * 100)}% of the diff.` };
@@ -1827,7 +1869,7 @@ export default function workflow(pi: ExtensionAPI) {
 		const prevChecked = plan.kind === "recheck" && state.lastKnowledge?.status === "checked" && state.lastKnowledge.hash === plan.prev.hash;
 		const { files: knowledgeFiles, scoped } = plan.kind === "recheck" ? recheckKnowledgeFiles(prevChecked, plan.changed, diff.checkNames) : { files: diff.checkNames, scoped: false };
 		const max = cfg.judge.maxDiffChars;
-		const testJudge = judgeAddenda(state.minorRounds ?? 0);
+		const testJudge = judgeAddenda(state.minorRounds ?? 0, state.profile === "quick");
 		const systemPrompts = recheck
 			? [
 					prompts.JUDGE + testJudge,
@@ -1898,7 +1940,7 @@ export default function workflow(pi: ExtensionAPI) {
 	// ----------------------------------------------------------------------
 
 	const title = (theme: Theme, name: string, role: Role) =>
-		theme.fg("toolTitle", theme.bold(`${name} `)) + theme.fg("muted", shortModel(cfg.roles[role].model));
+		theme.fg("toolTitle", theme.bold(`${name} `)) + theme.fg("muted", shortModel(flowSpec(role).model));
 
 	// ----------------------------------------------------------------------
 	// Wait points
@@ -2605,6 +2647,7 @@ export default function workflow(pi: ExtensionAPI) {
 		if (publishCache?.key !== publishKey) publishCache = { key: publishKey, value: (await flowRepos(ctx)).some((r) => fs.existsSync(path.join(r.root, "scripts", "update-packages.mjs"))) };
 		const canPublish = (state.phase === "plan" || state.phase === "execute") && publishCache.value;
 		const phaseText = prompts.phaseSection(state.phase, {
+			quick: state.profile === "quick",
 			publish: canPublish,
 			staging: cfg.stagedPlans,
 			stage: staged ? stageLine(staged.stages, staged.current) : undefined,
@@ -3021,7 +3064,13 @@ export default function workflow(pi: ExtensionAPI) {
 			if (blocked) ctx.ui.notify(`workflow: can't approve: ${blocked}.`, "warning");
 			const approveLabel = "Approve";
 			const arbiterLabel = "Approve, arbiter solves plan flaws →";
-			const choice = await askUser(ctx, `Plan phase · execute on ${describeRole(cfg.roles.execute)}`, [...(blocked ? [] : [approveLabel, ...(cfg.planFlaw === "ask" ? [arbiterLabel] : [])]), "Back to discussion", "Keep discussing"]);
+			const quick = state.profile === "quick";
+			const fullLabel = "Full flow instead";
+			const choice = await askUser(ctx, `${quick ? "Quick flow" : "Plan phase"} · execute on ${describeRole(cfg.roles.execute)}`, [...(blocked ? [] : [approveLabel, ...(cfg.planFlaw === "ask" && !quick ? [arbiterLabel] : [])]), quick ? fullLabel : "Back to discussion", "Keep discussing"]);
+			if (choice === fullLabel) {
+				await toFullFlow(ctx);
+				return;
+			}
 			if (choice === "Back to discussion") {
 				await setPhase(ctx, "discuss");
 				ctx.ui.notify(`workflow: back to discussion on ${describeRole(cfg.roles.discuss)}`, "info");
@@ -3226,7 +3275,7 @@ export default function workflow(pi: ExtensionAPI) {
 		if (!manual && (cfg.autoJudge === "off" || seenDiffs.has(diff.hash))) return;
 		if (!manual && cfg.autoJudge === "ask" && !autopilotOn()) {
 			notifyUser(ctx, "diff ready for the judge");
-			const run = await ctx.ui.confirm("Diff ready", `Run the judge (${describeRole(cfg.roles.judge)}) on ${diff.files} changed file(s)?`);
+			const run = await ctx.ui.confirm("Diff ready", `Run the judge (${describeRole(flowSpec("judge"))}) on ${diff.files} changed file(s)?`);
 			if (!run) {
 				seenDiffs.add(diff.hash);
 				return;
@@ -3276,7 +3325,7 @@ export default function workflow(pi: ExtensionAPI) {
 
 	/** After a failed judge round: send the executor back to fix, or ask what to do once the round cap is hit. */
 	async function fixOrAsk(ctx: ExtensionContext, report: string | undefined): Promise<void> {
-		if (judgeCapReached(state.judgeRounds, cfg.maxJudgeRounds)) {
+		if (judgeCapReached(state.judgeRounds, judgeLimits().maxJudgeRounds)) {
 			if (report) pi.sendMessage({ customType: "workflow-judge", content: report, display: true }, { triggerTurn: false });
 			const choice = await askUser(ctx, `Judge failed ${state.judgeRounds} rounds in a row`, ["Keep fixing", "Escalate and keep fixing", "Stop"]);
 			if (choice === "Keep fixing" || choice === "Escalate and keep fixing") {
@@ -3304,7 +3353,7 @@ export default function workflow(pi: ExtensionAPI) {
 	 * "stop": back to planning, or the flow ended.
 	 */
 	async function resolvePlanFlaw(ctx: ExtensionContext, report: string, diff: Diff): Promise<"continue" | "amended" | "stop"> {
-		let arbiter = arbiterFirst(autopilotOn() ? "auto" : state.planFlaw, cfg.planFlaw);
+		let arbiter = state.profile !== "quick" && arbiterFirst(autopilotOn() ? "auto" : state.planFlaw, cfg.planFlaw);
 		let canAsk = true;
 		for (;;) {
 			if (arbiter) {
@@ -3353,10 +3402,10 @@ export default function workflow(pi: ExtensionAPI) {
 		return lines.length;
 	}
 
-	/** A pass that questions the plan, without a blocker: minor flaws are noted, major ones go to the arbiter. Never asks the user. */
+	/** A pass that questions the plan, without a blocker: minor flaws are noted, major ones go to the arbiter (a quick flow notes them too). Never asks the user. */
 	async function settlePlanFlawOnPass(ctx: ExtensionContext, report: string, diff: Diff, route: "arbiter" | "note"): Promise<"continue" | "amended"> {
 		const heading = "Plan choices upheld at a pass";
-		if (route === "arbiter") {
+		if (route === "arbiter" && state.profile !== "quick") {
 			const outcome = await runArbiter(ctx, report, diff, false);
 			if (outcome !== "ask") return outcome;
 			const n = notePlanFlaws(ctx, report, heading);
@@ -3434,7 +3483,7 @@ export default function workflow(pi: ExtensionAPI) {
 		const findings = fixableFindings(text);
 		// Same diff as the last fix message: the executor skipped the findings, so don't ask again.
 		if (state.minorSentFor === hash) return false;
-		if (afterPass(findings, state.minorRounds ?? 0, cfg.maxMinorRounds) !== "fix") return false;
+		if (afterPass(findings, state.minorRounds ?? 0, judgeLimits().maxMinorRounds) !== "fix") return false;
 		state.minorRounds = (state.minorRounds ?? 0) + 1;
 		state.minorSentFor = hash;
 		persist();
@@ -3701,7 +3750,8 @@ export default function workflow(pi: ExtensionAPI) {
 		{ value: "status", label: "status - phase, models, config path" },
 		{ value: "board", label: "board - live view of every flow on this machine" },
 		{ value: "discuss", label: "discuss - discuss phase (read-only, talk before planning)" },
-		{ value: "plan", label: "plan - plan phase (read-only, planner model)" },
+		{ value: "plan", label: "plan - plan phase (read-only, planner model); from a quick scope card, a full flow" },
+		{ value: "quick", label: "quick [request] - quick flow: short scope card, execute, one review, full delivery" },
 		{ value: "approve", label: "approve - approve the plan, switch to execute and start" },
 		{ value: "execute", label: "execute - execute phase without sending anything" },
 		{ value: "off", label: "off - leave the workflow; restore the model from before the flow" },
@@ -3717,7 +3767,7 @@ export default function workflow(pi: ExtensionAPI) {
 
 	function statusText(): string {
 		const lines = [
-			`phase      ${state.phase}${state.escalated ? " (escalated)" : ""}`,
+			`phase      ${state.phase}${state.escalated ? " (escalated)" : ""}${state.profile === "quick" ? " (quick flow)" : ""}`,
 			`judge     ${state.judgeRounds} failed round(s); auto=${cfg.autoJudge}; ${noMerge(state.approvedPlan ?? "") ? "no merge (the plan says so)" : "merge and publish after a judge pass"}`,
 			...(currentStages() ? [`stage     ${currentStages()!.current} of ${currentStages()!.stages.length}: ${currentStages()!.stages[currentStages()!.current - 1].title}`] : []),
 			state.planFlaw === "auto" ? "flaws     arbiter (this flow)" : `flaws     ${cfg.planFlaw === "auto" ? "arbiter" : "ask"} (config)`,
@@ -3873,10 +3923,17 @@ export default function workflow(pi: ExtensionAPI) {
 				case "status":
 					ctx.ui.notify(statusText(), "info");
 					return;
+				case "quick":
+					await startQuick(ctx, args.trim().replace(/^quick\b\s*/i, ""));
+					return;
 				case "discuss":
 				case "plan":
 				case "execute":
 				case "off": {
+					if (sub.toLowerCase() === "plan" && state.phase === "plan" && state.profile === "quick") {
+						await toFullFlow(ctx);
+						return;
+					}
 					const from = state.phase;
 					await setPhase(ctx, sub.toLowerCase() as Phase);
 					ctx.ui.notify(`workflow: ${state.phase}`, "info");
@@ -4025,7 +4082,7 @@ export default function workflow(pi: ExtensionAPI) {
 					}
 					saveRole(role as Role, parsed);
 					cfg = loadConfig().config;
-					const live = state.escalated ? role === "escalate" : role === state.phase;
+					const live = state.escalated ? role === "escalate" : state.phase !== "off" && role === profileRole(state.profile, state.phase);
 					if (live) await applyRole(ctx, role as Role);
 					updateStatus(ctx);
 					ctx.ui.notify(`workflow: ${role} -> ${describeRole(parsed)} (saved to workflow.json)`, "info");

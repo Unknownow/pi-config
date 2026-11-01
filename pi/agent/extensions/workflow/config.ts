@@ -18,7 +18,7 @@ export { THINKING_LEVELS };
 export type { KnowledgeConfig, RoleSpec, Thinking };
 
 /** Roles of workflow.json; explore, advisor and runner live in agents.json (extensions/agents). */
-export const ROLES = ["discuss", "plan", "execute", "judge", "arbiter", "commit", "escalate"] as const;
+export const ROLES = ["discuss", "plan", "execute", "judge", "arbiter", "commit", "escalate", "quick", "quick-judge"] as const;
 export type Role = (typeof ROLES)[number];
 
 /** Guidance for the executor's own commit, push, pull request and merge. Merging, pushing to a protected branch and publishing still wait for a judge pass; a plan line `Delivery: no merge` turns them off for a flow. */
@@ -66,6 +66,15 @@ export interface PlansConfig {
 	keepDays: number;
 	/** Finished plans beyond the newest this many are deleted. 0 deletes a plan as soon as its flow ends. */
 	keepCount: number;
+}
+
+export interface QuickConfig {
+	/** Failed judge rounds in a row before the quick flow asks you what to do. 0 means no limit. */
+	maxJudgeRounds: number;
+	/** Fix rounds for minor findings after a pass. 0: minor findings are only listed. */
+	maxMinorRounds: number;
+	/** The judge runs the team knowledge check (`knowledge.judgeCheck` must be on too). */
+	knowledgeCheck: boolean;
 }
 
 export interface WorkflowConfig {
@@ -143,6 +152,8 @@ export interface WorkflowConfig {
 		finalFullReviewRepeatMaxShare: number;
 	};
 	knowledge: KnowledgeConfig;
+	/** `/flow quick`: a short scope card on the `quick` role, one review on `quick-judge`, these limits instead of the flow's. */
+	quick: QuickConfig;
 	subagent: {
 		extensions: string[];
 		timeoutMs: number;
@@ -160,6 +171,8 @@ export const DEFAULTS: WorkflowConfig = {
 		arbiter: { model: "claude-bridge/claude-fable-5-1", thinking: "high" },
 		commit: { model: "claude-bridge/claude-haiku-5-5", thinking: "medium" },
 		escalate: { model: "claude-bridge/claude-fable-5-1", thinking: "high" },
+		quick: { model: "claude-bridge/claude-sonnet-5-5", thinking: "medium" },
+		"quick-judge": { model: "claude-bridge/claude-opus-5-5", thinking: "medium" },
 	},
 	startPhase: "discuss",
 	contextGuardTokens: 140_000,
@@ -206,6 +219,7 @@ export const DEFAULTS: WorkflowConfig = {
 		env: { KNOWLEDGE_OFFLINE: "1" },
 		judgeCheck: true,
 	},
+	quick: { maxJudgeRounds: 2, maxMinorRounds: 0, knowledgeCheck: true },
 	subagent: {
 		extensions: ["~/.pi/agent/npm/node_modules/pi-claude-bridge/src/index.ts"],
 		timeoutMs: 15 * 60_000,
@@ -284,6 +298,9 @@ function parseConfig(file: string): Loaded {
 		if (typeof config.notify.idleMs !== "number" || !Number.isFinite(config.notify.idleMs) || config.notify.idleMs <= 0) config.notify.idleMs = DEFAULTS.notify.idleMs;
 		if (config.stagedPlans !== "auto" && config.stagedPlans !== "onRequest") config.stagedPlans = DEFAULTS.stagedPlans;
 		if (config.stageAdvance !== "auto" && config.stageAdvance !== "ask") config.stageAdvance = DEFAULTS.stageAdvance;
+		if (!isObject(config.quick)) config.quick = { ...DEFAULTS.quick };
+		for (const k of ["maxJudgeRounds", "maxMinorRounds"] as const) if (typeof config.quick[k] !== "number" || !Number.isInteger(config.quick[k]) || config.quick[k] < 0) config.quick[k] = DEFAULTS.quick[k];
+		if (typeof config.quick.knowledgeCheck !== "boolean") config.quick.knowledgeCheck = DEFAULTS.quick.knowledgeCheck;
 		// The test phase is gone: its role and block are dropped silently.
 		delete (config as unknown as Record<string, unknown>).test;
 		delete (config.roles as unknown as Record<string, unknown>).test;

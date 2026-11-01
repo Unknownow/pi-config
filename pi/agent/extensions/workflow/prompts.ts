@@ -68,6 +68,28 @@ Goal, Non-goals, User decisions and Done when are the target. The judge and the 
 ${CHECKPOINTS}${publish ? " " + PUBLISH_CHECKPOINTS : ""}`;
 }
 
+/** The scope-card prompt of a quick flow (`/flow quick`): plan phase rules, a short plan, and a size check. */
+export function quickPlanPhase(publish = true): string {
+	return `## Workflow: QUICK flow, scope card
+This is a quick flow for a small change, such as a game feature (a popup, a gameplay tweak): a short plan, then the usual execute, one review, and delivery.
+You write the scope card. Change nothing yet.
+- Only read and explore. Tools that change anything are refused, and bash refuses commands that change files, git or GitHub. Don't work around that. Even when the user says "do it", write the scope card first: the change runs after they approve it.
+${batchLine("a codemode script, run_code for read-only analysis, or one bash command joined with && or ;")}
+- ${PACE}
+- Read only what the scope card needs (the files to change and the code to model them on); don't survey the codebase.
+- If the request is unclear in a way that changes the work, ask one short question and stop. Otherwise answer with the scope card at once.
+- Size check first. Quick is for a few files that follow existing patterns. If the change needs more than about 6 files, a new shared system or public API, a save-data or network format change, a migration, or staged delivery, don't write a scope card: say why in two or three lines and recommend \`/flow plan\` (the full flow).
+- The scope card is the final plan: \`## Plan: <title>\`, then Goal (one or two lines, plus non-goals if any); User decisions (D1, D2, ..., only the user's explicit choices, if any); Steps, each starting \`**S<n>.**\` with the file and what to change in a line or two, naming the existing code to follow (file:line); Check: the narrowest check that proves it works (it compiles, the Unity console is clean, the test files that cover the changed files); Verify: what a person should look at in the Editor or on a device, as \`**S<n>.** Verify: <steps> — look for: <what>\` steps; Done when. Keep it short, about 15 lines. No design section, no stages.
+- The user approves it (Approve in the menu, or "go"); a requested change comes as a \`## Plan changes\` section with only the changed steps. The execute model only sees this transcript and follows the card; the judge checks the result against it.
+${CHECKPOINTS}${publish ? " " + PUBLISH_CHECKPOINTS : ""}`;
+}
+
+/** Added to the execute prompt in a quick flow: narrow checks instead of the plan's test suites. */
+export const QUICK_EXECUTE = `- This is a quick flow: the plan is a short scope card. For checks, run only the narrowest one that proves the change (a compile, a clean Unity console, the test files that cover the changed files when they are fast); skip slow and full suites and don't send \`test_run\` cards. Visual and feel checks are the plan's Verify steps, for the user after the flow. The judge reviews once, reporting only blockers and majors; delivery is the same as in a full flow.`;
+
+/** Sent when a quick flow is turned into a full flow from its scope card. */
+export const QUICK_TO_FULL = "This is now a full flow, not a quick one. Write the plan as the final `## Plan: <title>` from the request and what you found so far, following the plan-phase rules. Ask only about what blocks the plan.";
+
 /** Text of the `workflow` section when no phase is active; the section is never empty so it is never deleted. */
 export const NO_WORKFLOW = "No workflow is active. Instructions from an earlier workflow phase no longer apply.";
 
@@ -109,10 +131,10 @@ export function deliveryGuidance(d: { splitCommits: boolean; mergeMethod: string
 /** The executor's publish_packages rule, sent only when a flow repo can publish. */
 const PUBLISH_RULE = `- At a \`Publish:\` or \`Mirror:\` step call \`publish_packages {step}\`; after a publish wait resumes, call it again. Never run \`updates.bat\`, \`update-packages.mjs publish\`, \`maintenance.mjs mirror --confirm\`, \`publish-package.mjs\` or \`npm publish\` yourself.`;
 
-export function phaseSection(phase: string, opts: { staging: StagedPlans; stage?: string; delivery?: string; publish?: boolean }): string {
+export function phaseSection(phase: string, opts: { staging: StagedPlans; stage?: string; delivery?: string; publish?: boolean; quick?: boolean }): string {
 	if (phase === "discuss") return DISCUSS_PHASE;
-	if (phase === "plan") return planPhase(opts.staging, opts.publish ?? true);
-	if (phase === "execute") return [EXECUTE_PHASE, opts.publish ? PUBLISH_RULE : undefined, opts.delivery, opts.stage].filter(Boolean).join("\n");
+	if (phase === "plan") return opts.quick ? quickPlanPhase(opts.publish ?? true) : planPhase(opts.staging, opts.publish ?? true);
+	if (phase === "execute") return [EXECUTE_PHASE, opts.quick ? QUICK_EXECUTE : undefined, opts.publish ? PUBLISH_RULE : undefined, opts.delivery, opts.stage].filter(Boolean).join("\n");
 	return NO_WORKFLOW;
 }
 
@@ -141,6 +163,8 @@ Then a final line: VERDICT: PASS or VERDICT: FAIL
 FAIL if there is any blocker or major finding that is not a [plan-flaw]. blocker: wrong results, data loss or a security hole. major: a likely bug, or a design problem that will cost real rework. minor: worth fixing, not worth another round. No praise, no style nits. If you find nothing, write only the verdict line.`;
 
 /** Added to the judge prompt after a minor-fix round: no more minor findings. */
+export const JUDGE_QUICK = `This review is for a quick flow: a small change with a short scope card as its plan. Report only blocker and major findings, and leave out minor ones. The knowledge check still runs as described.`;
+
 export const JUDGE_MAJOR_ONLY = `This review follows a minor-fix round: report only blocker and major findings, and leave out minor ones.`;
 
 export const JUDGE_RECHECK = `This is a re-review. An earlier round reviewed the whole change and reported the findings below; the code has changed since. You get only the changes since that round, plus the names of every file in the whole change.

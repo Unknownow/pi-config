@@ -12,7 +12,7 @@ type Tokens = { input: number; output: number; cacheRead: number; cacheWrite: nu
 export type MetricEvent =
 	| { kind: "subagent"; at: string; flowId?: string; role: string; label: string; stage: string; model: string; ms: number; bootMs?: number; turns: number; tools: number; tokens: Tokens; cost: number; ok: boolean; error?: string }
 	| { kind: "compaction"; at: string; flowId?: string; reason: "handover" | "guard"; tokensBefore: number | null; ms: number; ok: boolean; error?: string }
-	| { kind: "flow"; at: string; flowId?: string; outcome: string; ok: boolean; started?: number; ended: number; stages: FlowUsage };
+	| { kind: "flow"; at: string; flowId?: string; outcome: string; ok: boolean; started?: number; ended: number; stages: FlowUsage; profile?: "quick" };
 
 const MAX_QUEUED = 1000;
 

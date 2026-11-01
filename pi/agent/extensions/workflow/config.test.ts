@@ -178,3 +178,18 @@ test("the shipped planAllowedTools refuses test_run but admits explore, advisor 
 	assert.equal(allowed("test_run"), false);
 	for (const n of ["explore", "advisor", "judge"]) assert.equal(allowed(n), true, n);
 });
+
+test("quick: defaults, and bad values fall back", () => {
+	const quick = (v: string) => {
+		const f = tmp();
+		fs.writeFileSync(f, `{"quick":${v}}`);
+		return loadConfig(f).config.quick;
+	};
+	assert.deepEqual(quick("{}"), { maxJudgeRounds: 2, maxMinorRounds: 0, knowledgeCheck: true });
+	assert.deepEqual(quick('{"maxJudgeRounds":-1,"maxMinorRounds":1.5,"knowledgeCheck":"no"}'), { maxJudgeRounds: 2, maxMinorRounds: 0, knowledgeCheck: true });
+	assert.deepEqual(quick('{"maxJudgeRounds":0,"maxMinorRounds":1,"knowledgeCheck":false}'), { maxJudgeRounds: 0, maxMinorRounds: 1, knowledgeCheck: false });
+	assert.deepEqual(quick('"x"'), { maxJudgeRounds: 2, maxMinorRounds: 0, knowledgeCheck: true });
+	const roles = loadConfig(tmp()).config.roles;
+	assert.equal(roles.quick.model, "claude-bridge/claude-sonnet-5-5");
+	assert.deepEqual(roles["quick-judge"], { model: "claude-bridge/claude-opus-5-5", thinking: "medium" });
+});
