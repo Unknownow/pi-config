@@ -354,32 +354,29 @@ test('import deletes settings.json that differs only in a scrubbed machine key',
   assert.ok(!fs.existsSync(local));
 });
 
-test('a delete that fails is a warning, not an error', (t) => {
+test('a delete that fails is a warning, not an error', () => {
   const { env, a, ma } = syncedPair();
   fs.unlinkSync(ma);
-  const dir = path.dirname(a);
-  if (process.platform !== 'win32' && process.getuid?.() === 0) return t.skip('root can delete anything');
-  // Make deleting a fail: a read-only file on Windows, a read-only folder elsewhere.
-  const lock = process.platform === 'win32' ? [a, 0o444, 0o666] : [dir, 0o555, 0o755];
-  fs.chmodSync(lock[0], lock[1]);
-  try {
-    const probe = path.join(dir, 'probe.tmp');
-    let canFail = true;
-    if (process.platform === 'win32') {
-      write(probe, 'x');
-      fs.chmodSync(probe, 0o444);
-      try { fs.unlinkSync(probe); canFail = false; } catch { /* expected */ }
-      if (fs.existsSync(probe)) {
-        fs.chmodSync(probe, 0o666);
-        fs.rmSync(probe, { force: true });
-      }
-    }
-    if (!canFail) return t.skip('this host cannot make a delete fail');
-    const out = run(env, 'import.js');
-    assert.match(out, /WARNING  could not delete extensions\/demo\/a\.ts/);
-    const state = JSON.parse(read(path.join(env.repo, 'local', 'sync-state.json')));
-    assert.equal(typeof state['extensions/demo/a.ts'], 'string');
-  } finally {
-    fs.chmodSync(lock[0], lock[2]);
-  }
+  // Fail the delete of a.ts by injecting the error, so it works the same on every platform.
+  const preload = path.join(env.root, 'fail-unlink.js');
+  write(preload, [
+    "const fs = require('fs');",
+    'const orig = fs.unlinkSync;',
+    'fs.unlinkSync = function (p, ...rest) {',
+    "  if (String(p).replace(/\\\\/g, '/').endsWith('extensions/demo/a.ts')) {",
+    "    throw Object.assign(new Error('EPERM: operation not permitted (test)'), { code: 'EPERM' });",
+    '  }',
+    '  return orig.call(this, p, ...rest);',
+    '};',
+    '',
+  ].join('\n'));
+  const out = execFileSync(process.execPath, ['--require', preload, path.join(env.repo, 'bin', 'import.js')], {
+    cwd: env.repo,
+    env: { ...process.env, HOME: env.home, USERPROFILE: env.home },
+    encoding: 'utf8',
+  });
+  assert.match(out, /WARNING  could not delete extensions\/demo\/a\.ts/);
+  assert.ok(fs.existsSync(a));
+  const state = JSON.parse(read(path.join(env.repo, 'local', 'sync-state.json')));
+  assert.equal(typeof state['extensions/demo/a.ts'], 'string');
 });
