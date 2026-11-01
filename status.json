@@ -1,10 +1,9 @@
 {
   "v": 1,
   "flowId": "20261101-0128-trim-and-speed-up-the-pi-setup-normal-mo-921c",
-  "rev": 9,
-  "updated": "2026-11-01T02:15:32.913Z",
+  "rev": 10,
+  "updated": "2026-11-01T02:20:36.860Z",
   "title": "Trim and speed up the Pi setup (normal mode first, agents extension, sync deletes, faster flows)",
-  "stage": 5,
   "done": [
     "S1",
     "S2",
@@ -34,10 +33,21 @@
     "S26",
     "S27",
     "S28",
-    "S29"
+    "S29",
+    "S30",
+    "S31",
+    "S32",
+    "S33",
+    "S34",
+    "S37"
   ],
+  "finished": {
+    "at": "2026-11-01T02:20:36.736Z",
+    "ok": true,
+    "text": "stage 1: master, 5 commits since the review base, PR #21 MERGED https://github.com/Unknownow/pi-config/pull/21; stage 2: master, 4 commits since the review base, PR #22 MERGED https://github.com/Unknownow/pi-config/pull/22; stage 3: master, 3 commits since the review base, PR #23 MERGED https://github.com/Unknownow/pi-config/pull/23; stage 4: master, 4 commits since the review base, PR #24 MERGED https://github.com/Unknownow/pi-config/pull/24; stage 5: master, 3 commits since the review base, PR #25 MERGED https://github.com/Unknownow/pi-config/pull/25 · 2 human check(s) for you (see the card)"
+  },
   "reviewBase": {
-    "d:/works/pi-config": "53421c469d8a2d63da247f92571470f88bdb5f39"
+    "d:/works/pi-config": "c4b05eb35601bf8a8ab1c6b83f53c433da5eaa98"
   },
   "passedTrees": {
     "d:/works/pi-config": [
@@ -46,14 +56,15 @@
       "27ff61dffb4c79720dcec81d58c24418234b6d86",
       "1bf6126b7161c7c9a918f80a322b11f0fab97c00",
       "95c6f5b20cb3b3c78d97e99afebb5201fb406308",
-      "eec07d104b75057b191c3a0b421b5f812c5333f1"
+      "eec07d104b75057b191c3a0b421b5f812c5333f1",
+      "51b1fbfec7b6fc701d5f89995e319815bc5c205f"
     ]
   },
   "judgedMerges": {
     "d:/works/pi-config": {
-      "pr": "24",
-      "tree": "eec07d104b75057b191c3a0b421b5f812c5333f1",
-      "stage": 4
+      "pr": "25",
+      "tree": "51b1fbfec7b6fc701d5f89995e319815bc5c205f",
+      "stage": 5
     }
   },
   "repos": [

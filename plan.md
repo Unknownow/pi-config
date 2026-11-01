@@ -571,12 +571,14 @@ Read local/delete-preview.txt (0 WOULD delete lines today) and create local/dele
 - [x] S27 `git_task` in `off` (D14): its guard (`index.ts:2656`) allows phase `off` and execute. In `off` there is no judge gate o
 - [x] S28 Docs rows (D24) for S25–S27.
 - [x] S29 Deliver: merge — remove the test phase and normal-mode extras.
-- [ ] S30 Per-phase tools (D22):
-- [ ] S31 Trim `prompts.ts` (D23):
-- [ ] S32 Docs rows for S30–S31. Update `README.md` for the tool tables per phase.
-- [ ] S33 Deliver: merge — flow speed 5b.
-- [ ] S34 Delete `local/sync.json`, `local/delete-preview.txt` and `local/deletes-reviewed.txt`, after looking at each (they are t
-- [ ] S37 Final report to the user, including the item-7 reminder:
+- [x] S30 Per-phase tools (D22):
+- [x] S31 Trim `prompts.ts` (D23):
+- [x] S32 Docs rows for S30–S31. Update `README.md` for the tool tables per phase.
+- [x] S33 Deliver: merge — flow speed 5b.
+- [x] S34 Delete `local/sync.json`, `local/delete-preview.txt` and `local/deletes-reviewed.txt`, after looking at each (they are t
+- [x] S37 Final report to the user, including the item-7 reminder:
 ## For you after the flow
 - S35 Verify: restart Pi in `D:\works\pi-config` — look for:
 - S36 Verify: on CuongPT-dev, after its next start — look for: the same deletions, and `hermes-memory-config.json` gone if it 
+## Outcome
+2026-11-01T02:20:36.736Z — ok: stage 1: master, 5 commits since the review base, PR #21 MERGED https://github.com/Unknownow/pi-config/pull/21; stage 2: master, 4 commits since the review base, PR #22 MERGED https://github.com/Unknownow/pi-config/pull/22; stage 3: master, 3 commits since the review base, PR #23 MERGED https://github.com/Unknownow/pi-config/pull/23; stage 4: master, 4 commits since the review base, PR #24 MERGED https://github.com/Unknownow/pi-config/pull/24; stage 5: master, 3 commits since the review base, PR #25 MERGED https://github.com/Unknownow/pi-config/pull/25 · 2 human check(s) for you (see the card)
