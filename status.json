@@ -1,0 +1,18 @@
+{
+  "v": 1,
+  "flowId": "20261101-1736-new-pi-sessions-start-with-the-flow-off-1e67",
+  "rev": 1,
+  "updated": "2026-11-01T10:36:50.124Z",
+  "title": "New Pi sessions start with the flow off, and the merged changes go live",
+  "done": [],
+  "reviewBase": {
+    "d:/works/pi-config": "5b39dfd6aab0c7c1f20711ece100825cb0e1aa0c"
+  },
+  "repos": [
+    {
+      "branch": "master",
+      "remote": "github.com/Unknownow/pi-config",
+      "primary": true
+    }
+  ]
+}
