@@ -1,10 +1,10 @@
 {
   "v": 1,
   "flowId": "20261101-0128-trim-and-speed-up-the-pi-setup-normal-mo-921c",
-  "rev": 7,
-  "updated": "2026-11-01T02:05:08.180Z",
+  "rev": 8,
+  "updated": "2026-11-01T02:07:20.092Z",
   "title": "Trim and speed up the Pi setup (normal mode first, agents extension, sync deletes, faster flows)",
-  "stage": 3,
+  "stage": 4,
   "done": [
     "S1",
     "S2",
@@ -26,29 +26,32 @@
     "S18",
     "S19",
     "S20",
+    "S21",
     "S22",
-    "S23"
+    "S23",
+    "S24"
   ],
   "reviewBase": {
-    "d:/works/pi-config": "974316465982a28ee9b3d4748cbd2eba7287bbbd"
+    "d:/works/pi-config": "53aa5eeb77cdceaa6e3df51e78cf04f9979594ec"
   },
   "passedTrees": {
     "d:/works/pi-config": [
       "1a14e0dea90ed3a89dd5476ab9f9a8b4854ce09b",
       "54233d2608d7572513d1b9b666ef1338379c2e66",
-      "27ff61dffb4c79720dcec81d58c24418234b6d86"
+      "27ff61dffb4c79720dcec81d58c24418234b6d86",
+      "1bf6126b7161c7c9a918f80a322b11f0fab97c00"
     ]
   },
   "judgedMerges": {
     "d:/works/pi-config": {
-      "pr": "22",
-      "tree": "27ff61dffb4c79720dcec81d58c24418234b6d86",
-      "stage": 2
+      "pr": "23",
+      "tree": "1bf6126b7161c7c9a918f80a322b11f0fab97c00",
+      "stage": 3
     }
   },
   "repos": [
     {
-      "branch": "flow/trim-pi-stage3",
+      "branch": "master",
       "remote": "github.com/Unknownow/pi-config",
       "primary": true
     }

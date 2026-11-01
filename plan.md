@@ -562,10 +562,10 @@ Read local/delete-preview.txt (0 WOULD delete lines today) and create local/dele
 - [x] S18 `agents/config.ts` plus `pi/agent/agents.json`, per Design:
 - [x] S19 `agents/index.ts`: register `explore` and `advisor`, moved from `workflow/index.ts:2245` and `2858`, together with:
 - [x] S20 `workflow/index.ts`:
-- [ ] S21 Deliver: merge — agents extension, explore and advisor.
+- [x] S21 Deliver: merge — agents extension, explore and advisor.
 - [x] S22 Move `test_run` (`workflow/index.ts:2291` and its record helpers about 2026-2031 and 2328, 811-819) and the runner-guard
 - [x] S23 Update `README.md`: the workflow README sections on explore, advisor and test_run point to a short new `agents/README.md
-- [ ] S24 Deliver: merge — agents extension, test_run.
+- [x] S24 Deliver: merge — agents extension, test_run.
 - [ ] S25 Remove the test phase (D8):
 - [ ] S26 `/flow off` restores the model (D13):
 - [ ] S27 `git_task` in `off` (D14): its guard (`index.ts:2656`) allows phase `off` and execute. In `off` there is no judge gate o
