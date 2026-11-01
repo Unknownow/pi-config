@@ -1,10 +1,34 @@
 // node --test agent-end.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { handoverAction, approvalBlock, handoverKind, addPlanReply, composePlan, afterPass, noChangeStage, arbiterFirst, fixableFindings, hasPlanFlaw, planFlawLines, planFlawOnPass, canApprove, hasPlanLine, isPlanReady, judgeCapReached, minorFixOpen, passPending, stageEndAction, parseArbiter, phaseAfterFlow, shouldResume, skipJudge } from "./agent-end.ts";
+import { preFlowModelAction, gitTaskAllowed, migrateSavedState, handoverAction, approvalBlock, handoverKind, addPlanReply, composePlan, afterPass, noChangeStage, arbiterFirst, fixableFindings, hasPlanFlaw, planFlawLines, planFlawOnPass, canApprove, hasPlanLine, isPlanReady, judgeCapReached, minorFixOpen, passPending, stageEndAction, parseArbiter, phaseAfterFlow, shouldResume, skipJudge } from "./agent-end.ts";
 import { planWaitProblems } from "./stages.ts";
 
 const empty = { role: "assistant", content: [] };
+
+test("the pre-flow model is saved when a flow starts and restored when it ends", () => {
+	assert.equal(preFlowModelAction("off", "discuss"), "save");
+	assert.equal(preFlowModelAction("discuss", "off"), "restore");
+	assert.equal(preFlowModelAction("execute", "off"), "restore");
+	assert.equal(preFlowModelAction("off", "off"), "keep");
+	assert.equal(preFlowModelAction("discuss", "plan"), "keep");
+});
+
+test("git_task runs in normal mode (no gate) and in execute with a plan; discuss and plan refuse it", () => {
+	assert.deepEqual(gitTaskAllowed("off", false), { ok: true, ungated: true });
+	assert.deepEqual(gitTaskAllowed("execute", true), { ok: true, ungated: false });
+	assert.equal(gitTaskAllowed("execute", false).ok, false);
+	assert.equal(gitTaskAllowed("discuss", false).ok, false);
+	assert.equal(gitTaskAllowed("plan", true).ok, false);
+});
+
+test("a saved state from the removed test phase loads as off; its test tokens are dropped", () => {
+	assert.deepEqual(migrateSavedState({ phase: "test", tokens: { test: 1 } }), { phase: "off", escalated: false, judgeRounds: 0 });
+	const kept = migrateSavedState({ phase: "execute", tokens: { test: 1, plan: 2 } }) as { tokens: Record<string, number> };
+	assert.deepEqual(kept.tokens, { plan: 2 });
+	const same = { phase: "plan" };
+	assert.equal(migrateSavedState(same), same);
+});
 
 test("resume only after an overflow retry with an empty reply, at most twice", () => {
 	assert.equal(shouldResume(true, empty, 0), true);

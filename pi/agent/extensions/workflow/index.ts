@@ -48,7 +48,7 @@ import {
 	type Thinking,
 	type WorkflowConfig,
 } from "./config.ts";
-import { handoverAction, handoverKind, afterPass, noChangeStage, arbiterFirst, fixableFindings, canApprove, approvalBlock, addPlanReply, composePlan, type PlanDraft, hasPlanFlaw, planFlawLines, planFlawOnPass,  judgeCapReached, minorFixOpen, passPending, stageEndAction, parseArbiter, phaseAfterFlow, shouldResume, skipJudge } from "./agent-end.ts";
+import { handoverAction, handoverKind, preFlowModelAction, gitTaskAllowed, migrateSavedState, afterPass, noChangeStage, arbiterFirst, fixableFindings, canApprove, approvalBlock, addPlanReply, composePlan, type PlanDraft, hasPlanFlaw, planFlawLines, planFlawOnPass,  judgeCapReached, minorFixOpen, passPending, stageEndAction, parseArbiter, phaseAfterFlow, shouldResume, skipJudge } from "./agent-end.ts";
 import { countTokens, type Tok } from "./tokens.ts";
 import { idleReason, notifyCommand, notifyDue } from "./notify.ts";
 import * as prompts from "./prompts.ts";
@@ -403,7 +403,10 @@ export default function workflow(pi: ExtensionAPI) {
 		stopWaitTimer();
 		updateStatus(ctx);
 		const next = phaseAfterFlow(cfg.returnTo, state.phase);
-		if (!next) return;
+		if (!next) {
+			if (cfg.returnTo === "off" && state.phase === "execute") await setPhase(ctx, "off"); // restores the model from before the flow
+			return;
+		}
 		await setPhase(ctx, next);
 		ctx.ui.notify(`workflow: flow done, back to ${next === "discuss" ? "discussion" : "planning"} on ${describeRole(cfg.roles[next])}`, "info");
 	}
@@ -535,9 +538,10 @@ export default function workflow(pi: ExtensionAPI) {
 			if (readOnly(phase)) blockPlanTools();
 		}
 		if (leavingFlow && state.planDoc && !state.planDoc.finished) planMilestone(ctx, { at: new Date().toISOString(), ok: false, text: "abandoned" });
-		const samePhase = phase === state.phase;
-		if (state.phase === "off" && phase !== "off" && ctx.model) state.preFlowModel = { model: `${ctx.model.provider}/${ctx.model.id}`, thinking: pi.getThinkingLevel() };
-		const restoreModel = phase === "off" && state.phase !== "off" ? state.preFlowModel : undefined; // a repeated setPhase keeps what the judge already passed
+		const samePhase = phase === state.phase; // a repeated setPhase keeps what the judge already passed
+		const modelAction = preFlowModelAction(state.phase, phase);
+		if (modelAction === "save" && ctx.model) state.preFlowModel = { model: `${ctx.model.provider}/${ctx.model.id}`, thinking: pi.getThinkingLevel() };
+		const restoreModel = modelAction === "restore" ? state.preFlowModel : undefined;
 		if (leavingFlow) await dropReviewRefs(ctx);
 		state.phase = phase;
 		state.escalated = false;
@@ -2183,7 +2187,7 @@ export default function workflow(pi: ExtensionAPI) {
 		name: "git_task",
 		label: "Git task",
 		description:
-			"Delegate messy git work (merge conflicts, rebases, a long sequence of split commits) to a cheaper model and get its report back in the same turn. Plain commits, pushes and pull requests are faster in bash with git and gh. It runs under the same guard as you: a merge or a push to a protected branch is refused until the exact tree has passed judge. Give the exact task (repo, branch, commit messages, base). If it fails, do the work yourself.",
+			"Delegate messy git work (merge conflicts, rebases, a long sequence of split commits) to a cheaper model and get its report back in the same turn. Plain commits, pushes and pull requests are faster in bash with git and gh. It runs under the same guard as you: a merge or a push to a protected branch is refused until the exact tree has passed judge in a flow; in normal mode (no flow) there is no judge gate. Give the exact task (repo, branch, commit messages, base). If it fails, do the work yourself.",
 		promptSnippet: "git_task: delegate messy git work (conflicts, rebases, long split-commit sequences) to a cheap model; plain commit/push/PR go through bash",
 		parameters: Type.Object({
 			task: Type.String({ description: "What to do, e.g. 'commit the staged changes as \"feat: x\", push the branch, open a PR against main'" }),
@@ -2191,8 +2195,8 @@ export default function workflow(pi: ExtensionAPI) {
 		}),
 		async execute(_id, params, signal, onUpdate, ctx) {
 			const reply = (text: string, details: object = {}) => ({ content: [{ type: "text" as const, text }], details });
-			const normalMode = state.phase === "off";
-			if (!normalMode && (state.phase !== "execute" || !state.approvedPlan)) return reply("git_task works only in normal mode or while executing an approved plan. Nothing changed.");
+			const allowed = gitTaskAllowed(state.phase, !!state.approvedPlan);
+			if (!allowed.ok) return reply("git_task works only in normal mode or while executing an approved plan. Nothing changed.");
 			if (!fs.existsSync(GIT_GUARD_EXTENSION)) return reply(`git_task failed: git guard extension not found at ${GIT_GUARD_EXTENSION}`);
 			const repos = await flowRepos(ctx);
 			const cwd = params.repo ? path.resolve(ctx.cwd, params.repo) : ctx.cwd;
@@ -2203,7 +2207,7 @@ export default function workflow(pi: ExtensionAPI) {
 				protectedBranches: cfg.protectedBranches,
 				passedTrees: state.passedTrees ?? {},
 				noMerge: noMerge(state.approvedPlan ?? ""),
-				...(normalMode ? { ungated: true } : {}),
+				...(allowed.ungated ? { ungated: true } : {}),
 			};
 			const task = [
 				params.task.trim(),
@@ -3620,10 +3624,7 @@ export default function workflow(pi: ExtensionAPI) {
 
 		if (saved?.data) {
 			// Pi restores the session's model itself; only the tool set needs re-applying.
-			state = { ...saved.data };
-			// Saved by the removed test phase: back to normal mode.
-			if ((state.phase as string) === "test") state = { phase: "off", escalated: false, judgeRounds: 0 };
-			if (state.tokens) delete (state.tokens as Record<string, unknown>).test;
+			state = migrateSavedState({ ...saved.data }) as FlowState;
 			if (state.tokenUnit !== "both") {
 				// Saved before counts carried both raw and cost-weighted totals; the old ones would mislead.
 				state.tokens = undefined;

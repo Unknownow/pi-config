@@ -120,6 +120,31 @@ export function phaseAfterFlow(returnTo: "discuss" | "plan" | "off", phase: "off
 	return returnTo !== "off" && phase === "execute" ? returnTo : undefined;
 }
 
+type FlowPhase = "off" | "discuss" | "plan" | "execute";
+
+/** What setPhase does with the pre-flow model: save it when a flow starts, restore it when the phase goes back to off. */
+export function preFlowModelAction(from: FlowPhase, to: FlowPhase): "save" | "restore" | "keep" {
+	if (from === "off" && to !== "off") return "save";
+	if (from !== "off" && to === "off") return "restore";
+	return "keep";
+}
+
+/** Where git_task may run: normal mode (no judge gate) or executing an approved plan (gated). */
+export function gitTaskAllowed(phase: FlowPhase, hasPlan: boolean): { ok: boolean; ungated: boolean } {
+	if (phase === "off") return { ok: true, ungated: true };
+	return { ok: phase === "execute" && hasPlan, ungated: false };
+}
+
+/** A saved flow state from before the test phase was removed loads as normal mode; its test token row is dropped. */
+export function migrateSavedState<T extends { phase: string; tokens?: unknown }>(data: T): T | { phase: "off"; escalated: false; judgeRounds: 0 } {
+	if (data.phase === "test") return { phase: "off", escalated: false, judgeRounds: 0 };
+	if (data.tokens && typeof data.tokens === "object" && "test" in data.tokens) {
+		const { test: _drop, ...rest } = data.tokens as Record<string, unknown>;
+		return { ...data, tokens: rest };
+	}
+	return data;
+}
+
 /** Handovers that start a new piece of work (execute, a stage) may compact first; the others ("continue": fix rounds, open steps) never do. */
 export function handoverKind(customType: string): "start" | "continue" {
 	return customType === "workflow-execute" || customType === "workflow-stage" ? "start" : "continue";
