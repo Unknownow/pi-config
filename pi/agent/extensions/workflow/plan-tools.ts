@@ -21,7 +21,7 @@ export function refilterPlanTools(
 export const KEPT_TOOLS = ["explore", "advisor", "test_run"];
 
 /** Workflow tools that only mean something inside a flow; normal mode does not declare them to the model. */
-export const FLOW_ONLY_TOOLS = ["plan_check", "deliver"];
+export const FLOW_ONLY_TOOLS = ["plan_check", "deliver", "wait_for_user", "publish_packages"];
 
 export type ToolPhase = "off" | "discuss" | "plan" | "execute";
 

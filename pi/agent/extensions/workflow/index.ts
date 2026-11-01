@@ -71,7 +71,7 @@ import { checkpointAmendment, checkpointNote, checkpointOutcome, deliverHint, de
 import { pushArgs, tagDecision } from "./tags.ts";
 import { type CheckVerdict, autopilotAmendment, autopilotReply, checkTitle, checkVerdict, cleanCheck, waitCheckProblem, type HumanCheck, humanChecks, parseVerifyStep, parseWaitStep, pollDecision, resumePrefix, verifyAmendment, waitAmendment } from "./waits.ts";
 import { nextStage, parseStages, planWaitProblems, stageLine, stageNote, stageStart, stagesOutcome } from "./stages.ts";
-import { planToolProblem, planToolRefused } from "./readonly-tools.ts";
+import { planToolProblem, planToolRefused, phaseToolRefusal } from "./readonly-tools.ts";
 import { refilterPlanTools, hiddenInPhase, syncFlowOnlyTools } from "./plan-tools.ts";
 import { AGENT_ROLES, type AgentRole, loadConfig as loadAgents, saveRole as saveAgentRole } from "../agents/config.ts";
 import { countSubagent } from "./agent-events.ts";
@@ -491,6 +491,8 @@ export default function workflow(pi: ExtensionAPI) {
 	}
 
 	/** The read-only tool set of plan phase. */
+	let publishCache: { key: string; value: boolean } | undefined;
+
 	function blockPlanTools(): void {
 		state.toolsBeforePlan ??= pi.getActiveTools();
 		pi.setActiveTools(state.toolsBeforePlan.filter((t) => !planToolRefusedIn(t)));
@@ -2605,7 +2607,9 @@ export default function workflow(pi: ExtensionAPI) {
 		// pi-claude-bridge saved (prompt_capture_unresolved). So both sections are always set, in this order.
 		opts.sections.workspace = prompts.workspaceSection(ctx.cwd, folders, touched, listed);
 		const staged = state.phase === "execute" ? currentStages() : undefined;
-		const canPublish = state.phase === "plan" || state.phase === "execute" ? (await flowRepos(ctx)).some((r) => fs.existsSync(path.join(r.root, "scripts", "update-packages.mjs"))) : false;
+		const publishKey = [ctx.cwd, ...existingFolders(), ...(state.touchedRepos ?? [])].join("|");
+		if (publishCache?.key !== publishKey) publishCache = { key: publishKey, value: (await flowRepos(ctx)).some((r) => fs.existsSync(path.join(r.root, "scripts", "update-packages.mjs"))) };
+		const canPublish = (state.phase === "plan" || state.phase === "execute") && publishCache.value;
 		const phaseText = prompts.phaseSection(state.phase, {
 			publish: canPublish,
 			staging: cfg.stagedPlans,
@@ -2667,7 +2671,7 @@ export default function workflow(pi: ExtensionAPI) {
 			return;
 		}
 		if (state.phase !== "plan" && state.phase !== "discuss") return;
-		const refused = planToolRefused(event.toolName, planAllowedTools(), cfg.planBlockedTools);
+		const refused = phaseToolRefusal(state.phase, event.toolName, planAllowedTools(), cfg.planBlockedTools);
 		if (refused) return { block: true, reason: planBlocked(refused) };
 		if (!cfg.planReadOnlyBash) return;
 		if (event.toolName === "powershell") return { block: true, reason: planBlocked("PowerShell commands are not checked, so they are off while planning") };

@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { refilterPlanTools } from "./plan-tools.ts";
-import { planToolRefused } from "./readonly-tools.ts";
+import { planToolRefused, phaseToolRefusal } from "./readonly-tools.ts";
 
 function fakePi(initial: string[]) {
 	const pi = {
@@ -58,18 +58,24 @@ test("phases never hide explore, advisor or test_run; the hook refuses test_run 
 	assert.equal(hiddenInPhase("plan", "git_task", planRefused), true);
 	assert.equal(hiddenInPhase("execute", "edit", planRefused), false);
 	assert.equal(hiddenInPhase("off", "plan_check", planRefused), true);
+	assert.equal(hiddenInPhase("off", "wait_for_user", planRefused), true);
+	assert.equal(hiddenInPhase("off", "publish_packages", planRefused), true);
 	assert.equal(hiddenInPhase("off", "judge", planRefused), false);
 	assert.equal(hiddenInPhase("off", "git_task", planRefused), false);
 	// The tool_call hook still refuses test_run in discuss and plan.
-	assert.notEqual(planToolRefused("test_run", [/^(read|bash|explore|advisor|judge)$/], ["edit", "write"]), null);
+	const allowed = [/^(read|bash|explore|advisor|judge)$/];
+	assert.notEqual(phaseToolRefusal("discuss", "test_run", allowed, ["edit"]), null);
+	assert.notEqual(phaseToolRefusal("plan", "test_run", allowed, ["edit"]), null);
+	assert.equal(phaseToolRefusal("off", "test_run", allowed, ["edit"]), null);
+	assert.equal(phaseToolRefusal("execute", "test_run", allowed, ["edit"]), null);
 });
 
 test("flow-only tools leave the active set in normal mode and return with a flow", () => {
-	const pi = { active: ["read", "plan_check", "deliver", "judge"], getActiveTools: () => [...pi.active], setActiveTools: (t: string[]) => { pi.active = [...t]; }, getAllTools: () => ["read", "plan_check", "deliver", "judge"].map((name) => ({ name })) };
+	const pi = { active: ["read", "plan_check", "deliver", "wait_for_user", "publish_packages", "judge"], getActiveTools: () => [...pi.active], setActiveTools: (t: string[]) => { pi.active = [...t]; }, getAllTools: () => ["read", "plan_check", "deliver", "wait_for_user", "publish_packages", "judge"].map((name) => ({ name })) };
 	assert.equal(syncFlowOnlyTools(pi, "off"), true);
 	assert.deepEqual(pi.active, ["read", "judge"]);
 	assert.equal(syncFlowOnlyTools(pi, "off"), false);
 	assert.equal(syncFlowOnlyTools(pi, "execute"), true);
-	assert.deepEqual(pi.active, ["read", "judge", "plan_check", "deliver"]);
+	assert.deepEqual(pi.active, ["read", "judge", "plan_check", "deliver", "wait_for_user", "publish_packages"]);
 	assert.equal(syncFlowOnlyTools(pi, "plan"), false);
 });
