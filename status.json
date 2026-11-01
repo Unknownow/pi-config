@@ -1,0 +1,18 @@
+{
+  "v": 1,
+  "flowId": "20261101-1649-make-the-failed-delete-sync-test-run-on-9a11",
+  "rev": 1,
+  "updated": "2026-11-01T09:49:18.348Z",
+  "title": "Make the failed-delete sync test run on every platform",
+  "done": [],
+  "reviewBase": {
+    "d:/works/pi-config": "2807000a6dec39900856dbbd76c2e47d637fc105"
+  },
+  "repos": [
+    {
+      "branch": "master",
+      "remote": "github.com/Unknownow/pi-config",
+      "primary": true
+    }
+  ]
+}
