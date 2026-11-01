@@ -24,8 +24,8 @@ import { RUNNER_GUARD_ENV, type RunnerGuardSpec } from "./runner-guard.ts";
 import { addUsage, emptyUsage, mapLimit, noContextFilesFor, type RunResult, runSubagent } from "./subagent.ts";
 import { callDir, formatTaskResult, parseRunnerReply, runnerGate, sanitizeIds, scheduleTasks, taskCard, taskRecord, type TestTask, verifyRun } from "./test-run.ts";
 import { FlowView, type RunView, shortModel } from "../workflow/view.ts";
-import { forwardedServers, roleTools } from "../workflow/knowledge.ts";
-import { knowledgeTools } from "../workflow/prompts.ts";
+import { forwardedServers, roleTools } from "./knowledge.ts";
+import { knowledgeTools } from "./prompts.ts";
 import { uniqueRoots } from "../workflow/repos.ts";
 
 const EXPLORE_REASONS = ["question", "broad_search", "timeout", "too_much_output", "location_unknown", "parallel_lookups"] as const;

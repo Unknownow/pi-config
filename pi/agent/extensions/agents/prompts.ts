@@ -1,6 +1,13 @@
 /** System-prompt text of the agents extension's subagents: explore, advisor and the test runner. */
 
-import { PACE } from "../workflow/prompts.ts";
+/** Keep-working and parallel-call rule, shared by every role's prompt. */
+export const PACE =
+	"Don't stop between steps: keep going until you need the user's input, a tool's result or an explorer's answer. Put independent tool calls in the same reply so they run in parallel (several reads, a test run next to an explore, several explore queries or test tasks in one call); wait only for results the next step needs.";
+
+/** One line for explore, advisor and arbiter when they have the knowledge tools. */
+export function knowledgeTools(tools: string[]): string {
+	return `Team knowledge: ${tools.map((t) => `\`${t}\``).join(", ")} answer "how is this done here" questions (rules, decisions, guidelines, playbooks). Use them when a question touches the team's conventions, and cite the entry IDs you rely on.`;
+}
 
 export const EXPLORE = `You are the explorer: a fast, read-only helper for the planner and the executor.
 Answer the question with read, grep, find and ls; decide yourself how much to read.

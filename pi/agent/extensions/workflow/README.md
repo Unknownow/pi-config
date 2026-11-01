@@ -227,8 +227,10 @@ Other extensions (the worktree extension in this repo) may rely on exactly these
 - **K2. Switch guard.** `session_before_switch` (`new` and `resume`) is cancelled while the phase is execute and a plan is approved, with the notice "a flow is executing; finish it or leave it with /flow off before switching sessions".
 - **K3. CLI flags.** `--add-dir` takes absolute folders joined by `;` on Windows and `:` elsewhere (applied at startup only, not again after a session switch); `--flow plan|execute|off` sets the start phase.
 - **K4. `workflow:status` event.** `pi.events.emit("workflow:status", { v: 1, phase: "off"|"discuss"|"plan"|"execute", flowId?, title?, stage?, stages? })`, emitted when the payload changes.
-- **K5. Shell parser.** `readonly-bash.ts` exports `parseCommands`, `KEYWORDS` and `WRAPPERS`. Other extensions may import these three; changing their names, signatures or meaning is a contract change.
+- **K5. Shell parser.** `readonly-bash.ts` exports `parseCommands`, `KEYWORDS`, `WRAPPERS`, `commandReadOnlyProblem` and `unwrapCommand`. Other extensions may import these five; changing their names, signatures or meaning is a contract change.
 - **K6. `workflow:folder-add` event.** `/folders add` emits `pi.events.emit("workflow:folder-add", { v: 1, cwd, folder, claim })` after its checks (`cwd` and `folder` absolute, forward slashes). A listener calls `claim(promise)` synchronously during the emit; the promise resolves to `{ folder }` (use this path instead), `{ error }` (cancel the add) or `null` (no opinion). Late claims are ignored. The workflow waits for all claims for at most 300 s; an error, a rejection or the timeout cancels the add, otherwise the first `{ folder }` replaces the path (and passes the same checks again). No listener means the path is used as given.
+- **K7. Repo helpers.** `repos.ts` exports `uniqueRoots` and `repoKey`; the agents extension imports them.
+- **K8. Run cards.** `view.ts` exports `FlowView`, `RunView`, `runLine` and `shortModel`; the agents extension imports them to draw its run cards and to count its finished runs toward a flow.
 
 ## Team knowledge
 
