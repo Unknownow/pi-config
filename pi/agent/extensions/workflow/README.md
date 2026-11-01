@@ -25,9 +25,8 @@ plan is read-only:   bash refuses commands that change files, git or GitHub
 | `advisor` | `advisor` tool of the agents extension | choosing an approach, after an error repeats (auto-nudged after `repeatedErrorThreshold` failures), before "done" (see `../agents/README.md`) |
 | `judge` | `judge` tool, sub-`pi` with the git diff | the diff is ready; when a run ends with an unreviewed diff it asks (`autoJudge`) |
 | `arbiter` | sub-`pi` with the plan, the judge's report and the diff | the judge questions the plan and `planFlaw` is `auto`, or a passed review has a major plan flaw (whatever `planFlaw` is) (or you pick "Let the arbiter decide", or you picked *Approve, arbiter solves plan flaws* for this flow) |
-| `git_task` (`commit` role) | sub-`pi` with bash only, a git helper prompt, and its own git guard (`git-guard.ts`) with the same judge gate as the main session | when the executor calls `git_task` to delegate commit, push, pull request or merge work; default model `claude-bridge/claude-haiku-5-5`, thinking `medium` |
+| `git_task` (`commit` role) | sub-`pi` with bash only, a git helper prompt, and its own git guard (`git-guard.ts`) with the same judge gate as the main session | when the executor (or normal mode, where the gate is off) calls `git_task` to delegate commit, push, pull request or merge work; default model `claude-bridge/claude-haiku-5-5`, thinking `medium` |
 | `escalate` | main session model | `/flow escalate` |
-| `test` | main session model; edit/write/judge off, bash read-only plus `test.supervisorBashAllow`, plus `test_run` | `/flow test <scope>`: plans tests, sends runners, writes the test report (see Test and fix) |
 | `runner` | `test_run` tool of the agents extension; refused in discuss and plan (runner bash is not read-only) | one per test task card; reports facts only (see `../agents/README.md`) |
 
 ## Hands-off run
@@ -69,7 +68,7 @@ after approval runs on its own:
   - **`git_task {task, repo?}`:** delegates messy git work (conflicts, rebases, long split-commit sequences; plain commits, pushes and pull requests go through bash) to the `commit` role (default `claude-bridge/claude-haiku-5-5`, thinking `medium`). It runs in a fresh subagent under the same guard and gate (`git-guard.ts`, settings in `PI_WORKFLOW_GIT_GUARD`), returns in the same turn with the report and a line per repo (`<repo>: branch <b>, <n> commits since review base, PR #<n> <STATE> <url>`), and a failure comes back as the tool result.
 - **Review base:** the judge diffs from a per-repo review base, a commit taken when the flow enters execute (a repo that joins later gets the fork point or its HEAD then), kept in the local ref `refs/pi/review-base/<flowId>`. The ref is never pushed, is deleted when the flow ends and is swept by the plan prune. Commits do not change what was judged. When `origin/<base>` has been merged into the branch, the base moves forward with an in-memory `git merge-tree`, so the merged `main` does not show up in the review; if that fails the base stays and the judge gets a note.
 - **Push guard:** it never force-pushes, deletes or mirrors, uses `+`/`:` refspecs, `--all` or `--no-verify`, and changes to `core.hooksPath` / `GIT_CONFIG_*` are refused (`push-guard.ts`). `gh pr merge --admin` / `--auto` and `gh pr review --approve` are always refused. A merge or protected push must be its own command line. Like the plan-phase checks it reads the command text: a guard against a drifting executor, not a sandbox.
-- **Removed config keys:** `delivery.ask`, `delivery.default`, `delivery.runner` and `test.delivery` (and `/flow delivery`) are ignored if still in `workflow.json`; the other `delivery` keys (`splitCommits`, `branchPrefix`, `base`, `mergeMethod`, `deleteBranch`) stay.
+- **Removed config keys:** `delivery.ask`, `delivery.default`, `delivery.runner` (and `/flow delivery`) are ignored if still in `workflow.json`; the other `delivery` keys (`splitCommits`, `branchPrefix`, `base`, `mergeMethod`, `deleteBranch`) stay.
 - **Minor findings:** a passed review with fixable minor findings goes back to the executor for up to `maxMinorRounds`
   (default 1, `0` ends the stage at once) fix rounds, then the stage ends anyway; the review after a minor-fix round reports only blockers and majors. Fix them, or dispute a wrong one. `[knowledge ...]` and
   `[plan-flaw]` findings never start a round.
@@ -148,7 +147,7 @@ These let one plan deliver or pause partway through, without replanning and with
 - **Approve waits:** `wait_for_user {kind: "approve"}` doesn't pause. The tool tells the agent to review the item and, if it holds, post a comment where approval was asked (`gh issue comment <n> -R <repo> --body "approved (workflow autopilot): <reason>"`), run the check, and continue. The plan gets an `## Amendment N (executor: autopilot)`.
 - **Act waits:** the agent does the step when a non-interactive command can and the repo's `AGENTS.md`/`CLAUDE.md` allow it; otherwise it calls `wait_for_user` with `manual: true`, which pauses and polls as usual.
 - **Menus skipped:** `autoJudge: "ask"` (runs the judge), the plan-flaw menu (the arbiter decides), the stage-advance questions, and the "knowledge not checked" question (a notice only).
-- **Still asks:** plan approval, judge failure, the judge round cap, an arbiter result of "ask", open plan steps, the test-phase menus and stage-start `(after: …)` waits.
+- **Still asks:** plan approval, judge failure, the judge round cap, an arbiter result of "ask", open plan steps, and stage-start `(after: …)` waits.
 - **Limits:** it never scripts around a confirmation a person must type and never overrides a repo's `AGENTS.md`/`CLAUDE.md`. It does the delivery itself (commit, push, pull request, merge after the judge passed) unless the plan says `Delivery: no merge`.
 
 **Tags.** `deliver {tag, step?, reason?}` creates or moves a tag inside the executor's turn and then continues the same stage.
@@ -211,38 +210,11 @@ its plan and hand over, even when you said "fix it" or "do it for me".
 - It is a guard against the planner drifting into execution, not a sandbox. The code checks are
   regexes: a determined disguise (a computed lookup on an alias of `require('fs')`, say) can still get
   past them.
-- Tests: `node --experimental-strip-types --test agent-end.test.ts delivery.test.ts merge-gate.test.ts folder-add.test.ts readonly-bash.test.ts readonly-tools.test.ts plan-tools.test.ts tokens.test.ts push-guard.test.ts knowledge.test.ts registry-publish.test.ts agent-events.test.ts notify.test.ts repos.test.ts stages.test.ts git-guard.test.ts repo-diff.test.ts prompts.test.ts config.test.ts metrics.test.ts plan-store.test.ts boundary.test.ts plan-doc.test.ts test-report.test.ts test-run.test.ts test-flow.test.ts flow-report.test.ts view.test.ts waits.test.ts checkpoints.test.ts tags.test.ts`.
+- Tests: `node --experimental-strip-types --test agent-end.test.ts delivery.test.ts merge-gate.test.ts folder-add.test.ts readonly-bash.test.ts readonly-tools.test.ts plan-tools.test.ts tokens.test.ts push-guard.test.ts knowledge.test.ts registry-publish.test.ts agent-events.test.ts notify.test.ts repos.test.ts stages.test.ts git-guard.test.ts repo-diff.test.ts prompts.test.ts config.test.ts metrics.test.ts plan-store.test.ts boundary.test.ts plan-doc.test.ts  flow-report.test.ts view.test.ts waits.test.ts checkpoints.test.ts tags.test.ts`.
 
-## Test and fix
+## Test phase (removed)
 
-A flow for testing and fixing, next to plan → execute → judge → commit. `/flow test <scope>` (or `/flow test` and then typing the scope, or `pi --flow test`) starts the **test phase**.
-
-- **Supervisor** (role `test`, Opus medium): runs in the main session. Reads like the plan phase (edit, write, judge and plan_check are off; bash is read-only plus `test.supervisorBashAllow`, by default `adb devices`, `adb shell getprop` and `unity status`). It plans the tests, sends task cards to runners with the `test_run` tool, triages the results, diagnoses bugs and ends each round with a test report.
-- **Runners and `test_run`**: the `test_run` tool, its runners (role `runner`), the unverified-claim check and the runner guard now live in the agents extension and work in every mode; see `../agents/README.md`. In a test flow the supervisor calls it as before; its records go to the temp folder.
-- **Test report**: the supervisor's last reply of a round, parsed by `test-report.ts`:
-
-```
-## Test report: <scope>
-Ran: <command or scenario> → <result counts>
-**S1.** [bug] <title>      (Repro, Expected (source: ...), Actual, Suspect, Root cause, Fix direction)
-**S2.** [ask] <title>      (Question, Options)
-**S3.** [blocked] <title>  (Needs)
-**S4.** [manual] <title>   (Steps, Look for)
-**S5.** [fixed] <title>    (Evidence)
-VERDICT: CLEAN | BUGS
-```
-
-  A reply with no valid report gets one automatic request to fix it, then a Retry / Stop menu.
-- **Fix loop** (`test-flow.ts`, pure; `index.ts` drives it). After a valid report:
-  1. Open `[bug]` items start a **fix round** by themselves, with no approval and no delivery menu: the plan is regenerated from the bugs (steps S<n> with Repro, Expected, Fix direction; arbiter amendments are kept), the session switches to the execute model, and the executor gets the fix-round rules (root cause, regression test, never weaken an existing test, only the listed steps).
-  2. The judge reviews it with the test-flow addendum (weakened tests, special-cased repro input and changes beyond the steps are major). The arbiter decides plan flaws; when it hands one to the user, the flow does not stop: the question is queued and the plan notes the choice as upheld.
-  3. The executor commits its fixes itself, then the supervisor tests again: it re-runs the fixed items' repros and the `Ran:` checks and reports each as `[fixed]` or `[bug]`, then continues with the rest of the scope.
-  4. A bug that fails again after its fix makes the next fix round run on the escalate model. After `test.refails` (2) failed fixes it becomes a question.
-  5. At most `test.maxRounds` (3) fix rounds; then a menu offers that many more or Stop (`maxRounds: 0` = no limit).
-- **When it asks the user**, in one batch at the end of a test round, one prompt per question; Escape skips a question: an `[ask]` item (its Options, "Other", Skip), a `[blocked]` item ("It's available now", Skip, Stop), a bug that failed `test.refails` times (keep trying escalated, skip it, stop) and a plan question the arbiter could not settle (the test's Expected is right, the fix is right, skip). Skipped items are never asked or fixed again. Any other answer is recorded as a decision (`D2…`) and the supervisor tests again with it.
-- **End**: the flow ends when no bug and no question is open, or on Stop. The card says `test: <n> fixed in <r> fix round(s)`, then `; open: <ID tag, …>` and `; human checks: <IDs>` (the `[manual]` items, listed on the end card with their steps and what to look for, never asked) and `; skipped: <IDs>` when there are any; it is ok when no `[bug]` item remains.
-- **Not supported**: `/flow resume` for test flows (they are refused).
-- Config: the `test` block of workflow.json (`maxRounds`, `refails`, `supervisorBashAllow`) and the role `test`; the runner settings (`concurrency`, `maxTasks`, `runnerTimeoutMs`, `runnerTools`, `runnerDeny`, `runnerPathFlags`, `runnerPathEnv`) and the role `runner` are in agents.json.
+The test phase and its fix loop are gone. Test in normal mode with `test_run` (agents extension) or inside a flow's execute phase; `/flow test`, `--flow test`, the `test` role and the `test` block of `workflow.json` are ignored if still present, and a saved session in the test phase loads as `off`.
 
 ## Public contract for other extensions
 
@@ -250,9 +222,9 @@ Other extensions (the worktree extension in this repo) may rely on exactly these
 
 - **K1. `session-folders` entry.** `customType: "session-folders"`, data `{ "v": 1, "cwd": "<working folder, forward slashes>", "folders": ["<absolute, forward slashes>", ...] }`. The workflow is the only writer. It appends one whenever the added folders change, and at every session start (not reload) when the newest one is missing or differs. Readers use the newest entry on the branch; none means no added folders.
 - **K1b. Folder follow rule.** At session start (not reload), when saved state exists and the newest `session-folders` entry names another working folder than the current one, each added folder inside a git repo is replaced by the same path in the one worktree of that repo that sits next to the working folder's repo (same parent folder), if it exists. Plain folders, folders without exactly one such worktree and missing targets stay. A result equal to the working folder is dropped. A notice lists the moves.
-- **K2. Switch guard.** `session_before_switch` (`new` and `resume`) is cancelled while the phase is execute and a plan is approved, or the phase is test and a test flow is active, with the notice "a flow is executing; finish it or leave it with /flow off before switching sessions".
-- **K3. CLI flags.** `--add-dir` takes absolute folders joined by `;` on Windows and `:` elsewhere (applied at startup only, not again after a session switch); `--flow plan|execute|test|off` sets the start phase.
-- **K4. `workflow:status` event.** `pi.events.emit("workflow:status", { v: 1, phase: "off"|"plan"|"execute"|"test", flowId?, title?, stage?, stages? })`, emitted when the payload changes.
+- **K2. Switch guard.** `session_before_switch` (`new` and `resume`) is cancelled while the phase is execute and a plan is approved, with the notice "a flow is executing; finish it or leave it with /flow off before switching sessions".
+- **K3. CLI flags.** `--add-dir` takes absolute folders joined by `;` on Windows and `:` elsewhere (applied at startup only, not again after a session switch); `--flow plan|execute|off` sets the start phase.
+- **K4. `workflow:status` event.** `pi.events.emit("workflow:status", { v: 1, phase: "off"|"discuss"|"plan"|"execute", flowId?, title?, stage?, stages? })`, emitted when the payload changes.
 - **K5. Shell parser.** `readonly-bash.ts` exports `parseCommands`, `KEYWORDS` and `WRAPPERS`. Other extensions may import these three; changing their names, signatures or meaning is a contract change.
 - **K6. `workflow:folder-add` event.** `/folders add` emits `pi.events.emit("workflow:folder-add", { v: 1, cwd, folder, claim })` after its checks (`cwd` and `folder` absolute, forward slashes). A listener calls `claim(promise)` synchronously during the emit; the promise resolves to `{ folder }` (use this path instead), `{ error }` (cancel the add) or `null` (no opinion). Late claims are ignored. The workflow waits for all claims for at most 300 s; an error, a rejection or the timeout cancels the add, otherwise the first `{ folder }` replaces the path (and passes the same checks again). No listener means the path is used as given.
 
@@ -350,15 +322,14 @@ next run starts.
 |---|---|
 | `/flow` | status: phase, the model for each role, config path |
 | `/flow board` | live view of every flow on this machine (overlay, read-only) |
-| `/flow discuss` / `plan` / `execute` / `off` | switch phase (`off` leaves the model alone). `/flow plan` from discuss also asks the planner for the `Plan:`; `/flow approve` in discuss does the same |
-| `/flow test [scope]` | test phase: a strong supervisor plans tests, cheap runners run them, the report lists the bugs (without a scope, type it as the next message) |
+| `/flow discuss` / `plan` / `execute` / `off` | switch phase (`off` restores the model and thinking level from before the flow). `/flow plan` from discuss also asks the planner for the `Plan:`; `/flow approve` in discuss does the same |
 | `/flow approve` | approve the plan: switch to execute and start (also offered when a plan ends) |
 | `/flow escalate` (`fable`) / `/flow back` (`opusplan`) | manual escalation and return |
 | `/flow judge` | review the current diff now |
 | `/flow tokens` | token breakdown of the current flow so far |
 | `/flow model [role] [provider/id[:thinking]]` | set a role's model and save it to workflow.json (agents.json for explore, advisor and runner); left out, it lists the roles, the models with auth and the thinking levels (Tab completes model IDs) |
 | `/flow reload` | re-read workflow.json |
-| `pi --flow execute` (`plan`, `test`, `off`) | start a session in a given phase |
+| `pi --flow execute` (`plan`, `off`) | start a session in a given phase |
 | `/folders add <path>` / `remove <path\|n>` / `list` | folders that are part of this session (reloads Pi); Tab completes folder paths after `add` and folder numbers after `remove`; other extensions may replace or refuse the folder on `add` (K6) |
 | `pi --add-dir <path>` | start a session with extra folders (`;` separates several on Windows, `:` elsewhere) |
 

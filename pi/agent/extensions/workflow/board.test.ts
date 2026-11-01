@@ -56,7 +56,7 @@ test("liveEvents: first snapshot, no-op and endings", () => {
 	assert.deepEqual(liveEvents(live(), live({ updated: "2026-10-22T11:00:00.000Z" })), []);
 	const busy = live({ judgeRound: 1, waiting: "review", runs: [{ role: "judge", label: "round 1", activity: "" }] });
 	assert.deepEqual(liveEvents(busy, live({ judgeRound: 1 })), ["wait over", "judge finished: round 1"]);
-	assert.equal(liveEvents(live(), live({ phase: "test" }))[0], "phase execute → test");
+	assert.equal(liveEvents(live(), live({ phase: "judge" }))[0], "phase execute → judge");
 });
 
 test("progressBar", () => {

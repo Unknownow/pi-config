@@ -15,6 +15,12 @@ test("parseGuardSpec round-trips a valid spec", () => {
 	assert.deepEqual(parseGuardSpec(JSON.stringify(spec)), spec);
 });
 
+test("parseGuardSpec keeps the ungated flag and rejects a non-boolean one", () => {
+	const base = { roots: [], protectedBranches: ["main"], passedTrees: {}, noMerge: false };
+	assert.equal(parseGuardSpec(JSON.stringify({ ...base, ungated: true }))?.ungated, true);
+	assert.equal(parseGuardSpec(JSON.stringify({ ...base, ungated: "yes" })), null);
+});
+
 test("parseGuardSpec rejects missing or malformed specs", () => {
 	assert.equal(parseGuardSpec(undefined), null);
 	assert.equal(parseGuardSpec(""), null);
