@@ -115,11 +115,12 @@ Report any WARNING lines from the import.
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 Create the branch `flow/start-flow-off` from `master`.
-- [ ] S2 Deliver: merge — `startPhase: "off"` in `pi/agent/workflow.json`.
-- [ ] S3 From `D:/works/pi-config`, on `master` after the merge is pulled, run `node bin/import.js --dry-run`.
+- [x] S1 Create the branch `flow/start-flow-off` from `master`.
+- [x] S2 Deliver: merge — `startPhase: "off"` in `pi/agent/workflow.json`.
+- [x] S3 From `D:/works/pi-config`, on `master` after the merge is pulled, run `node bin/import.js --dry-run`.
 - [ ] S4 Wait: the user reviews the S3 dry-run list and approves it by creating the empty file `D:/works/pi-config/local/import-a
 - [ ] S5 From `D:/works/pi-config`, run `node bin/import.js` with no flags, then delete `local/import-approved.txt`. Confirm all 
 - [ ] S7 Final report to the user:
 ## For you after the flow
 - S6 Verify: restart Pi in any folder and open a new session — look for: the status bar shows no flow phase, tools such as ed
+**Waiting for:** Review the import dry run (44 files written, 0 deleted, no local edits overwritten) and approve by creating the empty file D:/works/pi-config/local/import-approved.txt
