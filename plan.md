@@ -566,11 +566,11 @@ Read local/delete-preview.txt (0 WOULD delete lines today) and create local/dele
 - [x] S22 Move `test_run` (`workflow/index.ts:2291` and its record helpers about 2026-2031 and 2328, 811-819) and the runner-guard
 - [x] S23 Update `README.md`: the workflow README sections on explore, advisor and test_run point to a short new `agents/README.md
 - [x] S24 Deliver: merge — agents extension, test_run.
-- [ ] S25 Remove the test phase (D8):
-- [ ] S26 `/flow off` restores the model (D13):
-- [ ] S27 `git_task` in `off` (D14): its guard (`index.ts:2656`) allows phase `off` and execute. In `off` there is no judge gate o
-- [ ] S28 Docs rows (D24) for S25–S27.
-- [ ] S29 Deliver: merge — remove the test phase and normal-mode extras.
+- [x] S25 Remove the test phase (D8):
+- [x] S26 `/flow off` restores the model (D13):
+- [x] S27 `git_task` in `off` (D14): its guard (`index.ts:2656`) allows phase `off` and execute. In `off` there is no judge gate o
+- [x] S28 Docs rows (D24) for S25–S27.
+- [x] S29 Deliver: merge — remove the test phase and normal-mode extras.
 - [ ] S30 Per-phase tools (D22):
 - [ ] S31 Trim `prompts.ts` (D23):
 - [ ] S32 Docs rows for S30–S31. Update `README.md` for the tool tables per phase.
