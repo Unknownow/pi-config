@@ -570,4 +570,3 @@ Read local/delete-preview.txt (0 WOULD delete lines today) and create local/dele
 ## For you after the flow
 - S35 Verify: restart Pi in `D:\works\pi-config` — look for:
 - S36 Verify: on CuongPT-dev, after its next start — look for: the same deletions, and `hermes-memory-config.json` gone if it 
-**Waiting for:** Plan forbids the executor creating local/deletes-reviewed.txt. Read local/delete-preview.txt (0 deletions today; the dry runs found nothing to delete) and create that file to approve merging PR #22.
