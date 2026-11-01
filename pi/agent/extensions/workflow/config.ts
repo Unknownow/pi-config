@@ -11,31 +11,14 @@ import { UNITY_PLAN_ALLOW } from "./readonly-bash.ts";
 import { PLAN_TOOLS } from "./readonly-tools.ts";
 import type { MergeMethod } from "./delivery.ts";
 import type { TokenWeights } from "./tokens.ts";
+import { type KnowledgeConfig, type RoleSpec, type Thinking, THINKING_LEVELS } from "../agents/types.ts";
 
-export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
-export type Thinking = (typeof THINKING_LEVELS)[number];
+export { THINKING_LEVELS };
+export type { KnowledgeConfig, RoleSpec, Thinking };
 
-export const ROLES = ["discuss", "plan", "execute", "explore", "advisor", "judge", "arbiter", "commit", "escalate", "test", "runner"] as const;
+/** Roles of workflow.json; explore, advisor and runner live in agents.json (extensions/agents). */
+export const ROLES = ["discuss", "plan", "execute", "judge", "arbiter", "commit", "escalate", "test"] as const;
 export type Role = (typeof ROLES)[number];
-
-export interface RoleSpec {
-	/** `provider/model-id`, as accepted by `pi --model`. */
-	model: string;
-	thinking?: Thinking;
-}
-
-export interface KnowledgeConfig {
-	/** MCP server a pi package registers (IEC: "knowledge"). "" turns it off; off too when nothing registered it. */
-	server: string;
-	/** Subagent roles that get the server's tools. */
-	roles: Role[];
-	/** The server's tools those roles get. Never list one that writes (propose_entry). */
-	tools: string[];
-	/** Added to the environment of the subagents' copy of the server. */
-	env: Record<string, string>;
-	/** The judge's last step is the knowledge check; a skipped check gets a separate pass. */
-	judgeCheck: boolean;
-}
 
 /** Guidance for the executor's own commit, push, pull request and merge. Merging, pushing to a protected branch and publishing still wait for a judge pass; a plan line `Delivery: no merge` turns them off for a flow. */
 export interface DeliveryConfig {
@@ -84,14 +67,8 @@ export interface PlansConfig {
 	keepCount: number;
 }
 
-/** The test-and-fix flow: a supervisor (role `test`) sends `runner` subagents through the test_run tool. */
+/** The test-and-fix flow: a supervisor (role `test`) sends runners through the test_run tool (settings in agents.json). */
 export interface TestConfig {
-	/** Runners at once; tasks sharing a resource always run one after another. 1 = one at a time. */
-	concurrency: number;
-	/** Tasks one test_run call may carry. */
-	maxTasks: number;
-	/** One runner's time limit. */
-	runnerTimeoutMs: number;
 	/** Fix rounds before the flow asks whether to go on. 0 = no limit. */
 	maxRounds: number;
 	/** Failed fixes of one bug before the user is asked. */
@@ -100,12 +77,6 @@ export interface TestConfig {
 	runnerTools: string[];
 	/** Extra commands the supervisor's bash may run, as regexes over the command's words. */
 	supervisorBashAllow: string[];
-	/** Commands runners may not run, as regexes over the command's words or the whole text. */
-	runnerDeny: string[];
-	/** Flags whose value is a project path that must lie inside the flow's folders. */
-	runnerPathFlags: string[];
-	/** Environment variable names that runners may not set (use the path flags instead). */
-	runnerPathEnv: string[];
 }
 
 export interface WorkflowConfig {
@@ -164,16 +135,8 @@ export interface WorkflowConfig {
 	 */
 	tokenWeights: TokenWeights;
 	test: TestConfig;
-	explore: {
-		maxQueries: number;
-		concurrency: number;
-		tools: string[];
-		/** Explore subagents load AGENTS.md / CLAUDE.md files when true; off keeps them cheap. */
-		contextFiles: boolean;
-	};
 	/** Rules files of added folders: "paths" lists them in the workspace section, "full" loads them into the prompt. */
 	addedFolderRules: "paths" | "full";
-	advisor: { tools: string[]; maxTranscriptChars: number };
 	arbiter: { tools: string[] };
 	judge: {
 		tools: string[];
@@ -205,14 +168,11 @@ export const DEFAULTS: WorkflowConfig = {
 		discuss: { model: "claude-bridge/claude-opus-5-5", thinking: "high" },
 		plan: { model: "claude-bridge/claude-opus-5-5", thinking: "high" },
 		execute: { model: "claude-bridge/claude-sonnet-5-5", thinking: "medium" },
-		explore: { model: "claude-bridge/claude-haiku-5-5", thinking: "off" },
-		advisor: { model: "claude-bridge/claude-opus-5-5", thinking: "high" },
 		judge: { model: "claude-bridge/claude-opus-5-5", thinking: "high" },
 		arbiter: { model: "claude-bridge/claude-fable-5-1", thinking: "high" },
 		commit: { model: "claude-bridge/claude-haiku-5-5", thinking: "medium" },
 		escalate: { model: "claude-bridge/claude-fable-5-1", thinking: "high" },
 		test: { model: "claude-bridge/claude-opus-5-5", thinking: "medium" },
-		runner: { model: "claude-bridge/claude-haiku-5-5", thinking: "low" },
 	},
 	startPhase: "discuss",
 	contextGuardTokens: 140_000,
@@ -241,24 +201,11 @@ export const DEFAULTS: WorkflowConfig = {
 	planBashAllow: UNITY_PLAN_ALLOW,
 	tokenWeights: { input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1.25 },
 	test: {
-		concurrency: 4,
-		maxTasks: 8,
-		runnerTimeoutMs: 45 * 60_000,
 		maxRounds: 3,
 		refails: 2,
-		runnerTools: ["bash", "read", "grep", "find", "ls"],
 		supervisorBashAllow: ["^adb( -[sdetHP] \\S+)* (devices|shell getprop)\\b", "^unity (cmd )?(status|editor_status|console_status)\\b"],
-		runnerDeny: [
-			"^adb( -[sdetHP] \\S+)* (reboot|reboot-bootloader|sideload|root|unroot|remount|disable-verity|enable-verity)\\b",
-			"^adb\\b.*\\bshell\\b.*(\\brm\\s+-[a-z]*r|\\bwipe\\b|\\brecovery\\b|\\bfactory\\b|\\bformat\\b|\\breboot\\b)",
-			"^fastboot\\b",
-		],
-		runnerPathFlags: ["--project-path", "-projectPath"],
-		runnerPathEnv: ["UNITY_PROJECT_PATH"],
 	},
-	explore: { maxQueries: 8, concurrency: 8, tools: ["read", "grep", "find", "ls"], contextFiles: false },
 	addedFolderRules: "paths",
-	advisor: { tools: ["read", "grep", "find", "ls"], maxTranscriptChars: 1_500_000 },
 	arbiter: { tools: ["read", "grep", "find", "ls"] },
 	judge: {
 		tools: ["read", "grep", "find", "ls"],
@@ -272,7 +219,7 @@ export const DEFAULTS: WorkflowConfig = {
 	},
 	knowledge: {
 		server: "knowledge",
-		roles: ["explore", "advisor", "judge", "arbiter"],
+		roles: ["judge", "arbiter"],
 		tools: ["search", "get_entry", "get_rule_pack", "get_schema", "status"],
 		env: { KNOWLEDGE_OFFLINE: "1" },
 		judgeCheck: true,
@@ -342,8 +289,9 @@ function parseConfig(file: string): Loaded {
 		if (config.plans.sync !== "remote" && config.plans.sync !== "local") config.plans.sync = DEFAULTS.plans.sync;
 		if (!Array.isArray(config.plans.localOnly) || config.plans.localOnly.some((s) => typeof s !== "string")) config.plans.localOnly = DEFAULTS.plans.localOnly;
 		for (const k of ["keepDays", "keepCount"] as const) if (typeof config.plans[k] !== "number" || !Number.isFinite(config.plans[k]) || config.plans[k] < 0) config.plans[k] = DEFAULTS.plans[k];
-		if (!isObject(config.explore)) config.explore = DEFAULTS.explore;
-		if (typeof config.explore.contextFiles !== "boolean") config.explore.contextFiles = DEFAULTS.explore.contextFiles;
+		// Settings that moved to agents.json (the explore, advisor and runner roles and blocks, the runner keys of test) are dropped silently.
+		for (const old of ["explore", "advisor"]) delete (config as unknown as Record<string, unknown>)[old];
+		for (const old of ["explore", "advisor", "runner"]) delete (config.roles as unknown as Record<string, unknown>)[old];
 		if (config.addedFolderRules !== "paths" && config.addedFolderRules !== "full") config.addedFolderRules = DEFAULTS.addedFolderRules;
 		if (typeof config.autopilot !== "boolean") config.autopilot = DEFAULTS.autopilot;
 		if (!isObject(config.wait)) config.wait = DEFAULTS.wait;
@@ -356,15 +304,11 @@ function parseConfig(file: string): Loaded {
 		if (config.stageAdvance !== "auto" && config.stageAdvance !== "ask") config.stageAdvance = DEFAULTS.stageAdvance;
 		const t = (config.test = isObject(config.test) ? config.test : DEFAULTS.test);
 		const num = (v: unknown, min: number, max = Infinity): v is number => typeof v === "number" && Number.isInteger(v) && v >= min && v <= max;
-		if (!num(t.concurrency, 1)) t.concurrency = DEFAULTS.test.concurrency;
-		if (!num(t.maxTasks, 1, 16)) t.maxTasks = DEFAULTS.test.maxTasks;
-		if (typeof t.runnerTimeoutMs !== "number" || !Number.isFinite(t.runnerTimeoutMs) || t.runnerTimeoutMs < 60_000) t.runnerTimeoutMs = DEFAULTS.test.runnerTimeoutMs;
+		for (const old of ["concurrency", "maxTasks", "runnerTimeoutMs", "runnerTools", "runnerDeny", "runnerPathFlags", "runnerPathEnv"]) delete (t as unknown as Record<string, unknown>)[old];
 		if (!num(t.maxRounds, 0)) t.maxRounds = DEFAULTS.test.maxRounds;
 		if (!num(t.refails, 1)) t.refails = DEFAULTS.test.refails;
 		delete (t as unknown as Record<string, unknown>).delivery;
-		for (const k of ["runnerTools", "supervisorBashAllow", "runnerDeny", "runnerPathFlags", "runnerPathEnv"] as const) {
-			if (!Array.isArray(t[k]) || t[k].some((s) => typeof s !== "string")) t[k] = DEFAULTS.test[k];
-		}
+		if (!Array.isArray(t.supervisorBashAllow) || t.supervisorBashAllow.some((s) => typeof s !== "string")) t.supervisorBashAllow = DEFAULTS.test.supervisorBashAllow;
 		return { config };
 	} catch (e) {
 		return { config: DEFAULTS, error: `${file}: ${(e as Error).message}` };

@@ -14,7 +14,7 @@ import {
 	roleTools,
 	toolPrefix,
 } from "./knowledge.ts";
-import type { ToolCall } from "./subagent.ts";
+import type { ToolCall } from "../agents/subagent.ts";
 
 // DEFAULTS.knowledge, inline: config.ts loads pi at runtime.
 const CFG: KnowledgeConfig = {

@@ -1,6 +1,6 @@
 # workflow
 
-Each kind of work gets its own model. Every model and thinking level is set in `~/.pi/agent/workflow.json`.
+Each kind of work gets its own model. Every model and thinking level is set in `~/.pi/agent/workflow.json`; the `explore`, `advisor` and `runner` roles are in `~/.pi/agent/agents.json` (agents extension).
 The workflow is for software: system design, architecture and code. (The name stays `workflow`: the
 pi-config sync never deletes, so renaming the folder would leave the old extension loaded beside the new one.)
 
@@ -21,14 +21,14 @@ plan is read-only:   bash refuses commands that change files, git or GitHub
 | `discuss` | main session model; same read-only rules as `plan` | new sessions start here (`startPhase`). Open talk before a plan: investigate, answer, agree; no `Plan:` sections and no menus. `/flow plan` or a typed "go" moves to `plan` (it never executes) |
 | `plan` | main session model; edit/write off, bash read-only | turns the discussion into a `Plan:`, checks it and fixes it with you; `/flow discuss` or "Back to discussion" in the menu returns to talk; its first `## Plan:` reply is the final plan; changes come as `## Plan changes` sections |
 | `execute` | main session model | after you approve the plan; when the flow ends (delivered, passed without a commit, or stopped) it goes back to `discuss` (`returnTo`: `discuss`, `plan` or `off`) |
-| `explore` | `explore` tool, parallel sub-`pi` processes | plan and execute send open questions and multi-file searches to it; it decides how much to read and answers with `Answer:` plus `Evidence:` (file:line). Known files are read directly. Judge and advisor do not use it. It runs with thinking low, without `AGENTS.md`/`CLAUDE.md` files (`explore.contextFiles: true` loads them) and with a budget of about 10 tool calls per question, after which it answers with what it has and says what it did not verify |
-| `advisor` | `advisor` tool, sub-`pi` with the whole transcript | choosing an approach, after an error repeats (auto-nudged after `repeatedErrorThreshold` failures), before "done" |
+| `explore` | `explore` tool of the agents extension | open questions and multi-file searches, in every mode (see `../agents/README.md`) |
+| `advisor` | `advisor` tool of the agents extension | choosing an approach, after an error repeats (auto-nudged after `repeatedErrorThreshold` failures), before "done" (see `../agents/README.md`) |
 | `judge` | `judge` tool, sub-`pi` with the git diff | the diff is ready; when a run ends with an unreviewed diff it asks (`autoJudge`) |
 | `arbiter` | sub-`pi` with the plan, the judge's report and the diff | the judge questions the plan and `planFlaw` is `auto`, or a passed review has a major plan flaw (whatever `planFlaw` is) (or you pick "Let the arbiter decide", or you picked *Approve, arbiter solves plan flaws* for this flow) |
 | `git_task` (`commit` role) | sub-`pi` with bash only, a git helper prompt, and its own git guard (`git-guard.ts`) with the same judge gate as the main session | when the executor calls `git_task` to delegate commit, push, pull request or merge work; default model `claude-bridge/claude-haiku-5-5`, thinking `medium` |
 | `escalate` | main session model | `/flow escalate` |
 | `test` | main session model; edit/write/judge off, bash read-only plus `test.supervisorBashAllow`, plus `test_run` | `/flow test <scope>`: plans tests, sends runners, writes the test report (see Test and fix) |
-| `runner` | `test_run` tool, parallel sub-`pi` processes with `bash, read, grep, find, ls` and their own guard (`runner-guard.ts`) | one per test task card; reports facts only |
+| `runner` | `test_run` tool of the agents extension | one per test task card; reports facts only (see `../agents/README.md`) |
 
 ## Hands-off run
 
@@ -92,7 +92,7 @@ after approval runs on its own:
   the code, and drops the finding only if the code shows the executor is right.
 - **Turning steps back to manual:** set `"autoJudge": "ask"`
   and `"planPrompt": false` for a "say go" hint instead of the Approve menu.
-  `"autopilot": true` skips the routine menus and lets the agent resolve waits itself (see "Autopilot"). `"handoverCompactTokens": 0` turns off compaction at handovers. `"addedFolderRules": "full"` loads the rules files of added folders into the prompt (default `"paths"`: only their paths and sizes are listed). `"explore": { "contextFiles": true }` gives explore subagents the context files. `"returnToPlan": false` stays in execute after a flow ends. `"stageAdvance": "auto"` (default) starts the next stage at once, even after an incomplete delivery or a stage with no changes, with a warning (not after a run you aborted, and never while the stage has open steps, no changes and no judge call); `"ask"` asks first. When `gh` is not on PATH, the workflow looks in the standard GitHub CLI install folders and adds the one it finds to pi's PATH; when there is none, outcomes say the PR state is unknown. `"stagedPlans": "onRequest"` makes the planner use stages only when you ask for delivery in parts.
+  `"autopilot": true` skips the routine menus and lets the agent resolve waits itself (see "Autopilot"). `"handoverCompactTokens": 0` turns off compaction at handovers. `"addedFolderRules": "full"` loads the rules files of added folders into the prompt (default `"paths"`: only their paths and sizes are listed). In agents.json, `"explore": { "contextFiles": true }` gives explore subagents the context files. `"returnTo": "off"` stays in execute after a flow ends. `"stageAdvance": "auto"` (default) starts the next stage at once, even after an incomplete delivery or a stage with no changes, with a warning (not after a run you aborted, and never while the stage has open steps, no changes and no judge call); `"ask"` asks first. When `gh` is not on PATH, the workflow looks in the standard GitHub CLI install folders and adds the one it finds to pi's PATH; when there is none, outcomes say the PR state is unknown. `"stagedPlans": "onRequest"` makes the planner use stages only when you ask for delivery in parts.
 
 ## The plan, the judge and the arbiter
 
@@ -211,17 +211,14 @@ its plan and hand over, even when you said "fix it" or "do it for me".
 - It is a guard against the planner drifting into execution, not a sandbox. The code checks are
   regexes: a determined disguise (a computed lookup on an alias of `require('fs')`, say) can still get
   past them.
-- Tests: `node --experimental-strip-types --test agent-end.test.ts delivery.test.ts merge-gate.test.ts folder-add.test.ts readonly-bash.test.ts readonly-tools.test.ts plan-tools.test.ts tokens.test.ts push-guard.test.ts knowledge.test.ts registry-publish.test.ts mcp-forward.test.ts subagent.test.ts notify.test.ts repos.test.ts stages.test.ts git-guard.test.ts repo-diff.test.ts prompts.test.ts config.test.ts metrics.test.ts plan-store.test.ts boundary.test.ts plan-doc.test.ts runner-guard.test.ts test-report.test.ts test-run.test.ts test-flow.test.ts flow-report.test.ts view.test.ts waits.test.ts checkpoints.test.ts tags.test.ts`.
+- Tests: `node --experimental-strip-types --test agent-end.test.ts delivery.test.ts merge-gate.test.ts folder-add.test.ts readonly-bash.test.ts readonly-tools.test.ts plan-tools.test.ts tokens.test.ts push-guard.test.ts knowledge.test.ts registry-publish.test.ts agent-events.test.ts notify.test.ts repos.test.ts stages.test.ts git-guard.test.ts repo-diff.test.ts prompts.test.ts config.test.ts metrics.test.ts plan-store.test.ts boundary.test.ts plan-doc.test.ts test-report.test.ts test-run.test.ts test-flow.test.ts flow-report.test.ts view.test.ts waits.test.ts checkpoints.test.ts tags.test.ts`.
 
 ## Test and fix
 
 A flow for testing and fixing, next to plan → execute → judge → commit. `/flow test <scope>` (or `/flow test` and then typing the scope, or `pi --flow test`) starts the **test phase**.
 
 - **Supervisor** (role `test`, Opus medium): runs in the main session. Reads like the plan phase (edit, write, judge and plan_check are off; bash is read-only plus `test.supervisorBashAllow`, by default `adb devices`, `adb shell getprop` and `unity status`). It plans the tests, sends task cards to runners with the `test_run` tool, triages the results, diagnoses bugs and ends each round with a test report.
-- **Runners** (role `runner`, Haiku low): one sub-`pi` per task card, with `bash, read, grep, find, ls` (`test.runnerTools`; edit and write are always removed). A runner runs exactly the card and replies `RESULT: PASS | FAIL | ERROR`, the command, the exit code, at most 40 lines of output and artifact paths.
-- **`test_run`**: up to `test.maxTasks` (8) tasks per call, each with `id`, `run`, `observe`, `pass` and `resource`. Tasks with the same resource (`unity:<project folder>`, `device:<serial>`) run one after another; the other groups run in parallel, up to `test.concurrency` (4; 1 runs one task at a time). Each runner has `test.runnerTimeoutMs` (45 minutes). A record per task (card, reply, every bash command with the start of its result) is written to `runs/<round>/<call>/<id>.md` in the plan's folder (the temp folder when there is no plan file); each `test_run` call gets its own numbered folder. The resource order and `test.concurrency` also hold across `test_run` calls that run at the same time in one session (not across separate pi sessions).
-- **Runner results are claims.** The tool result lists the commands the runner actually ran (read from its tool calls). A PASS or FAIL with no bash call, or a PASS with a failed command, is marked `unverified`, and the supervisor reruns it.
-- **Runner guard** (`runner-guard.ts`, loaded only in runner sub-processes): refuses git and gh commands that change anything, commands matching `test.runnerDeny` (by default `adb reboot` and friends, `adb shell rm -r`, wipe, recovery, format, `fastboot`), a project path after a flag in `test.runnerPathFlags` (`--project-path`, `-projectPath`) that lies outside the flow's folders or cannot be checked (`$`, backticks, `%`), and assigning a name from `test.runnerPathEnv` (`UNITY_PROJECT_PATH`). `adb install -r`, `uninstall` and `pm clear` stay allowed; add patterns to `runnerDeny` when a device is not a dedicated test phone. Commands are checked behind wrappers too (`timeout`, `env`, `xargs`, `nice`, …), so `timeout 60 adb reboot` is refused and only a real `git`/`gh` command counts as git. It is a guard against drift, not a sandbox: a `cd` inside a command does not move the base of relative paths.
+- **Runners and `test_run`**: the `test_run` tool, its runners (role `runner`), the unverified-claim check and the runner guard now live in the agents extension and work in every mode; see `../agents/README.md`. In a test flow the supervisor calls it as before; its records go to the temp folder.
 - **Test report**: the supervisor's last reply of a round, parsed by `test-report.ts`:
 
 ```
@@ -245,7 +242,7 @@ VERDICT: CLEAN | BUGS
 - **When it asks the user**, in one batch at the end of a test round, one prompt per question; Escape skips a question: an `[ask]` item (its Options, "Other", Skip), a `[blocked]` item ("It's available now", Skip, Stop), a bug that failed `test.refails` times (keep trying escalated, skip it, stop) and a plan question the arbiter could not settle (the test's Expected is right, the fix is right, skip). Skipped items are never asked or fixed again. Any other answer is recorded as a decision (`D2…`) and the supervisor tests again with it.
 - **End**: the flow ends when no bug and no question is open, or on Stop. The card says `test: <n> fixed in <r> fix round(s)`, then `; open: <ID tag, …>` and `; human checks: <IDs>` (the `[manual]` items, listed on the end card with their steps and what to look for, never asked) and `; skipped: <IDs>` when there are any; it is ok when no `[bug]` item remains.
 - **Not supported**: `/flow resume` for test flows (they are refused).
-- Config: the `test` block of workflow.json (`concurrency`, `maxTasks`, `runnerTimeoutMs`, `maxRounds`, `refails`, `delivery`, `runnerTools`, `supervisorBashAllow`, `runnerDeny`, `runnerPathFlags`, `runnerPathEnv`) and the roles `test` and `runner`.
+- Config: the `test` block of workflow.json (`maxRounds`, `refails`, `supervisorBashAllow`) and the role `test`; the runner settings (`concurrency`, `maxTasks`, `runnerTimeoutMs`, `runnerTools`, `runnerDeny`, `runnerPathFlags`, `runnerPathEnv`) and the role `runner` are in agents.json.
 
 ## Public contract for other extensions
 
@@ -263,7 +260,7 @@ Other extensions (the worktree extension in this repo) may rely on exactly these
 
 When a pi package registers the MCP server named by `knowledge.server` (IEC game repos: `knowledge`),
 the subagents in `knowledge.roles` get its read tools (`knowledge.tools`; never `propose_entry`). Each
-subagent starts its own copy through `mcp-forward.ts`, with `knowledge.env` added
+subagent starts its own copy through `../agents/mcp-forward.ts`, with `knowledge.env` added
 (`KNOWLEDGE_OFFLINE=1`: use the team index the main session fetched).
 
 With `knowledge.judgeCheck`, the judge's last step is the knowledge check: `get_rule_pack` for every
@@ -359,7 +356,7 @@ next run starts.
 | `/flow escalate` (`fable`) / `/flow back` (`opusplan`) | manual escalation and return |
 | `/flow judge` | review the current diff now |
 | `/flow tokens` | token breakdown of the current flow so far |
-| `/flow model [role] [provider/id[:thinking]]` | set a role's model and save it to workflow.json; left out, it lists the roles, the models with auth and the thinking levels (Tab completes model IDs) |
+| `/flow model [role] [provider/id[:thinking]]` | set a role's model and save it to workflow.json (agents.json for explore, advisor and runner); left out, it lists the roles, the models with auth and the thinking levels (Tab completes model IDs) |
 | `/flow reload` | re-read workflow.json |
 | `pi --flow execute` (`plan`, `test`, `off`) | start a session in a given phase |
 | `/folders add <path>` / `remove <path\|n>` / `list` | folders that are part of this session (reloads Pi); Tab completes folder paths after `add` and folder numbers after `remove`; other extensions may replace or refuse the folder on `add` (K6) |

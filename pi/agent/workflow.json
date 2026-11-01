@@ -13,14 +13,6 @@
       "model": "claude-bridge/claude-sonnet-5-5",
       "thinking": "medium"
     },
-    "explore": {
-      "model": "claude-bridge/claude-haiku-5-5",
-      "thinking": "low"
-    },
-    "advisor": {
-      "model": "claude-bridge/claude-opus-5-5",
-      "thinking": "medium"
-    },
     "judge": {
       "model": "claude-bridge/claude-opus-5-5",
       "thinking": "medium"
@@ -40,10 +32,6 @@
     "test": {
       "model": "claude-bridge/claude-opus-5-5",
       "thinking": "medium"
-    },
-    "runner": {
-      "model": "claude-bridge/claude-haiku-5-5",
-      "thinking": "low"
     }
   },
   "startPhase": "discuss",
@@ -82,7 +70,7 @@
     "write"
   ],
   "planAllowedTools": [
-    "^(read|grep|find|ls|bash|codemode|explore|advisor|judge)$",
+    "^(read|grep|find|ls|bash|codemode|explore|advisor|judge|test_run)$",
     "(^|__)run_code$",
     "(^|__)fetch_url$",
     "(^|__)video_frames$",
@@ -101,56 +89,14 @@
     "cacheWrite": 1.25
   },
   "test": {
-    "concurrency": 4,
-    "maxTasks": 8,
-    "runnerTimeoutMs": 2700000,
     "maxRounds": 3,
     "refails": 2,
-    "runnerTools": [
-      "bash",
-      "read",
-      "grep",
-      "find",
-      "ls"
-    ],
     "supervisorBashAllow": [
       "^adb( -[sdetHP] \\S+)* (devices|shell getprop)\\b",
       "^unity (cmd )?(status|editor_status|console_status)\\b"
-    ],
-    "runnerDeny": [
-      "^adb( -[sdetHP] \\S+)* (reboot|reboot-bootloader|sideload|root|unroot|remount|disable-verity|enable-verity)\\b",
-      "^adb\\b.*\\bshell\\b.*(\\brm\\s+-[a-z]*r|\\bwipe\\b|\\brecovery\\b|\\bfactory\\b|\\bformat\\b|\\breboot\\b)",
-      "^fastboot\\b"
-    ],
-    "runnerPathFlags": [
-      "--project-path",
-      "-projectPath"
-    ],
-    "runnerPathEnv": [
-      "UNITY_PROJECT_PATH"
     ]
   },
   "addedFolderRules": "paths",
-  "explore": {
-    "contextFiles": false,
-    "maxQueries": 8,
-    "concurrency": 8,
-    "tools": [
-      "read",
-      "grep",
-      "find",
-      "ls"
-    ]
-  },
-  "advisor": {
-    "tools": [
-      "read",
-      "grep",
-      "find",
-      "ls"
-    ],
-    "maxTranscriptChars": 1500000
-  },
   "arbiter": {
     "tools": [
       "read",
@@ -171,8 +117,6 @@
   "knowledge": {
     "server": "knowledge",
     "roles": [
-      "explore",
-      "advisor",
       "judge",
       "arbiter"
     ],
