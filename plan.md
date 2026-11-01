@@ -94,7 +94,9 @@ Rejected options:
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 Create the branch `fix/failed-delete-test` from `master`.
-- [ ] S2 Rewrite the test body at `bin/sync.test.js:357` and keep its name.
-- [ ] S3 Deliver: merge — the failed-delete test fix.
-- [ ] S4 Final report to the user:
+- [x] S1 Create the branch `fix/failed-delete-test` from `master`.
+- [x] S2 Rewrite the test body at `bin/sync.test.js:357` and keep its name.
+- [x] S3 Deliver: merge — the failed-delete test fix.
+- [x] S4 Final report to the user:
+## Outcome
+2026-11-01T09:50:58.983Z — ok: master, 2 commits since the review base, PR #27 MERGED https://github.com/Unknownow/pi-config/pull/27

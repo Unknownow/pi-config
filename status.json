@@ -1,12 +1,33 @@
 {
   "v": 1,
   "flowId": "20261101-1649-make-the-failed-delete-sync-test-run-on-9a11",
-  "rev": 1,
-  "updated": "2026-11-01T09:49:18.348Z",
+  "rev": 2,
+  "updated": "2026-11-01T09:50:59.096Z",
   "title": "Make the failed-delete sync test run on every platform",
-  "done": [],
+  "done": [
+    "S1",
+    "S2",
+    "S3",
+    "S4"
+  ],
+  "finished": {
+    "at": "2026-11-01T09:50:58.983Z",
+    "ok": true,
+    "text": "master, 2 commits since the review base, PR #27 MERGED https://github.com/Unknownow/pi-config/pull/27"
+  },
   "reviewBase": {
-    "d:/works/pi-config": "2807000a6dec39900856dbbd76c2e47d637fc105"
+    "d:/works/pi-config": "e09f1abe4b98594706da6d4e66c71aa0297bbe52"
+  },
+  "passedTrees": {
+    "d:/works/pi-config": [
+      "f107f8a2827b47637b5f06f3074f6a1aa7a9a875"
+    ]
+  },
+  "judgedMerges": {
+    "d:/works/pi-config": {
+      "pr": "27",
+      "tree": "f107f8a2827b47637b5f06f3074f6a1aa7a9a875"
+    }
   },
   "repos": [
     {
