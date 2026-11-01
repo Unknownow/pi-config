@@ -30,7 +30,7 @@
       "thinking": "high"
     }
   },
-  "startPhase": "discuss",
+  "startPhase": "off",
   "contextGuardTokens": 140000,
   "autoJudge": "auto",
   "maxJudgeRounds": 5,
