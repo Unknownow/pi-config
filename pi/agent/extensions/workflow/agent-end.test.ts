@@ -23,7 +23,11 @@ test("git_task runs in normal mode (no gate) and in execute with a plan; discuss
 });
 
 test("a saved state from the removed test phase loads as off; its test tokens are dropped", () => {
-	assert.deepEqual(migrateSavedState({ phase: "test", tokens: { test: 1 } }), { phase: "off", escalated: false, judgeRounds: 0 });
+	const moved = migrateSavedState({ phase: "test", folders: ["D:/x"], tokens: { test: 1 }, testFlow: {} } as { phase: string; tokens?: unknown }) as Record<string, unknown>;
+	assert.equal(moved.phase, "off");
+	assert.deepEqual(moved.folders, ["D:/x"]);
+	assert.deepEqual(moved.tokens, {});
+	assert.equal(moved.testFlow, undefined);
 	const kept = migrateSavedState({ phase: "execute", tokens: { test: 1, plan: 2 } }) as { tokens: Record<string, number> };
 	assert.deepEqual(kept.tokens, { plan: 2 });
 	const same = { phase: "plan" };

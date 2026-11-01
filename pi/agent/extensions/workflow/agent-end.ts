@@ -136,13 +136,17 @@ export function gitTaskAllowed(phase: FlowPhase, hasPlan: boolean): { ok: boolea
 }
 
 /** A saved flow state from before the test phase was removed loads as normal mode; its test token row is dropped. */
-export function migrateSavedState<T extends { phase: string; tokens?: unknown }>(data: T): T | { phase: "off"; escalated: false; judgeRounds: 0 } {
-	if (data.phase === "test") return { phase: "off", escalated: false, judgeRounds: 0 };
+export function migrateSavedState<T extends { phase: string; tokens?: unknown }>(data: T): T {
+	let out: Record<string, unknown> = data;
 	if (data.tokens && typeof data.tokens === "object" && "test" in data.tokens) {
 		const { test: _drop, ...rest } = data.tokens as Record<string, unknown>;
-		return { ...data, tokens: rest };
+		out = { ...out, tokens: rest };
 	}
-	return data;
+	if (data.phase === "test") {
+		// Only what belonged to the test flow goes; added folders and the rest stay.
+		out = { ...out, phase: "off", escalated: false, judgeRounds: 0, testFlow: undefined, approvedPlan: undefined, checklist: undefined, planDoc: undefined, toolsBeforePlan: undefined };
+	}
+	return out as T;
 }
 
 /** Handovers that start a new piece of work (execute, a stage) may compact first; the others ("continue": fix rounds, open steps) never do. */
