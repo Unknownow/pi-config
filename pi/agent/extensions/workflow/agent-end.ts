@@ -9,6 +9,13 @@ export function judgeAddenda(minorRounds: number, quick = false): string {
 	return quick ? "\n" + JUDGE_QUICK : minorRounds > 0 ? "\n" + JUDGE_MAJOR_ONLY : "";
 }
 
+/** The profile after a phase switch: `/flow quick` sets it in plan, only the approval (plan to execute) carries it on, every other switch clears it. */
+export function nextProfile(prev: string, phase: string, requested: "quick" | undefined, current: "quick" | undefined): "quick" | undefined {
+	if (phase === "plan") return requested;
+	if (phase === "execute" && (prev === "plan" || prev === "execute")) return current;
+	return undefined;
+}
+
 /** The role whose model runs `role` in this flow: a quick flow plans on `quick` and reviews on `quick-judge`. */
 export function profileRole<R extends string>(profile: "quick" | undefined, role: R): R | "quick" | "quick-judge" {
 	if (profile !== "quick") return role;

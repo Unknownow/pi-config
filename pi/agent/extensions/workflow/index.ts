@@ -45,7 +45,7 @@ import {
 	type WorkflowConfig,
 } from "./config.ts";
 import { describeRole, parseRoleSpec, pickRoleSpec, roleCompletions, type Thinking } from "../shared/roles.ts";
-import { judgeAddenda, profileRole, handoverAction, handoverKind, preFlowModelAction, gitTaskAllowed, migrateSavedState, afterPass, noChangeStage, arbiterFirst, fixableFindings, canApprove, approvalBlock, addPlanReply, composePlan, type PlanDraft, hasPlanFlaw, planFlawLines, planFlawOnPass,  judgeCapReached, minorFixOpen, passPending, stageEndAction, parseArbiter, phaseAfterFlow, shouldResume, skipJudge } from "./agent-end.ts";
+import { judgeAddenda, profileRole, nextProfile, handoverAction, handoverKind, preFlowModelAction, gitTaskAllowed, migrateSavedState, afterPass, noChangeStage, arbiterFirst, fixableFindings, canApprove, approvalBlock, addPlanReply, composePlan, type PlanDraft, hasPlanFlaw, planFlawLines, planFlawOnPass,  judgeCapReached, minorFixOpen, passPending, stageEndAction, parseArbiter, phaseAfterFlow, shouldResume, skipJudge } from "./agent-end.ts";
 import { countTokens, fmtTok, type Tok } from "../shared/tokens.ts";
 import { idleReason, notifyCommand, notifyDue } from "./notify.ts";
 import * as prompts from "./prompts.ts";
@@ -533,7 +533,7 @@ export default function workflow(pi: ExtensionAPI) {
 		state.toolsBeforePlan = undefined;
 	}
 
-	/** `profile`: "quick" starts a quick flow (plan phase only); execute keeps the flow's profile, every other switch ends it. */
+	/** `profile`: "quick" starts a quick flow (plan phase only); see nextProfile. */
 	async function setPhase(ctx: ExtensionContext, phase: Phase, profile?: "quick"): Promise<void> {
 		const leavingFlow = state.phase === "execute" && phase !== state.phase;
 		if (leavingFlow && state.approvedPlan && !state.flowSummarized) {
@@ -555,6 +555,7 @@ export default function workflow(pi: ExtensionAPI) {
 		const modelAction = preFlowModelAction(state.phase, phase);
 		if (modelAction === "save" && ctx.model) state.preFlowModel = { model: `${ctx.model.provider}/${ctx.model.id}`, thinking: pi.getThinkingLevel() };
 		const restoreModel = modelAction === "restore" ? state.preFlowModel : undefined;
+		const profileNext = nextProfile(state.phase, phase, profile, state.profile);
 		if (leavingFlow) await dropReviewRefs(ctx);
 		state.phase = phase;
 		state.escalated = false;
@@ -584,7 +585,7 @@ export default function workflow(pi: ExtensionAPI) {
 			state.planDoc = undefined;
 			state.planFlaw = undefined;
 		}
-		if (phase !== "execute") state.profile = phase === "plan" ? profile : undefined;
+		state.profile = profileNext;
 		if (!state.profile) state.quickFrom = undefined;
 		consecutiveErrors = 0;
 		if (phase === "execute" && !(samePhase && state.reviewBase)) await initReviewBase(ctx);

@@ -162,9 +162,10 @@ path:line - blocker|major|minor - [bug|plan|test|security|longrun|design|plan-fl
 Then a final line: VERDICT: PASS or VERDICT: FAIL
 FAIL if there is any blocker or major finding that is not a [plan-flaw]. blocker: wrong results, data loss or a security hole. major: a likely bug, or a design problem that will cost real rework. minor: worth fixing, not worth another round. No praise, no style nits. If you find nothing, write only the verdict line.`;
 
-/** Added to the judge prompt after a minor-fix round: no more minor findings. */
-export const JUDGE_QUICK = `This review is for a quick flow: a small change with a short scope card as its plan. Report only blocker and major findings, and leave out minor ones. The knowledge check still runs as described.`;
+/** Added to the judge prompt in a quick flow (`/flow quick`): only blocker and major findings, from the first round. */
+export const JUDGE_QUICK = `This review is for a quick flow: a small change with a short scope card as its plan. Report only blocker and major findings, and leave out minor ones.`;
 
+/** Added to the judge prompt after a minor-fix round: no more minor findings. */
 export const JUDGE_MAJOR_ONLY = `This review follows a minor-fix round: report only blocker and major findings, and leave out minor ones.`;
 
 export const JUDGE_RECHECK = `This is a re-review. An earlier round reviewed the whole change and reported the findings below; the code has changed since. You get only the changes since that round, plus the names of every file in the whole change.
