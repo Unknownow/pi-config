@@ -1,20 +1,14 @@
 {
   "v": 1,
   "flowId": "20261101-1736-new-pi-sessions-start-with-the-flow-off-1e67",
-  "rev": 2,
-  "updated": "2026-11-01T10:37:58.765Z",
+  "rev": 3,
+  "updated": "2026-11-01T10:39:04.435Z",
   "title": "New Pi sessions start with the flow off, and the merged changes go live",
   "done": [
     "S1",
     "S2",
     "S3"
   ],
-  "waiting": {
-    "reason": "Review the import dry run (44 files written, 0 deleted, no local edits overwritten) and approve by creating the empty file D:/works/pi-config/local/import-approved.txt",
-    "check": "test -f D:/works/pi-config/local/import-approved.txt",
-    "since": "2026-11-01T10:37:58.672Z",
-    "planned": true
-  },
   "reviewBase": {
     "d:/works/pi-config": "5b39dfd6aab0c7c1f20711ece100825cb0e1aa0c"
   },

@@ -123,4 +123,3 @@ Report any WARNING lines from the import.
 - [ ] S7 Final report to the user:
 ## For you after the flow
 - S6 Verify: restart Pi in any folder and open a new session — look for: the status bar shows no flow phase, tools such as ed
-**Waiting for:** Review the import dry run (44 files written, 0 deleted, no local edits overwritten) and approve by creating the empty file D:/works/pi-config/local/import-approved.txt
