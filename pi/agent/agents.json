@@ -1,0 +1,85 @@
+{
+  "_comment": "Config for ~/.pi/agent/extensions/agents (explore, advisor, test_run). model is provider/model-id; thinking is off|minimal|low|medium|high|xhigh|max. Edit here or with `/flow model <explore|advisor|runner> <provider/id[:thinking]>`. Synced by pi-config.",
+  "roles": {
+    "explore": {
+      "model": "claude-bridge/claude-haiku-5-5",
+      "thinking": "medium"
+    },
+    "advisor": {
+      "model": "claude-bridge/claude-opus-5-5",
+      "thinking": "medium"
+    },
+    "runner": {
+      "model": "claude-bridge/claude-haiku-5-5",
+      "thinking": "low"
+    }
+  },
+  "explore": {
+    "contextFiles": false,
+    "maxQueries": 8,
+    "concurrency": 8,
+    "tools": [
+      "read",
+      "grep",
+      "find",
+      "ls"
+    ]
+  },
+  "advisor": {
+    "tools": [
+      "read",
+      "grep",
+      "find",
+      "ls"
+    ],
+    "maxTranscriptChars": 1500000
+  },
+  "test": {
+    "concurrency": 4,
+    "maxTasks": 8,
+    "runnerTimeoutMs": 2700000,
+    "runnerTools": [
+      "bash",
+      "read",
+      "grep",
+      "find",
+      "ls"
+    ],
+    "runnerDeny": [
+      "^adb( -[sdetHP] \\S+)* (reboot|reboot-bootloader|sideload|root|unroot|remount|disable-verity|enable-verity)\\b",
+      "^adb\\b.*\\bshell\\b.*(\\brm\\s+-[a-z]*r|\\bwipe\\b|\\brecovery\\b|\\bfactory\\b|\\bformat\\b|\\breboot\\b)",
+      "^fastboot\\b"
+    ],
+    "runnerPathFlags": [
+      "--project-path",
+      "-projectPath"
+    ],
+    "runnerPathEnv": [
+      "UNITY_PROJECT_PATH"
+    ]
+  },
+  "knowledge": {
+    "server": "knowledge",
+    "roles": [
+      "explore",
+      "advisor"
+    ],
+    "tools": [
+      "search",
+      "get_entry",
+      "get_rule_pack",
+      "get_schema",
+      "status"
+    ],
+    "env": {
+      "KNOWLEDGE_OFFLINE": "1"
+    },
+    "judgeCheck": true
+  },
+  "subagent": {
+    "extensions": [
+      "~/.pi/agent/npm/node_modules/pi-claude-bridge/src/index.ts"
+    ],
+    "timeoutMs": 900000
+  }
+}

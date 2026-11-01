@@ -33,10 +33,10 @@ test("fetch_url and other tools are not checked here", () => {
 test("the allow list admits reading tools and refuses the rest", () => {
 	const allowed = PLAN_TOOLS.map((p) => new RegExp(p));
 	const blocked = ["edit", "write"];
-	for (const name of ["read", "bash", "run_code", "fetch_url", "video_frames", "mcp__knowledge__get_entry", "mcp__knowledge__search"]) {
+	for (const name of ["explore", "advisor", "judge", "read", "bash", "run_code", "fetch_url", "video_frames", "mcp__knowledge__get_entry", "mcp__knowledge__search"]) {
 		assert.equal(planToolRefused(name, allowed, blocked), null, name);
 	}
-	for (const name of ["AskClaude", "mcp__knowledge__propose_entry", "mcp__x__find_and_replace", "mcp__x__get_or_create_item", "ctx_execute", "ctx_purge", "mcp__custom-tools__ctx_search", "edit", "powershell"]) {
+	for (const name of ["AskClaude", "mcp__knowledge__propose_entry", "mcp__x__find_and_replace", "mcp__x__get_or_create_item", "test_run", "ctx_execute", "ctx_purge", "mcp__custom-tools__ctx_search", "edit", "powershell"]) {
 		assert.ok(planToolRefused(name, allowed, blocked), name);
 	}
 });

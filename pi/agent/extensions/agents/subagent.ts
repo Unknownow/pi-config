@@ -3,7 +3,7 @@
  * own model, thinking level, tools and context window.
  *
  * Sub-processes start with `--no-extensions` and load only the extensions
- * listed in workflow.json (`subagent.extensions`, normally just the provider).
+ * listed in agents.json or workflow.json (`subagent.extensions`, normally just the provider).
  * That keeps the pi-config sync extension from pulling and importing on every
  * subagent start, and keeps this extension from recursing into itself.
  */
@@ -13,7 +13,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { Message, Usage } from "@earendil-works/pi-ai";
-import type { RoleSpec } from "./config.ts";
+import type { RoleSpec } from "./types.ts";
 import { FORWARD_ENV } from "./mcp-forward.ts";
 
 export interface RunOptions {

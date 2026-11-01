@@ -21,7 +21,7 @@ import type { Theme } from "@earendil-works/pi-coding-agent";
 import { type Component, type TUI, truncateToWidth } from "@earendil-works/pi-tui";
 import { DEFAULTS, describeRole, type Role, type RoleSpec } from "./config.ts";
 import { countTokens, type Tok, type TokenWeights, type UsageCounts } from "./tokens.ts";
-import type { SubagentEvent } from "./subagent.ts";
+import type { SubagentEvent } from "../agents/subagent.ts";
 import { progressBar } from "./board.ts";
 import { reportLines, type ReportFinding, type ReportStep } from "./flow-report.ts";
 
@@ -377,7 +377,7 @@ export class FlowView {
 		this.ticker = undefined;
 	}
 
-	start(role: SubRole, label: string, model: string = this.roles[role].model): RunView {
+	start(role: SubRole, label: string, model: string = (this.roles as Partial<Record<string, RoleSpec>>)[role]?.model ?? ""): RunView {
 		this.clearFinished(15_000);
 		const run: RunView = {
 			id: this.nextId++,
@@ -437,6 +437,13 @@ export class FlowView {
 		run.liveTokens = zero();
 		run.liveCounts = noCounts();
 		run.activity = outcome;
+		this.changed();
+	}
+
+	/** Counts a finished subagent run that another extension drove (explore, advisor, runners) toward the current stage. */
+	addFinished(role: SubRole, model: string, usage: UsageCounts): void {
+		this.flowStarted ??= Date.now();
+		this.add(this.stage, countTokens(usage, this.weights), role, shortModel(model), countsOf(usage));
 		this.changed();
 	}
 

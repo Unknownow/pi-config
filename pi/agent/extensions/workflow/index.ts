@@ -24,18 +24,15 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import { type Message, StringEnum } from "@earendil-works/pi-ai";
 import {
-	convertToLlm,
 	type ExtensionAPI,
 	type ExtensionContext,
 	getAgentDir,
 	getShellConfig,
 	loadProjectContextFiles,
-	serializeConversation,
 	type Theme,
 } from "@earendil-works/pi-coding-agent";
-import { type Component, Text, truncateToWidth } from "@earendil-works/pi-tui";
+import { Text, truncateToWidth } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import {
 	CONFIG_PATH,
@@ -46,6 +43,7 @@ import {
 	ROLES,
 	THINKING_LEVELS,
 	type Role,
+	type RoleSpec,
 	saveRole,
 	type Thinking,
 	type WorkflowConfig,
@@ -64,10 +62,8 @@ import { combineRepoTexts, followFolders, parseAddDir, parseWorktreeList, repoKe
 import { askFolderAdd } from "./folder-add.ts";
 import { codePublishProblem, registryPublishCodeProblem, registryPublishProblem, shellProblem } from "./push-guard.ts";
 import { blockedWaitCheck, classifyPublish, lockDecision, lockWaitCheck, NO_JUDGED_MERGE, waitSince, mirrorArgs, parseMirrorStep, parsePublishStep, publishArgs } from "./registry-publish.ts";
-import { RUNNER_GUARD_ENV, type RunnerGuardSpec } from "./runner-guard.ts";
 import { parseTestReport } from "./test-report.ts";
 import { amendmentTail, answerItem, askOptions, bodyField, manualChecks, newTestFlow, nextAction, normalize, openBugs, pendingFromFlaws, recordReport, skipItem, testOutcome, testPlan, type TestFlow } from "./test-flow.ts";
-import { callDir, formatTaskResult, parseRunnerReply, runnerGate, sanitizeIds, scheduleTasks, taskCard, taskRecord, type TestTask, verifyRun } from "./test-run.ts";
 import { type Finished, mergeChecklist, newFlowId, isHuman, openStepsReminder, parseChecklist, type PlanStatus, planCard, pruneIds, renderPlanFile, splitPlanFile, type ChecklistItem } from "./plan-doc.ts";
 import { addToRegistry, type BoardEntry, boardLines, boardRows, detailLines, liveEvents, type LiveInfo, readLive, readRegistry } from "./board.ts";
 import { adoptHigher, claimLive, commitRef, dropClaim, pidAlive, readClaim, writeClaim, deleteLocal, deleteRef, deleteReviewRef, fetchMirror, type Git, listRefs, plansDir, pushRef, readLocalStatuses, readPlanMd, refRev, remoteOf, repoInfo, type RefEntry, sweepReviewRefs, writeLocal, writeReviewRef } from "./plan-store.ts";
@@ -79,8 +75,11 @@ import { type CheckVerdict, autopilotAmendment, autopilotReply, checkTitle, chec
 import { nextStage, parseStages, planWaitProblems, stageLine, stageNote, stageStart, stagesOutcome } from "./stages.ts";
 import { planToolProblem, planToolRefused } from "./readonly-tools.ts";
 import { refilterPlanTools } from "./plan-tools.ts";
+import { AGENT_ROLES, type AgentRole, loadConfig as loadAgents, saveRole as saveAgentRole } from "../agents/config.ts";
+import { countSubagent } from "./agent-events.ts";
 import { MetricsQueue, type MetricEvent, subagentMetric } from "./metrics.ts";
-import { addUsage, emptyUsage, mapLimit, noContextFilesFor, type RunResult, runSubagent } from "./subagent.ts";
+import { addUsage, emptyUsage, mapLimit, type RunResult, runSubagent } from "../agents/subagent.ts";
+import { renderRuns, toolProgress } from "../agents/render.ts";
 import {
 	type Deviation,
 	deviationBlock,
@@ -210,15 +209,15 @@ const APPROVED = "Plan approved. Execute it now, step by step, following the wor
 const APPROVED_FINAL = "The final plan is approved. Execute it exactly, step by step, following the workflow rules.";
 /** The judge reads at most this much of the plan; the end (the arbiter's amendments) is kept. */
 const MAX_PLAN_CHARS = 60_000;
+/** Every role `/flow model` can set: the workflow's (workflow.json) and the agents extension's (agents.json). */
+const MODEL_ROLES: readonly string[] = [...ROLES, ...AGENT_ROLES];
 const OWN_TOOLS = new Set(["explore", "advisor", "judge"]);
-const EXPLORE_REASONS = ["question", "broad_search", "timeout", "too_much_output", "location_unknown", "parallel_lookups"] as const;
 const execFileAsync = promisify(execFile);
 /** Subagent-only extension that registers forwarded MCP servers (see mcp-forward.ts). */
-const FORWARD_EXTENSION = path.join(path.dirname(CONFIG_PATH), "extensions", "workflow", "mcp-forward.ts");
+const FORWARD_EXTENSION = path.join(path.dirname(CONFIG_PATH), "extensions", "agents", "mcp-forward.ts");
 /** Subagent-only extension that guards the git_task subagent's git and gh commands (see git-guard.ts). */
 const GIT_GUARD_EXTENSION = path.join(path.dirname(CONFIG_PATH), "extensions", "workflow", "git-guard.ts");
-/** Subagent-only extension that guards the test runners (see runner-guard.ts). */
-const RUNNER_GUARD_EXTENSION = path.join(path.dirname(CONFIG_PATH), "extensions", "workflow", "runner-guard.ts");
+
 
 interface Diff {
 	text: string;
@@ -255,43 +254,14 @@ function assistantText(m: AgentMessage | undefined): string {
 		.join("\n");
 }
 
-interface ToolDetails {
-	runs: RunView[];
-	verdict?: "PASS" | "FAIL";
-}
-
-/** Calls `fn` at most every `ms`, always delivering the last call. */
-function throttle(fn: () => void, ms: number): () => void {
-	let last = 0;
-	let timer: ReturnType<typeof setTimeout> | undefined;
-	return () => {
-		const wait = last + ms - Date.now();
-		if (wait <= 0) {
-			last = Date.now();
-			fn();
-		} else if (!timer) {
-			timer = setTimeout(() => {
-				timer = undefined;
-				last = Date.now();
-				fn();
-			}, wait);
-		}
-	};
-}
-
-function textOf(result: { content: { type: string; text?: string }[] }): string {
-	return result.content
-		.filter((c) => c.type === "text")
-		.map((c) => c.text ?? "")
-		.join("\n");
-}
-
 function countFindings(text: string): number {
 	return text.split("\n").filter((l) => /\s-\s*(blocker|major|minor)\s*-/i.test(l)).length;
 }
 
 export default function workflow(pi: ExtensionAPI) {
 	let { config: cfg, error: configError } = loadConfig();
+	/** The model of a role from workflow.json or, for explore, advisor and runner, agents.json. */
+	const roleSpecOf = (r: string): RoleSpec => (cfg.roles as Record<string, RoleSpec | undefined>)[r] ?? (loadAgents().config.roles as Record<string, RoleSpec>)[r];
 	let state: FlowState = { phase: "off", escalated: false, judgeRounds: 0 };
 	/** Diffs already judged or declined this session, so agent_end doesn't ask twice. */
 	const seenDiffs = new Set<string>();
@@ -704,7 +674,7 @@ export default function workflow(pi: ExtensionAPI) {
 	// ----------------------------------------------------------------------
 
 	/** The knowledge tools and server config a subagent role gets, or undefined when knowledge is off for it. */
-	function knowledgeFor(role: Role): { tools: string[]; servers: Record<string, Record<string, unknown>> } | undefined {
+	function knowledgeFor(role: string): { tools: string[]; servers: Record<string, Record<string, unknown>> } | undefined {
 		const k = cfg.knowledge;
 		if (!k.server || !k.roles.includes(role) || !fs.existsSync(FORWARD_EXTENSION)) return undefined;
 		const servers = forwardedServers(pi.getMcpServers(), k);
@@ -718,7 +688,7 @@ export default function workflow(pi: ExtensionAPI) {
 
 	/** Runs a role as a subagent with a live row in the view; `onChange` fires on every update. */
 	async function runRole(
-		role: SubRole,
+		role: Role & SubRole,
 		label: string,
 		opts: { systemPrompts: string[]; tools: string[]; task: string; cwd: string; signal?: AbortSignal; thinking?: Thinking; env?: Record<string, string>; extensions?: string[]; timeoutMs?: number },
 		onChange?: (run: RunView) => void,
@@ -730,7 +700,6 @@ export default function workflow(pi: ExtensionAPI) {
 		const started = Date.now();
 		const result = await runSubagent({
 			...rest,
-			noContextFiles: noContextFilesFor(role, cfg.explore.contextFiles),
 			tools: k ? [...rest.tools, ...k.tools] : rest.tools,
 			systemPrompts: k && role !== "judge" ? [...rest.systemPrompts, prompts.knowledgeTools(k.tools)] : rest.systemPrompts,
 			mcp: k ? { servers: k.servers, extension: FORWARD_EXTENSION } : undefined,
@@ -746,23 +715,6 @@ export default function workflow(pi: ExtensionAPI) {
 		recordMetric(subagentMetric(role, label, run.stage, result.model ?? cfg.roles[role].model, started, Date.now(), result));
 		if (!result.ok) view.finish(run, false, result.error ?? "failed");
 		return { result, run };
-	}
-
-	/** Streams a tool's live rows into its transcript entry. */
-	function toolProgress(onUpdate: ((p: { content: { type: "text"; text: string }[]; details: ToolDetails }) => void) | undefined) {
-		const runs: RunView[] = [];
-		const push = throttle(() => {
-			const summary = runs.map((r) => `${r.role} ${r.status}: ${r.activity}`).join("\n");
-			onUpdate?.({ content: [{ type: "text", text: summary }], details: { runs: runs.map((r) => ({ ...r })) } });
-		}, 150);
-		return {
-			runs,
-			track: (run: RunView) => {
-				if (!runs.includes(run)) runs.push(run);
-				push();
-			},
-			snapshot: (): RunView[] => runs.map((r) => ({ ...r })),
-		};
 	}
 
 	async function git(cwd: string, ...args: string[]) {
@@ -899,23 +851,6 @@ export default function workflow(pi: ExtensionAPI) {
 
 	function repoRoots(diff: Diff): string[] {
 		return diff.repos.filter((r) => r.changed).map((r) => r.root);
-	}
-
-	/** The whole branch, compactions included, as text. */
-	function transcript(ctx: ExtensionContext): string {
-		const messages: AgentMessage[] = [];
-		for (const entry of ctx.sessionManager.getBranch()) {
-			if (entry.type === "message") messages.push((entry as { message: AgentMessage }).message);
-			else if (entry.type === "custom_message") {
-				const e = entry as { content: Message["content"]; timestamp?: string };
-				messages.push({ role: "user", content: e.content, timestamp: Date.now() } as AgentMessage);
-			}
-		}
-		const text = serializeConversation(convertToLlm(messages));
-		const max = cfg.advisor.maxTranscriptChars;
-		if (text.length <= max) return text;
-		const head = Math.floor(max * 0.3);
-		return `${text.slice(0, head)}\n\n[... ${text.length - max} characters of the middle omitted ...]\n\n${text.slice(text.length - (max - head))}`;
 	}
 
 	interface JudgeResult {
@@ -2017,18 +1952,6 @@ export default function workflow(pi: ExtensionAPI) {
 		return true;
 	}
 
-	/** One gate for all test_run calls of this session: a resource is used by one runner at a time, and at most test.concurrency run at once. */
-	const runnerSlots = runnerGate(() => cfg.test.concurrency);
-
-	/** The folder for one round's runner logs and records: next to the plan file, else in the temp folder. */
-	function runsDir(round: number): string {
-		const plan = planFilePath();
-		const base = plan ? path.dirname(plan) : path.join(os.tmpdir(), "pi-test-runs", state.planDoc?.flowId ?? `flow-${process.pid}`);
-		const dir = path.join(base, "runs", String(round));
-		fs.mkdirSync(dir, { recursive: true });
-		return dir;
-	}
-
 	const reportRequest = (problems: string[]) => `Your report is not valid:\n${problems.map((p) => `- ${p}`).join("\n")}\n\nEnd with the test report in the required format.`;
 
 	/** The end of a supervisor turn in the test phase: check the report, record it, and end the flow. */
@@ -2220,145 +2143,6 @@ export default function workflow(pi: ExtensionAPI) {
 
 	const title = (theme: Theme, name: string, role: Role) =>
 		theme.fg("toolTitle", theme.bold(`${name} `)) + theme.fg("muted", shortModel(cfg.roles[role].model));
-
-	/** Live rows while running; rows plus the output (or a preview of it) when done. */
-	function renderRuns(
-		result: { content: { type: string; text?: string }[]; details?: unknown },
-		opts: { expanded: boolean; isPartial: boolean },
-		theme: Theme,
-		previewLines: number,
-	): Component {
-		const details = result.details as ToolDetails | undefined;
-		const rows = (details?.runs ?? []).map((r) => runLine(r, theme, { showRole: false }));
-		if (opts.isPartial) return new Text(rows.join("\n") || theme.fg("dim", "starting…"), 0, 0);
-		const body = textOf(result).trim();
-		if (!details) return new Text(theme.fg("toolOutput", body), 0, 0);
-		const lines = body.split("\n");
-		const shown = opts.expanded || lines.length <= previewLines ? lines : [...lines.slice(0, previewLines), theme.fg("dim", `… ${lines.length - previewLines} more lines (expand to see all)`)];
-		const colored = shown.map((l) =>
-			/VERDICT:\s*PASS/i.test(l) ? theme.fg("success", theme.bold(l)) : /VERDICT:\s*FAIL/i.test(l) ? theme.fg("error", theme.bold(l)) : /\s-\s*blocker\s*-/i.test(l) ? theme.fg("error", l) : /\s-\s*major\s*-/i.test(l) ? theme.fg("warning", l) : theme.fg("toolOutput", l),
-		);
-		return new Text([...rows, ...(previewLines > 0 || opts.expanded ? ["", ...colored] : [])].join("\n"), 0, 0);
-	}
-
-	pi.registerTool({
-		name: "explore",
-		label: "Explore",
-		description:
-			"Ask a cheap explorer model questions about the codebase, in parallel. Use it for open questions and multi-file searches ('how does the save system serialize state?', 'where is X handled?'); read files you already know yourself. Each query is self-contained. Returns a short answer with file:line evidence; check the evidence before relying on it.",
-		promptSnippet: "explore: ask a cheap model open questions about the codebase (answer + file:line evidence)",
-		parameters: Type.Object({
-			reason: StringEnum(EXPLORE_REASONS, {
-				description:
-					"Why: question (an open question about how something works), broad_search (a search across many files), timeout, too_much_output, location_unknown (no idea where to look), parallel_lookups (several independent lookups, e.g. across repos)",
-			}),
-			queries: Type.Array(Type.String({ description: "One self-contained lookup question" }), {
-				description: "Lookups to run in parallel",
-				minItems: 1,
-			}),
-		}),
-		async execute(_id, params, signal, onUpdate, ctx) {
-			const queries = params.queries.slice(0, cfg.explore.maxQueries);
-			const progress = toolProgress(onUpdate);
-			const results = await mapLimit(queries, cfg.explore.concurrency, async (q) => {
-				const { result, run } = await runRole("explore", `[${params.reason}] ${q}`, { systemPrompts: [prompts.EXPLORE], tools: cfg.explore.tools, task: q, cwd: ctx.cwd, signal }, progress.track);
-				if (result.ok) {
-					const refs = result.text.split("\n").filter((l) => /^(?:[-*]\s+)?\S+:\d+/.test(l.trim())).length;
-					view.finish(run, true, refs ? `${refs} ref${refs === 1 ? "" : "s"}` : "nothing found");
-				}
-				progress.track(run);
-				return result;
-			});
-			const usage = emptyUsage();
-			const sections = results.map((r, i) => {
-				addUsage(usage, r.usage);
-				return `### ${queries[i]}\n${r.ok ? r.text : `(failed: ${r.error})`}`;
-			});
-			const dropped = params.queries.length - queries.length;
-			if (dropped > 0) sections.push(`(${dropped} more queries dropped: limit is ${cfg.explore.maxQueries} per call)`);
-			return { content: [{ type: "text", text: sections.join("\n\n") }], details: { runs: progress.snapshot() }, usage };
-		},
-		renderCall(args, theme) {
-			const queries = (args.queries ?? []) as string[];
-			const reason = typeof args.reason === "string" ? theme.fg("warning", ` · ${args.reason.replace(/_/g, " ")}`) : "";
-			const head = `${title(theme, "explore", "explore")}${theme.fg("accent", ` ${queries.length} quer${queries.length === 1 ? "y" : "ies"}`)}${reason}`;
-			return new Text(head, 0, 0);
-		},
-		renderResult: (result, opts, theme) => renderRuns(result, opts, theme, 0),
-	});
-
-	pi.registerTool({
-		name: "test_run",
-		label: "Test run",
-		description:
-			"Send cheap runner agents to run test tasks, in parallel. Each task is a card: exact commands to run (run), what to capture (observe), and when it passes (pass). Tasks that share a resource (e.g. unity:<project>, device:<serial>) run one after another; others run together. Each result lists the commands the runner actually ran; a result marked unverified is only a claim, so rerun it. Full logs and per-task records are written to the artifacts folder.",
-		promptSnippet: "test_run: run test task cards on cheap runner agents (parallel by resource), results with the commands actually run",
-		parameters: Type.Object({
-			tasks: Type.Array(
-				Type.Object({
-					id: Type.String({ description: "Short name for the task" }),
-					run: Type.String({ description: "The exact commands or scenario to run" }),
-					observe: Type.String({ description: "What to capture (output lines, logcat, screenshot, exit code)" }),
-					pass: Type.String({ description: "The criteria for PASS" }),
-					resource: Type.String({ description: "What the task needs alone: unity:<project folder>, device:<serial>, or none" }),
-				}),
-				{ description: "Test tasks", minItems: 1 },
-			),
-		}),
-		async execute(_id, params, signal, onUpdate, ctx) {
-			const given = params.tasks.slice(0, cfg.test.maxTasks);
-			const ids = sanitizeIds(given.map((t) => t.id));
-			const tasks: TestTask[] = given.map((t, i) => ({ id: ids[i], run: t.run, observe: t.observe, pass: t.pass, resource: t.resource.trim() || "none" }));
-			const progress = toolProgress(onUpdate);
-			const usage = emptyUsage();
-			const notes: string[] = [];
-			if (params.tasks.length > given.length) notes.push(`(${params.tasks.length - given.length} more tasks dropped: limit is ${cfg.test.maxTasks} per call)`);
-			if (!fs.existsSync(RUNNER_GUARD_EXTENSION)) {
-				const sections = tasks.map((t) => `### ${t.id} · ${t.resource} · ERROR: runner guard extension not found at ${RUNNER_GUARD_EXTENSION}`);
-				return { content: [{ type: "text", text: [...sections, ...notes].join("\n\n") }], details: { runs: [] as RunView[] }, usage };
-			}
-			const roundDir = runsDir(state.testFlow?.round ?? 1);
-			let dir = roundDir;
-			try {
-				dir = callDir(roundDir, fs, path.join);
-			} catch {
-				// keep the round folder
-			}
-			const roots = uniqueRoots([...(await flowRepos(ctx)).map((r) => r.root), ...existingFolders(), ctx.cwd]);
-			const spec: RunnerGuardSpec = { roots, deny: cfg.test.runnerDeny, pathFlags: cfg.test.runnerPathFlags, pathEnv: cfg.test.runnerPathEnv };
-			const runnerTools = cfg.test.runnerTools.filter((t) => !/^(edit|write)$/.test(t));
-			const sections = await scheduleTasks(tasks, cfg.test.concurrency, async (task) => {
-				const card = taskCard(task, ctx.cwd, dir);
-				const { result, run } = await runnerSlots(task.resource, () =>
-					runRole(
-					"runner",
-					`[${task.resource}] ${task.id}`,
-					{ systemPrompts: [prompts.RUNNER], tools: runnerTools, task: card, cwd: ctx.cwd, signal, env: { [RUNNER_GUARD_ENV]: JSON.stringify(spec) }, extensions: [RUNNER_GUARD_EXTENSION], timeoutMs: cfg.test.runnerTimeoutMs },
-					progress.track,
-					),
-				);
-				addUsage(usage, result.usage);
-				const reply = parseRunnerReply(result.ok ? result.text : "");
-				const verified = verifyRun(reply, result.toolCalls);
-				const status = result.ok ? verified.status : `ERROR: ${result.error ?? "the runner failed"}`;
-				let record: string | undefined = path.join(dir, `${task.id}.md`);
-				try {
-					fs.writeFileSync(record, taskRecord(card, result.ok ? result.text : `(failed: ${result.error})`, result.toolCalls));
-				} catch {
-					record = undefined;
-				}
-				if (result.ok) view.finish(run, status === "PASS", status.length > 30 ? `${status.slice(0, 30)}…` : status);
-				progress.track(run);
-				return formatTaskResult({ id: task.id, resource: task.resource, status, reply: result.ok ? reply : undefined, ran: verified.ran, record });
-			});
-			return { content: [{ type: "text", text: [`Artifacts folder: ${dir}`, ...sections, ...notes].join("\n\n") }], details: { runs: progress.snapshot() }, usage };
-		},
-		renderCall(args, theme) {
-			const n = Array.isArray(args.tasks) ? args.tasks.length : 0;
-			return new Text(`${title(theme, "test_run", "runner")}${theme.fg("accent", ` ${n} task${n === 1 ? "" : "s"}`)}`, 0, 0);
-		},
-		renderResult: (result, opts, theme) => renderRuns(result, opts, theme, 0),
-	});
 
 	// ----------------------------------------------------------------------
 	// Wait points
@@ -2855,43 +2639,6 @@ export default function workflow(pi: ExtensionAPI) {
 	});
 
 	pi.registerTool({
-		name: "advisor",
-		label: "Advisor",
-		description:
-			"Ask a stronger model for guidance at a decision point. It reads the full session transcript, which is expensive, so call it sparingly and describe only the question. Use it only when choosing between approaches with real consequences, or when the same error keeps repeating. Not for routine steps, small changes, or checking finished work (the judge reviews the diff).",
-		promptSnippet: "advisor: guidance from a stronger model that reads the whole transcript",
-		parameters: Type.Object({
-			situation: StringEnum(["approach", "error", "other"] as const, {
-				description: "approach: pick between options; error: repeated failure",
-			}),
-			question: Type.String({ description: "The decision or question, with the options you are weighing" }),
-		}),
-		async execute(_id, params, signal, onUpdate, ctx) {
-			consecutiveErrors = 0;
-			const progress = toolProgress(onUpdate);
-			const { result, run } = await runRole(
-				"advisor",
-				`[${params.situation}] ${params.question}`,
-				{
-					systemPrompts: [prompts.ADVISOR, `## Transcript of the execution agent\n\n${transcript(ctx)}`],
-					tools: cfg.advisor.tools,
-					task: `Situation: ${params.situation}\nQuestion: ${params.question}`,
-					cwd: ctx.cwd,
-					signal,
-				},
-				progress.track,
-			);
-			if (!result.ok) throw new Error(`advisor failed: ${result.error}`);
-			view.finish(run, true, "guidance ready");
-			return { content: [{ type: "text", text: result.text }], details: { runs: progress.snapshot() }, usage: result.usage };
-		},
-		renderCall(args, theme) {
-			return new Text(`${title(theme, "advisor", "advisor")} ${theme.fg("accent", `[${args.situation ?? "…"}]`)} ${theme.fg("dim", String(args.question ?? ""))}`, 0, 0);
-		},
-		renderResult: (result, opts, theme) => renderRuns(result, opts, theme, 8),
-	});
-
-	pi.registerTool({
 		name: "judge",
 		label: "Judge",
 		description:
@@ -3108,7 +2855,6 @@ export default function workflow(pi: ExtensionAPI) {
 	// Plan phase is read-only: the planner settles the approach, the execute model changes things.
 	// Nested calls (codemode's tools.bash) pass through here too.
 	pi.on("tool_call", async (event, ctx) => {
-		if (event.toolName === "test_run" && state.phase !== "test") return { block: true, reason: "test_run works only in the test phase." };
 		if (state.phase === "execute") {
 			// Commits, pushes and pull requests are the executor's; a merge, a push to a protected branch and a publish need a judge pass on their tree; hooks are never skipped.
 			const input = (event.input ?? {}) as Record<string, unknown>;
@@ -4202,6 +3948,15 @@ export default function workflow(pi: ExtensionAPI) {
 		return { cancel: true };
 	});
 
+	// Explore, advisor and test_run run in the agents extension; a flow counts their usage and metrics.
+	pi.events.on("agents:subagent-finished", (data: unknown) => {
+		const c = countSubagent(data, state.phase, view.stage);
+		if (!c) return;
+		view.addFinished(c.event.role as SubRole, c.event.model, c.event.usage);
+		recordMetric(c.metric);
+		if (c.resetErrors) consecutiveErrors = 0;
+	});
+
 	pi.on("session_shutdown", async () => {
 		if (idleTimer) clearTimeout(idleTimer);
 		idleTimer = undefined;
@@ -4246,7 +4001,7 @@ export default function workflow(pi: ExtensionAPI) {
 			`guard     compact at ${cfg.contextGuardTokens || "off"} tokens`,
 			`tokens    ${STAGES.filter((s) => !["discuss", "test", "commit"].includes(s) || view.sessionTokens(s).raw + view.sessionTokens(s).cost > 0).map((s) => `${s} ${fmtTok(view.sessionTokens(s))}`).join(" · ")} · session total ${fmtTok(STAGES.reduce((n, s) => ({ raw: n.raw + view.sessionTokens(s).raw, cost: n.cost + view.sessionTokens(s).cost }), { raw: 0, cost: 0 }))}`,
 			"",
-			...ROLES.map((r) => `${r.padEnd(9)} ${describeRole(cfg.roles[r])}`),
+			...MODEL_ROLES.map((r) => `${r.padEnd(9)} ${describeRole(roleSpecOf(r))}`),
 			"",
 			`config    ${CONFIG_PATH}${fs.existsSync(CONFIG_PATH) ? "" : " (not created, using defaults)"}`,
 		];
@@ -4384,11 +4139,11 @@ export default function workflow(pi: ExtensionAPI) {
 		getArgumentCompletions: (prefix) => {
 			const parts = prefix.trimStart().split(/\s+/);
 			if (parts[0] === "model" && parts.length === 2) {
-				return ROLES.filter((r) => r.startsWith(parts[1])).map((r) => ({ value: `model ${r} `, label: `${r} (${describeRole(cfg.roles[r])})` }));
+				return MODEL_ROLES.filter((r) => r.startsWith(parts[1])).map((r) => ({ value: `model ${r} `, label: `${r} (${describeRole(roleSpecOf(r))})` }));
 			}
-			if (parts[0] === "model" && parts.length === 3 && ROLES.includes(parts[1] as Role)) {
+			if (parts[0] === "model" && parts.length === 3 && MODEL_ROLES.includes(parts[1])) {
 				try {
-					const items = modelChoices(lastCtx?.modelRegistry.getAvailable() ?? [], cfg.roles[parts[1] as Role]?.model)
+					const items = modelChoices(lastCtx?.modelRegistry.getAvailable() ?? [], roleSpecOf(parts[1]).model)
 						.filter((c) => c.value.toLowerCase().startsWith(parts[2].toLowerCase()))
 						.slice(0, 50)
 						.map((c) => ({ value: `model ${parts[1]} ${c.value}`, label: c.label }));
@@ -4428,7 +4183,7 @@ export default function workflow(pi: ExtensionAPI) {
 						return;
 					}
 					await startTestFlow(ctx, scope);
-					ctx.ui.notify(`workflow: testing on ${describeRole(cfg.roles.test)}, runners on ${describeRole(cfg.roles.runner)}`, "info");
+					ctx.ui.notify(`workflow: testing on ${describeRole(cfg.roles.test)}, runners on ${describeRole(loadAgents().config.roles.runner)}`, "info");
 					pi.sendMessage(
 						{ customType: "workflow-test", content: `Test this: ${scope}\n\nPlan the tests, send runners with test_run, and end with the test report. Next free ID: S1.`, display: true },
 						{ triggerTurn: true, deliverAs: "followUp" },
@@ -4559,13 +4314,13 @@ export default function workflow(pi: ExtensionAPI) {
 				}
 				case "model": {
 					let [role, spec] = rest;
-					const usage = () => ctx.ui.notify(`Usage: /flow model <${ROLES.join("|")}> <provider/id[:thinking]>`, "warning");
+					const usage = () => ctx.ui.notify(`Usage: /flow model <${MODEL_ROLES.join("|")}> <provider/id[:thinking]>`, "warning");
 					if (!role && ctx.hasUI) {
-						const pick = await ctx.ui.select("Role", ROLES.map((r) => `${r} (${describeRole(cfg.roles[r])})`));
+						const pick = await ctx.ui.select("Role", MODEL_ROLES.map((r) => `${r} (${describeRole(roleSpecOf(r))})`));
 						if (!pick) return;
 						role = pick.split(" ")[0];
 					}
-					if (!role || !ROLES.includes(role as Role)) {
+					if (!role || !MODEL_ROLES.includes(role)) {
 						usage();
 						return;
 					}
@@ -4577,7 +4332,7 @@ export default function workflow(pi: ExtensionAPI) {
 					if (spec) {
 						parsed = parseRoleSpec(spec);
 					} else {
-						const current = cfg.roles[role as Role];
+						const current = roleSpecOf(role);
 						let choices: ReturnType<typeof modelChoices> = [];
 						try {
 							choices = modelChoices(ctx.modelRegistry.getAvailable(), current?.model);
@@ -4601,12 +4356,16 @@ export default function workflow(pi: ExtensionAPI) {
 						ctx.ui.notify(`workflow: ${parsed}`, "error");
 						return;
 					}
-					saveRole(role as Role, parsed);
-					cfg = loadConfig().config;
-					const live = state.escalated ? role === "escalate" : role === state.phase;
-					if (live) await applyRole(ctx, role as Role);
+					const agentRole = (AGENT_ROLES as readonly string[]).includes(role);
+					if (agentRole) saveAgentRole(role as AgentRole, parsed);
+					else {
+						saveRole(role as Role, parsed);
+						cfg = loadConfig().config;
+						const live = state.escalated ? role === "escalate" : role === state.phase;
+						if (live) await applyRole(ctx, role as Role);
+					}
 					updateStatus(ctx);
-					ctx.ui.notify(`workflow: ${role} -> ${describeRole(parsed)} (saved to workflow.json)`, "info");
+					ctx.ui.notify(`workflow: ${role} -> ${describeRole(parsed)} (saved to ${agentRole ? "agents.json" : "workflow.json"})`, "info");
 					return;
 				}
 				default:

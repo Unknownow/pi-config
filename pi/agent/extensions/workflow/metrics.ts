@@ -4,7 +4,7 @@
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { RunResult } from "./subagent.ts";
+import type { RunResult } from "../agents/subagent.ts";
 import type { FlowUsage } from "./view.ts";
 
 type Tokens = { input: number; output: number; cacheRead: number; cacheWrite: number };

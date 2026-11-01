@@ -69,30 +69,23 @@ test("idleTimeoutMs: bad value falls back to the default, 0 is kept", () => {
 
 test("test block defaults", () => {
 	const t = DEFAULTS.test;
-	assert.equal(t.concurrency, 4);
-	assert.equal(t.maxTasks, 8);
-	assert.equal(t.runnerTimeoutMs, 2700000);
 	assert.equal(t.maxRounds, 3);
 	assert.equal(t.refails, 2);
 	assert.equal((t as Record<string, unknown>).delivery, undefined);
 	assert.deepEqual(DEFAULTS.roles.commit, { model: "claude-bridge/claude-haiku-5-5", thinking: "medium" });
 	assert.deepEqual(DEFAULTS.roles.test, { model: "claude-bridge/claude-opus-5-5", thinking: "medium" });
-	assert.deepEqual(DEFAULTS.roles.runner, { model: "claude-bridge/claude-haiku-5-5", thinking: "low" });
+	assert.equal("runner" in DEFAULTS.roles, false);
 });
 
-test("test block validation: bad values fall back, concurrency 1 is kept", () => {
+test("test block validation: bad values fall back, maxRounds 0 is kept", () => {
 	const f = tmp();
-	fs.writeFileSync(f, JSON.stringify({ test: { concurrency: 0, maxTasks: 99, runnerTimeoutMs: 5, refails: 0, delivery: "x", runnerDeny: "str" } }));
+	fs.writeFileSync(f, JSON.stringify({ test: { refails: 0, delivery: "x", supervisorBashAllow: "str" } }));
 	const t = loadConfig(f).config.test;
-	assert.equal(t.concurrency, 4);
-	assert.equal(t.maxTasks, 8);
-	assert.equal(t.runnerTimeoutMs, 2700000);
 	assert.equal(t.refails, 2);
 	assert.equal((t as Record<string, unknown>).delivery, undefined);
-	assert.deepEqual(t.runnerDeny, DEFAULTS.test.runnerDeny);
+	assert.deepEqual(t.supervisorBashAllow, DEFAULTS.test.supervisorBashAllow);
 	const g = tmp();
-	fs.writeFileSync(g, JSON.stringify({ test: { concurrency: 1, maxRounds: 0 } }));
-	assert.equal(loadConfig(g).config.test.concurrency, 1);
+	fs.writeFileSync(g, JSON.stringify({ test: { maxRounds: 0 } }));
 	assert.equal(loadConfig(g).config.test.maxRounds, 0);
 });
 
@@ -100,7 +93,7 @@ test("the shipped workflow.json test block matches the defaults", () => {
 	const shipped = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, "..", "..", "workflow.json"), "utf8"));
 	assert.deepEqual(shipped.test, DEFAULTS.test);
 	assert.deepEqual(shipped.roles.test, DEFAULTS.roles.test);
-	assert.deepEqual(shipped.roles.runner, DEFAULTS.roles.runner);
+	assert.deepEqual(Object.keys(shipped.roles).sort(), Object.keys(DEFAULTS.roles).sort());
 });
 
 test("wait defaults and validation", () => {
@@ -137,13 +130,18 @@ test("invalid autopilot falls back to false", () => {
 	assert.equal(loadConfig(f).config.autopilot, true);
 });
 
-test("explore.contextFiles defaults to false and takes only a boolean", () => {
-	assert.equal(DEFAULTS.explore.contextFiles, false);
-	for (const [v, want] of [[true, true], ["yes", false]] as const) {
-		const f = tmp();
-		fs.writeFileSync(f, JSON.stringify({ explore: { contextFiles: v } }));
-		assert.equal(loadConfig(f).config.explore.contextFiles, want);
-	}
+test("settings that moved to agents.json are ignored and dropped", () => {
+	const f = tmp();
+	fs.writeFileSync(f, JSON.stringify({ roles: { explore: { model: "a/b" }, advisor: { model: "a/b" }, runner: { model: "a/b" }, plan: { model: "p/q" } }, explore: { maxQueries: 2 }, advisor: { tools: [] }, test: { concurrency: 9, runnerDeny: ["x"], refails: 3 } }));
+	const c = loadConfig(f);
+	assert.equal(c.error, undefined);
+	const raw = c.config as unknown as Record<string, unknown>;
+	assert.equal("explore" in raw || "advisor" in raw, false);
+	for (const r of ["explore", "advisor", "runner"]) assert.equal(r in c.config.roles, false, r);
+	assert.equal(c.config.roles.plan.model, "p/q");
+	assert.deepEqual(Object.keys(c.config.test).sort(), ["maxRounds", "refails", "supervisorBashAllow"]);
+	assert.equal(c.config.test.refails, 3);
+	assert.deepEqual(c.config.knowledge.roles, ["judge", "arbiter"]);
 });
 
 test("addedFolderRules defaults to paths; full is kept, anything else falls back", () => {
@@ -193,4 +191,11 @@ test("keys of the removed delivery menu and commit step load and are dropped", (
 
 test("minor findings get one fix round by default", () => {
 	assert.equal(DEFAULTS.maxMinorRounds, 1);
+});
+
+test("the shipped planAllowedTools refuses test_run but admits explore, advisor and judge", () => {
+	const shipped = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, "..", "..", "workflow.json"), "utf8"));
+	const allowed = (name: string) => shipped.planAllowedTools.some((p: string) => new RegExp(p).test(name));
+	assert.equal(allowed("test_run"), false);
+	for (const n of ["explore", "advisor", "judge"]) assert.equal(allowed(n), true, n);
 });

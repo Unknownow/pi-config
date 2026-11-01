@@ -2,8 +2,8 @@
  * Team knowledge (an MCP server such as IEC's `knowledge`) for the workflow's subagents, and the
  * check that the judge really ran its knowledge step. Pure functions; index.ts wires them in.
  */
-import type { KnowledgeConfig, Role } from "./config.ts";
-import type { ToolCall } from "./subagent.ts";
+import type { KnowledgeConfig } from "../agents/types.ts";
+import type { ToolCall } from "../agents/subagent.ts";
 
 export type KnowledgeStatus = { status: "checked" } | { status: "skipped" | "unavailable"; reason: string };
 
@@ -26,7 +26,7 @@ export function toolPrefix(server: string): string {
 const WRITE_TOOLS = new Set(["propose_entry"]);
 
 /** Knowledge tool names `role` gets; [] when the role is not in `cfg.roles`. */
-export function roleTools(role: Role, cfg: KnowledgeConfig): string[] {
+export function roleTools(role: string, cfg: KnowledgeConfig): string[] {
 	return cfg.server && cfg.roles.includes(role) ? cfg.tools.filter((t) => !WRITE_TOOLS.has(t)).map((t) => toolPrefix(cfg.server) + t) : [];
 }
 
