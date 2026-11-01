@@ -25,6 +25,7 @@ import { addUsage, emptyUsage, mapLimit, noContextFilesFor, type RunResult, runS
 import { callDir, formatTaskResult, parseRunnerReply, runnerGate, sanitizeIds, scheduleTasks, taskCard, taskRecord, type TestTask, verifyRun } from "./test-run.ts";
 import { FlowView, type RunView, shortModel } from "../workflow/view.ts";
 import { forwardedServers, roleTools } from "./knowledge.ts";
+import { foldersForCwd } from "./session-folders.ts";
 import { knowledgeTools } from "./prompts.ts";
 import { uniqueRoots } from "../workflow/repos.ts";
 
@@ -35,7 +36,6 @@ const FORWARD_EXTENSION = path.join(path.dirname(CONFIG_PATH), "extensions", "ag
 /** Subagent-only extension that guards the runners' bash (see runner-guard.ts). */
 const RUNNER_GUARD_EXTENSION = path.join(path.dirname(CONFIG_PATH), "extensions", "agents", "runner-guard.ts");
 /** The workflow publishes the session's added folders as a custom entry of this type. */
-const FOLDERS_ENTRY = "session-folders";
 
 export default function agents(pi: ExtensionAPI) {
 	// Tracks the live rows of this extension's own runs; the workflow widget is not involved.
@@ -121,12 +121,7 @@ export default function agents(pi: ExtensionAPI) {
 
 	/** Folders the workflow extension added to this session (newest `session-folders` entry for this working folder) that still exist. */
 	function sessionFolders(ctx: ExtensionContext): string[] {
-		const newest = ctx.sessionManager
-			.getBranch()
-			.filter((e) => e.type === "custom" && (e as { customType?: string }).customType === FOLDERS_ENTRY)
-			.pop() as { data?: { cwd?: unknown; folders?: unknown } } | undefined;
-		const folders = newest?.data && Array.isArray(newest.data.folders) ? newest.data.folders.filter((f): f is string => typeof f === "string") : [];
-		return folders.filter((f) => {
+		return foldersForCwd(ctx.sessionManager.getBranch(), ctx.cwd).filter((f) => {
 			try {
 				return fs.statSync(f).isDirectory();
 			} catch {
