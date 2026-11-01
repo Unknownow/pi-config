@@ -542,12 +542,12 @@ Read local/delete-preview.txt (0 WOULD delete lines today) and create local/dele
 - [x] S8 Commits (D21):
 - [x] S9 Update `README.md` and `docs/workflow-improvements.md` with new rows for S4–S8 (next free IDs per category), the Status 
 - [x] S10 Deliver: merge — flow speed 5a.
-- [ ] S11 `bin/lib.js`: delete detection per D9–D11, next to the record code (`lib.js:361-426`), modelled on `editedInRepo`.
-- [ ] S12 `bin/export.js` and `bin/import.js`: apply the deletions after copying.
-- [ ] S13 `extension/ready.ts` and `extension/index.ts`:
-- [ ] S14 Run `node bin/import.js --dry-run` and `node bin/export.js --dry-run` against the real folders. Write every `WOULD delet
-- [ ] S15 Wait: the user reads the paths in `local/delete-preview.txt` and confirms them by creating `local/deletes-reviewed.txt` 
-- [ ] S16 Deliver: merge — sync deletes.
+- [x] S11 `bin/lib.js`: delete detection per D9–D11, next to the record code (`lib.js:361-426`), modelled on `editedInRepo`.
+- [x] S12 `bin/export.js` and `bin/import.js`: apply the deletions after copying.
+- [x] S13 `extension/ready.ts` and `extension/index.ts`:
+- [x] S14 Run `node bin/import.js --dry-run` and `node bin/export.js --dry-run` against the real folders. Write every `WOULD delet
+- [x] S15 Wait: the user reads the paths in `local/delete-preview.txt` and confirms them by creating `local/deletes-reviewed.txt` 
+- [x] S16 Deliver: merge — sync deletes.
 - [ ] S17 Create `pi/agent/extensions/agents/`.
 - [ ] S18 `agents/config.ts` plus `pi/agent/agents.json`, per Design:
 - [ ] S19 `agents/index.ts`: register `explore` and `advisor`, moved from `workflow/index.ts:2245` and `2858`, together with:
