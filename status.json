@@ -1,0 +1,18 @@
+{
+  "v": 1,
+  "flowId": "20261101-1604-fix-the-open-findings-from-the-pi-setup-f65a",
+  "rev": 1,
+  "updated": "2026-11-01T09:04:14.892Z",
+  "title": "Fix the open findings from the Pi setup flow",
+  "done": [],
+  "reviewBase": {
+    "d:/works/pi-config": "c81d47e39212e50f4ce53c9157be14927acf3052"
+  },
+  "repos": [
+    {
+      "branch": "master",
+      "remote": "github.com/Unknownow/pi-config",
+      "primary": true
+    }
+  ]
+}
