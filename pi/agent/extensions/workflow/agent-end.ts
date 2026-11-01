@@ -1,6 +1,13 @@
 /** Pure decisions behind the agent_end handler, kept apart so node tests can reach them. */
 
+import { JUDGE_MAJOR_ONLY } from "./prompts.ts";
+
 export const MAX_RESUMES = 2;
+
+/** Extra judge system text: after a minor-fix round the review reports only blocker and major findings. */
+export function judgeAddenda(minorRounds: number): string {
+	return minorRounds > 0 ? "\n" + JUDGE_MAJOR_ONLY : "";
+}
 
 /** True when the reply is an assistant reply with no content: the bridge's answer to a retry that ended on a tool result. */
 export function isEmptyReply(last: { role?: string; content?: unknown } | undefined): boolean {

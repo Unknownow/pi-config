@@ -443,6 +443,10 @@ export class FlowView {
 	/** Counts a finished subagent run that another extension drove (explore, advisor, runners) toward the current stage. */
 	addFinished(role: SubRole, model: string, usage: UsageCounts): void {
 		this.flowStarted ??= Date.now();
+		const sub = (this.flow[this.stage].subs[role] ??= { tokens: zero(), runs: 0 });
+		sub.runs++;
+		const bySub = ((sub.byModel ??= {})[modelKey(shortModel(model))] ??= { tokens: zero(), runs: 0 });
+		bySub.runs++;
 		this.add(this.stage, countTokens(usage, this.weights), role, shortModel(model), countsOf(usage));
 		this.changed();
 	}

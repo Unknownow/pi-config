@@ -2,10 +2,9 @@
 
 import type { StagedPlans } from "./config.ts";
 import { toolPrefix } from "./knowledge.ts";
+import { knowledgeTools, PACE } from "../agents/prompts.ts";
 
-/** Keep-working and parallel-call rule, shared by every role's prompt. */
-export const PACE =
-	"Don't stop between steps: keep going until you need the user's input, a tool's result or an explorer's answer. Put independent tool calls in the same reply so they run in parallel (several reads, a test run next to an explore, several explore queries or test tasks in one call); wait only for results the next step needs.";
+export { knowledgeTools, PACE };
 
 /** Sent with every judge fix message: the re-runs after a small fix were most of the flows' time. */
 export const FIX_TESTS =
@@ -205,11 +204,6 @@ Output, nothing else: your findings, then the KNOWLEDGE line, then a final line 
 path:line - blocker|major|minor - [knowledge <entry-id>] the problem in one line
   Why: the rule and the evidence, with file:line.
   Fix: concrete steps a less capable model can follow.`;
-
-/** One line for explore, advisor and arbiter when they have the knowledge tools. */
-export function knowledgeTools(tools: string[]): string {
-	return `Team knowledge: ${tools.map((t) => `\`${t}\``).join(", ")} answer "how is this done here" questions (rules, decisions, guidelines, playbooks). Use them when a question touches the team's conventions, and cite the entry IDs you rely on.`;
-}
 
 /** The agent's view of the extra folders and repos in this session. */
 export function workspaceSection(cwd: string, folders: string[], touched: string[], rules: { path: string; size: number }[] = []): string {

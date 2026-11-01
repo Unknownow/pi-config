@@ -145,3 +145,16 @@ test("summary card hides a zero commit row and keeps a used one", () => {
 	assert.ok(!summaryLines(mk(0) as never, theme as never).some((l) => l.trim().startsWith("commit")));
 	assert.ok(summaryLines(mk(7) as never, theme as never).some((l) => l.trim().startsWith("commit")));
 });
+
+test("addFinished counts each finished run", async () => {
+	const { FlowView } = await import("./view.ts");
+	const v = new FlowView(roles);
+	v.weights = w;
+	v.addFinished("explore", "claude-bridge/claude-haiku-5-5", usage(10) as never);
+	v.addFinished("explore", "claude-bridge/claude-haiku-5-5", usage(10) as never);
+	const sub = v.flow[v.stage].subs.explore!;
+	assert.equal(sub.runs, 2);
+	const models = Object.values(sub.byModel!);
+	assert.equal(models.length, 1);
+	assert.equal(models[0].runs, 2);
+});

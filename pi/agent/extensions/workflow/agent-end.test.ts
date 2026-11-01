@@ -269,3 +269,9 @@ test("a wait check broken in the full plan stays broken in a change section; a n
 	d = addPlanReply(d, "## Plan: x\n**S2.** Wait: act (check: test -f a)");
 	assert.equal(problems(d).length, 0);
 });
+
+test("judge addenda after a minor round", async () => {
+	const { judgeAddenda } = await import("./agent-end.ts");
+	assert.equal(judgeAddenda(0), "");
+	assert.ok(judgeAddenda(1).includes("only blocker and major"));
+});
