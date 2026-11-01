@@ -530,6 +530,16 @@ A persisted state with `phase: "test"`, or with `tokens.test`, loads as `off` wi
 Read local/delete-preview.txt (0 WOULD delete lines today) and create local/deletes-reviewed.txt to approve the sync-deletes merge (PR #22). (step S15, act)
 
 
+## Amendment 2 (arbiter)
+**S22 (amended).** `test_run` works in `off`, `execute` and (until stage 4) `test`. It is refused in `discuss` and `plan`.
+- `workflow/readonly-tools.ts` `PLAN_TOOLS` and `pi/agent/workflow.json` `planAllowedTools`: take `test_run` back out of the first regex. The existing `planToolRefused` check in the `tool_call` hook (`index.ts:~2918`) then refuses it in discuss and plan with the usual "not a reading tool" reason. The workflow does not remove the tool from the active list. It only refuses the call, which is consistent with "agents tools are never removed".
+- The agents extension stays phase-agnostic and imports no workflow state.
+- Why: runner bash is not read-only-checked, so allowing `test_run` while planning lets the plan phase change files.
+- Tests: in `readonly-tools.test.ts`, `planToolRefused("test_run", PLAN_TOOLS regexes, ["edit","write"])` is not null, and `explore`, `advisor` and `judge` are still allowed. In `config.test.ts`, the shipped `planAllowedTools` does not match `test_run`.
+- Docs: change the D31 row in `docs/workflow-improvements.md`. Replace the risk "the plan phase now allows `test_run`" with "`test_run` is refused in discuss and plan (runner bash is not read-only)". Add the same line to `agents/README.md` and to the workflow README phase table.
+
+**S30 (amended).** In the phase → tools table, `discuss` and `plan` keep the `test_run` refusal from S22 as a hook, not as a removal from the active tools. The test "never removes `explore`, `advisor` or `test_run`" stays. Add a test that the `tool_call` refusal for `test_run` still fires in discuss and plan.
+
 <!-- pi-workflow:status -->
 ## Checklist
 - [x] S1 Create the gitignored `D:\works\pi-config\local\sync.json`:
@@ -548,13 +558,13 @@ Read local/delete-preview.txt (0 WOULD delete lines today) and create local/dele
 - [x] S14 Run `node bin/import.js --dry-run` and `node bin/export.js --dry-run` against the real folders. Write every `WOULD delet
 - [x] S15 Wait: the user reads the paths in `local/delete-preview.txt` and confirms them by creating `local/deletes-reviewed.txt` 
 - [x] S16 Deliver: merge — sync deletes.
-- [ ] S17 Create `pi/agent/extensions/agents/`.
-- [ ] S18 `agents/config.ts` plus `pi/agent/agents.json`, per Design:
-- [ ] S19 `agents/index.ts`: register `explore` and `advisor`, moved from `workflow/index.ts:2245` and `2858`, together with:
-- [ ] S20 `workflow/index.ts`:
+- [x] S17 Create `pi/agent/extensions/agents/`.
+- [x] S18 `agents/config.ts` plus `pi/agent/agents.json`, per Design:
+- [x] S19 `agents/index.ts`: register `explore` and `advisor`, moved from `workflow/index.ts:2245` and `2858`, together with:
+- [x] S20 `workflow/index.ts`:
 - [ ] S21 Deliver: merge — agents extension, explore and advisor.
-- [ ] S22 Move `test_run` (`workflow/index.ts:2291` and its record helpers about 2026-2031 and 2328, 811-819) and the runner-guard
-- [ ] S23 Update `README.md`: the workflow README sections on explore, advisor and test_run point to a short new `agents/README.md
+- [x] S22 Move `test_run` (`workflow/index.ts:2291` and its record helpers about 2026-2031 and 2328, 811-819) and the runner-guard
+- [x] S23 Update `README.md`: the workflow README sections on explore, advisor and test_run point to a short new `agents/README.md
 - [ ] S24 Deliver: merge — agents extension, test_run.
 - [ ] S25 Remove the test phase (D8):
 - [ ] S26 `/flow off` restores the model (D13):
