@@ -1,8 +1,8 @@
 {
   "v": 1,
   "flowId": "20261101-1736-new-pi-sessions-start-with-the-flow-off-1e67",
-  "rev": 4,
-  "updated": "2026-11-01T10:39:12.275Z",
+  "rev": 5,
+  "updated": "2026-11-01T10:39:19.196Z",
   "title": "New Pi sessions start with the flow off, and the merged changes go live",
   "done": [
     "S1",
@@ -12,8 +12,13 @@
     "S5",
     "S7"
   ],
+  "finished": {
+    "at": "2026-11-01T10:39:19.083Z",
+    "ok": true,
+    "text": "master, 2 commits since the review base, PR #28 MERGED https://github.com/Unknownow/pi-config/pull/28 · 1 human check(s) for you (see the card)"
+  },
   "reviewBase": {
-    "d:/works/pi-config": "5b39dfd6aab0c7c1f20711ece100825cb0e1aa0c"
+    "d:/works/pi-config": "fff35fb18be40a47b26a8a2e31c59d138638767c"
   },
   "passedTrees": {
     "d:/works/pi-config": [
