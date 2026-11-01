@@ -1,7 +1,7 @@
 // node --experimental-strip-types --test prompts.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { ARBITER, COMMIT, EXECUTE_PHASE, FIX_MESSAGE, FIX_ROUND, FIX_TESTS, JUDGE, JUDGE_KNOWLEDGE_ONLY, NO_SLEEP, NO_WORKFLOW, PACE, deliveryGuidance, JUDGE_MAJOR_ONLY, minorFixMessage, phaseSection, PLAN_KICKOFF, planPhase, TEST_PHASE, workspaceSection } from "./prompts.ts";
+import { ARBITER, COMMIT, EXECUTE_PHASE, FIX_MESSAGE, FIX_TESTS, JUDGE, JUDGE_KNOWLEDGE_ONLY, NO_SLEEP, NO_WORKFLOW, PACE, deliveryGuidance, JUDGE_MAJOR_ONLY, minorFixMessage, phaseSection, PLAN_KICKOFF, planPhase, workspaceSection } from "./prompts.ts";
 import { ADVISOR, EXPLORE, RUNNER } from "../agents/prompts.ts";
 
 const BATCH = `- Batch tool calls. Each call re-sends the whole conversation, so ten small calls at 150k context re-send 1.5M tokens. Put independent reads and commands in one call (a codemode script, run_code, or one bash command joined with && or ;) and print only what you need. Don't spend a call on something you could have added to the previous one.`;
@@ -39,52 +39,24 @@ test("phaseSection gives the execute prompt, with the stage line when staged", (
 - Current stage: 1 of 2`);
 });
 
-test("phaseSection gives the test supervisor prompt in the test phase", () => {
-	const text = phaseSection("test", SECTION_OPTS) ?? "";
-	for (const s of ["test_run", "[ask]", "VERDICT: CLEAN | BUGS", "unity:", "device:"]) assert.ok(text.includes(s), s);
-});
-
 test("the runner prompt names its reply format", () => {
 	assert.ok(RUNNER.includes("RESULT: PASS | FAIL | ERROR"));
 });
 
-test("phaseSection gives the inactive note outside discuss, plan, execute and test", () => {
+test("phaseSection gives the inactive note outside discuss, plan and execute", () => {
 	assert.ok(NO_WORKFLOW.length > 0);
 	assert.equal(phaseSection("off", SECTION_OPTS), NO_WORKFLOW);
 	assert.equal(phaseSection("", SECTION_OPTS), NO_WORKFLOW);
 });
 
 test("phaseSection is never empty, so the workflow section is never deleted", () => {
-	for (const phase of ["off", "discuss", "plan", "execute", "test"]) assert.ok(phaseSection(phase, SECTION_OPTS).length > 0);
+	for (const phase of ["off", "discuss", "plan", "execute"]) assert.ok(phaseSection(phase, SECTION_OPTS).length > 0);
 });
 
 test("workspaceSection with no folders still gives the working folder", () => {
 	const text = workspaceSection("/w", [], [], []);
 	assert.ok(text.startsWith("Working folder: /w"));
 	assert.ok(!text.includes("Added folders"));
-});
-
-test("the test report template parses", async () => {
-	const { TEST_PHASE } = await import("./prompts.ts");
-	const { parseTestReport } = await import("./test-report.ts");
-	const tpl = TEST_PHASE.slice(TEST_PHASE.indexOf("## Test report:")).split("\n  (one line")[0].replace("VERDICT: CLEAN | BUGS", "VERDICT: BUGS");
-	const r = parseTestReport(tpl, { nextId: 1, known: [], mustReport: [] } as never);
-	assert.ok(r);
-	assert.deepEqual(r.problems, []);
-	assert.equal(r.items.length, 5);
-});
-
-test("fix round prompts", async () => {
-	const p = await import("./prompts.ts");
-	const opts = { staging: "off" } as never;
-	assert.ok(!p.phaseSection("execute", opts)!.includes("Fix round of a test flow"));
-	assert.ok(p.phaseSection("execute", { ...(opts as object), testFix: true } as never)!.includes("regression test"));
-	assert.ok(!p.JUDGE.includes("test flow"));
-	assert.match(p.JUDGE_TEST, /weakened, deleted or rewritten/);
-	assert.match(p.ARBITER_TEST, /ASK_USER/);
-	const msg = p.testRoundMessage({ why: "retest", fixed: [{ id: "S1", repro: "run it" }], ran: ["unity run-tests"], answers: ["D2. S3: yes"], nextId: 5 });
-	for (const t of ["S1: run it", "unity run-tests", "D2. S3: yes", "S5"]) assert.ok(msg.includes(t), t);
-	assert.match(p.fixRoundMessage(["S1", "S2"], ["repo: ?? x"]), /S1, S2[\s\S]*repo: \?\? x/);
 });
 
 test("execute prompt names deliver and wait_for_user", () => {
@@ -104,13 +76,12 @@ test("planner prompts teach Deliver and Wait steps", async () => {
 });
 
 test("every role carries the keep-working and parallel rule", () => {
-	for (const [name, text] of Object.entries({ plan: planPhase(), execute: EXECUTE_PHASE, test: TEST_PHASE, JUDGE, ARBITER, EXPLORE, ADVISOR, RUNNER, JUDGE_KNOWLEDGE_ONLY })) assert.ok(text.includes(PACE), name);
+	for (const [name, text] of Object.entries({ plan: planPhase(), execute: EXECUTE_PHASE, JUDGE, ARBITER, EXPLORE, ADVISOR, RUNNER, JUDGE_KNOWLEDGE_ONLY })) assert.ok(text.includes(PACE), name);
 	assert.ok(!COMMIT.includes(PACE));
 });
 
-test("execute and test prompts forbid fixed long sleeps", () => {
+test("the execute prompt forbids fixed long sleeps", () => {
 	assert.ok(EXECUTE_PHASE.includes(NO_SLEEP));
-	assert.ok(TEST_PHASE.includes(NO_SLEEP));
 });
 
 test("slow suites run once and rerun only when touched", async () => {
@@ -119,13 +90,11 @@ test("slow suites run once and rerun only when touched", async () => {
 	assert.ok(planPhase().includes("Mark each suite slower than about 2 minutes as slow"));
 	assert.ok(planPhase("onRequest").includes("Mark each suite slower than about 2 minutes as slow"));
 	assert.ok(EXECUTE_PHASE.includes("When done, run the plan's tests as above"));
-	assert.ok(FIX_ROUND.includes("rerun a slow suite only if the fix changed files it builds or reads"));
 });
 
 test("human checks are Verify steps, never Wait", () => {
 	assert.ok(planPhase().includes("Verify:") && planPhase().includes("Wait:"));
 	assert.ok(EXECUTE_PHASE.includes('kind: "verify"'));
-	assert.ok(TEST_PHASE.includes("after the flow"));
 });
 
 test("delivery guidance in the prompts", () => {

@@ -67,32 +67,13 @@ test("idleTimeoutMs: bad value falls back to the default, 0 is kept", () => {
 	assert.equal(idle("1000"), 1000);
 });
 
-test("test block defaults", () => {
-	const t = DEFAULTS.test;
-	assert.equal(t.maxRounds, 3);
-	assert.equal(t.refails, 2);
-	assert.equal((t as Record<string, unknown>).delivery, undefined);
+test("the commit role defaults to Haiku", () => {
 	assert.deepEqual(DEFAULTS.roles.commit, { model: "claude-bridge/claude-haiku-5-5", thinking: "medium" });
-	assert.deepEqual(DEFAULTS.roles.test, { model: "claude-bridge/claude-opus-5-5", thinking: "medium" });
-	assert.equal("runner" in DEFAULTS.roles, false);
 });
 
-test("test block validation: bad values fall back, maxRounds 0 is kept", () => {
-	const f = tmp();
-	fs.writeFileSync(f, JSON.stringify({ test: { refails: 0, delivery: "x", supervisorBashAllow: "str" } }));
-	const t = loadConfig(f).config.test;
-	assert.equal(t.refails, 2);
-	assert.equal((t as Record<string, unknown>).delivery, undefined);
-	assert.deepEqual(t.supervisorBashAllow, DEFAULTS.test.supervisorBashAllow);
-	const g = tmp();
-	fs.writeFileSync(g, JSON.stringify({ test: { maxRounds: 0 } }));
-	assert.equal(loadConfig(g).config.test.maxRounds, 0);
-});
-
-test("the shipped workflow.json test block matches the defaults", () => {
+test("the shipped workflow.json roles match the defaults", () => {
 	const shipped = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, "..", "..", "workflow.json"), "utf8"));
-	assert.deepEqual(shipped.test, DEFAULTS.test);
-	assert.deepEqual(shipped.roles.test, DEFAULTS.roles.test);
+	assert.equal("test" in shipped || "test" in shipped.roles, false);
 	assert.deepEqual(Object.keys(shipped.roles).sort(), Object.keys(DEFAULTS.roles).sort());
 });
 
@@ -139,8 +120,7 @@ test("settings that moved to agents.json are ignored and dropped", () => {
 	assert.equal("explore" in raw || "advisor" in raw, false);
 	for (const r of ["explore", "advisor", "runner"]) assert.equal(r in c.config.roles, false, r);
 	assert.equal(c.config.roles.plan.model, "p/q");
-	assert.deepEqual(Object.keys(c.config.test).sort(), ["maxRounds", "refails", "supervisorBashAllow"]);
-	assert.equal(c.config.test.refails, 3);
+	assert.equal("test" in raw || "test" in c.config.roles, false);
 	assert.deepEqual(c.config.knowledge.roles, ["judge", "arbiter"]);
 });
 
@@ -182,11 +162,10 @@ test("legacy returnToPlan and invalid values", () => {
 
 test("keys of the removed delivery menu and commit step load and are dropped", () => {
 	const f = tmp();
-	fs.writeFileSync(f, JSON.stringify({ delivery: { ask: true, default: "merge", runner: "main", base: "dev" }, test: { delivery: "commit" } }));
+	fs.writeFileSync(f, JSON.stringify({ delivery: { ask: true, default: "merge", runner: "main", base: "dev" } }));
 	const c = loadConfig(f).config;
 	for (const k of ["ask", "default", "runner"]) assert.equal(k in c.delivery, false, k);
 	assert.equal(c.delivery.base, "dev");
-	assert.equal("delivery" in c.test, false);
 });
 
 test("minor findings get one fix round by default", () => {

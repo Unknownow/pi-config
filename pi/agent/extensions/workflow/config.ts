@@ -17,7 +17,7 @@ export { THINKING_LEVELS };
 export type { KnowledgeConfig, RoleSpec, Thinking };
 
 /** Roles of workflow.json; explore, advisor and runner live in agents.json (extensions/agents). */
-export const ROLES = ["discuss", "plan", "execute", "judge", "arbiter", "commit", "escalate", "test"] as const;
+export const ROLES = ["discuss", "plan", "execute", "judge", "arbiter", "commit", "escalate"] as const;
 export type Role = (typeof ROLES)[number];
 
 /** Guidance for the executor's own commit, push, pull request and merge. Merging, pushing to a protected branch and publishing still wait for a judge pass; a plan line `Delivery: no merge` turns them off for a flow. */
@@ -67,20 +67,10 @@ export interface PlansConfig {
 	keepCount: number;
 }
 
-/** The test-and-fix flow: a supervisor (role `test`) sends runners through the test_run tool (settings in agents.json). */
-export interface TestConfig {
-	/** Fix rounds before the flow asks whether to go on. 0 = no limit. */
-	maxRounds: number;
-	/** Failed fixes of one bug before the user is asked. */
-	refails: number;
-	/** Extra commands the supervisor's bash may run, as regexes over the command's words. */
-	supervisorBashAllow: string[];
-}
-
 export interface WorkflowConfig {
 	roles: Record<Role, RoleSpec>;
 	/** Phase a new session starts in. */
-	startPhase: "discuss" | "plan" | "execute" | "test" | "off";
+	startPhase: "discuss" | "plan" | "execute" | "off";
 	/** Compact once context crosses this many tokens, whatever the model's window, when the run settles (never mid-run). 0 disables. */
 	contextGuardTokens: number;
 	/** At a handover to execute, a minor-fix round or the next stage, compact first when the context is over this many tokens (the plan is re-sent). 0 disables. */
@@ -132,7 +122,6 @@ export interface WorkflowConfig {
 	 * cache reads 0.1, cache writes 1.25, output 5. All 1 makes the two figures equal.
 	 */
 	tokenWeights: TokenWeights;
-	test: TestConfig;
 	/** Rules files of added folders: "paths" lists them in the workspace section, "full" loads them into the prompt. */
 	addedFolderRules: "paths" | "full";
 	arbiter: { tools: string[] };
@@ -170,7 +159,6 @@ export const DEFAULTS: WorkflowConfig = {
 		arbiter: { model: "claude-bridge/claude-fable-5-1", thinking: "high" },
 		commit: { model: "claude-bridge/claude-haiku-5-5", thinking: "medium" },
 		escalate: { model: "claude-bridge/claude-fable-5-1", thinking: "high" },
-		test: { model: "claude-bridge/claude-opus-5-5", thinking: "medium" },
 	},
 	startPhase: "discuss",
 	contextGuardTokens: 140_000,
@@ -198,11 +186,6 @@ export const DEFAULTS: WorkflowConfig = {
 	planReadOnlyBash: true,
 	planBashAllow: UNITY_PLAN_ALLOW,
 	tokenWeights: { input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1.25 },
-	test: {
-		maxRounds: 3,
-		refails: 2,
-		supervisorBashAllow: ["^adb( -[sdetHP] \\S+)* (devices|shell getprop)\\b", "^unity (cmd )?(status|editor_status|console_status)\\b"],
-	},
 	addedFolderRules: "paths",
 	arbiter: { tools: ["read", "grep", "find", "ls"] },
 	judge: {
@@ -275,7 +258,7 @@ function parseConfig(file: string): Loaded {
 		else config.returnTo = DEFAULTS.returnTo;
 		// Keys of removed settings (the finalize rewrite, the plan recap, the old boolean returnToPlan) are dropped silently.
 		for (const old of ["finalizePlan", "planRecap", "returnToPlan"]) delete (config as unknown as Record<string, unknown>)[old];
-		if (!["discuss", "plan", "execute", "test", "off"].includes(config.startPhase)) config.startPhase = DEFAULTS.startPhase;
+		if (!["discuss", "plan", "execute", "off"].includes(config.startPhase)) config.startPhase = DEFAULTS.startPhase;
 		// A delivery that is not an object (the old autoCommit style, null) would crash the first approval.
 		if (!isObject(config.delivery)) config.delivery = DEFAULTS.delivery;
 		for (const k of ["base", "branchPrefix"] as const) if (typeof config.delivery[k] !== "string") config.delivery[k] = DEFAULTS.delivery[k];
@@ -287,7 +270,7 @@ function parseConfig(file: string): Loaded {
 		if (config.plans.sync !== "remote" && config.plans.sync !== "local") config.plans.sync = DEFAULTS.plans.sync;
 		if (!Array.isArray(config.plans.localOnly) || config.plans.localOnly.some((s) => typeof s !== "string")) config.plans.localOnly = DEFAULTS.plans.localOnly;
 		for (const k of ["keepDays", "keepCount"] as const) if (typeof config.plans[k] !== "number" || !Number.isFinite(config.plans[k]) || config.plans[k] < 0) config.plans[k] = DEFAULTS.plans[k];
-		// Settings that moved to agents.json (the explore, advisor and runner roles and blocks, the runner keys of test) are dropped silently.
+		// Settings that moved to agents.json (the explore, advisor and runner roles and blocks) are dropped silently.
 		for (const old of ["explore", "advisor"]) delete (config as unknown as Record<string, unknown>)[old];
 		for (const old of ["explore", "advisor", "runner"]) delete (config.roles as unknown as Record<string, unknown>)[old];
 		if (config.addedFolderRules !== "paths" && config.addedFolderRules !== "full") config.addedFolderRules = DEFAULTS.addedFolderRules;
@@ -300,13 +283,9 @@ function parseConfig(file: string): Loaded {
 		if (typeof config.notify.idleMs !== "number" || !Number.isFinite(config.notify.idleMs) || config.notify.idleMs <= 0) config.notify.idleMs = DEFAULTS.notify.idleMs;
 		if (config.stagedPlans !== "auto" && config.stagedPlans !== "onRequest") config.stagedPlans = DEFAULTS.stagedPlans;
 		if (config.stageAdvance !== "auto" && config.stageAdvance !== "ask") config.stageAdvance = DEFAULTS.stageAdvance;
-		const t = (config.test = isObject(config.test) ? config.test : DEFAULTS.test);
-		const num = (v: unknown, min: number, max = Infinity): v is number => typeof v === "number" && Number.isInteger(v) && v >= min && v <= max;
-		for (const old of ["concurrency", "maxTasks", "runnerTimeoutMs", "runnerTools", "runnerDeny", "runnerPathFlags", "runnerPathEnv"]) delete (t as unknown as Record<string, unknown>)[old];
-		if (!num(t.maxRounds, 0)) t.maxRounds = DEFAULTS.test.maxRounds;
-		if (!num(t.refails, 1)) t.refails = DEFAULTS.test.refails;
-		delete (t as unknown as Record<string, unknown>).delivery;
-		if (!Array.isArray(t.supervisorBashAllow) || t.supervisorBashAllow.some((s) => typeof s !== "string")) t.supervisorBashAllow = DEFAULTS.test.supervisorBashAllow;
+		// The test phase is gone: its role and block are dropped silently.
+		delete (config as unknown as Record<string, unknown>).test;
+		delete (config.roles as unknown as Record<string, unknown>).test;
 		return { config };
 	} catch (e) {
 		return { config: DEFAULTS, error: `${file}: ${(e as Error).message}` };

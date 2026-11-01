@@ -116,8 +116,8 @@ export function judgeCapReached(rounds: number, max: number): boolean {
 }
 
 /** The phase to go back to when a flow ends: `returnTo` (discuss or plan), from execute or test; none when it is "off". */
-export function phaseAfterFlow(returnTo: "discuss" | "plan" | "off", phase: "off" | "discuss" | "plan" | "execute" | "test"): "discuss" | "plan" | undefined {
-	return returnTo !== "off" && (phase === "execute" || phase === "test") ? returnTo : undefined;
+export function phaseAfterFlow(returnTo: "discuss" | "plan" | "off", phase: "off" | "discuss" | "plan" | "execute"): "discuss" | "plan" | undefined {
+	return returnTo !== "off" && phase === "execute" ? returnTo : undefined;
 }
 
 /** Handovers that start a new piece of work (execute, a stage) may compact first; the others ("continue": fix rounds, open steps) never do. */

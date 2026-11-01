@@ -19,6 +19,8 @@ export interface GitGuardSpec {
 	/** repoKey -> snapshot trees of every judge PASS this flow. */
 	passedTrees: Record<string, string[]>;
 	noMerge: boolean;
+	/** Outside a flow (normal mode) there is no judge, so the merge and protected-push gate lets the command through. */
+	ungated?: boolean;
 }
 
 const isStrings = (v: unknown): v is string[] => Array.isArray(v) && v.every((s) => typeof s === "string");
@@ -35,10 +37,11 @@ export function parseGuardSpec(raw: string | undefined): GitGuardSpec | null {
 	if (typeof p !== "object" || p === null || Array.isArray(p)) return null;
 	const o = p as Record<string, unknown>;
 	if (!isStrings(o.roots) || !isStrings(o.protectedBranches) || typeof o.noMerge !== "boolean") return null;
+	if (o.ungated !== undefined && typeof o.ungated !== "boolean") return null;
 	const trees = o.passedTrees;
 	if (typeof trees !== "object" || trees === null || Array.isArray(trees)) return null;
 	if (!Object.values(trees).every(isStrings)) return null;
-	return { roots: o.roots, protectedBranches: o.protectedBranches, passedTrees: trees as Record<string, string[]>, noMerge: o.noMerge };
+	return { roots: o.roots, protectedBranches: o.protectedBranches, passedTrees: trees as Record<string, string[]>, noMerge: o.noMerge, ...(o.ungated ? { ungated: true } : {}) };
 }
 
 function gitOut(dir: string, args: string[]): string {
@@ -61,6 +64,7 @@ export default function gitGuard(pi: ExtensionAPI): void {
 			return branches.get(dir) as string;
 		};
 		const gate = async (kind: "merge" | "protected-push", root: string | undefined, target: string | undefined, repo?: string): Promise<string | null> => {
+			if (spec.ungated) return null;
 			const dir = root ?? ctx.cwd;
 			const key = repoKey(gitOut(dir, ["rev-parse", "--show-toplevel"]) || dir);
 			const res = await gateCheck(defaultRunner, kind, dir, target, { passedTrees: spec.passedTrees[key] ?? [], noMerge: spec.noMerge, repo });

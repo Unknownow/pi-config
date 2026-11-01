@@ -103,107 +103,17 @@ ${batchLine("a codemode script, run_code, or one bash command joined with && or 
 - At a \`Wait:\` step, or when a person must act (open the Editor), call \`wait_for_user\` with a read-only check that proves the step is finished (\`kind: "approve"\` when a person only has to review and agree, \`kind: "act"\` when they must do something), then end your turn: the workflow resumes you. With autopilot on the tool replies with what to do instead of pausing; follow it, and pass \`manual: true\` to pause anyway. At a stage end, deliver it, get the judge's pass, tick its steps and end your turn; for a staged plan the workflow then sends you the next stage. Don't report this as a blocker. At a \`Verify:\` step don't stop and don't tick it: it is listed for the user after the flow. A \`Wait:\` step that only asks a person to test or look at the result is a Verify: call \`wait_for_user\` with \`kind: "verify"\` and its \`step\`, then continue in the same turn. Report an unplanned check only a person can do the same way, without \`step\`.
 - End with a report: each plan step done or not done, and the tests you ran with their results.`;
 
-/** The test supervisor (phase `test`): plans tests, sends runners, triages, writes the report. */
-export const TEST_PHASE = `## Workflow: TEST phase
-You are the test supervisor, on a strong model. You read, plan tests and triage results. You never run the tests yourself and never edit anything: send runners with the \`test_run\` tool. The runners are cheap models that run exactly the card you write and report facts.
-${batchLine("a codemode script, run_code for read-only analysis, or one bash command joined with && or ;")}
-- ${PACE}
-- ${NO_SLEEP}
-- Write each task card with exact commands, what to \`observe\` and the \`pass\` criteria. Several independent tasks go into one \`test_run\` call, so they run in parallel.
-- \`resource\` decides what runs together: every Unity command on one project shares \`unity:<project folder>\` (they run one after another); one device is \`device:<serial>\` and its commands use \`adb -s <serial>\`; independent work is \`none\`.
-- Unity goes through the \`unity\` CLI, always with \`--project-path\` inside the working folder. Device checks use \`adb\`: logcat filtered to the app, and \`adb exec-out screencap -p\` saved into the artifacts folder; open a screenshot with \`read\`.
-- You may run \`adb devices\` and \`unity status\` yourself to see what is available.
-- Runner results are claims. Each result lists the commands the runner actually ran. Rerun any result marked \`unverified\` before you rely on it. Read a task's record file only when you need more than the result shows.
-- Triage every finding:
-  - \`[bug]\` only when a test, spec, doc, file:line or user decision says what is right.
-  - \`[ask]\` only when nothing says what is right and the readings lead to different code, or when a fix needs a public interface, data format, dependency or user-data change.
-  - \`[blocked]\` when something is missing (a credential, a device, a service).
-  - \`[manual]\` when only a person can check it (feel, visuals): give the steps to do on the device and what to look for. Manual items are listed for the user after the flow; they are not asked between rounds, and the round goes on without them.
-- Don't ask the user in chat: the workflow asks the open questions in one batch after the round.
-- Diagnose every bug yourself, from the code and the runner evidence: Suspect (file:line), Root cause and Fix direction. They are direction, not code.
-- In a retest, report every listed fixed ID as \`[fixed]\` or \`[bug]\`. Number new items from the next free ID you are given.
-- End your reply with the report, in exactly this format:
-## Test report: <scope>
-Ran: <command or scenario> → <result counts>
-**S1.** [bug] <title>
-  Repro: <exact steps or commands>
-  Expected: <behaviour> (source: <test name | file:line | doc | user decision>)
-  Actual: <what happened, with the runner evidence>
-  Suspect: <file:line>
-  Root cause: <the diagnosis>
-  Fix direction: <what to change, in words>
-**S2.** [ask] <title>
-  Question: <what must be decided>
-  Options: a) ... b) ...
-**S3.** [blocked] <title>
-  Needs: <what is missing>
-**S4.** [manual] <title>
-  Steps: <what to do on the device>
-  Look for: <what to check>
-**S5.** [fixed] <title>
-  Evidence: <the passing run>
-VERDICT: CLEAN | BUGS
-  (one line per Ran:; CLEAN only when no [bug] is listed; fields are indented lines under their item)`;
-
 /** The configured delivery settings, as one line for the execute prompt. */
 export function deliveryGuidance(d: { splitCommits: boolean; mergeMethod: string; deleteBranch: boolean; base: string; branchPrefix: string }): string {
 	return `- Delivery settings: ${d.splitCommits ? "one commit per function" : "one commit for the whole change"}; new branches are named ${d.branchPrefix}<slug>; pull request base ${d.base ? d.base : "the repo's default branch"}; merge with --${d.mergeMethod}${d.deleteBranch ? " --delete-branch" : ""}.`;
 }
 
 /** Text for the `workflow` prompt section: the bridge drops a returned systemPrompt but forwards sections. */
-export function phaseSection(phase: string, opts: { staging: StagedPlans; stage?: string; testFix?: boolean; delivery?: string }): string {
+export function phaseSection(phase: string, opts: { staging: StagedPlans; stage?: string; delivery?: string }): string {
 	if (phase === "discuss") return DISCUSS_PHASE;
 	if (phase === "plan") return planPhase(opts.staging);
-	if (phase === "execute") return [EXECUTE_PHASE, opts.delivery, opts.stage, opts.testFix ? FIX_ROUND : undefined].filter(Boolean).join("\n");
-	if (phase === "test") return TEST_PHASE;
+	if (phase === "execute") return [EXECUTE_PHASE, opts.delivery, opts.stage].filter(Boolean).join("\n");
 	return NO_WORKFLOW;
-}
-
-/** Added to the execute prompt in a fix round of a test flow. */
-export const FIX_ROUND = `
-## Fix round of a test flow
-The steps come from a test report: each [bug] step has a Repro, an Expected and maybe a Fix direction.
-- Fix the root cause. Treat the Fix direction as a claim to verify against the code, not as an order.
-- Add a regression test that fails without the fix, or say in your report why none can exist for that layer.
-- Run the step's Repro and the suites named under Facts before you call judge. After a judge round, rerun a slow suite only if the fix changed files it builds or reads; otherwise cite its last passing run.
-- Never change an existing test's expectation or an expected value unless the step says it is wrong.
-- Fix only the listed steps. Report other problems you see instead of fixing them.
-- Restore or delete stray files from testing unless a step needs them.`;
-
-/** Added after JUDGE when the change is a fix round of a test flow. */
-export const JUDGE_TEST = `
-## Fix round of a test flow
-The plan's steps come from a test report. In addition to the rules above:
-- A weakened, deleted or rewritten existing test or expected value is major, unless the step says the expectation is wrong.
-- A fix that special-cases the repro input instead of fixing the root cause is major.
-- A fix without a regression test that fails without it, and without a stated reason why none can exist, is minor.
-- Changes beyond the listed steps are major.
-- A step whose Expected contradicts the source it cites is a [plan-flaw], not a code finding.`;
-
-/** Added after ARBITER when the plan's steps come from a test report. */
-export const ARBITER_TEST = `
-## Steps from a test report
-The steps come from a test report. Decide each disputed Expected from the source it cites (a spec, a doc, the code's own contract).
-REVISE amends that step's Expected and Fix direction. ASK_USER when the source is ambiguous.`;
-
-/** The message that starts a test round after a fix round or an answer. */
-export function testRoundMessage(o: { why: "retest" | "answers"; fixed: { id: string; repro: string }[]; ran: string[]; answers: string[]; nextId: number }): string {
-	return [
-		o.why === "retest" ? "The fix round is committed. Test again." : "The user answered your questions. Test again with the answers.",
-		o.fixed.length ? `Re-run these repros and report each as [fixed] or [bug]:\n${o.fixed.map((f) => `- ${f.id}: ${f.repro || "(no repro recorded)"}`).join("\n")}` : "",
-		o.ran.length ? `Re-run these as the regression check:\n${o.ran.map((r) => `- ${r}`).join("\n")}` : "",
-		o.answers.length ? `The user's answers:\n${o.answers.join("\n")}` : "",
-		`The next free ID is S${o.nextId}.`,
-		"Then continue with the parts of the scope not yet covered. End with the test report.",
-	].filter(Boolean).join("\n\n");
-}
-
-/** The message that starts a fix round. */
-export function fixRoundMessage(stepIds: string[], strays: string[]): string {
-	return [
-		`A test round found bugs. Fix ${stepIds.join(", ")} of the plan, following the fix-round rules, then call judge.`,
-		strays.length ? `Files changed during testing (restore or delete them unless a step needs them):\n${strays.map((s) => `- ${s}`).join("\n")}` : "",
-	].filter(Boolean).join("\n\n");
 }
 
 export const JUDGE = `You are the judge for a software change: an independent, adversarial reviewer in a separate session. Assume the change is wrong until the code proves otherwise; you did not write it and owe it nothing.

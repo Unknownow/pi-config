@@ -181,7 +181,7 @@ test("a pass with findings is fixed while rounds are left, then the stage is don
 
 test("a finished flow returns to plan only from execute, when enabled", () => {
 	assert.equal(phaseAfterFlow("discuss", "execute"), "discuss");
-	assert.equal(phaseAfterFlow("plan", "test"), "plan");
+	assert.equal(phaseAfterFlow("plan", "execute"), "plan");
 	assert.equal(phaseAfterFlow("off", "execute"), undefined);
 	assert.equal(phaseAfterFlow("discuss", "plan"), undefined);
 	assert.equal(phaseAfterFlow("discuss", "discuss"), undefined);
