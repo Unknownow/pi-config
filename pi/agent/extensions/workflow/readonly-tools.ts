@@ -17,7 +17,7 @@ import { readOnlyProblem } from "./readonly-bash.ts";
  * by name and then checked below.
  */
 export const PLAN_TOOLS = [
-	"^(read|grep|find|ls|bash|codemode|explore|advisor|judge|test_run)$",
+	"^(read|grep|find|ls|bash|codemode|explore|advisor|judge)$",
 	"(^|__)run_code$",
 	"(^|__)fetch_url$",
 	"(^|__)video_frames$",

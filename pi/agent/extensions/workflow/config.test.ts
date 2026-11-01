@@ -192,3 +192,10 @@ test("keys of the removed delivery menu and commit step load and are dropped", (
 test("minor findings get one fix round by default", () => {
 	assert.equal(DEFAULTS.maxMinorRounds, 1);
 });
+
+test("the shipped planAllowedTools refuses test_run but admits explore, advisor and judge", () => {
+	const shipped = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, "..", "..", "workflow.json"), "utf8"));
+	const allowed = (name: string) => shipped.planAllowedTools.some((p: string) => new RegExp(p).test(name));
+	assert.equal(allowed("test_run"), false);
+	for (const n of ["explore", "advisor", "judge"]) assert.equal(allowed(n), true, n);
+});

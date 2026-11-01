@@ -40,6 +40,10 @@ const FOLDERS_ENTRY = "session-folders";
 export default function agents(pi: ExtensionAPI) {
 	// Tracks the live rows of this extension's own runs; the workflow widget is not involved.
 	const view = new FlowView(loadConfig().config.roles as never);
+	pi.on("session_start", (_e, ctx) => {
+		const error = loadConfig().error;
+		if (error) ctx.ui.notify(`agents: ${error}`, "warning");
+	});
 	const runnerSlots = runnerGate(() => loadConfig().config.test.concurrency);
 
 	/** The knowledge tools and server config a subagent role gets, or undefined when knowledge is off for it. */

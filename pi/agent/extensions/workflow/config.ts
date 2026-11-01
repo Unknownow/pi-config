@@ -73,8 +73,6 @@ export interface TestConfig {
 	maxRounds: number;
 	/** Failed fixes of one bug before the user is asked. */
 	refails: number;
-	/** The runners' tools (regular names; no edit or write). */
-	runnerTools: string[];
 	/** Extra commands the supervisor's bash may run, as regexes over the command's words. */
 	supervisorBashAllow: string[];
 }

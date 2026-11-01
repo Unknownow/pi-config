@@ -28,7 +28,7 @@ plan is read-only:   bash refuses commands that change files, git or GitHub
 | `git_task` (`commit` role) | sub-`pi` with bash only, a git helper prompt, and its own git guard (`git-guard.ts`) with the same judge gate as the main session | when the executor calls `git_task` to delegate commit, push, pull request or merge work; default model `claude-bridge/claude-haiku-5-5`, thinking `medium` |
 | `escalate` | main session model | `/flow escalate` |
 | `test` | main session model; edit/write/judge off, bash read-only plus `test.supervisorBashAllow`, plus `test_run` | `/flow test <scope>`: plans tests, sends runners, writes the test report (see Test and fix) |
-| `runner` | `test_run` tool of the agents extension | one per test task card; reports facts only (see `../agents/README.md`) |
+| `runner` | `test_run` tool of the agents extension; refused in discuss and plan (runner bash is not read-only) | one per test task card; reports facts only (see `../agents/README.md`) |
 
 ## Hands-off run
 
