@@ -51,7 +51,7 @@ const DENY_DIRS = new Set([
 /**
  * Names that look like credentials: skipped on export whatever they contain.
  * Keep in sync with the copy in extension/index.ts (inScope). "token" is left out on
- * purpose: it would match extensions/workflow/tokens.ts.
+ * purpose: it would match extensions/shared/tokens.ts.
  */
 const SECRET_NAME_PATTERNS = [
   /(^|[._-])(o?auth|credentials?|secrets?)([._-]|$)/i,

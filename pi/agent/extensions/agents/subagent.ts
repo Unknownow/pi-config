@@ -13,7 +13,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { Message, Usage } from "@earendil-works/pi-ai";
-import type { RoleSpec } from "./types.ts";
+import type { RoleSpec } from "../shared/roles.ts";
 import { FORWARD_ENV } from "./mcp-forward.ts";
 
 export interface RunOptions {

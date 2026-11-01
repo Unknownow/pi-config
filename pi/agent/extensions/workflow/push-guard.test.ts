@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import * as path from "node:path";
 import { codePublishProblem, mergeTarget, pushProblem, pushSource, shellProblem, type GateRequest } from "./push-guard.ts";
-import { repoKey } from "./repos.ts";
+import { repoKey } from "../shared/repos.ts";
 
 const feature = { branch: "feat", protectedBranches: ["main", "master"] };
 const onMain = { ...feature, branch: "main" };

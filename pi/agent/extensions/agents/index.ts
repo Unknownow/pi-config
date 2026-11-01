@@ -17,17 +17,19 @@ import { type Message, StringEnum } from "@earendil-works/pi-ai";
 import { convertToLlm, type ExtensionAPI, type ExtensionContext, serializeConversation } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { type AgentRole, CONFIG_PATH, loadConfig } from "./config.ts";
+import { AGENT_ROLES, type AgentRole, CONFIG_PATH, loadConfig, saveRole } from "./config.ts";
 import * as prompts from "./prompts.ts";
 import { renderRuns, toolProgress } from "./render.ts";
 import { RUNNER_GUARD_ENV, type RunnerGuardSpec } from "./runner-guard.ts";
 import { addUsage, emptyUsage, mapLimit, noContextFilesFor, type RunResult, runSubagent } from "./subagent.ts";
 import { callDir, formatTaskResult, parseRunnerReply, runnerGate, sanitizeIds, scheduleTasks, taskCard, taskRecord, type TestTask, verifyRun } from "./test-run.ts";
-import { FlowView, type RunView, shortModel } from "../workflow/view.ts";
+import { applyEvent, endRun, newRun, type RunView, shortModel } from "../shared/runs.ts";
+import { DEFAULT_TOKEN_WEIGHTS } from "../shared/tokens.ts";
+import { describeRole, parseRoleSpec, pickRoleSpec, roleCompletions } from "../shared/roles.ts";
 import { forwardedServers, roleTools } from "./knowledge.ts";
 import { foldersForCwd } from "./session-folders.ts";
 import { knowledgeTools } from "./prompts.ts";
-import { uniqueRoots } from "../workflow/repos.ts";
+import { uniqueRoots } from "../shared/repos.ts";
 
 const EXPLORE_REASONS = ["question", "broad_search", "timeout", "too_much_output", "location_unknown", "parallel_lookups"] as const;
 
@@ -38,9 +40,12 @@ const RUNNER_GUARD_EXTENSION = path.join(path.dirname(CONFIG_PATH), "extensions"
 /** The workflow publishes the session's added folders as a custom entry of this type. */
 
 export default function agents(pi: ExtensionAPI) {
-	// Tracks the live rows of this extension's own runs; the workflow widget is not involved.
-	const view = new FlowView(loadConfig().config.roles as never);
+	// Ids of this extension's own run rows; the workflow widget is not involved.
+	let nextRunId = 1;
+	/** Models with auth, for the `/agents model` completions; set once a session starts. */
+	let availableModels: () => { provider: string; id: string; name?: string }[] = () => [];
 	pi.on("session_start", (_e, ctx) => {
+		availableModels = () => ctx.modelRegistry.getAvailable();
 		const error = loadConfig().error;
 		if (error) ctx.ui.notify(`agents: ${error}`, "warning");
 	});
@@ -63,7 +68,7 @@ export default function agents(pi: ExtensionAPI) {
 	): Promise<{ result: RunResult; run: RunView }> {
 		const cfg = loadConfig().config;
 		const spec = cfg.roles[role];
-		const run = view.start(role, label, spec.model);
+		const run = newRun(nextRunId++, role, label, spec.model);
 		onChange?.(run);
 		const { extensions, timeoutMs, ...rest } = opts;
 		const k = knowledgeFor(role);
@@ -79,11 +84,11 @@ export default function agents(pi: ExtensionAPI) {
 			timeoutMs: timeoutMs ?? cfg.subagent.timeoutMs,
 			idleTimeoutMs: cfg.subagent.idleTimeoutMs,
 			onEvent: (e) => {
-				view.event(run, e, opts.cwd);
+				applyEvent(run, e, opts.cwd, DEFAULT_TOKEN_WEIGHTS);
 				onChange?.(run);
 			},
 		});
-		if (!result.ok) view.finish(run, false, result.error ?? "failed");
+		if (!result.ok) endRun(run, false, result.error ?? "failed");
 		pi.events.emit("agents:subagent-finished", {
 			role,
 			label,
@@ -161,7 +166,7 @@ export default function agents(pi: ExtensionAPI) {
 				const { result, run } = await runAgent("explore", `[${params.reason}] ${q}`, { systemPrompts: [prompts.EXPLORE], tools: cfg.explore.tools, task: q, cwd: ctx.cwd, signal }, progress.track);
 				if (result.ok) {
 					const refs = result.text.split("\n").filter((l) => /^(?:[-*]\s+)?\S+:\d+/.test(l.trim())).length;
-					view.finish(run, true, refs ? `${refs} ref${refs === 1 ? "" : "s"}` : "nothing found");
+					endRun(run, true, refs ? `${refs} ref${refs === 1 ? "" : "s"}` : "nothing found");
 				}
 				progress.track(run);
 				return result;
@@ -211,7 +216,7 @@ export default function agents(pi: ExtensionAPI) {
 				progress.track,
 			);
 			if (!result.ok) throw new Error(`advisor failed: ${result.error}`);
-			view.finish(run, true, "guidance ready");
+			endRun(run, true, "guidance ready");
 			return { content: [{ type: "text", text: result.text }], details: { runs: progress.snapshot() }, usage: result.usage };
 		},
 		renderCall(args, theme) {
@@ -285,7 +290,7 @@ export default function agents(pi: ExtensionAPI) {
 				} catch {
 					record = undefined;
 				}
-				if (result.ok) view.finish(run, status === "PASS", status.length > 30 ? `${status.slice(0, 30)}…` : status);
+				if (result.ok) endRun(run, status === "PASS", status.length > 30 ? `${status.slice(0, 30)}…` : status);
 				progress.track(run);
 				return formatTaskResult({ id: task.id, resource: task.resource, status, reply: result.ok ? reply : undefined, ran: verified.ran, record });
 			});
@@ -296,5 +301,58 @@ export default function agents(pi: ExtensionAPI) {
 			return new Text(`${title(theme, "test_run", "runner")}${theme.fg("accent", ` ${n} task${n === 1 ? "" : "s"}`)}`, 0, 0);
 		},
 		renderResult: (result, opts, theme) => renderRuns(result, opts, theme, 0),
+	});
+
+	// ----------------------------------------------------------------------
+	// /agents
+	// ----------------------------------------------------------------------
+
+	const ROLES: readonly string[] = AGENT_ROLES;
+	const specOf = (role: string) => loadConfig().config.roles[role as AgentRole];
+
+	pi.registerCommand("agents", {
+		description: "Models of the explore, advisor and test_run helpers: status, model [role] [provider/id[:thinking]]",
+		getArgumentCompletions: (prefix) => {
+			const parts = prefix.trimStart().split(/\s+/);
+			if (parts[0] === "model" && parts.length > 1) return roleCompletions("model", parts, ROLES, specOf, availableModels);
+			const subs = [
+				{ value: "status", label: "status - each role's model and the config path" },
+				{ value: "model", label: "model [role] [provider/id[:thinking]] - set a role's model (pickers when left out)" },
+			].filter((c) => c.value.startsWith(prefix.trim()));
+			return subs.length > 0 ? subs : null;
+		},
+		handler: async (args, ctx) => {
+			const [sub = "status", role, spec] = args.trim().split(/\s+/).filter(Boolean);
+			if (sub === "status") {
+				const { error } = loadConfig();
+				const lines = [...ROLES.map((r) => `${r.padEnd(8)} ${describeRole(specOf(r))}`), "", `config   ${CONFIG_PATH}${fs.existsSync(CONFIG_PATH) ? "" : " (not created, using defaults)"}`];
+				if (error) lines.push(`error    ${error}`);
+				ctx.ui.notify(lines.join("\n"), error ? "error" : "info");
+				return;
+			}
+			if (sub !== "model") {
+				ctx.ui.notify(`agents: unknown ${sub}. Try: status, model`, "warning");
+				return;
+			}
+			const usage = () => ctx.ui.notify(`Usage: /agents model <${ROLES.join("|")}> <provider/id[:thinking]>`, "warning");
+			let picked = role;
+			if (!picked && ctx.hasUI) {
+				const pick = await ctx.ui.select("Role", ROLES.map((r) => `${r} (${describeRole(specOf(r))})`));
+				if (!pick) return;
+				picked = pick.split(" ")[0];
+			}
+			if (!picked || !ROLES.includes(picked) || (!spec && !ctx.hasUI)) {
+				usage();
+				return;
+			}
+			const parsed = spec ? parseRoleSpec(spec) : await pickRoleSpec(ctx.ui, picked, specOf(picked), () => ctx.modelRegistry.getAvailable());
+			if (!parsed) return;
+			if (typeof parsed === "string") {
+				ctx.ui.notify(`agents: ${parsed}`, "error");
+				return;
+			}
+			saveRole(picked as AgentRole, parsed);
+			ctx.ui.notify(`agents: ${picked} -> ${describeRole(parsed)} (saved to agents.json; used from the next call)`, "info");
+		},
 	});
 }

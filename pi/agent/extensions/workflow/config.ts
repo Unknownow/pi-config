@@ -7,11 +7,12 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
-import { UNITY_PLAN_ALLOW } from "./readonly-bash.ts";
+import { UNITY_PLAN_ALLOW } from "../shared/readonly-bash.ts";
 import { PLAN_TOOLS } from "./readonly-tools.ts";
 import type { MergeMethod } from "./delivery.ts";
-import type { TokenWeights } from "./tokens.ts";
-import { type KnowledgeConfig, type RoleSpec, type Thinking, THINKING_LEVELS } from "../agents/types.ts";
+import { DEFAULT_TOKEN_WEIGHTS, type TokenWeights } from "../shared/tokens.ts";
+import type { KnowledgeConfig } from "../agents/types.ts";
+import { type RoleSpec, type Thinking, THINKING_LEVELS } from "../shared/roles.ts";
 
 export { THINKING_LEVELS };
 export type { KnowledgeConfig, RoleSpec, Thinking };
@@ -185,7 +186,7 @@ export const DEFAULTS: WorkflowConfig = {
 	planAllowedTools: PLAN_TOOLS,
 	planReadOnlyBash: true,
 	planBashAllow: UNITY_PLAN_ALLOW,
-	tokenWeights: { input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1.25 },
+	tokenWeights: { ...DEFAULT_TOKEN_WEIGHTS },
 	addedFolderRules: "paths",
 	arbiter: { tools: ["read", "grep", "find", "ls"] },
 	judge: {
@@ -298,17 +299,4 @@ export function saveRole(role: Role, spec: RoleSpec, file = CONFIG_PATH): void {
 	raw.roles = { ...(raw.roles ?? {}), [role]: spec };
 	fs.writeFileSync(file, `${JSON.stringify(raw, null, 2)}\n`);
 	cache = null;
-}
-
-/** `provider/id[:thinking]` -> RoleSpec. */
-export function parseRoleSpec(input: string): RoleSpec | string {
-	const m = input.trim().match(/^([^/\s]+\/[^:\s]+)(?::(\w+))?$/);
-	if (!m) return `expected provider/model-id[:thinking], got "${input}"`;
-	const thinking = m[2] as Thinking | undefined;
-	if (thinking && !THINKING_LEVELS.includes(thinking)) return `thinking must be one of ${THINKING_LEVELS.join(", ")}`;
-	return thinking ? { model: m[1], thinking } : { model: m[1] };
-}
-
-export function describeRole(spec: RoleSpec): string {
-	return `${spec.model}${spec.thinking ? `:${spec.thinking}` : ""}`;
 }

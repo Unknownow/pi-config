@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import * as path from "node:path";
 import { test } from "node:test";
-import { modelChoices, pathCompletions } from "./pickers.ts";
+import { pathCompletions } from "./pickers.ts";
 
 const tree: Record<string, string[]> = {
 	[path.resolve("/w")]: ["src", "Docs", ".git", "spaced dir"],
@@ -27,10 +27,4 @@ test("pathCompletions lists matching folders", () => {
 test("pathCompletions caps at 50", () => {
 	const many = Array.from({ length: 60 }, (_, i) => `d${i}`);
 	assert.equal(pathCompletions("", "/w", "/h", () => many).length, 50);
-});
-
-test("modelChoices sorts and labels", () => {
-	const r = modelChoices([{ provider: "b", id: "m1", name: "m1" }, { provider: "a", id: "z", name: "Zed" }, { provider: "a", id: "c" }], "a/z");
-	assert.deepEqual(r.map((c) => c.value), ["a/c", "a/z", "b/m1"]);
-	assert.deepEqual(r.map((c) => c.label), ["a/c", "a/z — Zed (current)", "b/m1"]);
 });

@@ -149,7 +149,7 @@ In a session inside a set, `/folders add <path>` for a git repo attaches that re
 
 ## Relationship to the workflow extension
 
-The dependency is one-way. This extension uses only the workflow's public contract (see "Public contract for other extensions" in the workflow README): the `session-folders` entry (K1) to learn the added folders, the `--add-dir` flag (K3) when it launches pi, the `workflow:status` event (K4), and the `workflow:folder-add` event (K6) to answer `/folders add` (see "Adding folders inside a set"). The workflow reads nothing of this extension. The one code import is the shell parser `workflow/readonly-bash.ts` (K5), used by the Unity guard. `boundary.test.ts` enforces both sides.
+The dependency is one-way. This extension uses only the workflow's public contract (see "Public contract for other extensions" in the workflow README): the `session-folders` entry (K1) to learn the added folders, the `--add-dir` flag (K3) when it launches pi, the `workflow:status` event (K4), and the `workflow:folder-add` event (K6) to answer `/folders add` (see "Adding folders inside a set"). The workflow reads nothing of this extension. It imports no workflow code: the shell parser the Unity guard uses is `../shared/readonly-bash.ts`. `boundary.test.ts` enforces both sides.
 
 ## Limits
 

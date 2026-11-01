@@ -3,7 +3,7 @@
 import type { Component } from "@earendil-works/pi-tui";
 import { Text } from "@earendil-works/pi-tui";
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import { type RunView, runLine } from "../workflow/view.ts";
+import { type RunView, runLine } from "../shared/runs.ts";
 
 export interface ToolDetails {
 	runs: RunView[];

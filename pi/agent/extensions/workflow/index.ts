@@ -37,28 +37,25 @@ import { Type } from "typebox";
 import {
 	CONFIG_PATH,
 	DEFAULTS,
-	describeRole,
 	loadConfig,
-	parseRoleSpec,
 	ROLES,
-	THINKING_LEVELS,
 	type Role,
 	type RoleSpec,
 	saveRole,
-	type Thinking,
 	type WorkflowConfig,
 } from "./config.ts";
+import { describeRole, parseRoleSpec, pickRoleSpec, roleCompletions, type Thinking } from "../shared/roles.ts";
 import { judgeAddenda, handoverAction, handoverKind, preFlowModelAction, gitTaskAllowed, migrateSavedState, afterPass, noChangeStage, arbiterFirst, fixableFindings, canApprove, approvalBlock, addPlanReply, composePlan, type PlanDraft, hasPlanFlaw, planFlawLines, planFlawOnPass,  judgeCapReached, minorFixOpen, passPending, stageEndAction, parseArbiter, phaseAfterFlow, shouldResume, skipJudge } from "./agent-end.ts";
-import { countTokens, type Tok } from "./tokens.ts";
+import { countTokens, fmtTok, type Tok } from "../shared/tokens.ts";
 import { idleReason, notifyCommand, notifyDue } from "./notify.ts";
 import * as prompts from "./prompts.ts";
 import { planTitle } from "./delivery.ts";
-import { modelChoices, pathCompletions } from "./pickers.ts";
+import { pathCompletions } from "./pickers.ts";
 import { ghCandidates, withPathDir } from "./gh-path.ts";
 import { citeNames, collectRepoDiff as collectRepoDiffImpl, needsFinalFullReview, shouldSkipRepeatFullReview, type RepoDiff } from "./repo-diff.ts";
 import { GIT_GUARD_ENV, type GitGuardSpec } from "./git-guard.ts";
 import { forkBase, mergedInStage, baseFromTree, defaultRunner, recordJudged, gateCheck, mergedBase, noMerge } from "./merge-gate.ts";
-import { combineRepoTexts, followFolders, parseAddDir, parseWorktreeList, repoKey, uniqueRoots } from "./repos.ts";
+import { combineRepoTexts, followFolders, parseAddDir, parseWorktreeList, repoKey, uniqueRoots } from "../shared/repos.ts";
 import { askFolderAdd } from "./folder-add.ts";
 import { codePublishProblem, registryPublishCodeProblem, registryPublishProblem, shellProblem } from "./push-guard.ts";
 import { blockedWaitCheck, classifyPublish, lockDecision, lockWaitCheck, NO_JUDGED_MERGE, waitSince, mirrorArgs, parseMirrorStep, parsePublishStep, publishArgs } from "./registry-publish.ts";
@@ -66,14 +63,14 @@ import { type Finished, mergeChecklist, newFlowId, isHuman, openStepsReminder, p
 import { addToRegistry, type BoardEntry, boardLines, boardRows, detailLines, liveEvents, type LiveInfo, readLive, readRegistry } from "./board.ts";
 import { adoptHigher, claimLive, commitRef, dropClaim, pidAlive, readClaim, writeClaim, deleteLocal, deleteRef, deleteReviewRef, fetchMirror, type Git, listRefs, plansDir, pushRef, readLocalStatuses, readPlanMd, refRev, remoteOf, repoInfo, type RefEntry, sweepReviewRefs, writeLocal, writeReviewRef } from "./plan-store.ts";
 import { type FlowFinding, recordFindings, reportFindings, type ReportStep } from "./flow-report.ts";
-import { readOnlyProblem } from "./readonly-bash.ts";
+import { readOnlyProblem } from "../shared/readonly-bash.ts";
 import { checkpointAmendment, checkpointNote, checkpointOutcome, deliverHint, deliverHintsBlock, deliverStepSpec, hasCheckpointAmendment, checkpointText, isPlannedTag, parseDeliverStep, publishRefusal, withCheckpoints } from "./checkpoints.ts";
 import { pushArgs, tagDecision } from "./tags.ts";
 import { type CheckVerdict, autopilotAmendment, autopilotReply, checkTitle, checkVerdict, cleanCheck, waitCheckProblem, type HumanCheck, humanChecks, parseVerifyStep, parseWaitStep, pollDecision, resumePrefix, verifyAmendment, waitAmendment } from "./waits.ts";
 import { nextStage, parseStages, planWaitProblems, stageLine, stageNote, stageStart, stagesOutcome } from "./stages.ts";
 import { planToolProblem, planToolRefused, phaseToolRefusal } from "./readonly-tools.ts";
 import { refilterPlanTools, hiddenInPhase, syncFlowOnlyTools } from "./plan-tools.ts";
-import { AGENT_ROLES, type AgentRole, loadConfig as loadAgents, saveRole as saveAgentRole } from "../agents/config.ts";
+import { AGENT_ROLES } from "../agents/config.ts";
 import { countSubagent } from "./agent-events.ts";
 import { MetricsQueue, type MetricEvent, subagentMetric } from "./metrics.ts";
 import { addUsage, emptyUsage, mapLimit, type RunResult, runSubagent } from "../agents/subagent.ts";
@@ -94,17 +91,15 @@ import {
 	emptyFlowUsage,
 	emptyStageTokens,
 	type FlowSummary,
+	type FlowRun,
 	type FlowUsage,
 	FlowView,
-	fmtTok,
-	type RunView,
-	runLine,
 	STAGES,
 	type Stage,
-	shortModel,
 	type SubRole,
 	summaryLines,
 } from "./view.ts";
+import { shortModel } from "../shared/runs.ts";
 
 type Phase = "off" | "discuss" | "plan" | "execute";
 
@@ -206,8 +201,8 @@ const SUMMARY_ENTRY = "workflow-summary";
 const APPROVED_FINAL = "The final plan is approved. Execute it exactly, step by step, following the workflow rules.";
 /** The judge reads at most this much of the plan; the end (the arbiter's amendments) is kept. */
 const MAX_PLAN_CHARS = 60_000;
-/** Every role `/flow model` can set: the workflow's (workflow.json) and the agents extension's (agents.json). */
-const MODEL_ROLES: readonly string[] = [...ROLES, ...AGENT_ROLES];
+/** Roles `/flow model` sets (workflow.json); explore, advisor and runner are the agents extension's (`/agents model`). */
+const MODEL_ROLES: readonly string[] = ROLES;
 const OWN_TOOLS = new Set(["explore", "advisor", "judge"]);
 const execFileAsync = promisify(execFile);
 /** Subagent-only extension that registers forwarded MCP servers (see mcp-forward.ts). */
@@ -258,7 +253,7 @@ function countFindings(text: string): number {
 export default function workflow(pi: ExtensionAPI) {
 	let { config: cfg, error: configError } = loadConfig();
 	/** The model of a role from workflow.json or, for explore, advisor and runner, agents.json. */
-	const roleSpecOf = (r: string): RoleSpec => (cfg.roles as Record<string, RoleSpec | undefined>)[r] ?? (loadAgents().config.roles as Record<string, RoleSpec>)[r];
+	const roleSpecOf = (r: string): RoleSpec => (cfg.roles as Record<string, RoleSpec>)[r];
 	let state: FlowState = { phase: "off", escalated: false, judgeRounds: 0 };
 	/** Diffs already judged or declined this session, so agent_end doesn't ask twice. */
 	const seenDiffs = new Set<string>();
@@ -690,8 +685,8 @@ export default function workflow(pi: ExtensionAPI) {
 		role: Role & SubRole,
 		label: string,
 		opts: { systemPrompts: string[]; tools: string[]; task: string; cwd: string; signal?: AbortSignal; thinking?: Thinking; env?: Record<string, string>; extensions?: string[]; timeoutMs?: number },
-		onChange?: (run: RunView) => void,
-	): Promise<{ result: RunResult; run: RunView }> {
+		onChange?: (run: FlowRun) => void,
+	): Promise<{ result: RunResult; run: FlowRun }> {
 		const run = view.start(role, label, cfg.roles[role].model);
 		onChange?.(run);
 		const { thinking, extensions, timeoutMs, ...rest } = opts;
@@ -931,7 +926,7 @@ export default function workflow(pi: ExtensionAPI) {
 	 * last round plus its findings (cheaper, fresh each time). A large change that passes on a
 	 * re-review gets one final full review when the changes since touched a file the last findings did not cite. `full` forces a full review.
 	 */
-	async function judge(ctx: ExtensionContext, diff: Diff, focus: string | undefined, signal?: AbortSignal, onChange?: (run: RunView) => void, full = false, disputes?: string): Promise<JudgeResult & { run: RunView }> {
+	async function judge(ctx: ExtensionContext, diff: Diff, focus: string | undefined, signal?: AbortSignal, onChange?: (run: FlowRun) => void, full = false, disputes?: string): Promise<JudgeResult & { run: FlowRun }> {
 		// Disputes need a fresh look at the code, so they never get the "no changes" shortcut (a recheck still applies).
 		const plan = await reviewPlan(diff, full, Boolean(disputes));
 		if (plan.kind === "same") {
@@ -1788,7 +1783,7 @@ export default function workflow(pi: ExtensionAPI) {
 		server: string,
 		files: string[],
 		signal?: AbortSignal,
-		onChange?: (run: RunView) => void,
+		onChange?: (run: FlowRun) => void,
 	): Promise<{ text?: string; status: { status: "checked" } | { status: "unavailable"; reason: string }; usage: ReturnType<typeof emptyUsage> }> {
 		const { result, run } = await runRole(
 			"judge",
@@ -1824,9 +1819,9 @@ export default function workflow(pi: ExtensionAPI) {
 		focus: string | undefined,
 		plan: Exclude<ReviewPlan, { kind: "same" }>,
 		signal?: AbortSignal,
-		onChange?: (run: RunView) => void,
+		onChange?: (run: FlowRun) => void,
 		disputes?: string,
-	): Promise<JudgeResult & { run: RunView }> {
+	): Promise<JudgeResult & { run: FlowRun }> {
 		const recheck = plan.kind === "recheck";
 		const server = judgeKnowledgeServer();
 		const prevChecked = plan.kind === "recheck" && state.lastKnowledge?.status === "checked" && state.lastKnowledge.hash === plan.prev.hash;
@@ -3731,6 +3726,7 @@ export default function workflow(pi: ExtensionAPI) {
 			`tokens    ${STAGES.filter((s) => !["discuss", "commit"].includes(s) || view.sessionTokens(s).raw + view.sessionTokens(s).cost > 0).map((s) => `${s} ${fmtTok(view.sessionTokens(s))}`).join(" · ")} · session total ${fmtTok(STAGES.reduce((n, s) => ({ raw: n.raw + view.sessionTokens(s).raw, cost: n.cost + view.sessionTokens(s).cost }), { raw: 0, cost: 0 }))}`,
 			"",
 			...MODEL_ROLES.map((r) => `${r.padEnd(9)} ${describeRole(roleSpecOf(r))}`),
+			`${AGENT_ROLES.join(", ")}: /agents model`,
 			"",
 			`config    ${CONFIG_PATH}${fs.existsSync(CONFIG_PATH) ? "" : " (not created, using defaults)"}`,
 		];
@@ -3867,20 +3863,7 @@ export default function workflow(pi: ExtensionAPI) {
 		description: "Plan -> execute -> judge workflow with a model per role",
 		getArgumentCompletions: (prefix) => {
 			const parts = prefix.trimStart().split(/\s+/);
-			if (parts[0] === "model" && parts.length === 2) {
-				return MODEL_ROLES.filter((r) => r.startsWith(parts[1])).map((r) => ({ value: `model ${r} `, label: `${r} (${describeRole(roleSpecOf(r))})` }));
-			}
-			if (parts[0] === "model" && parts.length === 3 && MODEL_ROLES.includes(parts[1])) {
-				try {
-					const items = modelChoices(lastCtx?.modelRegistry.getAvailable() ?? [], roleSpecOf(parts[1]).model)
-						.filter((c) => c.value.toLowerCase().startsWith(parts[2].toLowerCase()))
-						.slice(0, 50)
-						.map((c) => ({ value: `model ${parts[1]} ${c.value}`, label: c.label }));
-					return items.length > 0 ? items : null;
-				} catch {
-					return null;
-				}
-			}
+			if (parts[0] === "model" && parts.length > 1) return roleCompletions("model", parts, MODEL_ROLES, roleSpecOf, () => lastCtx?.modelRegistry.getAvailable() ?? []);
 			const matches = SUBCOMMANDS.filter((c) => c.value.startsWith(prefix.trim()));
 			return matches.length > 0 ? matches : null;
 		},
@@ -4017,6 +4000,10 @@ export default function workflow(pi: ExtensionAPI) {
 				case "model": {
 					let [role, spec] = rest;
 					const usage = () => ctx.ui.notify(`Usage: /flow model <${MODEL_ROLES.join("|")}> <provider/id[:thinking]>`, "warning");
+					if (role && (AGENT_ROLES as readonly string[]).includes(role)) {
+						ctx.ui.notify(`workflow: ${role} belongs to the agents extension; use /agents model ${role}`, "warning");
+						return;
+					}
 					if (!role && ctx.hasUI) {
 						const pick = await ctx.ui.select("Role", MODEL_ROLES.map((r) => `${r} (${describeRole(roleSpecOf(r))})`));
 						if (!pick) return;
@@ -4030,44 +4017,18 @@ export default function workflow(pi: ExtensionAPI) {
 						usage();
 						return;
 					}
-					let parsed: ReturnType<typeof parseRoleSpec> | undefined;
-					if (spec) {
-						parsed = parseRoleSpec(spec);
-					} else {
-						const current = roleSpecOf(role);
-						let choices: ReturnType<typeof modelChoices> = [];
-						try {
-							choices = modelChoices(ctx.modelRegistry.getAvailable(), current?.model);
-						} catch {}
-						const typeOwn = "Type a model ID…";
-						const pick = choices.length > 0 ? await ctx.ui.select(`Model for ${role}`, [...choices.map((c) => c.label), typeOwn]) : typeOwn;
-						if (!pick) return;
-						if (pick === typeOwn) {
-							const input = await ctx.ui.input(`Model for ${role}`, describeRole(current));
-							if (!input) return;
-							parsed = parseRoleSpec(input);
-						} else {
-							const model = choices.find((c) => c.label === pick)!.value;
-							const keep = `keep (${current?.thinking ?? "default"})`;
-							const level = await ctx.ui.select(`Thinking for ${model}`, [keep, ...THINKING_LEVELS]);
-							if (!level) return;
-							parsed = level === keep ? (current?.thinking ? { model, thinking: current.thinking } : { model }) : { model, thinking: level as Thinking };
-						}
-					}
+					const parsed = spec ? parseRoleSpec(spec) : await pickRoleSpec(ctx.ui, role, roleSpecOf(role), () => ctx.modelRegistry.getAvailable());
+					if (!parsed) return;
 					if (typeof parsed === "string") {
 						ctx.ui.notify(`workflow: ${parsed}`, "error");
 						return;
 					}
-					const agentRole = (AGENT_ROLES as readonly string[]).includes(role);
-					if (agentRole) saveAgentRole(role as AgentRole, parsed);
-					else {
-						saveRole(role as Role, parsed);
-						cfg = loadConfig().config;
-						const live = state.escalated ? role === "escalate" : role === state.phase;
-						if (live) await applyRole(ctx, role as Role);
-					}
+					saveRole(role as Role, parsed);
+					cfg = loadConfig().config;
+					const live = state.escalated ? role === "escalate" : role === state.phase;
+					if (live) await applyRole(ctx, role as Role);
 					updateStatus(ctx);
-					ctx.ui.notify(`workflow: ${role} -> ${describeRole(parsed)} (saved to ${agentRole ? "agents.json" : "workflow.json"})`, "info");
+					ctx.ui.notify(`workflow: ${role} -> ${describeRole(parsed)} (saved to workflow.json)`, "info");
 					return;
 				}
 				default:

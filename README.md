@@ -63,7 +63,7 @@ config for extensions you install later — no list to maintain.
 | `pi/agent/skills/` | global skills |
 | `pi/agent/prompts/` | global prompt templates (`/name` commands) |
 | `pi/agent/themes/` | custom themes |
-| `pi/agent/extensions/` | your own global extensions (`workflow`; `worktree`: `/wt new NAME` opens a parallel pi session on git worktrees and `/wt open NAME` reopens one, in VS Code as a new VS Code terminal via the bundled `pi-terminal-bridge` extension, see its README) |
+| `pi/agent/extensions/` | your own global extensions (`workflow`; `agents`: `explore`, `advisor` and `test_run`, models set with `/agents model`; `shared`: code the extensions share, not loaded as an extension; `worktree`: `/wt new NAME` opens a parallel pi session on git worktrees and `/wt open NAME` reopens one, in VS Code as a new VS Code terminal via the bundled `pi-terminal-bridge` extension, see its README) |
 
 Extensions are declared in two places that must agree: `settings.json` lists `packages`, and
 `npm/package.json` pins the versions. Both are mirrored; `npm install` reconciles them.
