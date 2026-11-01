@@ -1,12 +1,38 @@
 {
   "v": 1,
   "flowId": "20261101-1604-fix-the-open-findings-from-the-pi-setup-f65a",
-  "rev": 1,
-  "updated": "2026-11-01T09:04:14.892Z",
+  "rev": 2,
+  "updated": "2026-11-01T09:08:34.211Z",
   "title": "Fix the open findings from the Pi setup flow",
-  "done": [],
+  "done": [
+    "S1",
+    "S2",
+    "S3",
+    "S4",
+    "S5",
+    "S6",
+    "S7",
+    "S8",
+    "S9"
+  ],
+  "finished": {
+    "at": "2026-11-01T09:08:34.096Z",
+    "ok": true,
+    "text": "master, 7 commits since the review base, PR #26 MERGED https://github.com/Unknownow/pi-config/pull/26"
+  },
   "reviewBase": {
-    "d:/works/pi-config": "c81d47e39212e50f4ce53c9157be14927acf3052"
+    "d:/works/pi-config": "09aa5b2f67b19019bcf4b7a2c44d2bb62dabd7cb"
+  },
+  "passedTrees": {
+    "d:/works/pi-config": [
+      "bbd5368e14650c826b1f11fdd631e9659eb9d211"
+    ]
+  },
+  "judgedMerges": {
+    "d:/works/pi-config": {
+      "pr": "26",
+      "tree": "bbd5368e14650c826b1f11fdd631e9659eb9d211"
+    }
   },
   "repos": [
     {

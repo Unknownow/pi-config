@@ -182,12 +182,14 @@ Rejected:
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 `workflow/view.ts:444` `addFinished`: before calling `add`, raise the run count by one for the role and for its model.
-- [ ] S2 Move the knowledge helpers and the prompt pieces.
-- [ ] S3 `agents/index.ts:123` `sessionFolders`: use `foldersForCwd(ctx.sessionManager.getBranch(), ctx.cwd)` from the new `agent
-- [ ] S4 `workflow/index.ts` plan branch (around 3008-3030):
-- [ ] S5 Add `judgeAddenda` to `workflow/agent-end.ts` and use it at `index.ts:1836` in place of the inline expression. Add a tes
-- [ ] S6 `bin/sync.test.js`: add two tests (section 6). If either one shows a bug, fix it in `bin/import.js` or `bin/lib.js` with
-- [ ] S7 `docs/workflow-improvements.md`:
-- [ ] S8 Deliver: merge — open-finding fixes.
-- [ ] S9 Final report to the user: each step and its tests, then the item-7 reminder (every non-goal listed in section 1).
+- [x] S1 `workflow/view.ts:444` `addFinished`: before calling `add`, raise the run count by one for the role and for its model.
+- [x] S2 Move the knowledge helpers and the prompt pieces.
+- [x] S3 `agents/index.ts:123` `sessionFolders`: use `foldersForCwd(ctx.sessionManager.getBranch(), ctx.cwd)` from the new `agent
+- [x] S4 `workflow/index.ts` plan branch (around 3008-3030):
+- [x] S5 Add `judgeAddenda` to `workflow/agent-end.ts` and use it at `index.ts:1836` in place of the inline expression. Add a tes
+- [x] S6 `bin/sync.test.js`: add two tests (section 6). If either one shows a bug, fix it in `bin/import.js` or `bin/lib.js` with
+- [x] S7 `docs/workflow-improvements.md`:
+- [x] S8 Deliver: merge — open-finding fixes.
+- [x] S9 Final report to the user: each step and its tests, then the item-7 reminder (every non-goal listed in section 1).
+## Outcome
+2026-11-01T09:08:34.096Z — ok: master, 7 commits since the review base, PR #26 MERGED https://github.com/Unknownow/pi-config/pull/26
