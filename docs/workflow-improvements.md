@@ -2,7 +2,7 @@
 
 Reference list for `pi/agent/extensions/workflow/`. Goal: less time, fewer tokens, more parallelism.
 
-Status: A2, A3, A5, A7, B1, B7, B9, C2, C3, C4, D2, D3, D4, D5, D6, D7, D8, D9, D10, D11, D12, D13, D14, D15, D16 and D17 are implemented; A13, A14, A15, A16, A17, A18, A20 and A21 are implemented; A22 is implemented; A23, A24 and A25 are implemented; A26, A27, A28, A32, A34, A35, A36, A37, A38, B11, B14, D29, D30, D31, D32, D33, D34, D35, D36, D18, D19, D20, D21 and D22 are implemented; D24, D26, D27 and D28 are implemented; D28's default is superseded by D29; D16 is superseded by D20; A13's delivery modes, D14, D15 and B10 are superseded by A35; A12 is implemented; A1 and D23 are rejected; the rest are ideas only. Found by reading the code on 2026-10-16. Nothing was measured, so every benefit below is an estimate. Line numbers are from commit `3fdc69a` and will drift.
+Status: A2, A3, A5, A7, B1, B7, B9, C2, C3, C4, D2, D3, D4, D5, D6, D7, D8, D9, D10, D11, D12, D13, D14, D15, D16 and D17 are implemented; A13, A14, A15, A16, A17, A18, A20 and A21 are implemented; A22 is implemented; A23, A24 and A25 are implemented; A26, A27, A28, A32, A34, A35, A36, A37, A38, B11, B14, B15, D29, D30, D31, D32, D33, D34, D35, D36, D18, D19, D20, D21 and D22 are implemented; D24, D26, D27 and D28 are implemented; D28's default is superseded by D29; D16 is superseded by D20; A13's delivery modes, D14, D15 and B10 are superseded by A35; A12 is implemented; A1 and D23 are rejected; the rest are ideas only. Found by reading the code on 2026-10-16. Nothing was measured, so every benefit below is an estimate. Line numbers are from commit `3fdc69a` and will drift.
 
 ## Keeping this file current
 
@@ -85,6 +85,7 @@ Plan (Opus) -> approve -> execute (Sonnet) -> judge (Opus, separate `pi` process
 | B12 | Idea: `finalizeThinking`, a lower thinking level for the final-plan reply (Opus `high` replies took 3-7 min with 23k-46k output tokens). Idea: no double plan at finalize (the final-plan reply repeats the plan). | Medium (T) | S | Medium. A weaker final plan. | Final-plan reply duration and output tokens. |
 | B13 | Idea: cheaper judge rechecks (`judge.recheckThinking: "low"` or a cheaper recheck model); 16-22 judge calls per flow took 15 s-3.5 min each. Idea: Sonnet does the re-reviews. | Medium (T) | S | Medium. A missed regression. | Judge minutes per flow. |
 | B14 | After a passing re-review the final full review repeated a full review that had just passed (129 files, about 1.7M tokens). Skip it when a full review already passed in this stage and the change since is small. **Done:** `shouldSkipRepeatFullReview` in `repo-diff.ts`, `lastFullPass` in `index.ts`, `judge.finalFullReviewRepeatMaxShare` (default 0.1, 0 = off). | High (K, T) | S | Medium. A fix of up to 10% goes without a whole-change review. | Count skipped final full reviews. |
+| B15 | Follow-up fixes from the trim flow: sub-agent run counts on flow cards, the agents→workflow import contract (K5, K7, K8), session folders keyed by cwd, the can't-approve notice, plan-wait retry reset, the `judgeAddenda` test. **Done:** `view.ts` `addFinished`, `agents/knowledge.ts`, `agents/session-folders.ts`, `agent-end.ts` `judgeAddenda`. | Low | S | Low. | See the Effect-measurement row. |
 
 ## C. Repeated work and caching
 
@@ -243,6 +244,7 @@ Method for every item:
 | B12 | Final-plan reply duration and output tokens | Session logs. Idea only. | Replies under 3 min |
 | B13 | Judge minutes per flow | Sum judge call times per flow. Idea only. | Rechecks under 1 min |
 | B14 | Full reviews per stage, judge tokens per flow | Judge events in `metrics.jsonl`. Implemented, not measured yet. | Fewer repeated full reviews of large stages, and no defect missed that the repeated review would have caught |
+| B15 | Run counts on flow cards | The `×N` of explore on a flow with several explores | N matches the calls |
 
 What to report after each change: baseline median, new median, percent change, and the quality-guard result, appended to `docs/workflow-baseline.md`.
 
