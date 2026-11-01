@@ -341,3 +341,45 @@ test('import deletes a JSON file that Pi reformatted', () => {
   run(env, 'import.js');
   assert.ok(!fs.existsSync(local));
 });
+
+test('import deletes settings.json that differs only in a scrubbed machine key', () => {
+  const env = setup();
+  const local = path.join(env.agent, 'settings.json');
+  write(local, JSON.stringify({ lastChangelogVersion: '1', a: 1 }));
+  for (let i = 0; i < 8; i++) write(path.join(env.agent, 'extensions', 'demo', `k${i}.ts`), `${i}\n`);
+  run(env, 'export.js');
+  write(local, JSON.stringify({ lastChangelogVersion: '2', a: 1 }));
+  fs.unlinkSync(path.join(env.mirror, 'settings.json'));
+  run(env, 'import.js');
+  assert.ok(!fs.existsSync(local));
+});
+
+test('a delete that fails is a warning, not an error', (t) => {
+  const { env, a, ma } = syncedPair();
+  fs.unlinkSync(ma);
+  const dir = path.dirname(a);
+  if (process.platform !== 'win32' && process.getuid?.() === 0) return t.skip('root can delete anything');
+  // Make deleting a fail: a read-only file on Windows, a read-only folder elsewhere.
+  const lock = process.platform === 'win32' ? [a, 0o444, 0o666] : [dir, 0o555, 0o755];
+  fs.chmodSync(lock[0], lock[1]);
+  try {
+    const probe = path.join(dir, 'probe.tmp');
+    let canFail = true;
+    if (process.platform === 'win32') {
+      write(probe, 'x');
+      fs.chmodSync(probe, 0o444);
+      try { fs.unlinkSync(probe); canFail = false; } catch { /* expected */ }
+      if (fs.existsSync(probe)) {
+        fs.chmodSync(probe, 0o666);
+        fs.rmSync(probe, { force: true });
+      }
+    }
+    if (!canFail) return t.skip('this host cannot make a delete fail');
+    const out = run(env, 'import.js');
+    assert.match(out, /WARNING  could not delete extensions\/demo\/a\.ts/);
+    const state = JSON.parse(read(path.join(env.repo, 'local', 'sync-state.json')));
+    assert.equal(typeof state['extensions/demo/a.ts'], 'string');
+  } finally {
+    fs.chmodSync(lock[0], lock[2]);
+  }
+});
