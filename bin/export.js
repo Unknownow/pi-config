@@ -6,7 +6,10 @@
  *
  * What counts as "setup" lives in lib.js. Machine-specific values are replaced
  * with placeholders so the committed files stay portable. Credentials are never
- * read, and nothing in the repo is deleted.
+ * read. A file that was synced earlier, is gone from this machine and is unchanged
+ * in the repo is deleted from the repo too (never one with no sync record, never an
+ * edited one). More than 20 deletions, or over 25% of the recorded files, need
+ * --allow-deletes; without it nothing is deleted and the exit code is 2.
  *
  * A repo file edited since the last sync is kept, not overwritten: finish the
  * edit, import it, or run with --force to replace it with this machine's copy.
@@ -14,6 +17,7 @@
  *   node bin/export.js            capture
  *   node bin/export.js --dry-run  show what would change, write nothing
  *   node bin/export.js --force    also overwrite repo files edited by hand
+ *   node bin/export.js --allow-deletes  allow a large number of deletions
  */
 'use strict';
 const fs = require('fs');
@@ -22,6 +26,7 @@ const lib = require('./lib');
 
 const DRY = process.argv.includes('--dry-run');
 const FORCE = process.argv.includes('--force');
+const ALLOW_DELETES = process.argv.includes('--allow-deletes');
 
 function main() {
   if (!fs.existsSync(lib.AGENT)) {
@@ -103,14 +108,49 @@ function main() {
     changed++;
   }
 
+  const del = lib.planDeletes({
+    state,
+    direction: 'export',
+    onSource: (k) => fs.existsSync(path.join(lib.AGENT, k)),
+    targetHash: (k) => {
+      const f = path.join(lib.MIRROR, k);
+      return fs.existsSync(f) ? lib.sha(fs.readFileSync(f)) : null;
+    },
+  });
+  for (const k of del.keptEdited) console.log(`  keep    ${k}  (gone from this machine but edited in the repo: not deleted)`);
+  const overCap = del.toDelete.length > 0 && !ALLOW_DELETES && lib.tooMany(del.toDelete.length, del.recorded);
+  if (overCap) {
+    console.log(`\n${del.toDelete.length} deletion(s) are over the cap (20, or 25% of ${del.recorded} recorded files); nothing deleted. Rerun with --allow-deletes after checking:`);
+    for (const k of del.toDelete) console.log(`  WOULD delete ${k}`);
+  } else {
+    for (const k of del.toDelete) {
+      if (DRY) {
+        console.log(`  WOULD delete ${k}`);
+        continue;
+      }
+      const f = path.join(lib.MIRROR, k);
+      try {
+        fs.unlinkSync(f);
+        lib.pruneEmptyParents(path.dirname(f), lib.MIRROR);
+      } catch (e) {
+        console.log(`  WARNING  could not delete ${k}: ${e.message}`);
+        continue;
+      }
+      state[k] = { deleted: true };
+      console.log(`  delete  ${k}`);
+    }
+  }
+
   const keptNote = (kept ? `, ${kept} kept (edited in the repo)` : '') + (skipped ? `, ${skipped} skipped (possible secrets — not synced)` : '');
   if (DRY) {
-    console.log(`\nDry run — ${changed} file(s) would change, ${same} already current${keptNote}.`);
+    console.log(`\nDry run — ${changed} file(s) would change, ${del.toDelete.length} would be deleted, ${same} already current${keptNote}.`);
+    if (overCap) process.exitCode = 2;
     return;
   }
   lib.writeState(state);
+  if (overCap) process.exitCode = 2;
   console.log(`\n${changed} file(s) written, ${same} already current${keptNote}.`);
-  if (changed > 0) console.log('Review with `git diff`, then commit.');
+  if (changed > 0 || (del.toDelete.length > 0 && !overCap)) console.log('Review with `git diff`, then commit.');
 }
 
 main();

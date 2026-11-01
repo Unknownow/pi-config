@@ -155,6 +155,13 @@ export default function piConfigSync(pi: ExtensionAPI) {
 		return pi.exec("git", ["-C", repo, ...args], { timeout: cfg.timeoutMs });
 	}
 
+	/** Exit code of import.js and export.js when the deletions are over the safety cap. */
+	const DELETE_CAP_EXIT = 2;
+	function capWarning(ctx: ExtensionContext, which: "import" | "export", stdout: string): void {
+		const n = (stdout.match(/^\s*WOULD delete\s/gm) ?? []).length;
+		say(ctx, cfg, `pi-config: ${which} would delete ${n} file(s), over the safety cap — nothing deleted. See local/sync.log, then run: node bin/${which}.js --allow-deletes`, "warning");
+	}
+
 	async function runScript(script: string, ...args: string[]) {
 		return pi.exec(process.execPath, [path.join(repo, "bin", script), ...args], {
 			cwd: repo,
@@ -218,18 +225,24 @@ export default function piConfigSync(pi: ExtensionAPI) {
 	/** Import repo -> machine, but only when a dry run says something would change. */
 	async function importIfChanged(ctx: ExtensionContext): Promise<string> {
 		const preview = await runScript("import.js", "--dry-run");
-		if (preview.code !== 0) {
+		if (preview.code !== 0 && preview.code !== DELETE_CAP_EXIT) {
 			log(repo, `import dry-run failed: ${preview.stderr.trim()}`);
 			return "import preview failed";
 		}
 		if (!/^\s*WOULD\s/m.test(preview.stdout)) return "config already matches the repo";
 
+		const overCap = preview.code === DELETE_CAP_EXIT;
+		if (overCap) capWarning(ctx, "import", preview.stdout);
+		// Over the cap the deletions are refused; run the import only when it has other changes.
+		if (overCap && !/^\s*WOULD\s+(?!delete\s)/m.test(preview.stdout)) return "import held: deletions over the safety cap";
+
 		const applied = await runScript("import.js");
 		log(repo, `import:\n${applied.stdout.trim()}`);
-		if (applied.code !== 0) return "import failed — see local/sync.log";
+		if (applied.code !== 0 && applied.code !== DELETE_CAP_EXIT) return "import failed — see local/sync.log";
 
+		const written = (applied.stdout.match(/^\s*(write|delete)\s/gm) ?? []).length;
+		if (written === 0) return overCap ? "import held: deletions over the safety cap" : "import changed nothing — see local/sync.log";
 		importedThisSession = true;
-		const written = (applied.stdout.match(/^\s*write\s/gm) ?? []).length;
 		say(ctx, cfg, `pi-config: imported ${written} file(s) from the repo — restart Pi to apply`, "warning");
 		return `imported ${written} file(s); restart Pi to apply`;
 	}
@@ -238,7 +251,8 @@ export default function piConfigSync(pi: ExtensionAPI) {
 	async function exportAndCommit(ctx: ExtensionContext, opts: { commit: boolean; push: boolean }): Promise<string> {
 		const exported = await runScript("export.js");
 		log(repo, `export:\n${exported.stdout.trim()}`);
-		if (exported.code !== 0) return "export failed — see local/sync.log";
+		if (exported.code === DELETE_CAP_EXIT) capWarning(ctx, "export", exported.stdout);
+		else if (exported.code !== 0) return "export failed — see local/sync.log";
 		const skipped = (exported.stdout.match(/^\s*SKIPPED\s/gm) ?? []).length;
 		if (skipped > 0) say(ctx, cfg, `pi-config: not syncing ${skipped} file(s) that look like secrets — see local/sync.log`, "warning");
 

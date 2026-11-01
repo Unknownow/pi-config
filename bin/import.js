@@ -6,10 +6,14 @@
  *
  * Placeholders are resolved from local/machine.json or auto-detected. Every
  * file that gets overwritten is backed up to <name>.bak-<timestamp> first.
- * Nothing on this machine is deleted.
+ * A file that was synced earlier, is gone from the repo and is unchanged on this machine
+ * is deleted here too (no backup; never a file with no sync record, never an edited
+ * one). More than 20 deletions, or over 25% of the recorded files, need --allow-deletes;
+ * without it nothing is deleted and the exit code is 2.
  *
  *   node bin/import.js            apply
  *   node bin/import.js --dry-run  show what would change, write nothing
+ *   node bin/import.js --allow-deletes  allow a large number of deletions
  */
 'use strict';
 const fs = require('fs');
@@ -17,6 +21,7 @@ const path = require('path');
 const lib = require('./lib');
 
 const DRY = process.argv.includes('--dry-run');
+const ALLOW_DELETES = process.argv.includes('--allow-deletes');
 
 function loadOverrides() {
   const p = path.join(lib.REPO, 'local', 'machine.json');
@@ -95,6 +100,46 @@ function main() {
     changed++;
   }
 
+  // This machine's copy in the form the record holds (what export would write).
+  const localForm = (k) => {
+    const f = path.join(lib.AGENT, k);
+    if (!fs.existsSync(f)) return null;
+    if (!k.endsWith('.json')) return lib.sha(fs.readFileSync(f));
+    const json = lib.readJson(f);
+    if (json === null) return 'unreadable';
+    lib.scrub(k, json);
+    return lib.sha(Buffer.from(JSON.stringify(json, null, 2) + '\n'));
+  };
+  const del = lib.planDeletes({
+    state,
+    direction: 'import',
+    onSource: (k) => fs.existsSync(path.join(lib.MIRROR, k)),
+    targetHash: localForm,
+  });
+  for (const k of del.keptEdited) console.log(`  keep    ${k}  (gone from the repo but edited on this machine: not deleted)`);
+  const overCap = del.toDelete.length > 0 && !ALLOW_DELETES && lib.tooMany(del.toDelete.length, del.recorded);
+  if (overCap) {
+    console.log(`\n${del.toDelete.length} deletion(s) are over the cap (20, or 25% of ${del.recorded} recorded files); nothing deleted. Rerun with --allow-deletes after checking:`);
+    for (const k of del.toDelete) console.log(`  WOULD delete ${k}`);
+  } else {
+    for (const k of del.toDelete) {
+      if (DRY) {
+        console.log(`  WOULD delete ${k}`);
+        continue;
+      }
+      const f = path.join(lib.AGENT, k);
+      try {
+        fs.unlinkSync(f);
+        lib.pruneEmptyParents(path.dirname(f), lib.AGENT);
+      } catch (e) {
+        console.log(`  WARNING  could not delete ${k}: ${e.message}`);
+        continue;
+      }
+      delete state[k];
+      console.log(`  delete  ${k}`);
+    }
+  }
+
   if (!DRY) lib.writeState(state);
   if (!DRY && fs.existsSync(path.join(lib.REPO, '.githooks', 'pre-commit'))) {
     // The hook refuses commits that hold credentials.
@@ -103,11 +148,13 @@ function main() {
     } catch (_) { /* not a git checkout */ }
   }
   if (DRY) {
-    console.log(`\nDry run — ${changed} file(s) would change, ${same} already current.`);
+    console.log(`\nDry run — ${changed} file(s) would change, ${del.toDelete.length} would be deleted, ${same} already current.`);
+    if (overCap) process.exitCode = 2;
     return;
   }
 
   console.log(`\n${changed} file(s) applied, ${same} already current.`);
+  if (overCap) process.exitCode = 2;
   for (const w of warnings) console.log(`\n  WARNING  ${w}`);
 
   if (changed > 0) {
