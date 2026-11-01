@@ -1,13 +1,16 @@
 {
   "v": 1,
   "flowId": "20261101-1736-new-pi-sessions-start-with-the-flow-off-1e67",
-  "rev": 3,
-  "updated": "2026-11-01T10:39:04.435Z",
+  "rev": 4,
+  "updated": "2026-11-01T10:39:12.275Z",
   "title": "New Pi sessions start with the flow off, and the merged changes go live",
   "done": [
     "S1",
     "S2",
-    "S3"
+    "S3",
+    "S4",
+    "S5",
+    "S7"
   ],
   "reviewBase": {
     "d:/works/pi-config": "5b39dfd6aab0c7c1f20711ece100825cb0e1aa0c"
