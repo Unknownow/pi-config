@@ -8,8 +8,8 @@
  */
 import * as path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { commandReadOnlyProblem, KEYWORDS, parseCommands, unwrapCommand } from "../workflow/readonly-bash.ts";
-import { repoKey } from "../workflow/repos.ts";
+import { commandReadOnlyProblem, KEYWORDS, parseCommands, unwrapCommand } from "../shared/readonly-bash.ts";
+import { repoKey } from "../shared/repos.ts";
 
 export const RUNNER_GUARD_ENV = "PI_WORKFLOW_RUNNER_GUARD";
 

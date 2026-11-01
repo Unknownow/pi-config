@@ -6,9 +6,9 @@
  * and `gh pr review --approve` are never allowed. Checked on the command text, so it is a guardrail
  * against a drifting executor, not a sandbox.
  */
-import { gitSubcommand, KEYWORDS, parseCommands, WRAPPERS } from "./readonly-bash.ts";
+import { gitSubcommand, KEYWORDS, parseCommands, WRAPPERS } from "../shared/readonly-bash.ts";
 import * as path from "node:path";
-import { fallbackTexts, repoKey, repoTexts } from "./repos.ts";
+import { fallbackTexts, repoKey, repoTexts } from "../shared/repos.ts";
 
 /** A command the pure check cannot decide: the caller's gate must (a merge, or a push to a protected branch). */
 export interface GateRequest {

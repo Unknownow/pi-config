@@ -10,8 +10,8 @@ test("worktree uses only the public contract of the workflow extension", () => {
 	assert.ok(files.length > 5);
 	for (const f of files) {
 		const text = fs.readFileSync(new URL(f, dir), "utf8");
-		// The one allowed code import: the shell parser the Unity guard shares with the workflow (README, "Relationship to the workflow extension").
-		const imports = [...text.matchAll(/from\s+["']([^"']*\.\.\/workflow[^"']*)["']/g)].map((m) => m[1]).filter((i) => i !== "../workflow/readonly-bash.ts");
+		// Code shared with the workflow (the shell parser) comes from ../shared, never from ../workflow.
+		const imports = [...text.matchAll(/from\s+["']([^"']*\.\.\/workflow[^"']*)["']/g)].map((m) => m[1]);
 		assert.deepEqual(imports, [], `${f} imports from ../workflow`);
 		assert.ok(!text.includes("workflow-state"), `${f} mentions workflow-state`);
 	}

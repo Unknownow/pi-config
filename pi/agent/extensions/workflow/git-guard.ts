@@ -8,7 +8,7 @@ import { spawnSync } from "node:child_process";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { defaultRunner, gateCheck } from "./merge-gate.ts";
 import { registryPublishProblem, shellProblem } from "./push-guard.ts";
-import { repoKey } from "./repos.ts";
+import { repoKey } from "../shared/repos.ts";
 
 export const GIT_GUARD_ENV = "PI_WORKFLOW_GIT_GUARD";
 

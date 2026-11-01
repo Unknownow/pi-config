@@ -7,7 +7,7 @@
  * This is a guard against drifting into execution, not a sandbox: code built at
  * runtime (eval of strings, aliased imports) can get past the word checks.
  */
-import { readOnlyProblem } from "./readonly-bash.ts";
+import { readOnlyProblem } from "../shared/readonly-bash.ts";
 
 /**
  * Tools the planner may call, as regexes over the tool name; workflow.json's

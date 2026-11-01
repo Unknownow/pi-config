@@ -1,6 +1,6 @@
 /**
- * Pure helpers for the interactive pickers: folder Tab completion and the model list. The caller
- * supplies the directory reader and the model list, so pickers.test.ts covers them.
+ * Pure helpers for the interactive pickers: folder Tab completion. The caller
+ * supplies the directory reader, so pickers.test.ts covers them.
  */
 
 import * as path from "node:path";
@@ -24,15 +24,4 @@ export function pathCompletions(partial: string, cwd: string, home: string, read
 		.sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()))
 		.slice(0, MAX_ITEMS)
 		.map((n) => `${shown}${n}/`);
-}
-
-/** Models sorted by provider then id, as `provider/id` values with a readable label. */
-export function modelChoices(models: { provider: string; id: string; name?: string }[], current?: string): { value: string; label: string }[] {
-	return [...models]
-		.sort((a, b) => a.provider.localeCompare(b.provider) || a.id.localeCompare(b.id))
-		.map((m) => {
-			const value = `${m.provider}/${m.id}`;
-			const name = m.name && m.name !== m.id ? ` — ${m.name}` : "";
-			return { value, label: `${value}${name}${value === current ? " (current)" : ""}` };
-		});
 }

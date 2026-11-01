@@ -212,7 +212,7 @@ its plan and hand over, even when you said "fix it" or "do it for me".
 - It is a guard against the planner drifting into execution, not a sandbox. The code checks are
   regexes: a determined disguise (a computed lookup on an alias of `require('fs')`, say) can still get
   past them.
-- Tests: `node --experimental-strip-types --test agent-end.test.ts delivery.test.ts merge-gate.test.ts folder-add.test.ts readonly-bash.test.ts readonly-tools.test.ts plan-tools.test.ts tokens.test.ts push-guard.test.ts knowledge.test.ts registry-publish.test.ts agent-events.test.ts notify.test.ts repos.test.ts stages.test.ts git-guard.test.ts repo-diff.test.ts prompts.test.ts config.test.ts metrics.test.ts plan-store.test.ts boundary.test.ts plan-doc.test.ts  flow-report.test.ts view.test.ts waits.test.ts checkpoints.test.ts tags.test.ts`.
+- Tests: `node --experimental-strip-types --test agent-end.test.ts delivery.test.ts merge-gate.test.ts folder-add.test.ts readonly-tools.test.ts plan-tools.test.ts push-guard.test.ts knowledge.test.ts registry-publish.test.ts agent-events.test.ts notify.test.ts repos.test.ts stages.test.ts git-guard.test.ts repo-diff.test.ts prompts.test.ts config.test.ts metrics.test.ts plan-store.test.ts boundary.test.ts plan-doc.test.ts  flow-report.test.ts view.test.ts waits.test.ts checkpoints.test.ts tags.test.ts`.
 
 ## Test phase (removed)
 
@@ -220,17 +220,17 @@ The test phase and its fix loop are gone. Test in normal mode with `test_run` (a
 
 ## Public contract for other extensions
 
-Other extensions (the worktree extension in this repo) may rely on exactly these, and on nothing else of the workflow. The workflow never refers to other extensions: it has no import of them and no knowledge of their files (`boundary.test.ts` checks this).
+Other extensions (the worktree extension in this repo) may rely on exactly these, and on nothing else of the workflow. The workflow never refers to the worktree extension: it has no import of it and no knowledge of its files (`boundary.test.ts` checks this). It uses the agents extension (`../agents/`: config, sub-agent runner, run rendering) and `../shared/`.
 
 - **K1. `session-folders` entry.** `customType: "session-folders"`, data `{ "v": 1, "cwd": "<working folder, forward slashes>", "folders": ["<absolute, forward slashes>", ...] }`. The workflow is the only writer. It appends one whenever the added folders change, and at every session start (not reload) when the newest one is missing or differs. Readers use the newest entry on the branch; none means no added folders.
 - **K1b. Folder follow rule.** At session start (not reload), when saved state exists and the newest `session-folders` entry names another working folder than the current one, each added folder inside a git repo is replaced by the same path in the one worktree of that repo that sits next to the working folder's repo (same parent folder), if it exists. Plain folders, folders without exactly one such worktree and missing targets stay. A result equal to the working folder is dropped. A notice lists the moves.
 - **K2. Switch guard.** `session_before_switch` (`new` and `resume`) is cancelled while the phase is execute and a plan is approved, with the notice "a flow is executing; finish it or leave it with /flow off before switching sessions".
 - **K3. CLI flags.** `--add-dir` takes absolute folders joined by `;` on Windows and `:` elsewhere (applied at startup only, not again after a session switch); `--flow plan|execute|off` sets the start phase.
 - **K4. `workflow:status` event.** `pi.events.emit("workflow:status", { v: 1, phase: "off"|"discuss"|"plan"|"execute", flowId?, title?, stage?, stages? })`, emitted when the payload changes.
-- **K5. Shell parser.** `readonly-bash.ts` exports `parseCommands`, `KEYWORDS`, `WRAPPERS`, `commandReadOnlyProblem` and `unwrapCommand`. Other extensions may import these five; changing their names, signatures or meaning is a contract change.
+- **K5. Shell parser.** Moved to `../shared/readonly-bash.ts` (D37); other extensions import it from there, never from `workflow/`.
 - **K6. `workflow:folder-add` event.** `/folders add` emits `pi.events.emit("workflow:folder-add", { v: 1, cwd, folder, claim })` after its checks (`cwd` and `folder` absolute, forward slashes). A listener calls `claim(promise)` synchronously during the emit; the promise resolves to `{ folder }` (use this path instead), `{ error }` (cancel the add) or `null` (no opinion). Late claims are ignored. The workflow waits for all claims for at most 300 s; an error, a rejection or the timeout cancels the add, otherwise the first `{ folder }` replaces the path (and passes the same checks again). No listener means the path is used as given.
-- **K7. Repo helpers.** `repos.ts` exports `uniqueRoots` and `repoKey`; the agents extension imports them.
-- **K8. Run cards.** `view.ts` exports `FlowView`, `RunView`, `runLine` and `shortModel`; the agents extension imports them to draw its run cards and to count its finished runs toward a flow.
+- **K7. Repo helpers.** Moved to `../shared/repos.ts` (D37).
+- **K8. Run cards.** Moved to `../shared/runs.ts` (D37); `view.ts` builds the workflow widget on them (`FlowRun` adds the stage). The agents extension's finished runs reach a flow only through `agents:subagent-finished`.
 
 ## Team knowledge
 
@@ -331,7 +331,7 @@ next run starts.
 | `/flow escalate` (`fable`) / `/flow back` (`opusplan`) | manual escalation and return |
 | `/flow judge` | review the current diff now |
 | `/flow tokens` | token breakdown of the current flow so far |
-| `/flow model [role] [provider/id[:thinking]]` | set a role's model and save it to workflow.json (agents.json for explore, advisor and runner); left out, it lists the roles, the models with auth and the thinking levels (Tab completes model IDs) |
+| `/flow model [role] [provider/id[:thinking]]` | set a workflow role's model (discuss, plan, execute, judge, commit, arbiter, escalate) and save it to workflow.json; left out, it lists the roles, the models with auth and the thinking levels (Tab completes model IDs). explore, advisor and runner are set with `/agents model` |
 | `/flow reload` | re-read workflow.json |
 | `pi --flow execute` (`plan`, `off`) | start a session in a given phase |
 | `/folders add <path>` / `remove <path\|n>` / `list` | folders that are part of this session (reloads Pi); Tab completes folder paths after `add` and folder numbers after `remove`; other extensions may replace or refuse the folder on `add` (K6) |

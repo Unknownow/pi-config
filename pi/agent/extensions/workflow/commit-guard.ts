@@ -6,7 +6,7 @@
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { shellProblem } from "./push-guard.ts";
-import { repoKey } from "./repos.ts";
+import { repoKey } from "../shared/repos.ts";
 
 export const COMMIT_GUARD_ENV = "PI_WORKFLOW_COMMIT_GUARD";
 

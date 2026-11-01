@@ -1,13 +1,4 @@
-/** Types shared by the agents and workflow extensions. */
-
-export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
-export type Thinking = (typeof THINKING_LEVELS)[number];
-
-export interface RoleSpec {
-	/** `provider/model-id`, as accepted by `pi --model`. */
-	model: string;
-	thinking?: Thinking;
-}
+/** Types of agents.json that the workflow extension reads too. Role specs live in ../shared/roles.ts. */
 
 export interface KnowledgeConfig {
 	/** MCP server a pi package registers (IEC: "knowledge"). "" turns it off; off too when nothing registered it. */

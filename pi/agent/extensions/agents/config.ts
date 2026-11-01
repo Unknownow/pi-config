@@ -1,12 +1,13 @@
 /**
  * agents.json lives next to workflow.json in ~/.pi/agent. Missing keys fall back to DEFAULTS and
- * unknown keys are ignored; `/flow model explore|advisor|runner ...` writes the roles back.
+ * unknown keys are ignored; `/agents model explore|advisor|runner ...` writes the roles back.
  */
 
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
-import { type KnowledgeConfig, type RoleSpec, THINKING_LEVELS } from "./types.ts";
+import type { KnowledgeConfig } from "./types.ts";
+import { type RoleSpec, THINKING_LEVELS } from "../shared/roles.ts";
 
 export const AGENT_ROLES = ["explore", "advisor", "runner"] as const;
 export type AgentRole = (typeof AGENT_ROLES)[number];

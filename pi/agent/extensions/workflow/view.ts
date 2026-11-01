@@ -15,82 +15,32 @@
  * context shows both its volume and what it costs.
  */
 
-import * as os from "node:os";
-import * as path from "node:path";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { type Component, type TUI, truncateToWidth } from "@earendil-works/pi-tui";
-import { DEFAULTS, describeRole, type Role, type RoleSpec } from "./config.ts";
-import { countTokens, type Tok, type TokenWeights, type UsageCounts } from "./tokens.ts";
-import type { SubagentEvent } from "../agents/subagent.ts";
+import { DEFAULTS, type Role, type RoleSpec } from "./config.ts";
+import { describeRole } from "../shared/roles.ts";
+import { add, addCounts, asTok, countsOf, countTokens, exact, fmtTok, isZero, max, maxCounts, type ModelCounts, noCounts, same, type Tok, type TokenWeights, type UsageCounts, zero } from "../shared/tokens.ts";
+import { applyEvent, elapsed, endRun, newRun, type RunEvent, type RunView, runLine, shortModel } from "../shared/runs.ts";
 import { progressBar } from "./board.ts";
 import { reportLines, type ReportFinding, type ReportStep } from "./flow-report.ts";
 
 export type Stage = "discuss" | "plan" | "execute" | "judge" | "commit";
 export type SubRole = "explore" | "advisor" | "judge" | "arbiter" | "commit" | "runner";
 
-export interface RunView {
-	id: number;
+/** A run card of the workflow widget, with the pipeline stage its tokens count toward. */
+export interface FlowRun extends RunView {
 	role: SubRole;
-	model: string;
-	label: string;
-	started: number;
-	ended?: number;
-	status: "running" | "ok" | "fail";
-	/** What it is doing now, or its outcome once finished. */
-	activity: string;
-	tools: number;
-	/** Tokens of finished messages. */
-	tokens: Tok;
-	/** Tokens of the message still streaming. */
-	liveTokens: Tok;
-	/** Counts of the message still streaming. */
-	liveCounts: ModelCounts;
-	/** Pipeline stage its tokens count toward. */
 	stage: Stage;
-}
-
-/** The four kinds of tokens, as the provider reports them. */
-export interface ModelCounts {
-	input: number;
-	output: number;
-	cacheRead: number;
-	cacheWrite: number;
 }
 
 export interface ModelTotal extends ModelCounts {
 	tokens: Tok;
 }
 
-const noCounts = (): ModelCounts => ({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
-const countsOf = (u: UsageCounts | undefined): ModelCounts => ({ input: u?.input ?? 0, output: u?.output ?? 0, cacheRead: u?.cacheRead ?? 0, cacheWrite: u?.cacheWrite ?? 0 });
-const maxCounts = (a: ModelCounts, b: ModelCounts): ModelCounts => ({
-	input: Math.max(a.input, b.input),
-	output: Math.max(a.output, b.output),
-	cacheRead: Math.max(a.cacheRead, b.cacheRead),
-	cacheWrite: Math.max(a.cacheWrite, b.cacheWrite),
-});
-const addCounts = (a: ModelCounts, b: ModelCounts): ModelCounts => ({
-	input: a.input + b.input,
-	output: a.output + b.output,
-	cacheRead: a.cacheRead + b.cacheRead,
-	cacheWrite: a.cacheWrite + b.cacheWrite,
-});
 /** Key of a model in the per-model maps: the short name, so "claude-bridge/claude-x" and "claude-x" agree. */
 const modelKey = (model: string | undefined): string => (model ? shortModel(model) : "unknown");
 
 export const STAGES: Stage[] = ["discuss", "plan", "execute", "judge", "commit"];
-
-const zero = (): Tok => ({ raw: 0, cost: 0 });
-const isZero = (t: Tok): boolean => t.raw === 0 && t.cost === 0;
-const add = (a: Tok, b: Tok): Tok => ({ raw: a.raw + b.raw, cost: a.cost + b.cost });
-const max = (a: Tok, b: Tok): Tok => ({ raw: Math.max(a.raw, b.raw), cost: Math.max(a.cost, b.cost) });
-const same = (a: Tok, b: Tok): boolean => a.raw === b.raw && a.cost === b.cost;
-
-/** Summaries saved before counts were tracked as raw and cost held a single number; show it as both. */
-function asTok(x: Tok | number | undefined): Tok {
-	if (typeof x === "number") return { raw: x, cost: x };
-	return x ?? zero();
-}
 
 export function emptyStageTokens(): Record<Stage, Tok> {
 	return { discuss: zero(), plan: zero(), test: zero(), execute: zero(), judge: zero(), commit: zero() };
@@ -145,85 +95,8 @@ export interface FlowSummary {
 	reposted?: boolean;
 }
 
-/** Exact count with thousands separators, e.g. 1,204,331. */
-export function exact(n: number): string {
-	return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-}
-
-/** Raw count, with the cost-weighted count in brackets when they differ. */
-export function fmtTok(t: Tok): string {
-	return t.raw === t.cost ? exact(t.raw) : `${exact(t.raw)} (${exact(t.cost)})`;
-}
-
-const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-
-export function shortModel(spec: string): string {
-	return spec.split("/").pop()?.replace(/^claude-/, "") ?? spec;
-}
-
 function short(spec: RoleSpec): string {
 	return `${shortModel(spec.model)}${spec.thinking && spec.thinking !== "off" ? `·${spec.thinking}` : ""}`;
-}
-
-function oneLine(s: string, max = 60): string {
-	const flat = s.replace(/\s+/g, " ").trim();
-	return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
-}
-
-export function elapsed(run: { started: number; ended?: number }): string {
-	const s = Math.round(((run.ended ?? Date.now()) - run.started) / 1000);
-	if (s >= 3600) return `${Math.floor(s / 3600)}h${String(Math.floor((s % 3600) / 60)).padStart(2, "0")}m`;
-	return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m${String(s % 60).padStart(2, "0")}s`;
-}
-
-export function spinner(): string {
-	return SPINNER[Math.floor(Date.now() / 100) % SPINNER.length];
-}
-
-/** `grep /pattern/ in dir`, `read file:10-50`, ... relative to cwd. */
-export function describeTool(name: string, args: Record<string, unknown>, cwd: string): string {
-	const rel = (p: unknown) => {
-		if (typeof p !== "string" || !p) return ".";
-		const r = path.isAbsolute(p) ? path.relative(cwd, p) : p;
-		if (!r.startsWith("..")) return r || ".";
-		const home = os.homedir();
-		return p.startsWith(home) ? `~${p.slice(home.length)}` : p;
-	};
-	switch (name) {
-		case "read": {
-			const off = args.offset as number | undefined;
-			const lim = args.limit as number | undefined;
-			const range = off || lim ? `:${off ?? 1}${lim ? `-${(off ?? 1) + lim - 1}` : ""}` : "";
-			return `read ${rel(args.path ?? args.file_path)}${range}`;
-		}
-		case "grep":
-			return `grep /${oneLine(String(args.pattern ?? ""), 30)}/ in ${rel(args.path)}`;
-		case "find":
-			return `find ${oneLine(String(args.pattern ?? "*"), 30)} in ${rel(args.path)}`;
-		case "ls":
-			return `ls ${rel(args.path)}`;
-		case "bash":
-			return `$ ${oneLine(String(args.command ?? ""), 50)}`;
-		default:
-			return `${name} ${oneLine(JSON.stringify(args), 40)}`;
-	}
-}
-
-/** One row per run, shared by the widget and the tool renderers. */
-export function runLine(run: RunView, theme: Theme, opts: { showRole: boolean }): string {
-	const icon =
-		run.status === "running"
-			? theme.fg("accent", spinner())
-			: run.status === "ok"
-				? theme.fg("success", "✓")
-				: theme.fg("error", "✗");
-	const role = opts.showRole ? `${theme.fg("toolTitle", run.role.padEnd(8))} ${theme.fg("muted", run.model.padEnd(10))} ` : "";
-	const tokens = add(asTok(run.tokens), asTok(run.liveTokens));
-	const stats = [run.tools ? `${run.tools} tool${run.tools > 1 ? "s" : ""}` : "", isZero(tokens) ? "" : `${fmtTok(tokens)} tok`, elapsed(run)]
-		.filter(Boolean)
-		.join(" · ");
-	const activityColor = run.status === "fail" ? "error" : run.status === "running" ? "toolOutput" : "muted";
-	return `${icon} ${role}${theme.fg("dim", oneLine(run.label, 40))}  ${theme.fg(activityColor, run.activity)} ${theme.fg("dim", `· ${stats}`)}`;
 }
 
 /**
@@ -326,7 +199,7 @@ export class FlowView {
 	roles: Record<Role, RoleSpec>;
 	/** How much each kind of token counts; see WorkflowConfig.tokenWeights. */
 	weights: TokenWeights = DEFAULTS.tokenWeights;
-	runs: RunView[] = [];
+	runs: FlowRun[] = [];
 	/** Progress of the executing plan; the widget shows it under the pipeline line. */
 	progress: FlowProgress | undefined;
 	/** Tokens of finished messages per stage this session, main session and subagents together. */
@@ -377,22 +250,9 @@ export class FlowView {
 		this.ticker = undefined;
 	}
 
-	start(role: SubRole, label: string, model: string = (this.roles as Partial<Record<string, RoleSpec>>)[role]?.model ?? ""): RunView {
+	start(role: SubRole, label: string, model: string = (this.roles as Partial<Record<string, RoleSpec>>)[role]?.model ?? ""): FlowRun {
 		this.clearFinished(15_000);
-		const run: RunView = {
-			id: this.nextId++,
-			role,
-			model: shortModel(model),
-			label,
-			started: Date.now(),
-			status: "running",
-			activity: "starting…",
-			tools: 0,
-			tokens: zero(),
-			liveTokens: zero(),
-			liveCounts: noCounts(),
-			stage: role === "judge" || role === "arbiter" ? "judge" : this.stage,
-		};
+		const run: FlowRun = { ...newRun(this.nextId++, role, label, model), role, stage: role === "judge" || role === "arbiter" ? "judge" : this.stage };
 		const sub = (this.flow[run.stage].subs[role] ??= { tokens: zero(), runs: 0 });
 		sub.runs++;
 		const bySub = ((sub.byModel ??= {})[modelKey(run.model)] ??= { tokens: zero(), runs: 0 });
@@ -404,39 +264,16 @@ export class FlowView {
 	}
 
 	/** Applies a subagent event to its row. */
-	event(run: RunView, e: SubagentEvent, cwd: string): void {
-		if (e.type === "tool") {
-			run.tools++;
-			run.activity = describeTool(e.name, e.args, cwd);
-		} else if (e.type === "usage") {
-			// Cumulative per message; a failed stream can end with empty usage, so keep the larger.
-			const tokens = max(countTokens(e.usage, this.weights), e.done ? run.liveTokens : zero());
-			// Counts are cumulative too: keep the latest of the message, never a sum of its events.
-			const counts = maxCounts(countsOf(e.usage), e.done ? run.liveCounts : noCounts());
-			if (e.done) {
-				run.tokens = add(run.tokens, tokens);
-				this.add(run.stage, tokens, run.role, run.model, counts);
-				run.liveTokens = zero();
-				run.liveCounts = noCounts();
-			} else {
-				run.liveTokens = tokens;
-				run.liveCounts = counts;
-			}
-		} else if (e.type === "text" && run.role !== "explore") {
-			run.activity = `writing: ${oneLine(e.text.split("\n").filter(Boolean).pop() ?? "", 50)}`;
-		}
+	event(run: FlowRun, e: RunEvent, cwd: string): void {
+		const spent = applyEvent(run, e, cwd, this.weights);
+		if (spent) this.add(run.stage, spent.tokens, run.role, run.model, spent.counts);
 		this.changed();
 	}
 
-	finish(run: RunView, ok: boolean, outcome: string): void {
-		run.status = ok ? "ok" : "fail";
-		run.ended = Date.now();
+	finish(run: FlowRun, ok: boolean, outcome: string): void {
 		// A message cut off by an abort or timeout never ends; its tokens were still spent.
-		this.add(run.stage, run.liveTokens, run.role, run.model, run.liveCounts);
-		run.tokens = add(run.tokens, run.liveTokens);
-		run.liveTokens = zero();
-		run.liveCounts = noCounts();
-		run.activity = outcome;
+		const spent = endRun(run, ok, outcome);
+		this.add(run.stage, spent.tokens, run.role, run.model, spent.counts);
 		this.changed();
 	}
 

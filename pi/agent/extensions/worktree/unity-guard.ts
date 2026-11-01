@@ -1,5 +1,5 @@
 import * as path from "node:path";
-import { KEYWORDS, parseCommands, WRAPPERS } from "../workflow/readonly-bash.ts";
+import { KEYWORDS, parseCommands, WRAPPERS } from "../shared/readonly-bash.ts";
 
 export interface GuardOptions {
 	cwd: string;

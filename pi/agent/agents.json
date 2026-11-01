@@ -1,5 +1,5 @@
 {
-  "_comment": "Config for ~/.pi/agent/extensions/agents (explore, advisor, test_run). model is provider/model-id; thinking is off|minimal|low|medium|high|xhigh|max. Edit here or with `/flow model <explore|advisor|runner> <provider/id[:thinking]>`. Synced by pi-config.",
+  "_comment": "Config for ~/.pi/agent/extensions/agents (explore, advisor, test_run). model is provider/model-id; thinking is off|minimal|low|medium|high|xhigh|max. Edit here or with `/agents model <explore|advisor|runner> <provider/id[:thinking]>`. Synced by pi-config.",
   "roles": {
     "explore": {
       "model": "claude-bridge/claude-haiku-5-5",
