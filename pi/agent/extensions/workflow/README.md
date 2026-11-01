@@ -171,6 +171,8 @@ A session shows a desktop notification (Windows toast, `osascript` on macOS, `no
 
 The discuss phase uses exactly the same rules as plan.
 
+**Tools per phase:** normal mode does not declare `plan_check`, `deliver`, `wait_for_user` and `publish_packages`; execute declares everything; discuss and plan declare only the reading tools below. `explore`, `advisor` and `test_run` are never removed from the active list; the `tool_call` hook refuses `test_run` in discuss and plan (`plan-tools.ts`).
+
 Only tools matching `planAllowedTools` (regexes over the tool name) can be called: read, grep, find,
 ls, bash, codemode, explore, advisor, judge, `run_code`, `fetch_url`, `video_frames` and MCP tools named search/get/list/...
 Everything else (AskClaude, `propose_entry`, edit, write) is hidden and refused.

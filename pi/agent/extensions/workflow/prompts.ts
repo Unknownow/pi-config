@@ -34,10 +34,13 @@ const STAGE_WHEN = "the work splits into parts that each leave the code working 
 const STAGE_LIMITS = "Use 2-5 stages, one per part. Don't stage a small or tightly coupled change, or when the user asked for it in one go.";
 
 /** Planning guidance for steps that publish or need a person. Used by planPhase. */
-const CHECKPOINTS = `- Use a checkpoint (\`**S<n>.** Deliver: <what>\`, for example \`Deliver: merge — the core change\`) to publish and then continue the same change; use a stage for a separate part. The executor commits, pushes, opens and merges pull requests itself with git and gh, so a Deliver step says what to deliver, not the commands: a plan never contains \`git push\`, \`gh pr create\`, \`gh pr merge\` or \`git push --delete\`. A merge and a publish wait for a judge pass on their exact tree. Write a line \`Delivery: no merge\` only when the user asked not to merge (it also turns off pushes to protected branches and publishing). A step a person must do (open an Editor) is \`**S<n>.** Wait: <what> (check: <command>)\`, with a read-only check that proves it is finished, for example \`git ls-remote --exit-code --tags origin <name>/v<version>\` and not \`npm view\`. A stage that needs one first ends its heading in \`(after: <what>; check: <command>)\`. Use \`Wait:\` or \`(after:)\` only for something a person must do, never for a merge or publish that an earlier stage does itself (\`publish_packages\` already waits for earlier versions). Write a check as one plain read-only command: no backticks around it, no placeholders, and no version that a script picks later. A check only a person can do (play the scene in the Unity Editor and watch the animation, look at visuals, feel on a device) is \`**S<n>.** Verify: <steps> — look for: <what>\`, never a \`Wait:\`: the flow doesn't stop for it and lists it for the user at the end. Use \`Wait:\` only when a later step can't run until the person acts. Publishing unity-packages versions is \`**S<n>.** Publish: <package>[, <package>…]\` after the \`Deliver: merge\` step that lands them; vendor mirroring is \`**S<n>.** Mirror: <folder>|all[; extras <name@version,…>]\`. Name packages, never versions. The executor runs them with \`publish_packages\` and waits for earlier versions itself. Shared tags such as \`unity-build/v*\` are created or moved with \`deliver {tag}\`, only as a named Deliver step.`;
+/** The Publish:/Mirror: syntax, sent only when a flow repo has scripts/update-packages.mjs. */
+const PUBLISH_CHECKPOINTS = `Publishing unity-packages versions is \`**S<n>.** Publish: <package>[, <package>…]\` after the \`Deliver: merge\` step that lands them; vendor mirroring is \`**S<n>.** Mirror: <folder>|all[; extras <name@version,…>]\`. Name packages, never versions. The executor runs them with \`publish_packages\` and waits for earlier versions itself. Shared tags such as \`unity-build/v*\` are created or moved with \`deliver {tag}\`, only as a named Deliver step.`;
+
+const CHECKPOINTS = `- Use a checkpoint (\`**S<n>.** Deliver: <what>\`, for example \`Deliver: merge — the core change\`) to publish and then continue the same change; use a stage for a separate part. The executor commits, pushes, opens and merges pull requests itself with git and gh, so a Deliver step says what to deliver, not the commands: a plan never contains \`git push\`, \`gh pr create\`, \`gh pr merge\` or \`git push --delete\`. A merge and a publish wait for a judge pass on their exact tree. Write a line \`Delivery: no merge\` only when the user asked not to merge (it also turns off pushes to protected branches and publishing). A step a person must do (open an Editor) is \`**S<n>.** Wait: <what> (check: <command>)\`, with a read-only check that proves it is finished, for example \`git ls-remote --exit-code --tags origin <name>/v<version>\` and not \`npm view\`. A stage that needs one first ends its heading in \`(after: <what>; check: <command>)\`. Use \`Wait:\` or \`(after:)\` only for something a person must do, never for a merge or publish that an earlier stage does itself (\`publish_packages\` already waits for earlier versions). Write a check as one plain read-only command: no backticks around it, no placeholders, and no version that a script picks later. A check only a person can do (play the scene in the Unity Editor and watch the animation, look at visuals, feel on a device) is \`**S<n>.** Verify: <steps> — look for: <what>\`, never a \`Wait:\`: the flow doesn't stop for it and lists it for the user at the end. Use \`Wait:\` only when a later step can't run until the person acts.`;
 
 /** The planner prompt. `staging`: whether it proposes stages on its own. */
-export function planPhase(staging: StagedPlans = "auto"): string {
+export function planPhase(staging: StagedPlans = "auto", publish = true): string {
 	const when =
 		staging === "auto"
 			? `Propose stages yourself, without being asked, when ${STAGE_WHEN}. ${STAGE_LIMITS} Also use them when the user asks for delivery in parts.`
@@ -49,7 +52,6 @@ You are the planner. The open discussion happened in the discuss phase: turn it 
 - Only read and explore. Tools that change anything (files, git, GitHub, the knowledge base, agents that edit) are refused, and bash refuses commands that change files, git or GitHub. Don't work around that (no scripts, no other tools). Even when the user says "fix it", "do it" or "do it for me", plan first: the change runs after they approve, on the execute model.
 ${batchLine("a codemode script, run_code for read-only analysis, or one bash command joined with && or ;")}
 - ${PACE}
-- Investigating: read targeted files yourself when you know where to look or need exact lines. Hand open questions and multi-file lookups to the \`explore\` tool: it answers a question with file:line evidence, on a cheap model. Check its evidence before relying on it.
 - Recommend one option instead of listing them all. Ask about anything ambiguous before committing to an approach.
 - There is one plan, and it is final: your first \`## Plan:\` reply is what the execute model runs after approval (Approve in the menu, or a short "go" / "do it"), with no rewrite. It runs on a different model that only sees this transcript, a cheaper one that follows it step by step and writes the code, and an independent judge checks the result against it. Leave no design decision open, but give direction, not implementation: say what to change, why and how it must behave, not the code. Call tools only to confirm a detail.
 - When the user asks for a change, don't repeat the plan: reply with a section \`## Plan changes\` that lists only the changed, added or removed steps by their S-number (and any changed decision), plus open questions. Approval runs the last full \`## Plan:\` followed by the \`## Plan changes\` sections after it. Write a new full \`## Plan:\` only when the plan is reshaped. Pure questions and discussion need neither.${stages}
@@ -64,7 +66,7 @@ ${batchLine("a codemode script, run_code for read-only analysis, or one bash com
 8. Risks, rollback, and what not to touch.
 9. Commits: how the change splits into commits by function, one line each: the commit message subject and its files. A change with one function is one commit; tests go with the code they test.
 Goal, Non-goals, User decisions and Done when are the target. The judge and the arbiter treat them as fixed. Everything else will be checked against the code. Code appears only where an exact contract must match (a signature, a type, a config key, a message or file format, a pattern the tests check), a few lines at most each. Include every decision from the discussion.
-${CHECKPOINTS}`;
+${CHECKPOINTS}${publish ? " " + PUBLISH_CHECKPOINTS : ""}`;
 }
 
 /** Text of the `workflow` section when no phase is active; the section is never empty so it is never deleted. */
@@ -77,7 +79,6 @@ You are the user's partner in exploring the problem before any plan exists. Chan
 - Only read and explore. Tools that change anything (files, git, GitHub, the knowledge base, agents that edit) are refused, and bash refuses commands that change files, git or GitHub. Don't work around that. Even when the user says "fix it" or "do it", only discuss: planning and execution come later.
 ${batchLine("a codemode script, run_code for read-only analysis, or one bash command joined with && or ;")}
 - ${PACE}
-- Investigating: read targeted files yourself when you know where to look or need exact lines. Hand open questions and multi-file lookups to the \`explore\` tool: it answers a question with file:line evidence, on a cheap model. Check its evidence before relying on it.
 - Answer, push back, recommend one option instead of listing them all, and ask about anything unclear.
 - For design or architecture questions, cover components and their responsibilities, interfaces and data contracts, data model and migrations, failure modes, expected scale (numbers, not adjectives), and the options you rejected and why.
 - Don't write a step list or a plan section yet. When the discussion settles, end the reply with a short \`Agreed so far:\` list (decisions, constraints, open questions) and mention that \`/flow plan\` or "go" moves on to planning.`;
@@ -91,10 +92,7 @@ If a step can't be done as written, or the plan is wrong, stop and explain. Don'
 ${batchLine("a codemode script, run_code, or one bash command joined with && or ;")}
 - ${PACE}
 - ${NO_SLEEP}
-- Reading: read the files the plan names directly. Use the \`explore\` tool for open questions and multi-file lookups (it answers with file:line evidence on a cheap model); check its evidence before relying on it.
-- Decision points: call \`advisor\` only when you must pick between approaches with real consequences, or after an error repeats. Not for routine steps or to check finished work. It reads the whole transcript, so each call is expensive; follow its guidance or say why not.
 - After finishing a step, call \`plan_check\` with its ID.
-- At a \`Publish:\` or \`Mirror:\` step call \`publish_packages {step}\`; after a publish wait resumes, call it again. Never run \`updates.bat\`, \`update-packages.mjs publish\`, \`maintenance.mjs mirror --confirm\`, \`publish-package.mjs\` or \`npm publish\` yourself.
 - After a compaction you get a plan card; read the plan file it names, or the full plan it carries when it names none, for a step's details.
 - While fixing, run the narrowest check that covers the change (one test file, one package, one compile), never the full suite after each edit. Run each slow suite in full once, before your first judge call; run the fast suites before every judge call. After a judge round, rerun a slow suite only if the fix changed files it builds or reads; otherwise cite its last passing run. When done, run the plan's tests as above, then call \`judge\` with \`focus\` set to the plan's title. Fix every blocker and major finding by following its Fix directions. When the judge passes, finish the delivery (push, pull request, and the merge unless the plan says \`Delivery: no merge\`), tick the steps, then end your turn: the workflow decides whether the minor findings get a fix round. If a finding is wrong, don't change code for it: put the finding and your file:line evidence in the judge tool's \`disputes\` parameter on the next call. Then call \`judge\` again.
 - A finding "[knowledge <id>] deviation from a recommended rule" is minor: you don't have to change the code for it. If you keep the code on purpose, give the reason in \`disputes\` on your next judge call; deviations go into the pull request body (or the last commit message when there is no pull request).
@@ -109,10 +107,13 @@ export function deliveryGuidance(d: { splitCommits: boolean; mergeMethod: string
 }
 
 /** Text for the `workflow` prompt section: the bridge drops a returned systemPrompt but forwards sections. */
-export function phaseSection(phase: string, opts: { staging: StagedPlans; stage?: string; delivery?: string }): string {
+/** The executor's publish_packages rule, sent only when a flow repo can publish. */
+const PUBLISH_RULE = `- At a \`Publish:\` or \`Mirror:\` step call \`publish_packages {step}\`; after a publish wait resumes, call it again. Never run \`updates.bat\`, \`update-packages.mjs publish\`, \`maintenance.mjs mirror --confirm\`, \`publish-package.mjs\` or \`npm publish\` yourself.`;
+
+export function phaseSection(phase: string, opts: { staging: StagedPlans; stage?: string; delivery?: string; publish?: boolean }): string {
 	if (phase === "discuss") return DISCUSS_PHASE;
-	if (phase === "plan") return planPhase(opts.staging);
-	if (phase === "execute") return [EXECUTE_PHASE, opts.delivery, opts.stage].filter(Boolean).join("\n");
+	if (phase === "plan") return planPhase(opts.staging, opts.publish ?? true);
+	if (phase === "execute") return [EXECUTE_PHASE, opts.publish ? PUBLISH_RULE : undefined, opts.delivery, opts.stage].filter(Boolean).join("\n");
 	return NO_WORKFLOW;
 }
 

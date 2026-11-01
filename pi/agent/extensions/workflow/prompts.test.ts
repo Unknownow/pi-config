@@ -144,7 +144,14 @@ test("Publish and Mirror steps are in the planner and executor prompts", () => {
 	assert.ok(planPhase().includes("Publish: <package>"));
 	assert.ok(planPhase().includes("Mirror: <folder>|all"));
 	assert.ok(!planPhase().includes("publish with `updates.bat`"));
-	assert.ok(EXECUTE_PHASE.includes("publish_packages {step}"));
+	assert.ok(phaseSection("execute", { ...SECTION_OPTS, publish: true }).includes("publish_packages {step}"));
+});
+
+test("the publish syntax is sent only when a flow repo can publish", () => {
+	assert.ok(!planPhase("auto", false).includes("Publish: <package>"));
+	assert.ok(!planPhase("auto", false).includes("Mirror: <folder>|all"));
+	assert.ok(!phaseSection("execute", SECTION_OPTS).includes("publish_packages {step}"));
+	assert.ok(planPhase("auto", false).length < planPhase("auto", true).length);
 });
 
 test("fix messages scope the tests to what the fix touched", () => {

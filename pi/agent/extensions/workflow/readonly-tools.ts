@@ -36,6 +36,12 @@ export function planToolRefused(name: string, allowed: RegExp[], blocked: string
 	return null;
 }
 
+/** The tool_call hook's decision: only discuss and plan refuse tools by name. */
+export function phaseToolRefusal(phase: string, name: string, allowed: RegExp[], blocked: string[]): string | null {
+	if (phase !== "discuss" && phase !== "plan") return null;
+	return planToolRefused(name, allowed, blocked);
+}
+
 const TOOL = (name: string) => new RegExp(`(^|__)${name}$`);
 const BASH_TOOL = TOOL("bash");
 const RUN_CODE_TOOL = TOOL("run_code");
