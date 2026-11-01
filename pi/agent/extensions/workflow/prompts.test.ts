@@ -1,7 +1,7 @@
 // node --experimental-strip-types --test prompts.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { ARBITER, COMMIT, EXECUTE_PHASE, FIX_MESSAGE, FIX_TESTS, JUDGE, JUDGE_KNOWLEDGE_ONLY, NO_SLEEP, NO_WORKFLOW, PACE, deliveryGuidance, JUDGE_MAJOR_ONLY, minorFixMessage, phaseSection, PLAN_KICKOFF, planPhase, workspaceSection } from "./prompts.ts";
+import { ARBITER, COMMIT, EXECUTE_PHASE, FIX_MESSAGE, FIX_TESTS, JUDGE, JUDGE_KNOWLEDGE_ONLY, NO_SLEEP, NO_WORKFLOW, PACE, deliveryGuidance, JUDGE_MAJOR_ONLY, minorFixMessage, phaseSection, PLAN_KICKOFF, planPhase, workspaceSection, QUICK_EXECUTE, quickPlanPhase } from "./prompts.ts";
 import { ADVISOR, EXPLORE, RUNNER } from "../agents/prompts.ts";
 
 const BATCH = `- Batch tool calls. Each call re-sends the whole conversation, so ten small calls at 150k context re-send 1.5M tokens. Put independent reads and commands in one call (a codemode script, run_code, or one bash command joined with && or ;) and print only what you need. Don't spend a call on something you could have added to the previous one.`;
@@ -164,4 +164,18 @@ test("fix messages scope the tests to what the fix touched", () => {
 
 test("the major-only note for the review after a minor-fix round", () => {
 	assert.match(JUDGE_MAJOR_ONLY, /only blocker and major/);
+});
+
+test("a quick flow gets the scope-card prompt in plan and the quick line in execute", () => {
+	const plan = phaseSection("plan", { ...SECTION_OPTS, quick: true });
+	assert.equal(plan, quickPlanPhase());
+	assert.ok(plan.includes("## Workflow: QUICK flow, scope card"));
+	assert.ok(plan.includes("`/flow plan`"), "the size check points to the full flow");
+	assert.ok(plan.includes("`## Plan: <title>`"), "the scope card is a plan the approve menu recognises");
+	assert.ok(plan.includes(PLAN_BATCH));
+	assert.ok(!plan.includes("### Stage 1"), "no stages in a quick flow");
+	const exec = phaseSection("execute", { ...SECTION_OPTS, quick: true });
+	assert.equal(exec, `${EXECUTE_PHASE}\n${QUICK_EXECUTE}`);
+	assert.ok(!phaseSection("execute", SECTION_OPTS).includes(QUICK_EXECUTE));
+	assert.equal(phaseSection("plan", SECTION_OPTS), planPhase("auto"));
 });

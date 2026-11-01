@@ -1,7 +1,8 @@
 // node --test agent-end.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { preFlowModelAction, gitTaskAllowed, migrateSavedState, handoverAction, approvalBlock, handoverKind, addPlanReply, composePlan, afterPass, noChangeStage, arbiterFirst, fixableFindings, hasPlanFlaw, planFlawLines, planFlawOnPass, canApprove, hasPlanLine, isPlanReady, judgeCapReached, minorFixOpen, passPending, stageEndAction, parseArbiter, phaseAfterFlow, shouldResume, skipJudge } from "./agent-end.ts";
+import { preFlowModelAction, gitTaskAllowed, migrateSavedState, handoverAction, approvalBlock, handoverKind, addPlanReply, composePlan, afterPass, noChangeStage, arbiterFirst, fixableFindings, hasPlanFlaw, planFlawLines, planFlawOnPass, canApprove, hasPlanLine, isPlanReady, judgeCapReached, minorFixOpen, passPending, stageEndAction, parseArbiter, phaseAfterFlow, shouldResume, skipJudge, judgeAddenda, profileRole, nextProfile } from "./agent-end.ts";
+import { JUDGE_MAJOR_ONLY, JUDGE_QUICK } from "./prompts.ts";
 import { planWaitProblems } from "./stages.ts";
 
 const empty = { role: "assistant", content: [] };
@@ -274,4 +275,32 @@ test("judge addenda after a minor round", async () => {
 	const { judgeAddenda } = await import("./agent-end.ts");
 	assert.equal(judgeAddenda(0), "");
 	assert.ok(judgeAddenda(1).includes("only blocker and major"));
+});
+
+test("a quick flow plans on the quick role and reviews on quick-judge; other roles and full flows keep theirs", () => {
+	assert.equal(profileRole("quick", "plan"), "quick");
+	assert.equal(profileRole("quick", "judge"), "quick-judge");
+	assert.equal(profileRole("quick", "execute"), "execute");
+	assert.equal(profileRole("quick", "arbiter"), "arbiter");
+	assert.equal(profileRole(undefined, "plan"), "plan");
+	assert.equal(profileRole(undefined, "judge"), "judge");
+});
+
+test("a quick flow's judge reports only blockers and majors from the first round", () => {
+	assert.equal(judgeAddenda(0), "");
+	assert.equal(judgeAddenda(1), "\n" + JUDGE_MAJOR_ONLY);
+	assert.equal(judgeAddenda(0, true), "\n" + JUDGE_QUICK);
+	assert.equal(judgeAddenda(2, true), "\n" + JUDGE_QUICK);
+});
+
+test("only the approval carries a quick profile into execute; every other switch clears it", () => {
+	assert.equal(nextProfile("off", "plan", "quick", undefined), "quick");
+	assert.equal(nextProfile("plan", "plan", undefined, "quick"), undefined, "/flow plan from a scope card is a full flow");
+	assert.equal(nextProfile("plan", "execute", undefined, "quick"), "quick", "approval");
+	assert.equal(nextProfile("execute", "execute", undefined, "quick"), "quick", "a repeated switch keeps it");
+	assert.equal(nextProfile("off", "execute", undefined, "quick"), undefined);
+	assert.equal(nextProfile("discuss", "execute", undefined, "quick"), undefined, "/flow resume from elsewhere is a full flow");
+	assert.equal(nextProfile("execute", "off", undefined, "quick"), undefined);
+	assert.equal(nextProfile("execute", "discuss", undefined, "quick"), undefined);
+	assert.equal(nextProfile("off", "plan", undefined, undefined), undefined);
 });

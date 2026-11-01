@@ -27,6 +27,8 @@ plan is read-only:   bash refuses commands that change files, git or GitHub
 | `arbiter` | sub-`pi` with the plan, the judge's report and the diff | the judge questions the plan and `planFlaw` is `auto`, or a passed review has a major plan flaw (whatever `planFlaw` is) (or you pick "Let the arbiter decide", or you picked *Approve, arbiter solves plan flaws* for this flow) |
 | `git_task` (`commit` role) | sub-`pi` with bash only, a git helper prompt, and its own git guard (`git-guard.ts`) with the same judge gate as the main session | when the executor (or normal mode, where the gate is off) calls `git_task` to delegate commit, push, pull request or merge work; default model `claude-bridge/claude-haiku-5-5`, thinking `medium` |
 | `escalate` | main session model | `/flow escalate` |
+| `quick` | main session model; same read-only rules as `plan` | the scope card of a quick flow (`/flow quick`); default Sonnet 5.5, medium |
+| `quick-judge` | the `judge` tool in a quick flow | one review, blockers and majors only; default Opus 5.5, medium |
 | `runner` | `test_run` tool of the agents extension; refused in discuss and plan (runner bash is not read-only) | one per test task card; reports facts only (see `../agents/README.md`) |
 
 ## Hands-off run
@@ -92,6 +94,21 @@ after approval runs on its own:
 - **Turning steps back to manual:** set `"autoJudge": "ask"`
   and `"planPrompt": false` for a "say go" hint instead of the Approve menu.
   `"autopilot": true` skips the routine menus and lets the agent resolve waits itself (see "Autopilot"). `"handoverCompactTokens": 0` turns off compaction at handovers. `"addedFolderRules": "full"` loads the rules files of added folders into the prompt (default `"paths"`: only their paths and sizes are listed). In agents.json, `"explore": { "contextFiles": true }` gives explore subagents the context files. `"returnTo": "off"` stays in execute after a flow ends. `"stageAdvance": "auto"` (default) starts the next stage at once, even after an incomplete delivery or a stage with no changes, with a warning (not after a run you aborted, and never while the stage has open steps, no changes and no judge call); `"ask"` asks first. When `gh` is not on PATH, the workflow looks in the standard GitHub CLI install folders and adds the one it finds to pi's PATH; when there is none, outcomes say the PR state is unknown. `"stagedPlans": "onRequest"` makes the planner use stages only when you ask for delivery in parts.
+
+## Quick flow
+
+For small changes such as game features (a popup, a gameplay tweak), where the full flow takes too long. `/flow quick [request]` (or `/flow quick`, then type the request) starts it from normal mode, discuss or plan; it is refused while a flow is executing.
+
+| Step | Quick flow |
+|---|---|
+| Plan | No discuss. The `quick` role writes a scope card in the plan phase (read-only): a `## Plan:` of about 15 lines with goal, steps, the narrowest check, Verify steps and done-when. A change too big for quick (more than about 6 files, a new shared system or API, save-data or network formats, a migration, stages) gets no card but a recommendation of `/flow plan`. |
+| Approval | The usual menu or a typed "go". *Full flow instead* (or `/flow plan`) switches to the planner model for a full plan, keeping the conversation. |
+| Execute | The execute role, as in a full flow, with `QUICK_EXECUTE`: only the narrowest checks (compile, clean Unity console, the tests of the changed files when fast); no slow suites and no `test_run`. Visual checks are Verify steps, listed after the flow. |
+| Judge | The `quick-judge` role, reporting only blockers and majors. `quick.maxJudgeRounds` (2) failed rounds in a row before it asks; `quick.maxMinorRounds` (0) minor-fix rounds; no final full review; the knowledge check runs when `quick.knowledgeCheck` (true) and `knowledge.judgeCheck` are on. Plan flaws never go to the arbiter: at a pass they are noted in the plan, at a fail you are asked. |
+| Delivery | The same as a full flow: branch, commits, push, pull request, merge after the judge's pass. |
+| End | Back to the phase it started from (normal mode when started from execute). The status bar shows `quick`; the `flow` line in `metrics.jsonl` has `profile: "quick"`. |
+
+Config: `"quick": { "maxJudgeRounds": 2, "maxMinorRounds": 0, "knowledgeCheck": true }`; models with `/flow model quick` and `/flow model quick-judge`. Limit: `/flow resume` brings a quick flow back as a full one (the profile is not in the plan ref).
 
 ## The plan, the judge and the arbiter
 
@@ -326,12 +343,13 @@ next run starts.
 |---|---|
 | `/flow` | status: phase, the model for each role, config path |
 | `/flow board` | live view of every flow on this machine (overlay, read-only) |
+| `/flow quick [request]` | start a quick flow (see "Quick flow") |
 | `/flow discuss` / `plan` / `execute` / `off` | switch phase (`off` restores the model and thinking level from before the flow). `/flow plan` from discuss also asks the planner for the `Plan:`; `/flow approve` in discuss does the same |
 | `/flow approve` | approve the plan: switch to execute and start (also offered when a plan ends) |
 | `/flow escalate` (`fable`) / `/flow back` (`opusplan`) | manual escalation and return |
 | `/flow judge` | review the current diff now |
 | `/flow tokens` | token breakdown of the current flow so far |
-| `/flow model [role] [provider/id[:thinking]]` | set a workflow role's model (discuss, plan, execute, judge, commit, arbiter, escalate) and save it to workflow.json; left out, it lists the roles, the models with auth and the thinking levels (Tab completes model IDs). explore, advisor and runner are set with `/agents model` |
+| `/flow model [role] [provider/id[:thinking]]` | set a workflow role's model (discuss, plan, execute, judge, commit, arbiter, escalate, quick, quick-judge) and save it to workflow.json; left out, it lists the roles, the models with auth and the thinking levels (Tab completes model IDs). explore, advisor and runner are set with `/agents model` |
 | `/flow reload` | re-read workflow.json |
 | `pi --flow execute` (`plan`, `off`) | start a session in a given phase |
 | `/folders add <path>` / `remove <path\|n>` / `list` | folders that are part of this session (reloads Pi); Tab completes folder paths after `add` and folder numbers after `remove`; other extensions may replace or refuse the folder on `add` (K6) |

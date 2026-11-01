@@ -28,6 +28,14 @@
     "escalate": {
       "model": "claude-bridge/claude-opus-5-5",
       "thinking": "high"
+    },
+    "quick": {
+      "model": "claude-bridge/claude-sonnet-5-5",
+      "thinking": "medium"
+    },
+    "quick-judge": {
+      "model": "claude-bridge/claude-opus-5-5",
+      "thinking": "medium"
     }
   },
   "startPhase": "off",
@@ -119,6 +127,11 @@
       "KNOWLEDGE_OFFLINE": "1"
     },
     "judgeCheck": true
+  },
+  "quick": {
+    "maxJudgeRounds": 2,
+    "maxMinorRounds": 0,
+    "knowledgeCheck": true
   },
   "subagent": {
     "extensions": [

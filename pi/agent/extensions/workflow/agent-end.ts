@@ -1,12 +1,25 @@
 /** Pure decisions behind the agent_end handler, kept apart so node tests can reach them. */
 
-import { JUDGE_MAJOR_ONLY } from "./prompts.ts";
+import { JUDGE_MAJOR_ONLY, JUDGE_QUICK } from "./prompts.ts";
 
 export const MAX_RESUMES = 2;
 
-/** Extra judge system text: after a minor-fix round the review reports only blocker and major findings. */
-export function judgeAddenda(minorRounds: number): string {
-	return minorRounds > 0 ? "\n" + JUDGE_MAJOR_ONLY : "";
+/** Extra judge system text: a quick flow's review, and any review after a minor-fix round, reports only blocker and major findings. */
+export function judgeAddenda(minorRounds: number, quick = false): string {
+	return quick ? "\n" + JUDGE_QUICK : minorRounds > 0 ? "\n" + JUDGE_MAJOR_ONLY : "";
+}
+
+/** The profile after a phase switch: `/flow quick` sets it in plan, only the approval (plan to execute) carries it on, every other switch clears it. */
+export function nextProfile(prev: string, phase: string, requested: "quick" | undefined, current: "quick" | undefined): "quick" | undefined {
+	if (phase === "plan") return requested;
+	if (phase === "execute" && (prev === "plan" || prev === "execute")) return current;
+	return undefined;
+}
+
+/** The role whose model runs `role` in this flow: a quick flow plans on `quick` and reviews on `quick-judge`. */
+export function profileRole<R extends string>(profile: "quick" | undefined, role: R): R | "quick" | "quick-judge" {
+	if (profile !== "quick") return role;
+	return role === "plan" ? "quick" : role === "judge" ? "quick-judge" : role;
 }
 
 /** True when the reply is an assistant reply with no content: the bridge's answer to a retry that ended on a tool result. */
