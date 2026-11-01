@@ -48,7 +48,7 @@ import {
 	type Thinking,
 	type WorkflowConfig,
 } from "./config.ts";
-import { handoverAction, handoverKind, preFlowModelAction, gitTaskAllowed, migrateSavedState, afterPass, noChangeStage, arbiterFirst, fixableFindings, canApprove, approvalBlock, addPlanReply, composePlan, type PlanDraft, hasPlanFlaw, planFlawLines, planFlawOnPass,  judgeCapReached, minorFixOpen, passPending, stageEndAction, parseArbiter, phaseAfterFlow, shouldResume, skipJudge } from "./agent-end.ts";
+import { judgeAddenda, handoverAction, handoverKind, preFlowModelAction, gitTaskAllowed, migrateSavedState, afterPass, noChangeStage, arbiterFirst, fixableFindings, canApprove, approvalBlock, addPlanReply, composePlan, type PlanDraft, hasPlanFlaw, planFlawLines, planFlawOnPass,  judgeCapReached, minorFixOpen, passPending, stageEndAction, parseArbiter, phaseAfterFlow, shouldResume, skipJudge } from "./agent-end.ts";
 import { countTokens, type Tok } from "./tokens.ts";
 import { idleReason, notifyCommand, notifyDue } from "./notify.ts";
 import * as prompts from "./prompts.ts";
@@ -203,7 +203,6 @@ const STATE_ENTRY = "workflow-state";
 const FOLDERS_ENTRY = "session-folders";
 /** Display-only entry (never sent to the model) with the token breakdown of a finished flow. */
 const SUMMARY_ENTRY = "workflow-summary";
-const APPROVED = "Plan approved. Execute it now, step by step, following the workflow rules.";
 const APPROVED_FINAL = "The final plan is approved. Execute it exactly, step by step, following the workflow rules.";
 /** The judge reads at most this much of the plan; the end (the arbiter's amendments) is kept. */
 const MAX_PLAN_CHARS = 60_000;
@@ -1833,7 +1832,7 @@ export default function workflow(pi: ExtensionAPI) {
 		const prevChecked = plan.kind === "recheck" && state.lastKnowledge?.status === "checked" && state.lastKnowledge.hash === plan.prev.hash;
 		const { files: knowledgeFiles, scoped } = plan.kind === "recheck" ? recheckKnowledgeFiles(prevChecked, plan.changed, diff.checkNames) : { files: diff.checkNames, scoped: false };
 		const max = cfg.judge.maxDiffChars;
-		const testJudge = ((state.minorRounds ?? 0) > 0 ? "\n" + prompts.JUDGE_MAJOR_ONLY : "");
+		const testJudge = judgeAddenda(state.minorRounds ?? 0);
 		const systemPrompts = recheck
 			? [
 					prompts.JUDGE + testJudge,
@@ -3008,6 +3007,7 @@ export default function workflow(pi: ExtensionAPI) {
 			planReady = canApprove(text, stoppedNormally, planProposed);
 			if (!stoppedNormally) return;
 			planWaitNow = planDraft.full ? planWaitProblems(composePlan(planDraft), (c) => readOnlyProblem(c)) : [];
+			if (!planWaitNow.length) planWaitRetried = false;
 			if (planWaitNow.length && /^##\s*Plan(?::| changes)/m.test(text)) {
 				if (!planWaitRetried) {
 					planWaitRetried = true;
@@ -3023,6 +3023,7 @@ export default function workflow(pi: ExtensionAPI) {
 				ctx.ui.notify(`workflow: say "go" to execute on ${describeRole(cfg.roles.execute)}, or keep discussing.`, "info");
 				return;
 			}
+			if (blocked) ctx.ui.notify(`workflow: can't approve: ${blocked}.`, "warning");
 			const approveLabel = "Approve";
 			const arbiterLabel = "Approve, arbiter solves plan flaws →";
 			const choice = await askUser(ctx, `Plan phase · execute on ${describeRole(cfg.roles.execute)}`, [...(blocked ? [] : [approveLabel, ...(cfg.planFlaw === "ask" ? [arbiterLabel] : [])]), "Back to discussion", "Keep discussing"]);
