@@ -46,3 +46,30 @@ test("no change, no call", () => {
 	assert.equal(refilterPlanTools(pi, ["read", "bash"], refused), false);
 	assert.equal(pi.calls, 0);
 });
+
+import { hiddenInPhase, syncFlowOnlyTools, KEPT_TOOLS } from "./plan-tools.ts";
+
+test("phases never hide explore, advisor or test_run; the hook refuses test_run while planning", () => {
+	const planRefused = (n: string) => planToolRefused(n, [/^(read|bash|explore|advisor|judge)$/], ["edit", "write"]) !== null;
+	for (const phase of ["off", "discuss", "plan", "execute"] as const) {
+		for (const t of KEPT_TOOLS) assert.equal(hiddenInPhase(phase, t, planRefused), false, `${phase} ${t}`);
+	}
+	assert.equal(hiddenInPhase("plan", "edit", planRefused), true);
+	assert.equal(hiddenInPhase("plan", "git_task", planRefused), true);
+	assert.equal(hiddenInPhase("execute", "edit", planRefused), false);
+	assert.equal(hiddenInPhase("off", "plan_check", planRefused), true);
+	assert.equal(hiddenInPhase("off", "judge", planRefused), false);
+	assert.equal(hiddenInPhase("off", "git_task", planRefused), false);
+	// The tool_call hook still refuses test_run in discuss and plan.
+	assert.notEqual(planToolRefused("test_run", [/^(read|bash|explore|advisor|judge)$/], ["edit", "write"]), null);
+});
+
+test("flow-only tools leave the active set in normal mode and return with a flow", () => {
+	const pi = { active: ["read", "plan_check", "deliver", "judge"], getActiveTools: () => [...pi.active], setActiveTools: (t: string[]) => { pi.active = [...t]; }, getAllTools: () => ["read", "plan_check", "deliver", "judge"].map((name) => ({ name })) };
+	assert.equal(syncFlowOnlyTools(pi, "off"), true);
+	assert.deepEqual(pi.active, ["read", "judge"]);
+	assert.equal(syncFlowOnlyTools(pi, "off"), false);
+	assert.equal(syncFlowOnlyTools(pi, "execute"), true);
+	assert.deepEqual(pi.active, ["read", "judge", "plan_check", "deliver"]);
+	assert.equal(syncFlowOnlyTools(pi, "plan"), false);
+});

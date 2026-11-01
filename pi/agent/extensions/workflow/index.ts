@@ -72,7 +72,7 @@ import { pushArgs, tagDecision } from "./tags.ts";
 import { type CheckVerdict, autopilotAmendment, autopilotReply, checkTitle, checkVerdict, cleanCheck, waitCheckProblem, type HumanCheck, humanChecks, parseVerifyStep, parseWaitStep, pollDecision, resumePrefix, verifyAmendment, waitAmendment } from "./waits.ts";
 import { nextStage, parseStages, planWaitProblems, stageLine, stageNote, stageStart, stagesOutcome } from "./stages.ts";
 import { planToolProblem, planToolRefused } from "./readonly-tools.ts";
-import { refilterPlanTools } from "./plan-tools.ts";
+import { refilterPlanTools, hiddenInPhase, syncFlowOnlyTools } from "./plan-tools.ts";
 import { AGENT_ROLES, type AgentRole, loadConfig as loadAgents, saveRole as saveAgentRole } from "../agents/config.ts";
 import { countSubagent } from "./agent-events.ts";
 import { MetricsQueue, type MetricEvent, subagentMetric } from "./metrics.ts";
@@ -497,7 +497,7 @@ export default function workflow(pi: ExtensionAPI) {
 	}
 
 	function planToolRefusedIn(name: string): boolean {
-		return planToolRefused(name, planAllowedTools(), cfg.planBlockedTools) !== null;
+		return hiddenInPhase("plan", name, (n) => planToolRefused(n, planAllowedTools(), cfg.planBlockedTools) !== null);
 	}
 
 	/** Tools that registered after the phase began (an MCP server that connected late) get the same filter. */
@@ -537,6 +537,7 @@ export default function workflow(pi: ExtensionAPI) {
 			if (readOnly(state.phase)) restorePlanTools();
 			if (readOnly(phase)) blockPlanTools();
 		}
+		if (!readOnly(phase)) syncFlowOnlyTools(pi, phase); // plan_check and deliver only exist inside a flow
 		if (leavingFlow && state.planDoc && !state.planDoc.finished) planMilestone(ctx, { at: new Date().toISOString(), ok: false, text: "abandoned" });
 		const samePhase = phase === state.phase; // a repeated setPhase keeps what the judge already passed
 		const modelAction = preFlowModelAction(state.phase, phase);
@@ -2604,7 +2605,9 @@ export default function workflow(pi: ExtensionAPI) {
 		// pi-claude-bridge saved (prompt_capture_unresolved). So both sections are always set, in this order.
 		opts.sections.workspace = prompts.workspaceSection(ctx.cwd, folders, touched, listed);
 		const staged = state.phase === "execute" ? currentStages() : undefined;
+		const canPublish = state.phase === "plan" || state.phase === "execute" ? (await flowRepos(ctx)).some((r) => fs.existsSync(path.join(r.root, "scripts", "update-packages.mjs"))) : false;
 		const phaseText = prompts.phaseSection(state.phase, {
+			publish: canPublish,
 			staging: cfg.stagedPlans,
 			stage: staged ? stageLine(staged.stages, staged.current) : undefined,
 			delivery: state.phase === "execute" ? prompts.deliveryGuidance(cfg.delivery) + (noMerge(state.approvedPlan ?? "") ? "\n- This plan says Delivery: no merge: do not merge, push to a protected branch or publish; commit, push your branch and open the pull request, then stop there." : "") : undefined,
@@ -3635,6 +3638,7 @@ export default function workflow(pi: ExtensionAPI) {
 			view.flow = { ...emptyFlowUsage(), ...structuredClone(state.flow) };
 			view.flowStarted = state.flowStarted;
 			if (state.phase === "discuss" || state.phase === "plan") blockPlanTools();
+			else syncFlowOnlyTools(pi, state.phase);
 			if (event.reason !== "reload") {
 				await followWorkingFolder(ctx);
 				// --add-dir is a launch flag: only the first session of the process applies it, not a later switch or resume.
