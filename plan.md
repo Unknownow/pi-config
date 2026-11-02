@@ -377,12 +377,14 @@ Work on a branch in worktree `D:/projects/wt/rules-review/game-template`. Run pu
 - [x] S12 GD and E4 tests (D16 E3/E4):
 - [x] S13 Texts:
 - [x] S14 Deliver: merge — the game-template PR (merge commit), after its pre-push passes and the judge passes.
-- [ ] S15 maze-flow:
-- [ ] S16 Deliver: merge — maze-flow's update-from-template PR, with a merge commit (G4).
-- [ ] S17 maze-flow: on a new branch from the updated `origin/main`, remove all 112 `rule-check: allow eng.rule.short-functions|no
-- [ ] S18 Deliver: merge — maze-flow's allow-comment PR.
-- [ ] S19 shiny-loop: the same as S15, in worktree `D:/projects/wt/rules-review/shiny-loop`. Its `AGENTS.md` has its own additions
-- [ ] S20 Deliver: merge — shiny-loop's update-from-template PR, with a merge commit.
-- [ ] S21 In `D:\game-template-rules-and-tests.md` (not a git repo), add a line under "## Decisions" saying "Applied 2026-11-03" w
+- [x] S15 maze-flow:
+- [x] S16 Deliver: merge — maze-flow's update-from-template PR, with a merge commit (G4).
+- [x] S17 maze-flow: on a new branch from the updated `origin/main`, remove all 112 `rule-check: allow eng.rule.short-functions|no
+- [x] S18 Deliver: merge — maze-flow's allow-comment PR.
+- [x] S19 shiny-loop: the same as S15, in worktree `D:/projects/wt/rules-review/shiny-loop`. Its `AGENTS.md` has its own additions
+- [x] S20 Deliver: merge — shiny-loop's update-from-template PR, with a merge commit.
+- [x] S21 In `D:\game-template-rules-and-tests.md` (not a git repo), add a line under "## Decisions" saying "Applied 2026-11-03" w
 ## For you after the flow
 - S22 Verify:
+## Outcome
+2026-11-02T18:03:38.420Z — ok: stage 1: pi-config: master, 0 commits since the review base; knowledge: main, 9 commits since the review base, PR #224 MERGED https://github.com/iecgames/knowledge/pull/224; game-template: main, 0 commits since the review base; unity-packages: main, 3 commits since the review base, PR #328 MERGED https://github.com/iecgames/unity-packages/pull/328; shiny-loop: main, 0 commits since the review base; maze-flow: release/android, 0 commits since the review base; stage 2: pi-config: master, 0 commits since the review base; knowledge: main, 0 commits since the review base; game-template: main, 8 commits since the review base, PR #219 MERGED https://github.com/iecgames/game-template/pull/219; unity-packages: main, 0 commits since the review base; shiny-loop: main, 0 commits since the review base; maze-flow: release/android, 0 commits since the review base; stage 3: pi-config: master, 0 commits since the review base; knowledge: main, 0 commits since the review base; game-template: main, 0 commits since the review base; unity-packages: main, 0 commits since the review base; shiny-loop: main, 25 commits since the review base, PR #113 MERGED https://github.com/iecgames/shiny-loop/pull/113; maze-flow: release/android, 0 commits since the review base, PR #112 MERGED https://github.com/iecgames/maze-flow/pull/112 · 1 human check(s) for you (see the card)

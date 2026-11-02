@@ -1,10 +1,9 @@
 {
   "v": 1,
   "flowId": "20261103-0004-apply-the-rules-review-game-template-kno-270b",
-  "rev": 3,
-  "updated": "2026-11-02T17:48:01.165Z",
+  "rev": 4,
+  "updated": "2026-11-02T18:03:38.808Z",
   "title": "Apply the rules review (game-template, knowledge, unity-packages, maze-flow, shiny-loop)",
-  "stage": 3,
   "done": [
     "S1",
     "S2",
@@ -19,15 +18,27 @@
     "S11",
     "S12",
     "S13",
-    "S14"
+    "S14",
+    "S15",
+    "S16",
+    "S17",
+    "S18",
+    "S19",
+    "S20",
+    "S21"
   ],
+  "finished": {
+    "at": "2026-11-02T18:03:38.420Z",
+    "ok": true,
+    "text": "stage 1: pi-config: master, 0 commits since the review base; knowledge: main, 9 commits since the review base, PR #224 MERGED https://github.com/iecgames/knowledge/pull/224; game-template: main, 0 commits since the review base; unity-packages: main, 3 commits since the review base, PR #328 MERGED https://github.com/iecgames/unity-packages/pull/328; shiny-loop: main, 0 commits since the review base; maze-flow: release/android, 0 commits since the review base; stage 2: pi-config: master, 0 commits since the review base; knowledge: main, 0 commits since the review base; game-template: main, 8 commits since the review base, PR #219 MERGED https://github.com/iecgames/game-template/pull/219; unity-packages: main, 0 commits since the review base; shiny-loop: main, 0 commits since the review base; maze-flow: release/android, 0 commits since the review base; stage 3: pi-config: master, 0 commits since the review base; knowledge: main, 0 commits since the review base; game-template: main, 0 commits since the review base; unity-packages: main, 0 commits since the review base; shiny-loop: main, 25 commits since the review base, PR #113 MERGED https://github.com/iecgames/shiny-loop/pull/113; maze-flow: release/android, 0 commits since the review base, PR #112 MERGED https://github.com/iecgames/maze-flow/pull/112 · 1 human check(s) for you (see the card)"
+  },
   "reviewBase": {
-    "d:/projects/pi-config": "cfbf85e52d6ef713788159bc97c008b4d449eab8",
-    "d:/projects/knowledge": "e92a13fbea23527a8e3cd9bc175452ec4e4196c5",
-    "d:/projects/game-template": "682d876d6c0a8f88757f54cf5f3413a0418b3033",
-    "d:/projects/unity-packages": "b755e221d63dcecb1be470f20ba33e142d9c3564",
-    "d:/projects/shiny-loop": "a41870cfc0085c45de1174523191c924b5cba29d",
-    "d:/projects/maze-flow": "f8a602c08ab835d63a5546bd20d8f81bd375b526"
+    "d:/projects/pi-config": "7336646b3dc04548ebe5441e15503b07cde5c6ff",
+    "d:/projects/knowledge": "a7a020f8cf01cdbe847ee2c2fdf5aba586a1c632",
+    "d:/projects/game-template": "e782ee2299dab2c9c30d0a559f5fa59f3c637ef1",
+    "d:/projects/unity-packages": "8ae97e91bb92c04ac884b893811e2ac0a440afc2",
+    "d:/projects/shiny-loop": "5193b8a70334cb92b6857668d2352b18e03c7b00",
+    "d:/projects/maze-flow": "90b3fba53dc3398d730eebc28174fc5c8c7ecfbe"
   },
   "passedTrees": {
     "d:/projects/pi-config": [
@@ -47,10 +58,13 @@
       "0b718e7395bc3584a9784b54685d77b47c2c13b1"
     ],
     "d:/projects/shiny-loop": [
-      "43a58c4e1b46f09bef9af80edfd03a12cacd1706"
+      "43a58c4e1b46f09bef9af80edfd03a12cacd1706",
+      "eaaedb9b17f9b3ea669697e51296ed05e309b60d"
     ],
     "d:/projects/maze-flow": [
-      "bcfeb646220e1eb2a3c6665eb00181d6316c22bc"
+      "bcfeb646220e1eb2a3c6665eb00181d6316c22bc",
+      "57afa0386120a15154f487bc73c75c75a16a5bd6",
+      "b1a6feacc7891d7d9f3e8e74e6fb6e28a8eaeba0"
     ]
   },
   "judgedMerges": {
@@ -68,6 +82,16 @@
       "pr": "219",
       "tree": "d32c05c553fe24f9774871635fb1be3076a83d92",
       "stage": 2
+    },
+    "d:/projects/shiny-loop": {
+      "pr": "113",
+      "tree": "eaaedb9b17f9b3ea669697e51296ed05e309b60d",
+      "stage": 3
+    },
+    "d:/projects/maze-flow": {
+      "pr": "112",
+      "tree": "b1a6feacc7891d7d9f3e8e74e6fb6e28a8eaeba0",
+      "stage": 3
     }
   },
   "repos": [
