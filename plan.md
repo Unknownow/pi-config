@@ -363,13 +363,13 @@ Work on a branch in worktree `D:/projects/wt/rules-review/game-template`. Run pu
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 knowledge: on a branch from `origin/main` (worktree `D:/projects/wt/rules-review/knowledge`), retire the three rules.
-- [ ] S2 knowledge texts K1–K3, G11:
-- [ ] S3 knowledge entries for the other decisions (edit only what each entry actually says; leave unrelated text alone):
-- [ ] S4 knowledge daily job (D15):
-- [ ] S5 knowledge pi extension (D12):
-- [ ] S6 unity-packages (D6, D7, D15), on a branch in worktree `D:/projects/wt/rules-review/unity-packages`:
-- [ ] S7 Deliver: merge — the knowledge PR (S1–S5) and the unity-packages PR (S6), each after its pre-push checks pass (`npm run 
+- [x] S1 knowledge: on a branch from `origin/main` (worktree `D:/projects/wt/rules-review/knowledge`), retire the three rules.
+- [x] S2 knowledge texts K1–K3, G11:
+- [x] S3 knowledge entries for the other decisions (edit only what each entry actually says; leave unrelated text alone):
+- [x] S4 knowledge daily job (D15):
+- [x] S5 knowledge pi extension (D12):
+- [x] S6 unity-packages (D6, D7, D15), on a branch in worktree `D:/projects/wt/rules-review/unity-packages`:
+- [x] S7 Deliver: merge — the knowledge PR (S1–S5) and the unity-packages PR (S6), each after its pre-push checks pass (`npm run 
 - [ ] S8 Remove A6–A8 (D1):
 - [ ] S9 Test scope (D16 E2):
 - [ ] S10 Skip script tests in game repos (D14): the `template` option of `prePushFlow` (`scripts/iec.mjs:242`), as in Design, inc

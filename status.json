@@ -1,18 +1,60 @@
 {
   "v": 1,
   "flowId": "20261103-0004-apply-the-rules-review-game-template-kno-270b",
-  "rev": 1,
-  "updated": "2026-11-02T17:04:53.980Z",
+  "rev": 2,
+  "updated": "2026-11-02T17:25:55.078Z",
   "title": "Apply the rules review (game-template, knowledge, unity-packages, maze-flow, shiny-loop)",
-  "stage": 1,
-  "done": [],
+  "stage": 2,
+  "done": [
+    "S1",
+    "S2",
+    "S3",
+    "S4",
+    "S5",
+    "S6",
+    "S7"
+  ],
   "reviewBase": {
-    "d:/projects/pi-config": "184ff29e2c56742d731b33c74fe6dab8f738e396",
-    "d:/projects/knowledge": "f83a27656883bb10c41d9287944eeb450ae7cf55",
-    "d:/projects/game-template": "643757d0daa4c68d75def3e5c7044e36227f8d4b",
-    "d:/projects/unity-packages": "25bbd080c8f246a9f6cca6ad4b344a64d4635321",
-    "d:/projects/shiny-loop": "33ef339254e366e4e3183bfaf7090342f47ab523",
-    "d:/projects/maze-flow": "c49b255ebf1b39007904fccf41d217a0fa5a6c21"
+    "d:/projects/pi-config": "34a1e8e97b18b0f7ab3a5a866abebc9007556f84",
+    "d:/projects/knowledge": "4acfaf5df5aa3dae92c67d4ff2e30566f0b2b869",
+    "d:/projects/game-template": "d4b65109b6706edd9d8cab989d2fdb388e2e3d4d",
+    "d:/projects/unity-packages": "3178947283062a050e1ffa170a26110ce6b2353c",
+    "d:/projects/shiny-loop": "fe665c3aac5f6f2c528340e4ff036fcb80b9b63f",
+    "d:/projects/maze-flow": "b310149d19d5625daed5166cd481675438743ca4"
+  },
+  "passedTrees": {
+    "d:/projects/pi-config": [
+      "732b044235a398759110ef13e4dfcc4d9595e89c"
+    ],
+    "d:/projects/knowledge": [
+      "f5a8b21693b667d46a375788cf6743cbec5fa9b5",
+      "912aa1c5c21d044a65bee4684344844cd0f7d92a",
+      "8fbc72a682ac0c3cdf6eb6bb24c8fa2d1265cd43"
+    ],
+    "d:/projects/game-template": [
+      "b2c53d7e3919195e4f7f2b6aafb558eae418ccce"
+    ],
+    "d:/projects/unity-packages": [
+      "0b718e7395bc3584a9784b54685d77b47c2c13b1"
+    ],
+    "d:/projects/shiny-loop": [
+      "43a58c4e1b46f09bef9af80edfd03a12cacd1706"
+    ],
+    "d:/projects/maze-flow": [
+      "bcfeb646220e1eb2a3c6665eb00181d6316c22bc"
+    ]
+  },
+  "judgedMerges": {
+    "d:/projects/knowledge": {
+      "pr": "224",
+      "tree": "8fbc72a682ac0c3cdf6eb6bb24c8fa2d1265cd43",
+      "stage": 1
+    },
+    "d:/projects/unity-packages": {
+      "pr": "328",
+      "tree": "0b718e7395bc3584a9784b54685d77b47c2c13b1",
+      "stage": 1
+    }
   },
   "repos": [
     {
