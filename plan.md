@@ -370,13 +370,13 @@ Work on a branch in worktree `D:/projects/wt/rules-review/game-template`. Run pu
 - [x] S5 knowledge pi extension (D12):
 - [x] S6 unity-packages (D6, D7, D15), on a branch in worktree `D:/projects/wt/rules-review/unity-packages`:
 - [x] S7 Deliver: merge — the knowledge PR (S1–S5) and the unity-packages PR (S6), each after its pre-push checks pass (`npm run 
-- [ ] S8 Remove A6–A8 (D1):
-- [ ] S9 Test scope (D16 E2):
-- [ ] S10 Skip script tests in game repos (D14): the `template` option of `prePushFlow` (`scripts/iec.mjs:242`), as in Design, inc
-- [ ] S11 GD hooks (D12–D14):
-- [ ] S12 GD and E4 tests (D16 E3/E4):
-- [ ] S13 Texts:
-- [ ] S14 Deliver: merge — the game-template PR (merge commit), after its pre-push passes and the judge passes.
+- [x] S8 Remove A6–A8 (D1):
+- [x] S9 Test scope (D16 E2):
+- [x] S10 Skip script tests in game repos (D14): the `template` option of `prePushFlow` (`scripts/iec.mjs:242`), as in Design, inc
+- [x] S11 GD hooks (D12–D14):
+- [x] S12 GD and E4 tests (D16 E3/E4):
+- [x] S13 Texts:
+- [x] S14 Deliver: merge — the game-template PR (merge commit), after its pre-push passes and the judge passes.
 - [ ] S15 maze-flow:
 - [ ] S16 Deliver: merge — maze-flow's update-from-template PR, with a merge commit (G4).
 - [ ] S17 maze-flow: on a new branch from the updated `origin/main`, remove all 112 `rule-check: allow eng.rule.short-functions|no
