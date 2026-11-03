@@ -56,6 +56,8 @@ The game-template PR is merged, `git grep new_code_only` finds nothing on `main`
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 On a new branch `flow/check-rules-base-comment` from `origin/main` in `D:/projects/game-template`, edit `scripts/check-r
-- [ ] S2 Tests:
-- [ ] S3 Deliver: merge:
+- [x] S1 On a new branch `flow/check-rules-base-comment` from `origin/main` in `D:/projects/game-template`, edit `scripts/check-r
+- [x] S2 Tests:
+- [x] S3 Deliver: merge:
+## Outcome
+2026-11-03T02:30:52.524Z — ok: pi-config: master, 0 commits since the review base; knowledge: main, 0 commits since the review base; game-template: main, 2 commits since the review base, PR #220 MERGED https://github.com/iecgames/game-template/pull/220; unity-packages: main, 0 commits since the review base; shiny-loop: main, 0 commits since the review base; maze-flow: release/android, 0 commits since the review base

@@ -1,17 +1,52 @@
 {
   "v": 1,
   "flowId": "20261103-0925-fix-the-stale-base-comment-in-game-templ-bad4",
-  "rev": 1,
-  "updated": "2026-11-03T02:25:04.606Z",
+  "rev": 2,
+  "updated": "2026-11-03T02:30:52.970Z",
   "title": "Fix the stale `--base` comment in game-template's `check-rules.mjs`",
-  "done": [],
+  "done": [
+    "S1",
+    "S2",
+    "S3"
+  ],
+  "finished": {
+    "at": "2026-11-03T02:30:52.524Z",
+    "ok": true,
+    "text": "pi-config: master, 0 commits since the review base; knowledge: main, 0 commits since the review base; game-template: main, 2 commits since the review base, PR #220 MERGED https://github.com/iecgames/game-template/pull/220; unity-packages: main, 0 commits since the review base; shiny-loop: main, 0 commits since the review base; maze-flow: release/android, 0 commits since the review base"
+  },
   "reviewBase": {
-    "d:/projects/pi-config": "184ff29e2c56742d731b33c74fe6dab8f738e396",
-    "d:/projects/knowledge": "a30abcb19873a0b9d571bef527db7696df4a4d0e",
-    "d:/projects/game-template": "308d082d1a5c6cb6475464412dfd2bfcc492ace5",
-    "d:/projects/unity-packages": "c26883565bb92b7ed77f6d8bd7e4f82815ba3f0d",
-    "d:/projects/shiny-loop": "6c57eeb713f6e24e74a948dd6dfcc02173fa9a94",
-    "d:/projects/maze-flow": "c49b255ebf1b39007904fccf41d217a0fa5a6c21"
+    "d:/projects/pi-config": "5eb2511ccc1f1005f014dd4b1fd76e00aedc1dd1",
+    "d:/projects/knowledge": "40dded64aca66484ed7690c57d3028001b336b60",
+    "d:/projects/game-template": "6664f030a16e395ba9ffac2b9031091ed89cb2c3",
+    "d:/projects/unity-packages": "406efc966179c44a1e30aeccb602a69fda5820e8",
+    "d:/projects/shiny-loop": "8c0b27c8e4ff5b7f9b94905be94afaf1a018615f",
+    "d:/projects/maze-flow": "1bfa103de77f9cb5522ed7ced8841fda9c26db9d"
+  },
+  "passedTrees": {
+    "d:/projects/pi-config": [
+      "732b044235a398759110ef13e4dfcc4d9595e89c"
+    ],
+    "d:/projects/knowledge": [
+      "8fbc72a682ac0c3cdf6eb6bb24c8fa2d1265cd43"
+    ],
+    "d:/projects/game-template": [
+      "b11ee0be4c1a264dbd5987a1fdc552ff07fb1376"
+    ],
+    "d:/projects/unity-packages": [
+      "0b718e7395bc3584a9784b54685d77b47c2c13b1"
+    ],
+    "d:/projects/shiny-loop": [
+      "eaaedb9b17f9b3ea669697e51296ed05e309b60d"
+    ],
+    "d:/projects/maze-flow": [
+      "bcfeb646220e1eb2a3c6665eb00181d6316c22bc"
+    ]
+  },
+  "judgedMerges": {
+    "d:/projects/game-template": {
+      "pr": "220",
+      "tree": "b11ee0be4c1a264dbd5987a1fdc552ff07fb1376"
+    }
   },
   "repos": [
     {
