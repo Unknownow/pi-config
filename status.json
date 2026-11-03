@@ -1,8 +1,8 @@
 {
   "v": 1,
   "flowId": "20261103-1828-a-b-tests-without-hand-editing-settings-721d",
-  "rev": 3,
-  "updated": "2026-11-03T12:12:47.064Z",
+  "rev": 4,
+  "updated": "2026-11-03T16:10:22.747Z",
   "title": "A/B tests without hand-editing: settings file, pick lists, Editor window, cheat overrides, mismatch checks",
   "done": [
     "S1",
@@ -11,15 +11,69 @@
     "S4",
     "S5",
     "S6",
-    "S7"
+    "S7",
+    "S8",
+    "S9",
+    "S10",
+    "S11",
+    "S12",
+    "S13",
+    "S14"
   ],
+  "finished": {
+    "at": "2026-11-03T16:10:22.364Z",
+    "ok": false,
+    "text": "back to discussion · 1 human check(s) for you (see the card)"
+  },
   "reviewBase": {
     "d:/projects/pi-config": "184ff29e2c56742d731b33c74fe6dab8f738e396",
-    "d:/projects/knowledge": "a30abcb19873a0b9d571bef527db7696df4a4d0e",
-    "d:/projects/game-template": "0279da09bd98f2ffb89bfaf905785b1eb865debf",
+    "d:/projects/knowledge": "c4c83121f616c221b17de0e42e82428592f35ee2",
+    "d:/projects/game-template": "ba5b800f0243ef568d080474e91a83b5b5fad18e",
     "d:/projects/unity-packages": "c26883565bb92b7ed77f6d8bd7e4f82815ba3f0d",
-    "d:/projects/shiny-loop": "6c57eeb713f6e24e74a948dd6dfcc02173fa9a94",
-    "d:/projects/maze-flow": "c49b255ebf1b39007904fccf41d217a0fa5a6c21"
+    "d:/projects/shiny-loop": "a2cfdbc620457e26ee500f40a9fb80e68b7c4b84",
+    "d:/projects/maze-flow": "b9043e5a789ca633ff5297d45bc5c37b5db20e8b"
+  },
+  "passedTrees": {
+    "d:/projects/pi-config": [
+      "732b044235a398759110ef13e4dfcc4d9595e89c"
+    ],
+    "d:/projects/knowledge": [
+      "8fbc72a682ac0c3cdf6eb6bb24c8fa2d1265cd43",
+      "b6ce23bbf51e6341724172def0021c966a461844"
+    ],
+    "d:/projects/game-template": [
+      "12bbaca046a6d4dab828e34f595c6971068f5cbe",
+      "5bdb6ecf029d0c1ed2425e2f15b42436ea7e6508"
+    ],
+    "d:/projects/unity-packages": [
+      "0b718e7395bc3584a9784b54685d77b47c2c13b1"
+    ],
+    "d:/projects/shiny-loop": [
+      "eaaedb9b17f9b3ea669697e51296ed05e309b60d",
+      "387bdba0f95e7b73d6c062cc87b797a3176ab9ad"
+    ],
+    "d:/projects/maze-flow": [
+      "bcfeb646220e1eb2a3c6665eb00181d6316c22bc",
+      "b3440aeb989e66122e31cc66e21fa90b40aa45ba"
+    ]
+  },
+  "judgedMerges": {
+    "d:/projects/game-template": {
+      "pr": "221",
+      "tree": "5bdb6ecf029d0c1ed2425e2f15b42436ea7e6508"
+    },
+    "d:/projects/knowledge": {
+      "pr": "225",
+      "tree": "b6ce23bbf51e6341724172def0021c966a461844"
+    },
+    "d:/projects/shiny-loop": {
+      "pr": "119",
+      "tree": "387bdba0f95e7b73d6c062cc87b797a3176ab9ad"
+    },
+    "d:/projects/maze-flow": {
+      "pr": "113",
+      "tree": "b3440aeb989e66122e31cc66e21fa90b40aa45ba"
+    }
   },
   "repos": [
     {
@@ -33,7 +87,7 @@
       "primary": false
     },
     {
-      "branch": "flow/ab-settings-tools",
+      "branch": "main",
       "remote": "github.com/iecgames/game-template",
       "primary": false
     },

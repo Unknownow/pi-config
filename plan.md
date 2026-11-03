@@ -289,10 +289,12 @@ In a live Unity Editor on game-template: open IEC > A/B tests > Edit tests..., a
 - [x] S5 Unity Editor.
 - [x] S6 Docs.
 - [x] S7 Tests.
-- [ ] S8 Deliver game-template, then merge.
-- [ ] S9 Update the playbooks.
-- [ ] S10 Deliver knowledge, then merge.
-- [ ] S11 shiny-loop.
-- [ ] S12 Deliver shiny-loop, then merge.
-- [ ] S13 maze-flow.
-- [ ] S14 Deliver maze-flow, then merge.
+- [x] S8 Deliver game-template, then merge.
+- [x] S9 Update the playbooks.
+- [x] S10 Deliver knowledge, then merge.
+- [x] S11 shiny-loop.
+- [x] S12 Deliver shiny-loop, then merge.
+- [x] S13 maze-flow.
+- [x] S14 Deliver maze-flow, then merge.
+## Outcome
+2026-11-03T16:10:22.364Z — failed: back to discussion · 1 human check(s) for you (see the card)
