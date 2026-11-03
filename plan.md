@@ -273,6 +273,10 @@ Stage 3: the games.
 
 **Publish:** none.
 
+## Amendment 1 (executor: autopilot)
+Open D:\projects\game-template\unity in the Unity Editor (6000.3.25f1) and let it finish compiling, so I can run the Edit Mode tests and the smoke test (S7). Nothing is started on my side without your OK. (act)
+
+
 <!-- pi-workflow:status -->
 ## Checklist
 - [ ] S1 Node library.
