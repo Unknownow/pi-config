@@ -1,10 +1,18 @@
 {
   "v": 1,
   "flowId": "20261103-1828-a-b-tests-without-hand-editing-settings-721d",
-  "rev": 2,
-  "updated": "2026-11-03T11:43:56.697Z",
+  "rev": 3,
+  "updated": "2026-11-03T12:12:47.064Z",
   "title": "A/B tests without hand-editing: settings file, pick lists, Editor window, cheat overrides, mismatch checks",
-  "done": [],
+  "done": [
+    "S1",
+    "S2",
+    "S3",
+    "S4",
+    "S5",
+    "S6",
+    "S7"
+  ],
   "reviewBase": {
     "d:/projects/pi-config": "184ff29e2c56742d731b33c74fe6dab8f738e396",
     "d:/projects/knowledge": "a30abcb19873a0b9d571bef527db7696df4a4d0e",

@@ -276,16 +276,19 @@ Stage 3: the games.
 ## Amendment 1 (executor: autopilot)
 Open D:\projects\game-template\unity in the Unity Editor (6000.3.25f1) and let it finish compiling, so I can run the Edit Mode tests and the smoke test (S7). Nothing is started on my side without your OK. (act)
 
+## Amendment 2 (executor: verify)
+In a live Unity Editor on game-template: open IEC > A/B tests > Edit tests..., add a setting in the Settings tab, set a variant value in the Tests tab, hand-break GameSettings.Generated.cs and check the red bar and Regenerate (the window itself could not be driven here; its model, the checks and the generated code were tested in batch mode).
+
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 Node library.
-- [ ] S2 CLI and menu.
-- [ ] S3 Build check.
-- [ ] S4 Unity runtime.
-- [ ] S5 Unity Editor.
-- [ ] S6 Docs.
-- [ ] S7 Tests.
+- [x] S1 Node library.
+- [x] S2 CLI and menu.
+- [x] S3 Build check.
+- [x] S4 Unity runtime.
+- [x] S5 Unity Editor.
+- [x] S6 Docs.
+- [x] S7 Tests.
 - [ ] S8 Deliver game-template, then merge.
 - [ ] S9 Update the playbooks.
 - [ ] S10 Deliver knowledge, then merge.
