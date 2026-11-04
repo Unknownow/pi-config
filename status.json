@@ -1,8 +1,8 @@
 {
   "v": 1,
   "flowId": "20261104-1529-readable-gd-progress-report-progress-md-0e52",
-  "rev": 1,
-  "updated": "2026-11-04T08:29:16.782Z",
+  "rev": 2,
+  "updated": "2026-11-04T09:16:06.316Z",
   "title": "Readable GD progress report (PROGRESS.md and IEC_Progress)",
   "done": [],
   "reviewBase": {
@@ -20,12 +20,12 @@
       "primary": true
     },
     {
-      "branch": "wt/progression-report",
+      "branch": "flow/gd-readable-report",
       "remote": "github.com/iecgames/knowledge",
       "primary": false
     },
     {
-      "branch": "wt/progression-report",
+      "branch": "flow/gd-readable-report",
       "remote": "github.com/iecgames/game-template",
       "primary": false
     },

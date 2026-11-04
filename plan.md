@@ -91,4 +91,9 @@ maze-flow and shiny-loop get the change later through their normal update-from-t
 
 **Delivery:** pull requests to `game-template` and `knowledge`. Merge after the judge passes, with a merge commit and no squash. The games are not updated in this flow.
 
+## Plan choices upheld by the arbiter
+The judge is right about how the code behaves. `summaryRows` in `gd-push.mjs` writes at least 13 lines for maze-flow's 5 tabs: the overview title and column row, 5 tab rows and the total, a blank line, the attention title and header, at least one attention line, a blank line and the "Items" title. That puts the header at row 15 or lower. `Code.gs:117` freezes only when the header is in row 12 or above (`MAX_FROZEN_ROWS = 12`), so with real data nothing is frozen.
+
+That doesn't make the plan miss its target, though. The fixed Goal is that the first screen of `IEC_Progress` shows what is done and what is left. "Header frozen" is only a detail in step 7, and the Checks don't mention it. Two of the judge's fixes would break the Goal: putting the summary from column O would push it off the first screen of a 13-column table, and `IEC_Summary` would take it out of `IEC_Progress`. The third fix ("frozen only when short") is already written down in `knowledge/entries/eng/playbook/gd-checklist.md` item 11: "the header frozen when the summary is short". The filter on the header still works (test "progress writes the summary above the table…", filter row = header row), so the table can still be sorted and filtered.
+
 <!-- pi-workflow:status -->
