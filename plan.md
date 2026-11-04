@@ -122,9 +122,11 @@ Stage 2: the games.
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 Node fixes (findings 1, 2, 4).
-- [ ] S2 Unity fixes (findings 1, 2, 3).
-- [ ] S3 Tests.
-- [ ] S4 Deliver game-template.
-- [ ] S5 shiny-loop.
-- [ ] S6 maze-flow.
+- [x] S1 Node fixes (findings 1, 2, 4).
+- [x] S2 Unity fixes (findings 1, 2, 3).
+- [x] S3 Tests.
+- [x] S4 Deliver game-template.
+- [x] S5 shiny-loop.
+- [x] S6 maze-flow.
+## Outcome
+2026-11-04T02:33:26.687Z — ok: pi-config: master, 0 commits since the review base; knowledge: main, 0 commits since the review base; game-template: main, 3 commits since the review base, PR #222 MERGED https://github.com/iecgames/game-template/pull/222; unity-packages: main, 0 commits since the review base; shiny-loop: main, 5 commits since the review base, PR #120 MERGED https://github.com/iecgames/shiny-loop/pull/120; maze-flow: release/android, 0 commits since the review base, PR #114 MERGED https://github.com/iecgames/maze-flow/pull/114
