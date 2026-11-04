@@ -1,17 +1,65 @@
 {
   "v": 1,
   "flowId": "20261104-0943-fix-the-last-three-a-b-tooling-minors-in-874e",
-  "rev": 1,
-  "updated": "2026-11-04T02:43:02.231Z",
+  "rev": 2,
+  "updated": "2026-11-04T02:55:39.994Z",
   "title": "Fix the last three A/B tooling minors in game-template, then update both games",
-  "done": [],
+  "done": [
+    "S1",
+    "S2",
+    "S3",
+    "S4",
+    "S5",
+    "S6"
+  ],
+  "finished": {
+    "at": "2026-11-04T02:55:38.922Z",
+    "ok": true,
+    "text": "pi-config: master, 0 commits since the review base; knowledge: main, 0 commits since the review base; game-template: main, 2 commits since the review base, PR #223 MERGED https://github.com/iecgames/game-template/pull/223; unity-packages: main, 0 commits since the review base; shiny-loop: main, 4 commits since the review base, PR #121 MERGED https://github.com/iecgames/shiny-loop/pull/121; maze-flow: release/android, 0 commits since the review base, PR #115 MERGED https://github.com/iecgames/maze-flow/pull/115"
+  },
   "reviewBase": {
-    "d:/projects/pi-config": "184ff29e2c56742d731b33c74fe6dab8f738e396",
-    "d:/projects/knowledge": "c4fa29c2d541466d46a7c585a68c277ac60d43c1",
-    "d:/projects/game-template": "962ab12ff76d8016c34a68d480897883c46c1225",
-    "d:/projects/unity-packages": "c26883565bb92b7ed77f6d8bd7e4f82815ba3f0d",
-    "d:/projects/shiny-loop": "5c1135eb9971a47db1c573267d6942a99a4ffeae",
-    "d:/projects/maze-flow": "c49b255ebf1b39007904fccf41d217a0fa5a6c21"
+    "d:/projects/pi-config": "8830d0604f280c8e4a99d6d3d6564d0f2efc6830",
+    "d:/projects/knowledge": "d11471181070f62a34c82a71a79dc21c977e5b7f",
+    "d:/projects/game-template": "4b0000b4dc2b2a75a6a245d1ad7e34b029e3db21",
+    "d:/projects/unity-packages": "4da0425c8ecf4baefbff80b80451a342f3217d0d",
+    "d:/projects/shiny-loop": "8eb4619d424f393a6eff17167e88fef126d76d4b",
+    "d:/projects/maze-flow": "2e7af348387b3da2c944d8d3951cdd90923729bf"
+  },
+  "passedTrees": {
+    "d:/projects/pi-config": [
+      "732b044235a398759110ef13e4dfcc4d9595e89c"
+    ],
+    "d:/projects/knowledge": [
+      "b6ce23bbf51e6341724172def0021c966a461844"
+    ],
+    "d:/projects/game-template": [
+      "9bcd15316129f99b8d3e8671d7f02512c601f0b4"
+    ],
+    "d:/projects/unity-packages": [
+      "0b718e7395bc3584a9784b54685d77b47c2c13b1"
+    ],
+    "d:/projects/shiny-loop": [
+      "f7d14d9bfbaf3579475c6ca842d385d76e5377b0",
+      "b973b5a8d1e4b3c30aa778d4d519c1b7e036a831"
+    ],
+    "d:/projects/maze-flow": [
+      "bcfeb646220e1eb2a3c6665eb00181d6316c22bc",
+      "627f72401474a9dd46b2fbb7bed6235688071750"
+    ]
+  },
+  "judgedMerges": {
+    "d:/projects/game-template": {
+      "pr": "223",
+      "tree": "9bcd15316129f99b8d3e8671d7f02512c601f0b4"
+    },
+    "d:/projects/shiny-loop": {
+      "pr": "121",
+      "tree": "b973b5a8d1e4b3c30aa778d4d519c1b7e036a831"
+    },
+    "d:/projects/maze-flow": {
+      "pr": "115",
+      "tree": "627f72401474a9dd46b2fbb7bed6235688071750"
+    }
   },
   "repos": [
     {

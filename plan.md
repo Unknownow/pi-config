@@ -89,9 +89,11 @@ Stage 2: the games.
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 Code and tests.
-- [ ] S2 Docs. The usage comment in `scripts/ab-tests.mjs` and `AGENTS.md:159-160`, as in Design 3.
-- [ ] S3 Tests.
-- [ ] S4 Deliver game-template.
-- [ ] S5 shiny-loop. Same steps as last time:
-- [ ] S6 maze-flow.
+- [x] S1 Code and tests.
+- [x] S2 Docs. The usage comment in `scripts/ab-tests.mjs` and `AGENTS.md:159-160`, as in Design 3.
+- [x] S3 Tests.
+- [x] S4 Deliver game-template.
+- [x] S5 shiny-loop. Same steps as last time:
+- [x] S6 maze-flow.
+## Outcome
+2026-11-04T02:55:38.922Z — ok: pi-config: master, 0 commits since the review base; knowledge: main, 0 commits since the review base; game-template: main, 2 commits since the review base, PR #223 MERGED https://github.com/iecgames/game-template/pull/223; unity-packages: main, 0 commits since the review base; shiny-loop: main, 4 commits since the review base, PR #121 MERGED https://github.com/iecgames/shiny-loop/pull/121; maze-flow: release/android, 0 commits since the review base, PR #115 MERGED https://github.com/iecgames/maze-flow/pull/115
