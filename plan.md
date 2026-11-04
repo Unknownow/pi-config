@@ -97,3 +97,5 @@ The judge is right about how the code behaves. `summaryRows` in `gd-push.mjs` wr
 That doesn't make the plan miss its target, though. The fixed Goal is that the first screen of `IEC_Progress` shows what is done and what is left. "Header frozen" is only a detail in step 7, and the Checks don't mention it. Two of the judge's fixes would break the Goal: putting the summary from column O would push it off the first screen of a 13-column table, and `IEC_Summary` would take it out of `IEC_Progress`. The third fix ("frozen only when short") is already written down in `knowledge/entries/eng/playbook/gd-checklist.md` item 11: "the header frozen when the summary is short". The filter on the header still works (test "progress writes the summary above the table…", filter row = header row), so the table can still be sorted and filtered.
 
 <!-- pi-workflow:status -->
+## Outcome
+2026-11-04T09:21:35.222Z — ok: knowledge: flow/gd-readable-report, 1 commit since the review base, PR #226 MERGED https://github.com/iecgames/knowledge/pull/226; game-template: flow/gd-readable-report, 10 commits since the review base, PR #224 MERGED https://github.com/iecgames/game-template/pull/224

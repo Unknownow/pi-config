@@ -1,17 +1,53 @@
 {
   "v": 1,
   "flowId": "20261104-1529-readable-gd-progress-report-progress-md-0e52",
-  "rev": 2,
-  "updated": "2026-11-04T09:16:06.316Z",
+  "rev": 3,
+  "updated": "2026-11-04T09:21:38.135Z",
   "title": "Readable GD progress report (PROGRESS.md and IEC_Progress)",
   "done": [],
+  "finished": {
+    "at": "2026-11-04T09:21:35.222Z",
+    "ok": true,
+    "text": "knowledge: flow/gd-readable-report, 1 commit since the review base, PR #226 MERGED https://github.com/iecgames/knowledge/pull/226; game-template: flow/gd-readable-report, 10 commits since the review base, PR #224 MERGED https://github.com/iecgames/game-template/pull/224"
+  },
   "reviewBase": {
-    "d:/projects/wt/progression-report/pi-config": "184ff29e2c56742d731b33c74fe6dab8f738e396",
-    "d:/projects/wt/progression-report/knowledge": "0a3ff8bd0a4ed1580ed9a452418d66e338dd7ef7",
-    "d:/projects/wt/progression-report/game-template": "ba3e0183aa4cf5072b9598e8f38c1ee57659e3ae",
-    "d:/projects/wt/progression-report/unity-packages": "c26883565bb92b7ed77f6d8bd7e4f82815ba3f0d",
-    "d:/projects/wt/progression-report/shiny-loop": "5043d963050ab002f491b921c9b8c936279db2c0",
-    "d:/projects/wt/progression-report/maze-flow": "20532cbbd50b27d0bcffd60c93fa3220f1a7b998"
+    "d:/projects/wt/progression-report/pi-config": "e32f5fc5703c87822d6897273448d4090c14935c",
+    "d:/projects/wt/progression-report/knowledge": "7e7634dd1602f74112d3c500befaae5c6f9dd155",
+    "d:/projects/wt/progression-report/game-template": "3f55e8bccc588b52ac549935895d8182a8046f7c",
+    "d:/projects/wt/progression-report/unity-packages": "309b58c244a3bca27d7716c5a9598cbe2f6a155c",
+    "d:/projects/wt/progression-report/shiny-loop": "bb2ea1a3f0b25ef6f75cdaf00ccb860c261db538",
+    "d:/projects/wt/progression-report/maze-flow": "5676b40cba1fe1e8db74b1995af626625c54230b"
+  },
+  "passedTrees": {
+    "d:/projects/wt/progression-report/pi-config": [
+      "732b044235a398759110ef13e4dfcc4d9595e89c"
+    ],
+    "d:/projects/wt/progression-report/knowledge": [
+      "ac67499e830ab5905beb08c9156d4deb4b125cdd"
+    ],
+    "d:/projects/wt/progression-report/game-template": [
+      "e3a5a1dedd4610800550606a4e62705310c0156c",
+      "569d5cc97dfd330261e699d78e5bb7a508446425"
+    ],
+    "d:/projects/wt/progression-report/unity-packages": [
+      "0b718e7395bc3584a9784b54685d77b47c2c13b1"
+    ],
+    "d:/projects/wt/progression-report/shiny-loop": [
+      "b973b5a8d1e4b3c30aa778d4d519c1b7e036a831"
+    ],
+    "d:/projects/wt/progression-report/maze-flow": [
+      "627f72401474a9dd46b2fbb7bed6235688071750"
+    ]
+  },
+  "judgedMerges": {
+    "d:/projects/wt/progression-report/game-template": {
+      "pr": "224",
+      "tree": "569d5cc97dfd330261e699d78e5bb7a508446425"
+    },
+    "d:/projects/wt/progression-report/knowledge": {
+      "pr": "226",
+      "tree": "ac67499e830ab5905beb08c9156d4deb4b125cdd"
+    }
   },
   "repos": [
     {
