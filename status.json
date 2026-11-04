@@ -1,0 +1,48 @@
+{
+  "v": 1,
+  "flowId": "20261104-1529-readable-gd-progress-report-progress-md-0e52",
+  "rev": 1,
+  "updated": "2026-11-04T08:29:16.782Z",
+  "title": "Readable GD progress report (PROGRESS.md and IEC_Progress)",
+  "done": [],
+  "reviewBase": {
+    "d:/projects/wt/progression-report/pi-config": "184ff29e2c56742d731b33c74fe6dab8f738e396",
+    "d:/projects/wt/progression-report/knowledge": "0a3ff8bd0a4ed1580ed9a452418d66e338dd7ef7",
+    "d:/projects/wt/progression-report/game-template": "ba3e0183aa4cf5072b9598e8f38c1ee57659e3ae",
+    "d:/projects/wt/progression-report/unity-packages": "c26883565bb92b7ed77f6d8bd7e4f82815ba3f0d",
+    "d:/projects/wt/progression-report/shiny-loop": "5043d963050ab002f491b921c9b8c936279db2c0",
+    "d:/projects/wt/progression-report/maze-flow": "20532cbbd50b27d0bcffd60c93fa3220f1a7b998"
+  },
+  "repos": [
+    {
+      "branch": "wt/progression-report",
+      "remote": "github-personal/Unknownow/pi-config",
+      "primary": true
+    },
+    {
+      "branch": "wt/progression-report",
+      "remote": "github.com/iecgames/knowledge",
+      "primary": false
+    },
+    {
+      "branch": "wt/progression-report",
+      "remote": "github.com/iecgames/game-template",
+      "primary": false
+    },
+    {
+      "branch": "wt/progression-report",
+      "remote": "github.com/iecgames/unity-packages",
+      "primary": false
+    },
+    {
+      "branch": "wt/progression-report",
+      "remote": "github.com/iecgames/shiny-loop",
+      "primary": false
+    },
+    {
+      "branch": "wt/progression-report",
+      "remote": "github.com/iecgames/maze-flow",
+      "primary": false
+    }
+  ]
+}
