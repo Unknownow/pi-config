@@ -1,0 +1,48 @@
+{
+  "v": 1,
+  "flowId": "20261104-0943-fix-the-last-three-a-b-tooling-minors-in-874e",
+  "rev": 1,
+  "updated": "2026-11-04T02:43:02.231Z",
+  "title": "Fix the last three A/B tooling minors in game-template, then update both games",
+  "done": [],
+  "reviewBase": {
+    "d:/projects/pi-config": "184ff29e2c56742d731b33c74fe6dab8f738e396",
+    "d:/projects/knowledge": "c4fa29c2d541466d46a7c585a68c277ac60d43c1",
+    "d:/projects/game-template": "962ab12ff76d8016c34a68d480897883c46c1225",
+    "d:/projects/unity-packages": "c26883565bb92b7ed77f6d8bd7e4f82815ba3f0d",
+    "d:/projects/shiny-loop": "5c1135eb9971a47db1c573267d6942a99a4ffeae",
+    "d:/projects/maze-flow": "c49b255ebf1b39007904fccf41d217a0fa5a6c21"
+  },
+  "repos": [
+    {
+      "branch": "master",
+      "remote": "github-personal/Unknownow/pi-config",
+      "primary": true
+    },
+    {
+      "branch": "main",
+      "remote": "github.com/iecgames/knowledge",
+      "primary": false
+    },
+    {
+      "branch": "main",
+      "remote": "github.com/iecgames/game-template",
+      "primary": false
+    },
+    {
+      "branch": "main",
+      "remote": "github.com/iecgames/unity-packages",
+      "primary": false
+    },
+    {
+      "branch": "main",
+      "remote": "github.com/iecgames/shiny-loop",
+      "primary": false
+    },
+    {
+      "branch": "release/android",
+      "remote": "github.com/iecgames/maze-flow",
+      "primary": false
+    }
+  ]
+}
