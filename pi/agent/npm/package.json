@@ -2,6 +2,6 @@
   "name": "pi-extensions",
   "private": true,
   "dependencies": {
-    "pi-claude-bridge": "^0.9.3"
+    "pi-claude-bridge": "^0.10.0"
   }
 }
