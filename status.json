@@ -1,0 +1,18 @@
+{
+  "v": 1,
+  "flowId": "20261107-0220-view-opens-an-agent-reply-or-a-markdown-bb4c",
+  "rev": 1,
+  "updated": "2026-11-06T19:20:21.961Z",
+  "title": "`/view` opens an agent reply or a markdown file in the browser, with real mermaid diagrams",
+  "done": [],
+  "reviewBase": {
+    "d:/works/pi-config": "eee6e462b7d77ced085ffea48f052f329559b18f"
+  },
+  "repos": [
+    {
+      "branch": "master",
+      "remote": "github.com/Unknownow/pi-config",
+      "primary": true
+    }
+  ]
+}
