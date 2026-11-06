@@ -1,0 +1,48 @@
+{
+  "v": 1,
+  "flowId": "20261106-1627-set-the-server-time-remote-config-and-ga-c05d",
+  "rev": 1,
+  "updated": "2026-11-06T09:27:17.162Z",
+  "title": "Set the server-time, remote-config and game-configs playbooks back to draft until their device checks pass",
+  "done": [],
+  "reviewBase": {
+    "d:/projects/wt/progression-report/pi-config": "97395f9f16f5757ad195388a771eaff114d8bb23",
+    "d:/projects/wt/progression-report/knowledge": "bbab9572c3ffbd39862f772340826c3ef3cee54b",
+    "d:/projects/wt/progression-report/game-template": "2cac60156e5e0988ad8d5a744b1891c5e854607a",
+    "d:/projects/wt/progression-report/unity-packages": "30147d55f177e8d053234d7b98443d4d4d413218",
+    "d:/projects/wt/progression-report/shiny-loop": "483d5fe9301383c8d6cd9bc96cdbc3c2129ceac8",
+    "d:/projects/wt/progression-report/maze-flow": "20532cbbd50b27d0bcffd60c93fa3220f1a7b998"
+  },
+  "repos": [
+    {
+      "branch": "wt/progression-report",
+      "remote": "github-personal/Unknownow/pi-config",
+      "primary": true
+    },
+    {
+      "branch": "flow/game-configs",
+      "remote": "github.com/iecgames/knowledge",
+      "primary": false
+    },
+    {
+      "branch": "flow/game-configs",
+      "remote": "github.com/iecgames/game-template",
+      "primary": false
+    },
+    {
+      "branch": "flow/configs-0.2",
+      "remote": "github.com/iecgames/unity-packages",
+      "primary": false
+    },
+    {
+      "branch": "wt/progression-report",
+      "remote": "github.com/iecgames/shiny-loop",
+      "primary": false
+    },
+    {
+      "branch": "wt/progression-report",
+      "remote": "github.com/iecgames/maze-flow",
+      "primary": false
+    }
+  ]
+}
