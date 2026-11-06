@@ -156,10 +156,10 @@ Look for:
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 Create `pi/agent/extensions/markdown-view/view.ts` with `parseViewArgs`, `replyTexts`, `buildHtml` and `viewFileName`, f
-- [ ] S2 Create `pi/agent/extensions/markdown-view/index.ts` with the default export registering `view`.
-- [ ] S3 Add `pi/agent/extensions/markdown-view/README.md`: what `/view` does, its argument forms, the temp-file location and 24 
-- [ ] S4 Update `README.md:66`: add `markdown-view` (`/view` opens a reply or `.md` file in the browser with mermaid diagrams) to
-- [ ] S5 Deliver: merge, with the extension, its tests and the README changes.
+- [x] S1 Create `pi/agent/extensions/markdown-view/view.ts` with `parseViewArgs`, `replyTexts`, `buildHtml` and `viewFileName`, f
+- [x] S2 Create `pi/agent/extensions/markdown-view/index.ts` with the default export registering `view`.
+- [x] S3 Add `pi/agent/extensions/markdown-view/README.md`: what `/view` does, its argument forms, the temp-file location and 24 
+- [x] S4 Update `README.md:66`: add `markdown-view` (`/view` opens a reply or `.md` file in the browser with mermaid diagrams) to
+- [x] S5 Deliver: merge, with the extension, its tests and the README changes.
 ## For you after the flow
 - S6 Verify: once the extension is synced to `~/.pi/agent/extensions`, restart pi. Then:

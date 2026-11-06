@@ -1,12 +1,29 @@
 {
   "v": 1,
   "flowId": "20261107-0220-view-opens-an-agent-reply-or-a-markdown-bb4c",
-  "rev": 1,
-  "updated": "2026-11-06T19:20:21.961Z",
+  "rev": 2,
+  "updated": "2026-11-06T19:22:57.965Z",
   "title": "`/view` opens an agent reply or a markdown file in the browser, with real mermaid diagrams",
-  "done": [],
+  "done": [
+    "S1",
+    "S2",
+    "S3",
+    "S4",
+    "S5"
+  ],
   "reviewBase": {
     "d:/works/pi-config": "eee6e462b7d77ced085ffea48f052f329559b18f"
+  },
+  "passedTrees": {
+    "d:/works/pi-config": [
+      "72fc35a3d868a8d10982b176a641d43773e3bc7a"
+    ]
+  },
+  "judgedMerges": {
+    "d:/works/pi-config": {
+      "pr": "31",
+      "tree": "72fc35a3d868a8d10982b176a641d43773e3bc7a"
+    }
   },
   "repos": [
     {
