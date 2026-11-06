@@ -1,10 +1,10 @@
 {
   "v": 1,
   "flowId": "20261106-1117-server-time-remote-config-game-configs-a-ac0b",
-  "rev": 5,
-  "updated": "2026-11-06T06:04:19.532Z",
+  "rev": 6,
+  "updated": "2026-11-06T06:07:16.741Z",
   "title": "Server time, remote config, game configs and their A/B integration",
-  "stage": 2,
+  "stage": 3,
   "done": [
     "S1",
     "S2",
@@ -34,12 +34,12 @@
     "S27"
   ],
   "reviewBase": {
-    "d:/projects/wt/progression-report/pi-config": "39b0be05a4d0be451818e6ab60edda7e96f0ee01",
-    "d:/projects/wt/progression-report/knowledge": "8205ef3aacce04af4d922918993ac7c9faf3d8c6",
-    "d:/projects/wt/progression-report/game-template": "e99f428b1406771f26d46079c24243e09280ce81",
-    "d:/projects/wt/progression-report/unity-packages": "bb802b6fab30bba80eb91c8bf639e9efb998a457",
-    "d:/projects/wt/progression-report/shiny-loop": "52b2d9cc16f038f4b28b86c47f5072e03e276d3a",
-    "d:/projects/wt/progression-report/maze-flow": "89a5fb972ccc2beead0d7743c2b025923330c202"
+    "d:/projects/wt/progression-report/pi-config": "5dabf08904a83ecab1037b5644ec2d0088cefae7",
+    "d:/projects/wt/progression-report/knowledge": "3b399c1b16e60ef50a6cdba87e3dc286bbfe4498",
+    "d:/projects/wt/progression-report/game-template": "e02b7fe58004187073576791b4a31be37693ff93",
+    "d:/projects/wt/progression-report/unity-packages": "d4dc704fe649bdb52a95039890c5eccf011a0e27",
+    "d:/projects/wt/progression-report/shiny-loop": "6c1e1af96bc6c04eb9206a074d5d7c871834d664",
+    "d:/projects/wt/progression-report/maze-flow": "13418c7c1be0a51449c094fda19945f584447805"
   },
   "passedTrees": {
     "d:/projects/wt/progression-report/pi-config": [
@@ -55,7 +55,8 @@
       "ca1d0c7df9395df5b1fd49dc92d11e27fc50fc3f",
       "ea78e76627df1b7bd63cff11a46adf9c59a3aaa8",
       "225a61d7f4204615ddd102785d21a6ee2b64bb01",
-      "94eaf9f28a6ed5d781dae51cd5cfc474b48b1f7d"
+      "94eaf9f28a6ed5d781dae51cd5cfc474b48b1f7d",
+      "65fa2161934da24e24a7a43234d28ec23744ed01"
     ],
     "d:/projects/wt/progression-report/unity-packages": [
       "8a952c36648035a88e364569ee74584e63de9150",
@@ -77,8 +78,8 @@
       "stage": 2
     },
     "d:/projects/wt/progression-report/game-template": {
-      "pr": "236",
-      "tree": "94eaf9f28a6ed5d781dae51cd5cfc474b48b1f7d",
+      "pr": "237",
+      "tree": "65fa2161934da24e24a7a43234d28ec23744ed01",
       "stage": 2
     },
     "d:/projects/wt/progression-report/knowledge": {
@@ -99,7 +100,7 @@
       "primary": false
     },
     {
-      "branch": "flow/remote-config",
+      "branch": "flow/remote-config-fixes",
       "remote": "github.com/iecgames/game-template",
       "primary": false
     },
