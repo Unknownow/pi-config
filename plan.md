@@ -871,6 +871,23 @@ Unity tests are EditMode, in `UP/com.iecgames.core/Tests/Editor/` or each packag
 - game-template `A/B remote control window, config patch panel, cheat rows`: Editor windows, `AbCheats.cs`, `ConfigsWindow.cs`, manifest and lock, `GameBootstrap.cs`.
 - knowledge `A/B playbook, tracking plan and migration row for remote A/B`.
 
+## Amendment 1 (arbiter)
+**S15a.** (new, core, in the same stage-2 core commit and the same 0.28.0 bump) `AbTestsStartupComponent`:
+- Add an optional constructor parameter `IReadOnlyList<Type> requires = null`, modelled on `PurchasesStartupComponent.cs:20-30`.
+- `Requires` becomes `IAppState` plus the given types. The default stays `IAppState` only, so games without remote config behave as before.
+- XML doc: pass `typeof(IRemoteConfigService)` when the game lists `RemoteConfigStartupComponent`. Cohort assignment and the game's first settings read then come after the first-launch wait.
+- CHANGELOG line under 0.28.0. In the README "Remote config" section, say that settings are final once `IAbTestService` is provided.
+- Tests (in `StartupTests` or `RemoteConfigStartupComponentTests`): first launch with a provider that answers at 1 s.
+  - With `requires: { IRemoteConfigService }`, the runner keeps AbTests `Waiting` until the service is provided, then starts it, and `ads.inter_interval` already reads the remote value when AbTests starts.
+  - Without the parameter, AbTests starts at once (no regression).
+
+**S23 step 2** (changed): add `new RemoteConfigStartupComponent()` after `ServerClockStartupComponent` and change the AbTests entry to `new AbTestsStartupComponent(requires: new[] { typeof(IRemoteConfigService) })`.
+- Update the AbTests comment: it runs after the remote config is ready, which on a first launch is up to `firstLaunchWaitSeconds`, and the game reads settings only after `IAbTestService` is provided.
+- Because AbTests is in `LoadingNames` and stays `Waiting` until then, `IsStartupDone` and `loading_finish` include the wait without any other change.
+- Test: a game-template EditMode test, or an extended existing bootstrap test, checks that `IsStartupDone(LoadingNames(CreateComponents()), state)` is false while the RemoteConfig service is not yet provided.
+
+**S26** (addition): the remote-config playbook says that game code reading settings or remote values at start must wait for `IAbTestService` (or `IRemoteConfigService`) through `context.When`. Values do not change after that, except through the cheat "Fetch and apply now".
+
 <!-- pi-workflow:status -->
 ## Checklist
 - [x] S1 Core `Runtime/Time/` (new asmdef `Iec.Core.Time`, which references `Iec.Core` and `Iec.Core.Storage`):
@@ -884,14 +901,14 @@ Unity tests are EditMode, in `UP/com.iecgames.core/Tests/Editor/` or each packag
 - [x] S9 game-template `scripts/server-time.mjs`, plus `lib/server-time.mjs` holding the pure parsing:
 - [x] S10 knowledge:
 - [x] S11 Deliver: merge — game-template and knowledge for stage 1. Then comment on gt#40 that server time has shipped (with the P
-- [ ] S13 Core `Runtime/RemoteConfig/` (asmdef `Iec.Core.RemoteConfig`, which references Core, Storage, Settings and Analytics), p
-- [ ] S14 Core settings: `Settings.Define<T>(string key, T defaultValue, string remoteGroup = null)`, and `SettingInfo.RemoteGroup
-- [ ] S15 Core: `RemoteConfigStartupComponent` in `Runtime/Startup/Components/`.
-- [ ] S16 unity-packages: add the sha256 pin of `com.google.firebase.remote-config@13.17.0` to `config/vendor-registries.json` (Go
-- [ ] S17 Mirror: all; extras com.google.firebase.remote-config@13.17.0
-- [ ] S18 New package `com.iecgames.remoteconfig.firebase`, created with `scripts/new-package.mjs`.
-- [ ] S19 `com.iecgames.tracking-set`: add the new package, bump the version, and update the CHANGELOG and README. Check `KN eng.r
-- [ ] S20 Tests in unity-packages: see §6 T4–T7. Run `node scripts/package.mjs check`.
+- [x] S13 Core `Runtime/RemoteConfig/` (asmdef `Iec.Core.RemoteConfig`, which references Core, Storage, Settings and Analytics), p
+- [x] S14 Core settings: `Settings.Define<T>(string key, T defaultValue, string remoteGroup = null)`, and `SettingInfo.RemoteGroup
+- [x] S15 Core: `RemoteConfigStartupComponent` in `Runtime/Startup/Components/`.
+- [x] S16 unity-packages: add the sha256 pin of `com.google.firebase.remote-config@13.17.0` to `config/vendor-registries.json` (Go
+- [x] S17 Mirror: all; extras com.google.firebase.remote-config@13.17.0
+- [x] S18 New package `com.iecgames.remoteconfig.firebase`, created with `scripts/new-package.mjs`.
+- [x] S19 `com.iecgames.tracking-set`: add the new package, bump the version, and update the CHANGELOG and README. Check `KN eng.r
+- [x] S20 Tests in unity-packages: see §6 T4–T7. Run `node scripts/package.mjs check`.
 - [ ] S21 Deliver: merge — the unity-packages part of stage 2.
 - [ ] S22 Publish: com.iecgames.core, com.iecgames.remoteconfig.firebase, com.iecgames.tracking-set
 - [ ] S23 game-template:

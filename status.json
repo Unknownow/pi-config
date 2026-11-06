@@ -1,8 +1,8 @@
 {
   "v": 1,
   "flowId": "20261106-1117-server-time-remote-config-game-configs-a-ac0b",
-  "rev": 3,
-  "updated": "2026-11-06T05:03:52.930Z",
+  "rev": 4,
+  "updated": "2026-11-06T05:32:09.159Z",
   "title": "Server time, remote config, game configs and their A/B integration",
   "stage": 2,
   "done": [
@@ -16,13 +16,21 @@
     "S8",
     "S9",
     "S10",
-    "S11"
+    "S11",
+    "S13",
+    "S14",
+    "S15",
+    "S16",
+    "S17",
+    "S18",
+    "S19",
+    "S20"
   ],
   "reviewBase": {
     "d:/projects/wt/progression-report/pi-config": "39b0be05a4d0be451818e6ab60edda7e96f0ee01",
     "d:/projects/wt/progression-report/knowledge": "b9e8cada7340cc110096e50cfd603039ddc222fd",
-    "d:/projects/wt/progression-report/game-template": "91d9387b2278092bd64429802602e5f40901c985",
-    "d:/projects/wt/progression-report/unity-packages": "006c81290f3964874cb8645b864beabdfb11d0b8",
+    "d:/projects/wt/progression-report/game-template": "017e4f0e051c0155f83be6f4832b4a611f6c0364",
+    "d:/projects/wt/progression-report/unity-packages": "3357e03dbcef5dc8f20321a035e3f99a62a4108b",
     "d:/projects/wt/progression-report/shiny-loop": "52b2d9cc16f038f4b28b86c47f5072e03e276d3a",
     "d:/projects/wt/progression-report/maze-flow": "89a5fb972ccc2beead0d7743c2b025923330c202"
   },
@@ -79,12 +87,12 @@
       "primary": false
     },
     {
-      "branch": "flow/server-time-fixes",
+      "branch": "flow/remote-config",
       "remote": "github.com/iecgames/game-template",
       "primary": false
     },
     {
-      "branch": "flow/server-time-stop",
+      "branch": "flow/remote-config",
       "remote": "github.com/iecgames/unity-packages",
       "primary": false
     },
