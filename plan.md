@@ -947,11 +947,11 @@ Unity tests are EditMode, in `UP/com.iecgames.core/Tests/Editor/` or each packag
 - [x] S27 Deliver: merge — game-template and knowledge for stage 2. Then comment on up#198 with what shipped, and leave it open fo
 - [x] S29 New package `com.iecgames.configs`, created with `new-package.mjs`.
 - [x] S30 Tests: see §6 T8–T9. Run `node scripts/package.mjs check`.
-- [ ] S31 Deliver: merge — the unity-packages part of stage 3. Open the issue in iecgames/unity-packages titled "Configs: export S
-- [ ] S32 Publish: com.iecgames.configs
-- [ ] S33 game-template:
-- [ ] S34 game-template Editor:
-- [ ] S35 knowledge: add the playbook `eng.playbook.game-configs` (declare a config, the sheet layout, import, generators, the Edi
+- [x] S31 Deliver: merge — the unity-packages part of stage 3. Open the issue in iecgames/unity-packages titled "Configs: export S
+- [x] S32 Publish: com.iecgames.configs
+- [x] S33 game-template:
+- [x] S34 game-template Editor:
+- [x] S35 knowledge: add the playbook `eng.playbook.game-configs` (declare a config, the sheet layout, import, generators, the Edi
 - [ ] S36 Deliver: merge — game-template and knowledge for stage 3.
 - [ ] S38 Core settings and A/B:
 - [ ] S39 `com.iecgames.configs`: the AbResult, AbVariant and AbVariantRemote layers from `IAbTestService` (`ResultConfigPatches`,
@@ -967,3 +967,5 @@ Unity tests are EditMode, in `UP/com.iecgames.core/Tests/Editor/` or each packag
 - S28 Verify: in a game-template build on an Android device, with prefix `SFP` and the test key `SFP_Ads_Parameters` holding t
 - S37 Verify: in the game-template Editor, run `IEC/Configs/New config...` for `daily_reward`, add the fields from the discuss
 - S47 Verify: in a game-template development build on a device with a two-variant test and `remote patch` on one variant paste
+## Outcome
+2026-11-06T07:01:48.240Z — failed: stage 1: knowledge: flow/server-time, 18 commits since the review base, PR #235 MERGED https://github.com/iecgames/knowledge/pull/235; game-template: flow/server-time-fixes, 26 commits since the review base, PR #235 MERGED https://github.com/iecgames/game-template/pull/235; unity-packages: flow/server-time-stop, 27 commits since the review base, PR #338 MERGED https://github.com/iecgames/unity-packages/pull/338; stage 2: knowledge: flow/remote-config, 4 commits since the review base, PR #236 MERGED https://github.com/iecgames/knowledge/pull/236; game-template: flow/remote-config-fixes, 8 commits since the review base, PR #237 MERGED https://github.com/iecgames/game-template/pull/237; unity-packages: flow/remote-config, 8 commits since the review base, PR #340 MERGED https://github.com/iecgames/unity-packages/pull/340; back to planning · 4 human check(s) for you (see the card)

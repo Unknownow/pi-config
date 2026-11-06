@@ -1,10 +1,9 @@
 {
   "v": 1,
   "flowId": "20261106-1117-server-time-remote-config-game-configs-a-ac0b",
-  "rev": 7,
-  "updated": "2026-11-06T06:34:00.139Z",
+  "rev": 8,
+  "updated": "2026-11-06T07:01:49.330Z",
   "title": "Server time, remote config, game configs and their A/B integration",
-  "stage": 3,
   "done": [
     "S1",
     "S2",
@@ -33,13 +32,23 @@
     "S26",
     "S27",
     "S29",
-    "S30"
+    "S30",
+    "S31",
+    "S32",
+    "S33",
+    "S34",
+    "S35"
   ],
+  "finished": {
+    "at": "2026-11-06T07:01:48.240Z",
+    "ok": false,
+    "text": "stage 1: knowledge: flow/server-time, 18 commits since the review base, PR #235 MERGED https://github.com/iecgames/knowledge/pull/235; game-template: flow/server-time-fixes, 26 commits since the review base, PR #235 MERGED https://github.com/iecgames/game-template/pull/235; unity-packages: flow/server-time-stop, 27 commits since the review base, PR #338 MERGED https://github.com/iecgames/unity-packages/pull/338; stage 2: knowledge: flow/remote-config, 4 commits since the review base, PR #236 MERGED https://github.com/iecgames/knowledge/pull/236; game-template: flow/remote-config-fixes, 8 commits since the review base, PR #237 MERGED https://github.com/iecgames/game-template/pull/237; unity-packages: flow/remote-config, 8 commits since the review base, PR #340 MERGED https://github.com/iecgames/unity-packages/pull/340; back to planning · 4 human check(s) for you (see the card)"
+  },
   "reviewBase": {
     "d:/projects/wt/progression-report/pi-config": "5dabf08904a83ecab1037b5644ec2d0088cefae7",
-    "d:/projects/wt/progression-report/knowledge": "3b399c1b16e60ef50a6cdba87e3dc286bbfe4498",
-    "d:/projects/wt/progression-report/game-template": "e02b7fe58004187073576791b4a31be37693ff93",
-    "d:/projects/wt/progression-report/unity-packages": "607bd3554b74d6f66df51a2845019011159a59ac",
+    "d:/projects/wt/progression-report/knowledge": "00adac1d2fd4b52c18ca741b64241e26aa870bb6",
+    "d:/projects/wt/progression-report/game-template": "02f5903084171c4dd3f7d4fecefe9a836345caaf",
+    "d:/projects/wt/progression-report/unity-packages": "e7b00b516bc323206b827ff60db6aa262a0d3bb3",
     "d:/projects/wt/progression-report/shiny-loop": "6c1e1af96bc6c04eb9206a074d5d7c871834d664",
     "d:/projects/wt/progression-report/maze-flow": "13418c7c1be0a51449c094fda19945f584447805"
   },
@@ -64,7 +73,8 @@
       "8a952c36648035a88e364569ee74584e63de9150",
       "fc8296af78dc7fc4c3284dae340f7a3a03cf1a98",
       "820d6a6cc9a78a393fc3160176d3ec5a670481fc",
-      "ef0e114d83eace709efa4574513e302bac3a3945"
+      "ef0e114d83eace709efa4574513e302bac3a3945",
+      "a6ef24cd3a94769460d15e68cb6261329261f00a"
     ],
     "d:/projects/wt/progression-report/shiny-loop": [
       "a26ac66c3a1d7b93bef34d381b86739c507c42c4"
@@ -75,19 +85,19 @@
   },
   "judgedMerges": {
     "d:/projects/wt/progression-report/unity-packages": {
-      "pr": "340",
-      "tree": "ef0e114d83eace709efa4574513e302bac3a3945",
-      "stage": 2
+      "pr": "343",
+      "tree": "a6ef24cd3a94769460d15e68cb6261329261f00a",
+      "stage": 3
     },
     "d:/projects/wt/progression-report/game-template": {
       "pr": "237",
       "tree": "65fa2161934da24e24a7a43234d28ec23744ed01",
-      "stage": 2
+      "stage": 3
     },
     "d:/projects/wt/progression-report/knowledge": {
       "pr": "236",
       "tree": "da68af5b7657e45e0767d121159070193f1d2409",
-      "stage": 2
+      "stage": 3
     }
   },
   "repos": [
@@ -97,12 +107,12 @@
       "primary": true
     },
     {
-      "branch": "flow/remote-config",
+      "branch": "flow/game-configs",
       "remote": "github.com/iecgames/knowledge",
       "primary": false
     },
     {
-      "branch": "flow/remote-config-fixes",
+      "branch": "flow/game-configs",
       "remote": "github.com/iecgames/game-template",
       "primary": false
     },
