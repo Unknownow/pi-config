@@ -1,8 +1,8 @@
 {
   "v": 1,
   "flowId": "20261106-1412-game-configs-fix-round-configs-0-2-0-the-a9d0",
-  "rev": 3,
-  "updated": "2026-11-06T07:33:38.556Z",
+  "rev": 4,
+  "updated": "2026-11-06T07:34:08.631Z",
   "title": "Game configs fix round (configs 0.2.0, then the game-template and knowledge parts of stage 3)",
   "stage": 2,
   "done": [
@@ -16,13 +16,6 @@
     "S8",
     "S9"
   ],
-  "waiting": {
-    "reason": "stage 1 published",
-    "since": "2026-11-06T07:33:28.536Z",
-    "planned": true,
-    "atStageStart": true,
-    "held": "Stage 1 (\"configs 0.2.0\") is delivered: unity-packages: flow/configs-0.2, 3 commits since the review base, PR #346 MERGED https://github.com/iecgames/unity-packages/pull/346.\n\nCheck `git status` and the current branch before you change anything. This plan has 2 stages. Do stage 2 only: \"game-template and knowledge\". Don't start a later stage. When it is done, run its tests and call `judge`. Once it passes, deliver the stage yourself as the plan says (commit, push, pull request, merge), tick its steps and end your turn. This is the last stage."
-  },
   "reviewBase": {
     "d:/projects/wt/progression-report/pi-config": "e439c8a50fb5ed84b76b9931639bbbce4c245f2d",
     "d:/projects/wt/progression-report/knowledge": "f45142f87d48a4b5f1fe813bc55f2e6624405ca9",
