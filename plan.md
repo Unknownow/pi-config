@@ -310,3 +310,4 @@ Run `npm run check`, then commit and push to PR #237.
 - [ ] S19 Deliver: merge — game-template PR #238 and knowledge PR #237.
 ## For you after the flow
 - S20 Verify: in the game-template Editor, run `package_resolve`. Then use IEC > Configs > New config... to create `daily_rewa
+**Waiting for:** stage 1 published
