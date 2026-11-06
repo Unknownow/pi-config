@@ -1,10 +1,10 @@
 {
   "v": 1,
   "flowId": "20261106-1117-server-time-remote-config-game-configs-a-ac0b",
-  "rev": 2,
-  "updated": "2026-11-06T04:56:56.031Z",
+  "rev": 3,
+  "updated": "2026-11-06T05:03:52.930Z",
   "title": "Server time, remote config, game configs and their A/B integration",
-  "stage": 1,
+  "stage": 2,
   "done": [
     "S1",
     "S2",
@@ -19,12 +19,12 @@
     "S11"
   ],
   "reviewBase": {
-    "d:/projects/wt/progression-report/pi-config": "97395f9f16f5757ad195388a771eaff114d8bb23",
-    "d:/projects/wt/progression-report/knowledge": "261eefac3cf984d9db02be53303889b6aab51c27",
-    "d:/projects/wt/progression-report/game-template": "72cbad3f3ba64705a4a35528e8bffadf68a26c19",
-    "d:/projects/wt/progression-report/unity-packages": "2fc8627a9fe12c543b3426b9441e7e5d8b94cdd1",
-    "d:/projects/wt/progression-report/shiny-loop": "483d5fe9301383c8d6cd9bc96cdbc3c2129ceac8",
-    "d:/projects/wt/progression-report/maze-flow": "20532cbbd50b27d0bcffd60c93fa3220f1a7b998"
+    "d:/projects/wt/progression-report/pi-config": "39b0be05a4d0be451818e6ab60edda7e96f0ee01",
+    "d:/projects/wt/progression-report/knowledge": "b9e8cada7340cc110096e50cfd603039ddc222fd",
+    "d:/projects/wt/progression-report/game-template": "91d9387b2278092bd64429802602e5f40901c985",
+    "d:/projects/wt/progression-report/unity-packages": "006c81290f3964874cb8645b864beabdfb11d0b8",
+    "d:/projects/wt/progression-report/shiny-loop": "52b2d9cc16f038f4b28b86c47f5072e03e276d3a",
+    "d:/projects/wt/progression-report/maze-flow": "89a5fb972ccc2beead0d7743c2b025923330c202"
   },
   "passedTrees": {
     "d:/projects/wt/progression-report/pi-config": [
@@ -36,10 +36,12 @@
     ],
     "d:/projects/wt/progression-report/game-template": [
       "a0e82a513ff93523f8e42b4f7f3fb6ddd5cc7fd1",
-      "ca1d0c7df9395df5b1fd49dc92d11e27fc50fc3f"
+      "ca1d0c7df9395df5b1fd49dc92d11e27fc50fc3f",
+      "ea78e76627df1b7bd63cff11a46adf9c59a3aaa8"
     ],
     "d:/projects/wt/progression-report/unity-packages": [
-      "8a952c36648035a88e364569ee74584e63de9150"
+      "8a952c36648035a88e364569ee74584e63de9150",
+      "fc8296af78dc7fc4c3284dae340f7a3a03cf1a98"
     ],
     "d:/projects/wt/progression-report/shiny-loop": [
       "a26ac66c3a1d7b93bef34d381b86739c507c42c4"
@@ -50,13 +52,13 @@
   },
   "judgedMerges": {
     "d:/projects/wt/progression-report/unity-packages": {
-      "pr": "334",
-      "tree": "8a952c36648035a88e364569ee74584e63de9150",
+      "pr": "338",
+      "tree": "fc8296af78dc7fc4c3284dae340f7a3a03cf1a98",
       "stage": 1
     },
     "d:/projects/wt/progression-report/game-template": {
-      "pr": "234",
-      "tree": "ca1d0c7df9395df5b1fd49dc92d11e27fc50fc3f",
+      "pr": "235",
+      "tree": "ea78e76627df1b7bd63cff11a46adf9c59a3aaa8",
       "stage": 1
     },
     "d:/projects/wt/progression-report/knowledge": {
@@ -77,12 +79,12 @@
       "primary": false
     },
     {
-      "branch": "flow/server-time",
+      "branch": "flow/server-time-fixes",
       "remote": "github.com/iecgames/game-template",
       "primary": false
     },
     {
-      "branch": "flow/server-time",
+      "branch": "flow/server-time-stop",
       "remote": "github.com/iecgames/unity-packages",
       "primary": false
     },
