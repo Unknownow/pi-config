@@ -888,6 +888,35 @@ Unity tests are EditMode, in `UP/com.iecgames.core/Tests/Editor/` or each packag
 
 **S26** (addition): the remote-config playbook says that game code reading settings or remote values at start must wait for `IAbTestService` (or `IRemoteConfigService`) through `context.When`. Values do not change after that, except through the cheat "Fetch and apply now".
 
+## Amendment 2 (arbiter)
+**§4.4 Resolution, step "On failure"** (replaces "drop the highest remaining layer and retry; the worst case is the build document"):
+- Build from the bottom up:
+  - Start from the filtered build document.
+  - Add the layers one at a time, lowest first, and run the type, range and `Validate()` checks after each one.
+  - If the result passes, keep the layer.
+  - If it fails, reject that layer, with the reason and detail of its own failure, and go on to the next layer from the last good result.
+- The worst case is still the build document.
+- Each rejected Remote layer (from stage 4 also AbVariantRemote, if it comes from remote) calls `IRemoteConfigService.Reject`. A layer that passed is never rejected.
+- A layer that breaks a rule only together with a lower layer is the one rejected. This is accepted and goes in the README.
+
+**S29 (amended), `com.iecgames.configs/Runtime/ConfigResolver.cs` `Resolve`:**
+- Replace the drop-top `while (true)` loop with the bottom-up loop above.
+- `report.Layers` lists the kept layers, lowest first.
+- `report.Rejected` holds one entry per rejected layer, each with its own reason and detail.
+- When the build document alone fails its checks, keep the existing `build` rejection path. Changing it is not part of this amendment.
+- Update the class XML doc, the README "Layers" step 4 and the CHANGELOG line ("drops the highest broken layer" becomes "skips each layer that breaks the checks, lowest first").
+
+**S30 tests (added to `ConfigResolveTests`):**
+- Remote `{"cycleDays":99}` (id `a`) under a valid cheat `{"enabled":false}`:
+  - the result has `enabled == false` and `cycleDays == 7`;
+  - `Layers` is only the cheat;
+  - `Rejected` holds one entry, source `remote`, id `a`, reason `range`;
+  - `Reject` is called once for `Daily_Reward/a/range`.
+- Remote `{"cycleDays":2}` (fails `Validate()`) under a valid second layer `{"days":{"7":{"coins":400}}}`: the second layer is kept, and only the remote layer is rejected, with reason `validate`.
+- `OnlyTheBrokenLayerIsDropped` still passes.
+
+**S39 (stage 4, note):** the AbResult, AbVariant and AbVariantRemote layers use the same bottom-up resolution. T12 adds a case where a general Remote value that breaks a rule leaves a v21 player with the variant's values, and the rejection is reported only against the remote layer.
+
 <!-- pi-workflow:status -->
 ## Checklist
 - [x] S1 Core `Runtime/Time/` (new asmdef `Iec.Core.Time`, which references `Iec.Core` and `Iec.Core.Storage`):
@@ -916,8 +945,8 @@ Unity tests are EditMode, in `UP/com.iecgames.core/Tests/Editor/` or each packag
 - [x] S25 game-template Editor, both shelling out through `NodeRunner` like `AbTestsWindow.cs:83,406-429`:
 - [x] S26 knowledge:
 - [x] S27 Deliver: merge — game-template and knowledge for stage 2. Then comment on up#198 with what shipped, and leave it open fo
-- [ ] S29 New package `com.iecgames.configs`, created with `new-package.mjs`.
-- [ ] S30 Tests: see §6 T8–T9. Run `node scripts/package.mjs check`.
+- [x] S29 New package `com.iecgames.configs`, created with `new-package.mjs`.
+- [x] S30 Tests: see §6 T8–T9. Run `node scripts/package.mjs check`.
 - [ ] S31 Deliver: merge — the unity-packages part of stage 3. Open the issue in iecgames/unity-packages titled "Configs: export S
 - [ ] S32 Publish: com.iecgames.configs
 - [ ] S33 game-template:
