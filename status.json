@@ -1,0 +1,49 @@
+{
+  "v": 1,
+  "flowId": "20261106-1412-game-configs-fix-round-configs-0-2-0-the-a9d0",
+  "rev": 1,
+  "updated": "2026-11-06T07:12:34.038Z",
+  "title": "Game configs fix round (configs 0.2.0, then the game-template and knowledge parts of stage 3)",
+  "stage": 1,
+  "done": [],
+  "reviewBase": {
+    "d:/projects/wt/progression-report/pi-config": "97395f9f16f5757ad195388a771eaff114d8bb23",
+    "d:/projects/wt/progression-report/knowledge": "10bd0105f1522fa6a4f1076121551682d7ae44f1",
+    "d:/projects/wt/progression-report/game-template": "5aacc6535d9ca233153e74e6991410791f6dc42c",
+    "d:/projects/wt/progression-report/unity-packages": "35fbbbbe755e145e7752b63c87add4b41b2c75b7",
+    "d:/projects/wt/progression-report/shiny-loop": "483d5fe9301383c8d6cd9bc96cdbc3c2129ceac8",
+    "d:/projects/wt/progression-report/maze-flow": "20532cbbd50b27d0bcffd60c93fa3220f1a7b998"
+  },
+  "repos": [
+    {
+      "branch": "wt/progression-report",
+      "remote": "github-personal/Unknownow/pi-config",
+      "primary": true
+    },
+    {
+      "branch": "flow/game-configs",
+      "remote": "github.com/iecgames/knowledge",
+      "primary": false
+    },
+    {
+      "branch": "flow/game-configs",
+      "remote": "github.com/iecgames/game-template",
+      "primary": false
+    },
+    {
+      "branch": "flow/game-configs",
+      "remote": "github.com/iecgames/unity-packages",
+      "primary": false
+    },
+    {
+      "branch": "wt/progression-report",
+      "remote": "github.com/iecgames/shiny-loop",
+      "primary": false
+    },
+    {
+      "branch": "wt/progression-report",
+      "remote": "github.com/iecgames/maze-flow",
+      "primary": false
+    }
+  ]
+}
