@@ -1,0 +1,49 @@
+{
+  "v": 1,
+  "flowId": "20261106-1117-server-time-remote-config-game-configs-a-ac0b",
+  "rev": 1,
+  "updated": "2026-11-06T04:17:02.729Z",
+  "title": "Server time, remote config, game configs and their A/B integration",
+  "stage": 1,
+  "done": [],
+  "reviewBase": {
+    "d:/projects/wt/progression-report/pi-config": "97395f9f16f5757ad195388a771eaff114d8bb23",
+    "d:/projects/wt/progression-report/knowledge": "368bde3ca1ee23e5d047fc1615036182b9128eac",
+    "d:/projects/wt/progression-report/game-template": "14097406a3dacc1b70b77e24e090e076bcbd2191",
+    "d:/projects/wt/progression-report/unity-packages": "c26883565bb92b7ed77f6d8bd7e4f82815ba3f0d",
+    "d:/projects/wt/progression-report/shiny-loop": "483d5fe9301383c8d6cd9bc96cdbc3c2129ceac8",
+    "d:/projects/wt/progression-report/maze-flow": "20532cbbd50b27d0bcffd60c93fa3220f1a7b998"
+  },
+  "repos": [
+    {
+      "branch": "wt/progression-report",
+      "remote": "github-personal/Unknownow/pi-config",
+      "primary": true
+    },
+    {
+      "branch": "flow/gd-readable-report",
+      "remote": "github.com/iecgames/knowledge",
+      "primary": false
+    },
+    {
+      "branch": "flow/gd-readable-report",
+      "remote": "github.com/iecgames/game-template",
+      "primary": false
+    },
+    {
+      "branch": "wt/progression-report",
+      "remote": "github.com/iecgames/unity-packages",
+      "primary": false
+    },
+    {
+      "branch": "wt/progression-report",
+      "remote": "github.com/iecgames/shiny-loop",
+      "primary": false
+    },
+    {
+      "branch": "wt/progression-report",
+      "remote": "github.com/iecgames/maze-flow",
+      "primary": false
+    }
+  ]
+}
