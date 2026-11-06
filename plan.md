@@ -873,17 +873,17 @@ Unity tests are EditMode, in `UP/com.iecgames.core/Tests/Editor/` or each packag
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 Core `Runtime/Time/` (new asmdef `Iec.Core.Time`, which references `Iec.Core` and `Iec.Core.Storage`):
-- [ ] S2 Core: `ServerClockStartupComponent` in `Runtime/Startup/Components/`.
-- [ ] S3 Core Editor: menu `IEC/Server time/Test endpoint`.
-- [ ] S4 `com.iecgames.cheats`: add `Cheats.SetBadge(string id, string text)`, where null or empty text removes the badge.
-- [ ] S5 Tests in unity-packages: see §6 T1–T3. Run `node scripts/package.mjs check`.
-- [ ] S6 Deliver: merge — the unity-packages part of stage 1.
-- [ ] S7 Publish: com.iecgames.core, com.iecgames.cheats
-- [ ] S8 game-template:
-- [ ] S9 game-template `scripts/server-time.mjs`, plus `lib/server-time.mjs` holding the pure parsing:
-- [ ] S10 knowledge:
-- [ ] S11 Deliver: merge — game-template and knowledge for stage 1. Then comment on gt#40 that server time has shipped (with the P
+- [x] S1 Core `Runtime/Time/` (new asmdef `Iec.Core.Time`, which references `Iec.Core` and `Iec.Core.Storage`):
+- [x] S2 Core: `ServerClockStartupComponent` in `Runtime/Startup/Components/`.
+- [x] S3 Core Editor: menu `IEC/Server time/Test endpoint`.
+- [x] S4 `com.iecgames.cheats`: add `Cheats.SetBadge(string id, string text)`, where null or empty text removes the badge.
+- [x] S5 Tests in unity-packages: see §6 T1–T3. Run `node scripts/package.mjs check`.
+- [x] S6 Deliver: merge — the unity-packages part of stage 1.
+- [x] S7 Publish: com.iecgames.core, com.iecgames.cheats
+- [x] S8 game-template:
+- [x] S9 game-template `scripts/server-time.mjs`, plus `lib/server-time.mjs` holding the pure parsing:
+- [x] S10 knowledge:
+- [x] S11 Deliver: merge — game-template and knowledge for stage 1. Then comment on gt#40 that server time has shipped (with the P
 - [ ] S13 Core `Runtime/RemoteConfig/` (asmdef `Iec.Core.RemoteConfig`, which references Core, Storage, Settings and Analytics), p
 - [ ] S14 Core settings: `Settings.Define<T>(string key, T defaultValue, string remoteGroup = null)`, and `SettingInfo.RemoteGroup
 - [ ] S15 Core: `RemoteConfigStartupComponent` in `Runtime/Startup/Components/`.
