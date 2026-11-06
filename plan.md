@@ -289,15 +289,15 @@ Run `npm run check`, then commit and push to PR #237.
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 Check `git status` and the branch in unity-packages, then create branch `flow/configs-0.2` from `origin/main`. Add `com.
-- [ ] S2 Add `Runtime/ConfigJson.cs` (§4). Replace every `JObject.Parse`/`JToken.Parse` in `Runtime/` and `Editor/` with it: `Con
-- [ ] S3 `ConfigResolver.Resolve` uses the filled-in base and filters inside the loop (§4). Add the whole-number walk to `TryBuil
-- [ ] S4 `GameConfigService` reject loop (`:162-175`): keep a `HashSet<string>` of remote layer ids already sent, and send `Rejec
-- [ ] S5 In `Editor/ConfigEditing.cs`, add `public static string Normalize(ConfigInfo info, string json)`:
-- [ ] S6 Bump the package to 0.2.0 and update README "Layers" and the path rule section. Add a CHANGELOG `## [0.2.0]` entry listi
-- [ ] S7 Write the tests in §6 (stage 1), then run `node scripts/package.mjs check` and the configs test run. Commit, push, open 
-- [ ] S8 Deliver: merge — the `com.iecgames.configs` 0.2.0 PR in unity-packages.
-- [ ] S9 Publish: com.iecgames.configs
+- [x] S1 Check `git status` and the branch in unity-packages, then create branch `flow/configs-0.2` from `origin/main`. Add `com.
+- [x] S2 Add `Runtime/ConfigJson.cs` (§4). Replace every `JObject.Parse`/`JToken.Parse` in `Runtime/` and `Editor/` with it: `Con
+- [x] S3 `ConfigResolver.Resolve` uses the filled-in base and filters inside the loop (§4). Add the whole-number walk to `TryBuil
+- [x] S4 `GameConfigService` reject loop (`:162-175`): keep a `HashSet<string>` of remote layer ids already sent, and send `Rejec
+- [x] S5 In `Editor/ConfigEditing.cs`, add `public static string Normalize(ConfigInfo info, string json)`:
+- [x] S6 Bump the package to 0.2.0 and update README "Layers" and the path rule section. Add a CHANGELOG `## [0.2.0]` entry listi
+- [x] S7 Write the tests in §6 (stage 1), then run `node scripts/package.mjs check` and the configs test run. Commit, push, open 
+- [x] S8 Deliver: merge — the `com.iecgames.configs` 0.2.0 PR in unity-packages.
+- [x] S9 Publish: com.iecgames.configs
 - [ ] S10 Check `git status` and the branch in game-template (`flow/game-configs`). Bump `com.iecgames.configs` from 0.1.0 to 0.2.
 - [ ] S11 Remove the link.xml generator:
 - [ ] S12 Add `export function normalizeDoc(config, doc)` to `scripts/lib/configs.mjs` (§4). Use it:
