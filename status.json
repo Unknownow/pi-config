@@ -1,8 +1,8 @@
 {
   "v": 1,
   "flowId": "20261107-0220-view-opens-an-agent-reply-or-a-markdown-bb4c",
-  "rev": 2,
-  "updated": "2026-11-06T19:22:57.965Z",
+  "rev": 3,
+  "updated": "2026-11-06T19:23:06.202Z",
   "title": "`/view` opens an agent reply or a markdown file in the browser, with real mermaid diagrams",
   "done": [
     "S1",
@@ -11,8 +11,13 @@
     "S4",
     "S5"
   ],
+  "finished": {
+    "at": "2026-11-06T19:23:06.076Z",
+    "ok": true,
+    "text": "master, 2 commits since the review base, PR #31 MERGED https://github.com/Unknownow/pi-config/pull/31 · 1 human check(s) for you (see the card)"
+  },
   "reviewBase": {
-    "d:/works/pi-config": "eee6e462b7d77ced085ffea48f052f329559b18f"
+    "d:/works/pi-config": "03440e24c37b1cdbd79f02e111eb966f9bb1819c"
   },
   "passedTrees": {
     "d:/works/pi-config": [

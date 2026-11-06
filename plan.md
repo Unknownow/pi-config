@@ -163,3 +163,5 @@ Look for:
 - [x] S5 Deliver: merge, with the extension, its tests and the README changes.
 ## For you after the flow
 - S6 Verify: once the extension is synced to `~/.pi/agent/extensions`, restart pi. Then:
+## Outcome
+2026-11-06T19:23:06.076Z — ok: master, 2 commits since the review base, PR #31 MERGED https://github.com/Unknownow/pi-config/pull/31 · 1 human check(s) for you (see the card)
