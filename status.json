@@ -1,10 +1,9 @@
 {
   "v": 1,
   "flowId": "20261106-1412-game-configs-fix-round-configs-0-2-0-the-a9d0",
-  "rev": 4,
-  "updated": "2026-11-06T07:34:08.631Z",
+  "rev": 5,
+  "updated": "2026-11-06T07:45:28.689Z",
   "title": "Game configs fix round (configs 0.2.0, then the game-template and knowledge parts of stage 3)",
-  "stage": 2,
   "done": [
     "S1",
     "S2",
@@ -14,25 +13,43 @@
     "S6",
     "S7",
     "S8",
-    "S9"
+    "S9",
+    "S10",
+    "S11",
+    "S12",
+    "S13",
+    "S14",
+    "S15",
+    "S16",
+    "S17",
+    "S18",
+    "S19"
   ],
+  "finished": {
+    "at": "2026-11-06T07:45:28.214Z",
+    "ok": true,
+    "text": "stage 1: unity-packages: flow/configs-0.2, 3 commits since the review base, PR #346 MERGED https://github.com/iecgames/unity-packages/pull/346; stage 2: knowledge: flow/game-configs, 1 commit since the review base, PR #237 MERGED https://github.com/iecgames/knowledge/pull/237; game-template: flow/game-configs, 4 commits since the review base, PR #238 MERGED https://github.com/iecgames/game-template/pull/238 · 1 human check(s) for you (see the card)"
+  },
   "reviewBase": {
-    "d:/projects/wt/progression-report/pi-config": "e439c8a50fb5ed84b76b9931639bbbce4c245f2d",
-    "d:/projects/wt/progression-report/knowledge": "f45142f87d48a4b5f1fe813bc55f2e6624405ca9",
-    "d:/projects/wt/progression-report/game-template": "906d3fa484a31d3c9ecbf05a249854d065706f8a",
-    "d:/projects/wt/progression-report/unity-packages": "b2d86a0e3ad26a965f9ccb007c84d84138eca5f7",
-    "d:/projects/wt/progression-report/shiny-loop": "3657743d3be589cc68bcbe0c83a23d4642538f40",
-    "d:/projects/wt/progression-report/maze-flow": "0e182753c9e42828aa2f1cd8e07fee48575ce6dc"
+    "d:/projects/wt/progression-report/pi-config": "66efaa51970a893d595dbe504b69fffc8b202879",
+    "d:/projects/wt/progression-report/knowledge": "d58db27a719dffd5272c57a84f07151d82b09bdc",
+    "d:/projects/wt/progression-report/game-template": "405a857c70665e3d5a9019add6e9eb51adc62780",
+    "d:/projects/wt/progression-report/unity-packages": "380cf5a8ea86b9743cbfa4987816fa22b987f951",
+    "d:/projects/wt/progression-report/shiny-loop": "51e51da7739f48426421559c8cde505d58b947da",
+    "d:/projects/wt/progression-report/maze-flow": "6eb08d6652ed7a86c9e048d75c307e60180a1a0f"
   },
   "passedTrees": {
     "d:/projects/wt/progression-report/pi-config": [
       "526bec54c3c0b60bd4a900fcac7b8e3a0d14268d"
     ],
     "d:/projects/wt/progression-report/knowledge": [
-      "3655a6f36c826790a65a21a6dfe1fa934d029a25"
+      "3655a6f36c826790a65a21a6dfe1fa934d029a25",
+      "a321687ea4711331e6f06c57e7d6f0a0b9248f13"
     ],
     "d:/projects/wt/progression-report/game-template": [
-      "f84d0baf6f3769daaac0c87167d24292ac1708c9"
+      "f84d0baf6f3769daaac0c87167d24292ac1708c9",
+      "c855e81bc9a0733988221270bc33ceb810e6fb4f",
+      "2e03728208368772bcd0adeec50a5107784201b2"
     ],
     "d:/projects/wt/progression-report/unity-packages": [
       "a0083a239a9b791ac87a70e2a904db201cc22ea8"
@@ -48,7 +65,17 @@
     "d:/projects/wt/progression-report/unity-packages": {
       "pr": "346",
       "tree": "a0083a239a9b791ac87a70e2a904db201cc22ea8",
-      "stage": 1
+      "stage": 2
+    },
+    "d:/projects/wt/progression-report/game-template": {
+      "pr": "238",
+      "tree": "2e03728208368772bcd0adeec50a5107784201b2",
+      "stage": 2
+    },
+    "d:/projects/wt/progression-report/knowledge": {
+      "pr": "237",
+      "tree": "a321687ea4711331e6f06c57e7d6f0a0b9248f13",
+      "stage": 2
     }
   },
   "repos": [

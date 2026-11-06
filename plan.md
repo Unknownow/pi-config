@@ -298,15 +298,17 @@ Run `npm run check`, then commit and push to PR #237.
 - [x] S7 Write the tests in §6 (stage 1), then run `node scripts/package.mjs check` and the configs test run. Commit, push, open 
 - [x] S8 Deliver: merge — the `com.iecgames.configs` 0.2.0 PR in unity-packages.
 - [x] S9 Publish: com.iecgames.configs
-- [ ] S10 Check `git status` and the branch in game-template (`flow/game-configs`). Bump `com.iecgames.configs` from 0.1.0 to 0.2.
-- [ ] S11 Remove the link.xml generator:
-- [ ] S12 Add `export function normalizeDoc(config, doc)` to `scripts/lib/configs.mjs` (§4). Use it:
-- [ ] S13 `remote-diff --json` (`configs.mjs:349-350`): when `args.json` is set, pass `remoteMain` a logger whose `log` and `error
-- [ ] S14 `scripts/lib/remote-config.mjs`, config-name loop (after `:373`): when `RESERVED_NAMES.includes(pascal(config.name))`, p
-- [ ] S15 `Scripts/Editor/ConfigsWindow.cs`:
-- [ ] S16 Write the game-template tests in §6 (stage 2), run them and `check-rules`, then commit and push to PR #238.
-- [ ] S17 Check `git status` in knowledge (`flow/game-configs`) and update `entries/eng/playbook/game-configs.md`:
-- [ ] S18 Run `judge` over game-template and knowledge and fix blocker and major findings.
-- [ ] S19 Deliver: merge — game-template PR #238 and knowledge PR #237.
+- [x] S10 Check `git status` and the branch in game-template (`flow/game-configs`). Bump `com.iecgames.configs` from 0.1.0 to 0.2.
+- [x] S11 Remove the link.xml generator:
+- [x] S12 Add `export function normalizeDoc(config, doc)` to `scripts/lib/configs.mjs` (§4). Use it:
+- [x] S13 `remote-diff --json` (`configs.mjs:349-350`): when `args.json` is set, pass `remoteMain` a logger whose `log` and `error
+- [x] S14 `scripts/lib/remote-config.mjs`, config-name loop (after `:373`): when `RESERVED_NAMES.includes(pascal(config.name))`, p
+- [x] S15 `Scripts/Editor/ConfigsWindow.cs`:
+- [x] S16 Write the game-template tests in §6 (stage 2), run them and `check-rules`, then commit and push to PR #238.
+- [x] S17 Check `git status` in knowledge (`flow/game-configs`) and update `entries/eng/playbook/game-configs.md`:
+- [x] S18 Run `judge` over game-template and knowledge and fix blocker and major findings.
+- [x] S19 Deliver: merge — game-template PR #238 and knowledge PR #237.
 ## For you after the flow
 - S20 Verify: in the game-template Editor, run `package_resolve`. Then use IEC > Configs > New config... to create `daily_rewa
+## Outcome
+2026-11-06T07:45:28.214Z — ok: stage 1: unity-packages: flow/configs-0.2, 3 commits since the review base, PR #346 MERGED https://github.com/iecgames/unity-packages/pull/346; stage 2: knowledge: flow/game-configs, 1 commit since the review base, PR #237 MERGED https://github.com/iecgames/knowledge/pull/237; game-template: flow/game-configs, 4 commits since the review base, PR #238 MERGED https://github.com/iecgames/game-template/pull/238 · 1 human check(s) for you (see the card)
