@@ -909,13 +909,13 @@ Unity tests are EditMode, in `UP/com.iecgames.core/Tests/Editor/` or each packag
 - [x] S18 New package `com.iecgames.remoteconfig.firebase`, created with `scripts/new-package.mjs`.
 - [x] S19 `com.iecgames.tracking-set`: add the new package, bump the version, and update the CHANGELOG and README. Check `KN eng.r
 - [x] S20 Tests in unity-packages: see §6 T4–T7. Run `node scripts/package.mjs check`.
-- [ ] S21 Deliver: merge — the unity-packages part of stage 2.
-- [ ] S22 Publish: com.iecgames.core, com.iecgames.remoteconfig.firebase, com.iecgames.tracking-set
-- [ ] S23 game-template:
-- [ ] S24 game-template `scripts/remote-config.mjs`, plus `lib/remote-config.mjs` with pure operations (model `ab-tests.mjs` and `
-- [ ] S25 game-template Editor, both shelling out through `NodeRunner` like `AbTestsWindow.cs:83,406-429`:
-- [ ] S26 knowledge:
-- [ ] S27 Deliver: merge — game-template and knowledge for stage 2. Then comment on up#198 with what shipped, and leave it open fo
+- [x] S21 Deliver: merge — the unity-packages part of stage 2.
+- [x] S22 Publish: com.iecgames.core, com.iecgames.remoteconfig.firebase, com.iecgames.tracking-set
+- [x] S23 game-template:
+- [x] S24 game-template `scripts/remote-config.mjs`, plus `lib/remote-config.mjs` with pure operations (model `ab-tests.mjs` and `
+- [x] S25 game-template Editor, both shelling out through `NodeRunner` like `AbTestsWindow.cs:83,406-429`:
+- [x] S26 knowledge:
+- [x] S27 Deliver: merge — game-template and knowledge for stage 2. Then comment on up#198 with what shipped, and leave it open fo
 - [ ] S29 New package `com.iecgames.configs`, created with `new-package.mjs`.
 - [ ] S30 Tests: see §6 T8–T9. Run `node scripts/package.mjs check`.
 - [ ] S31 Deliver: merge — the unity-packages part of stage 3. Open the issue in iecgames/unity-packages titled "Configs: export S
