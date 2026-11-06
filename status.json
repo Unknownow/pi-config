@@ -1,17 +1,64 @@
 {
   "v": 1,
   "flowId": "20261106-1627-set-the-server-time-remote-config-and-ga-c05d",
-  "rev": 1,
-  "updated": "2026-11-06T09:27:17.162Z",
+  "rev": 2,
+  "updated": "2026-11-06T09:32:49.170Z",
   "title": "Set the server-time, remote-config and game-configs playbooks back to draft until their device checks pass",
-  "done": [],
+  "done": [
+    "S1",
+    "S2",
+    "S3",
+    "S4",
+    "S5",
+    "S6",
+    "S7"
+  ],
+  "finished": {
+    "at": "2026-11-06T09:32:48.896Z",
+    "ok": true,
+    "text": "knowledge: flow/playbooks-draft, 3 commits since the review base, PR #238 MERGED https://github.com/iecgames/knowledge/pull/238"
+  },
   "reviewBase": {
-    "d:/projects/wt/progression-report/pi-config": "97395f9f16f5757ad195388a771eaff114d8bb23",
-    "d:/projects/wt/progression-report/knowledge": "bbab9572c3ffbd39862f772340826c3ef3cee54b",
-    "d:/projects/wt/progression-report/game-template": "2cac60156e5e0988ad8d5a744b1891c5e854607a",
-    "d:/projects/wt/progression-report/unity-packages": "30147d55f177e8d053234d7b98443d4d4d413218",
-    "d:/projects/wt/progression-report/shiny-loop": "483d5fe9301383c8d6cd9bc96cdbc3c2129ceac8",
-    "d:/projects/wt/progression-report/maze-flow": "20532cbbd50b27d0bcffd60c93fa3220f1a7b998"
+    "d:/projects/wt/progression-report/pi-config": "2c7a16aa7babf8a38b540e97219db60bc377b18e",
+    "d:/projects/wt/progression-report/knowledge": "ec41a3ea75e17ca2d3695afac5774f64bf2c9a3f",
+    "d:/projects/wt/progression-report/game-template": "0a92c2379b03cfd8e73a36d2b00392ea44698de6",
+    "d:/projects/wt/progression-report/unity-packages": "1c7786b0ada2d295aae154a4a80ac79442c0a755",
+    "d:/projects/wt/progression-report/shiny-loop": "177ab5ae44c554859545efcfb48b86e6632cdf3b",
+    "d:/projects/wt/progression-report/maze-flow": "495c8dd04ca319773b13950a486e7a28a871542b"
+  },
+  "passedTrees": {
+    "d:/projects/wt/progression-report/pi-config": [
+      "526bec54c3c0b60bd4a900fcac7b8e3a0d14268d"
+    ],
+    "d:/projects/wt/progression-report/knowledge": [
+      "a717a5a4b9554835d5b8ba48f1711680fcd69cd8"
+    ],
+    "d:/projects/wt/progression-report/game-template": [
+      "2e03728208368772bcd0adeec50a5107784201b2"
+    ],
+    "d:/projects/wt/progression-report/unity-packages": [
+      "a0083a239a9b791ac87a70e2a904db201cc22ea8"
+    ],
+    "d:/projects/wt/progression-report/shiny-loop": [
+      "a26ac66c3a1d7b93bef34d381b86739c507c42c4"
+    ],
+    "d:/projects/wt/progression-report/maze-flow": [
+      "627f72401474a9dd46b2fbb7bed6235688071750"
+    ]
+  },
+  "judgedMerges": {
+    "d:/projects/wt/progression-report/knowledge": {
+      "pr": "238",
+      "tree": "a717a5a4b9554835d5b8ba48f1711680fcd69cd8"
+    },
+    "d:/projects/wt/progression-report/game-template": {
+      "pr": "238",
+      "tree": "2e03728208368772bcd0adeec50a5107784201b2"
+    },
+    "d:/projects/wt/progression-report/unity-packages": {
+      "pr": "346",
+      "tree": "a0083a239a9b791ac87a70e2a904db201cc22ea8"
+    }
   },
   "repos": [
     {
@@ -20,7 +67,7 @@
       "primary": true
     },
     {
-      "branch": "flow/game-configs",
+      "branch": "flow/playbooks-draft",
       "remote": "github.com/iecgames/knowledge",
       "primary": false
     },

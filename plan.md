@@ -53,10 +53,12 @@
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 Start a new knowledge branch, `flow/playbooks-draft`, from `origin/main`. Check `git status` first. The local `flow/game
-- [ ] S2 Edit the front matter of `entries/eng/playbook/server-time.md`, `entries/eng/playbook/remote-config.md` and `entries/eng
-- [ ] S3 Add one last Pitfalls bullet to `server-time.md` and `remote-config.md`, worded like the existing game-configs line:
-- [ ] S4 Run `npm run check` in `knowledge/`. Expected: "All checks passed." and 0 errors.
-- [ ] S5 Commit with the subject `playbooks: server-time, remote-config, game-configs back to draft until their device checks`. P
-- [ ] S6 Get a judge PASS on the exact tree before the merge.
-- [ ] S7 Deliver: merge the knowledge PR. Use a merge commit, not a squash.
+- [x] S1 Start a new knowledge branch, `flow/playbooks-draft`, from `origin/main`. Check `git status` first. The local `flow/game
+- [x] S2 Edit the front matter of `entries/eng/playbook/server-time.md`, `entries/eng/playbook/remote-config.md` and `entries/eng
+- [x] S3 Add one last Pitfalls bullet to `server-time.md` and `remote-config.md`, worded like the existing game-configs line:
+- [x] S4 Run `npm run check` in `knowledge/`. Expected: "All checks passed." and 0 errors.
+- [x] S5 Commit with the subject `playbooks: server-time, remote-config, game-configs back to draft until their device checks`. P
+- [x] S6 Get a judge PASS on the exact tree before the merge.
+- [x] S7 Deliver: merge the knowledge PR. Use a merge commit, not a squash.
+## Outcome
+2026-11-06T09:32:48.896Z — ok: knowledge: flow/playbooks-draft, 3 commits since the review base, PR #238 MERGED https://github.com/iecgames/knowledge/pull/238
