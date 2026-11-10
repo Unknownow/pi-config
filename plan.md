@@ -220,20 +220,46 @@ Command (fast, under a minute): `cd pi/agent/extensions/workflow && node --exper
 
 Delivery: one pull request with both commits, merged after the judge passes.
 
+## Amendment 1 (arbiter)
+**S9a.** `index.ts` `midFlowMergeRefusal` (and the same open-step filter in `request_merge`'s position text, so the two agree):
+- **What to change:** at the end of the flow (unstaged, or `staged.current === staged.stages.length`), build `openSteps` without the open steps that can only run after the final merge:
+  - a `Deliver:` step that is not a merge (`parseDeliverStep(plan, id) !== null && !isMergeDeliver(plan, id)`);
+  - a `Publish:` step (`parsePublishStep`, `registry-publish.ts:15`);
+  - a `Mirror:` step (`parseMirrorStep`, `registry-publish.ts:24`).
+- **Keep:**
+  - Open work steps and `Wait:` steps still block.
+  - Before the last stage, nothing changes.
+- **Why:** these steps act on the merged code, so they can't be ticked before the merge.
+- **Behaviour:**
+  - Last stage, only `Deliver: tag v1` open → the merge is allowed.
+  - Last stage, `S4` (a work step) and `Deliver: tag v1` open → refused, naming only `S4`.
+  - Stage 1 of 3 → refused as before.
+- **Do it in a pure helper:** `afterMergeStep(plan: string, id: string): boolean` in `checkpoints.ts`. It returns true for a non-merge `Deliver:`, a `Publish:` or a `Mirror:` step. `midFlowMergeRefusal` filters with it.
+
+**S9b.** `index.ts` `stageDone`:
+- **What to change:** when `mergeDue()` holds and every open step passes `afterMergeStep`, merge first. Keep the nudge's "Open steps … finish them" line, but put the unmerged-PR line ("merge the pull request") before it.
+- **Why:** the executor should merge first, then run the tag, publish or mirror steps.
+- **Behaviour:** with only after-merge steps open, the nudge lists the merge before those steps.
+
+**Tests:**
+- `checkpoints.test.ts`: `afterMergeStep` is true for `Deliver: tag v1`, `Publish: pkg` and `Mirror: all`. It is false for `Deliver: merge — x`, `Wait: … (check: …)` and a plain work step.
+- `merge-gate.test.ts`: no change. The filtering happens before `midFlowMergeProblem`, so its contract stays the same.
+- Command: `cd pi/agent/extensions/workflow && node --experimental-strip-types --test *.test.ts`. Expected: all pass.
+
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 `prompts.ts:41-47` `planPhase`: remove the `staging` parameter and the `onRequest` branch. Always use the `STAGE_WHEN` a
-- [ ] S2 `prompts.ts:39` `CHECKPOINTS`: replace "to publish and then continue the same change; use a stage for a separate part" w
-- [ ] S3 `prompts.ts:121`, the execute delivery bullet:
-- [ ] S4 `stages.ts:72-82`. `stageStart`:
-- [ ] S5 `index.ts:2472`, the judge tool's PASS hint: use `midFlowMergeRefusal()` (S9).
-- [ ] S6 `index.ts:3538-3580`, the `stageDone` / `unmergedRepos` reminder:
-- [ ] S7 `config.ts:39,99,186,299`: remove `StagedPlans` and `stagedPlans`; a leftover key in `workflow.json` is ignored. Remove 
-- [ ] S8 Add `isMergeDeliver(plan, id)`, `deliverMergeOpen(plan, checklist, stage)` (scoped like `deliverHintsBlock`, `checkpoint
-- [ ] S9 In `merge-gate.ts`, add `midFlowMergeProblem` (Design). In `index.ts`, add `midFlowMergeRefusal(): string | null`. It co
-- [ ] S10 `git-guard.ts`:
-- [ ] S11 Add `parseMergeArbiter(text)` in `agent-end.ts`, modelled on `parseArbiter` (`agent-end.ts:225`). It returns `{ decision
-- [ ] S12 `README.md`:
-- [ ] S13 `docs/workflow-improvements.md`:
+- [x] S1 `prompts.ts:41-47` `planPhase`: remove the `staging` parameter and the `onRequest` branch. Always use the `STAGE_WHEN` a
+- [x] S2 `prompts.ts:39` `CHECKPOINTS`: replace "to publish and then continue the same change; use a stage for a separate part" w
+- [x] S3 `prompts.ts:121`, the execute delivery bullet:
+- [x] S4 `stages.ts:72-82`. `stageStart`:
+- [x] S5 `index.ts:2472`, the judge tool's PASS hint: use `midFlowMergeRefusal()` (S9).
+- [x] S6 `index.ts:3538-3580`, the `stageDone` / `unmergedRepos` reminder:
+- [x] S7 `config.ts:39,99,186,299`: remove `StagedPlans` and `stagedPlans`; a leftover key in `workflow.json` is ignored. Remove 
+- [x] S8 Add `isMergeDeliver(plan, id)`, `deliverMergeOpen(plan, checklist, stage)` (scoped like `deliverHintsBlock`, `checkpoint
+- [x] S9 In `merge-gate.ts`, add `midFlowMergeProblem` (Design). In `index.ts`, add `midFlowMergeRefusal(): string | null`. It co
+- [x] S10 `git-guard.ts`:
+- [x] S11 Add `parseMergeArbiter(text)` in `agent-end.ts`, modelled on `parseArbiter` (`agent-end.ts:225`). It returns `{ decision
+- [x] S12 `README.md`:
+- [x] S13 `docs/workflow-improvements.md`:
 ## For you after the flow
 - S14 Verify: in a real staged flow (or the next one you run), check that stage 1 ends with a push and no PR merge, and that t
