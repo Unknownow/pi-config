@@ -4,7 +4,7 @@ import { test } from "node:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { forkBase, mergedInStage, baseFromTree, defaultRunner, gateCheck, recordJudged, gateProblem, mergedBase, noMerge, type Runner } from "./merge-gate.ts";
+import { forkBase, unpushedReason, mergedInStage, baseFromTree, defaultRunner, gateCheck, recordJudged, gateProblem, mergedBase, noMerge, type Runner } from "./merge-gate.ts";
 
 test("gateProblem: a passed tree is allowed", () => {
 	assert.equal(gateProblem("merge", { noMerge: false, passedTrees: ["t1", "t2"], tree: "t2", what: "merging" }), null);
@@ -224,4 +224,11 @@ test("recordJudged: a protected push of a passed tree that is on the remote is r
 	assert.deepEqual(r.entry, { commit: "c1", tree: "T" });
 	const local = stub({ branch: "main", trees: { HEAD: "c1", "HEAD^{tree}": "T" } });
 	assert.equal((await recordJudged(local, ".", { startBranch: "main", report: "", passed: ["T"], protectedBranches: ["main"] })).entry, undefined);
+});
+
+test("unpushedReason: dirty, no upstream, ahead, or pushed", () => {
+	assert.equal(unpushedReason({ dirty: true, hasUpstream: true, ahead: 0 }), "dirty");
+	assert.equal(unpushedReason({ dirty: false, hasUpstream: false, ahead: 0 }), "no upstream");
+	assert.equal(unpushedReason({ dirty: false, hasUpstream: true, ahead: 2 }), "ahead");
+	assert.equal(unpushedReason({ dirty: false, hasUpstream: true, ahead: 0 }), null);
 });

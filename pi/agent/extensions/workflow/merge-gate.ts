@@ -150,3 +150,11 @@ export async function recordJudged(
 	}
 	return { pr };
 }
+
+/** Why a changed repo's work is not pushed yet: uncommitted changes, no upstream branch, or commits ahead of it. Null when pushed. */
+export function unpushedReason(f: { dirty: boolean; hasUpstream: boolean; ahead: number }): "dirty" | "no upstream" | "ahead" | null {
+	if (f.dirty) return "dirty";
+	if (!f.hasUpstream) return "no upstream";
+	if (f.ahead > 0) return "ahead";
+	return null;
+}

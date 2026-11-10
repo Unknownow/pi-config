@@ -36,7 +36,6 @@ export interface DeliveryConfig {
 }
 
 /** "auto": the planner proposes stages itself when the work warrants them; "onRequest": only when the user asks for delivery in parts. */
-export type StagedPlans = "auto" | "onRequest";
 
 /** Desktop notifications when a session needs the user. */
 export interface NotifyConfig {
@@ -96,7 +95,6 @@ export interface WorkflowConfig {
 	/** The agent resolves waits itself (approves with a comment, acts when a non-interactive command may) and the workflow skips its routine menus; see README "Autopilot". */
 	autopilot: boolean;
 	/** When the planner splits a plan into stages, each executed, judged and delivered on its own. */
-	stagedPlans: StagedPlans;
 	/** Staged plans: "auto" starts the next stage at once, even after an incomplete delivery or a stage with no changes; "ask" asks you first. */
 	stageAdvance: "auto" | "ask";
 	/** Amendments the arbiter may add to the plan in one flow before it asks you instead. */
@@ -183,7 +181,6 @@ export const DEFAULTS: WorkflowConfig = {
 	returnTo: "discuss",
 	planFlaw: "ask",
 	autopilot: false,
-	stagedPlans: "auto",
 	stageAdvance: "auto",
 	maxPlanRevisions: 2,
 	delivery: { splitCommits: true, mergeMethod: "merge", deleteBranch: true, base: "", branchPrefix: "flow/" },
@@ -296,7 +293,6 @@ function parseConfig(file: string): Loaded {
 		if (!isObject(config.notify)) config.notify = DEFAULTS.notify;
 		if (typeof config.notify.enabled !== "boolean") config.notify.enabled = DEFAULTS.notify.enabled;
 		if (typeof config.notify.idleMs !== "number" || !Number.isFinite(config.notify.idleMs) || config.notify.idleMs <= 0) config.notify.idleMs = DEFAULTS.notify.idleMs;
-		if (config.stagedPlans !== "auto" && config.stagedPlans !== "onRequest") config.stagedPlans = DEFAULTS.stagedPlans;
 		if (config.stageAdvance !== "auto" && config.stageAdvance !== "ask") config.stageAdvance = DEFAULTS.stageAdvance;
 		if (!isObject(config.quick)) config.quick = { ...DEFAULTS.quick };
 		for (const k of ["maxJudgeRounds", "maxMinorRounds"] as const) if (typeof config.quick[k] !== "number" || !Number.isInteger(config.quick[k]) || config.quick[k] < 0) config.quick[k] = DEFAULTS.quick[k];

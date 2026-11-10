@@ -45,12 +45,13 @@ test("stageStart and nextStage", () => {
 	assert.ok(t.includes("Do stage 2 only"));
 	assert.ok(t.includes('"B"'));
 	assert.ok(t.includes("call `judge`"));
-	assert.ok(t.includes("deliver the stage yourself") && t.includes("merge"));
+	assert.ok(t.includes("merge it") && !t.includes("pull request, merge"));
+	assert.ok(stageStart(s, 1).includes("commit and push") && stageStart(s, 1).includes("end of the flow") && !stageStart(s, 1).includes("pull request, merge"));
 	assert.ok(!t.includes("once the judge has passed"));
 	assert.ok(!t.includes("the workflow delivers"));
 	assert.ok(t.includes("This is the last stage."));
 	assert.ok(!stageStart(s, 1).includes("last stage"));
-	assert.ok(nextStage(s, 2, "committed").startsWith('Stage 1 ("A") is delivered: committed'));
+	assert.ok(nextStage(s, 2, "committed").startsWith('Stage 1 ("A") is committed and pushed: committed'));
 });
 
 test("stageNote", () => {

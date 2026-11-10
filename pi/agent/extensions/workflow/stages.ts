@@ -71,14 +71,16 @@ export function planWaitProblems(plan: string, isReadOnly: (c: string) => string
 /** The instruction to do stage `current` only, then hand over. */
 export function stageStart(stages: PlanStage[], current: number): string {
 	const s = stages[current - 1];
-	const rest = current < stages.length ? " The workflow then sends you the next stage." : " This is the last stage.";
-	return `This plan has ${stages.length} stages. Do stage ${current} only: "${s.title}". Don't start a later stage. When it is done, run its tests and call \`judge\`. Once it passes, deliver the stage yourself as the plan says (commit, push, pull request, merge), tick its steps and end your turn.${rest}`;
+	const last = current < stages.length
+		? " Once it passes, commit and push the stage (no merge: the pull request is merged at the end of the flow or at a planned `Deliver: merge` step), tick its steps and end your turn. The workflow then sends you the next stage."
+		: " This is the last stage. Once it passes, tick the steps, commit, push, open or update the pull request and merge it.";
+	return `This plan has ${stages.length} stages. Do stage ${current} only: "${s.title}". Don't start a later stage. When it is done, run its tests and call \`judge\`. ${last}`;
 }
 
 /** The message that starts stage `current` after the previous one was delivered. */
 export function nextStage(stages: PlanStage[], current: number, outcome: string): string {
 	const prev = stages[current - 2];
-	return `Stage ${current - 1} ("${prev.title}") is delivered: ${outcome}.\n\nCheck \`git status\` and the current branch before you change anything. ${stageStart(stages, current)}`;
+	return `Stage ${current - 1} ("${prev.title}") is committed and pushed: ${outcome}.\n\nCheck \`git status\` and the current branch before you change anything. ${stageStart(stages, current)}`;
 }
 
 /** One line for the executor's system prompt while a staged plan runs. */

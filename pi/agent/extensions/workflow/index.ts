@@ -54,7 +54,7 @@ import { pathCompletions } from "./pickers.ts";
 import { ghCandidates, withPathDir } from "./gh-path.ts";
 import { citeNames, collectRepoDiff as collectRepoDiffImpl, needsFinalFullReview, shouldSkipRepeatFullReview, type RepoDiff } from "./repo-diff.ts";
 import { GIT_GUARD_ENV, type GitGuardSpec } from "./git-guard.ts";
-import { forkBase, mergedInStage, baseFromTree, defaultRunner, recordJudged, gateCheck, mergedBase, noMerge } from "./merge-gate.ts";
+import { forkBase, unpushedReason, mergedInStage, baseFromTree, defaultRunner, recordJudged, gateCheck, mergedBase, noMerge } from "./merge-gate.ts";
 import { combineRepoTexts, followFolders, parseAddDir, parseWorktreeList, repoKey, uniqueRoots } from "../shared/repos.ts";
 import { askFolderAdd } from "./folder-add.ts";
 import { codePublishProblem, registryPublishCodeProblem, registryPublishProblem, shellProblem } from "./push-guard.ts";
@@ -2470,7 +2470,9 @@ export default function workflow(pi: ExtensionAPI) {
 			if (r.verdict === "FAIL") state.judgeRounds++;
 			let text = r.text;
 			if (r.verdict === "PASS" && state.phase === "execute" && !hasPlanFlaw(r.text) && !noMerge(state.approvedPlan ?? "") && (await flowHasRemote(ctx))) {
-				text += "\n\nNow deliver this exact tree: commit, push, open or update the pull request and merge it with gh pr merge (as its own command), then end your turn.";
+				text += mergeDue()
+					? "\n\nTick the finished steps with plan_check. Now deliver this exact tree: commit, push, open or update the pull request and merge it with gh pr merge (as its own command), then end your turn."
+					: "\n\nNow commit and push this exact tree to the flow branch (no merge: the pull request is merged at the end of the flow), tick the finished steps with plan_check, then end your turn.";
 			}
 			if (r.verdict === "PASS") {
 				const knowledge = state.lastKnowledge?.hash === diff.hash ? state.lastKnowledge : undefined;
@@ -2650,7 +2652,6 @@ export default function workflow(pi: ExtensionAPI) {
 		const phaseText = prompts.phaseSection(state.phase, {
 			quick: state.profile === "quick",
 			publish: canPublish,
-			staging: cfg.stagedPlans,
 			stage: staged ? stageLine(staged.stages, staged.current) : undefined,
 			delivery: state.phase === "execute" ? prompts.deliveryGuidance(cfg.delivery) + (noMerge(state.approvedPlan ?? "") ? "\n- This plan says Delivery: no merge: do not merge, push to a protected branch or publish; commit, push your branch and open the pull request, then stop there." : "") : undefined,
 		});
@@ -3528,6 +3529,27 @@ export default function workflow(pi: ExtensionAPI) {
 		return parts.join("; ");
 	}
 
+	/** Whether a merge is due at this point of the flow: the plan is not staged or this is its last stage. */
+	function mergeDue(): boolean {
+		const staged = currentStages();
+		return !staged || staged.current >= staged.stages.length;
+	}
+
+	/** The changed repos of a passed diff with a remote whose work is not pushed yet, by folder name, with the reason. */
+	async function unpushedRepos(diff: Diff): Promise<string[]> {
+		const out: string[] = [];
+		for (const ref of diff.repos.filter((r) => r.changed)) {
+			if (!(await git(ref.dir, "remote")).stdout.trim()) continue;
+			const dirty = (await git(ref.dir, "status", "--porcelain")).stdout.trim() !== "";
+			const up = await git(ref.dir, "rev-parse", "--abbrev-ref", "@{u}");
+			const hasUpstream = up.code === 0;
+			const ahead = hasUpstream ? Number((await git(ref.dir, "rev-list", "--count", "@{u}..HEAD")).stdout.trim()) || 0 : 0;
+			const why = unpushedReason({ dirty, hasUpstream, ahead });
+			if (why) out.push(`${path.basename(ref.root)} (${why})`);
+		}
+		return out;
+	}
+
 	/** Whether some repo of the flow has a remote, so a pull request can be merged. */
 	async function flowHasRemote(ctx: ExtensionContext): Promise<boolean> {
 		const remotes = await Promise.all((await flowRepos(ctx)).map((r) => git(r.dir, "remote")));
@@ -3570,12 +3592,15 @@ export default function workflow(pi: ExtensionAPI) {
 			return;
 		}
 		const open = (state.checklist ?? []).filter((i) => !isHuman(i) && !i.done && (!staged || i.stage === undefined || i.stage === staged.current));
-		const unmerged = await unmergedRepos(diff);
-		if (stageEndAction({ openSteps: open.length + (unmerged.length ? 1 : 0), nudgedFor: state.stageNudgedFor, hash }) === "nudge") {
+		const due = mergeDue();
+		const unmerged = due ? await unmergedRepos(diff) : [];
+		const unpushed = due || noMerge(state.approvedPlan ?? "") ? [] : await unpushedRepos(diff);
+		if (stageEndAction({ openSteps: open.length + (unmerged.length || unpushed.length ? 1 : 0), nudgedFor: state.stageNudgedFor, hash }) === "nudge") {
 			state.stageNudgedFor = hash;
 			persist();
 			const lines: string[] = [];
 			if (open.length) lines.push(`Open steps ${open.map((i) => i.id).join(", ")}: finish them (merge, publish), tick them with plan_check, then end your turn.`);
+			if (unpushed.length) lines.push(`The judge passed: commit and push ${unpushed.join(", ")}, then end your turn.`);
 			if (unmerged.length) lines.push(`The judge passed: merge the pull request (gh pr merge, as its own command)${unmerged.length > 1 || diff.multi ? ` in ${unmerged.join(", ")}` : ""}, then end your turn.`);
 			handover("workflow-open-steps", lines.join("\n"));
 			return;
