@@ -2492,6 +2492,8 @@ export default function workflow(pi: ExtensionAPI) {
 						decided = parseMergeArbiter(result.text);
 						view.finish(run, true, decided?.decision ?? "no decision");
 					}
+				} catch (e) {
+					ctx.ui.notify(`workflow: merge arbiter failed: ${String(e)}`, "error");
 				} finally {
 					ctx.ui.setWorkingMessage();
 				}
@@ -3289,12 +3291,12 @@ export default function workflow(pi: ExtensionAPI) {
 		state.minorRounds = 0;
 		state.minorSentFor = undefined;
 		const decided = mergeDecisionsText(state.approvedPlan);
-		if (decided) outcome = { ...outcome, text: `${outcome.text}; ${decided}` };
+		const finalText = decided ? `${final.text}; ${decided}` : final.text;
 		state.planFlaw = undefined;
 		state.stage = undefined;
 		state.stageOutcomes = undefined;
 		view.stage = "execute";
-		if (!summarizeFlow(final.text, final.ok)) persist();
+		if (!summarizeFlow(finalText, final.ok)) persist();
 		await endFlow(ctx);
 	}
 
@@ -3739,6 +3741,8 @@ export default function workflow(pi: ExtensionAPI) {
 			}
 			outcome = stagesOutcome(state.stageOutcomes, staged.stages.length);
 		}
+		const decided = mergeDecisionsText(state.approvedPlan);
+		if (decided) outcome = { ...outcome, text: `${outcome.text}; ${decided}` };
 		state.planFlaw = undefined;
 		state.stage = undefined;
 		state.stageOutcomes = undefined;
