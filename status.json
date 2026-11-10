@@ -1,8 +1,8 @@
 {
   "v": 1,
   "flowId": "20261111-0224-quiet-tools-mode-hide-finished-tool-rows-ac44",
-  "rev": 2,
-  "updated": "2026-11-10T19:27:33.948Z",
+  "rev": 3,
+  "updated": "2026-11-10T19:28:24.071Z",
   "title": "Quiet tools mode: hide finished tool rows with a shortcut",
   "done": [
     "S1",
@@ -10,12 +10,28 @@
     "S3",
     "S4"
   ],
+  "finished": {
+    "at": "2026-11-10T19:28:23.948Z",
+    "ok": true,
+    "text": "master, 3 commits since the review base, PR #34 MERGED https://github.com/Unknownow/pi-config/pull/34 · 1 human check(s) for you (see the card)"
+  },
   "reviewBase": {
-    "d:/works/pi-config": "36c2b808edbbca35f791782ca050379f8dff6c6f"
+    "d:/works/pi-config": "80ef6546536fcf329814fb14ef723059f376684f"
+  },
+  "passedTrees": {
+    "d:/works/pi-config": [
+      "2e3f76ce7e386f5343a5a1ca37ea3b3d7db7c657"
+    ]
+  },
+  "judgedMerges": {
+    "d:/works/pi-config": {
+      "pr": "34",
+      "tree": "2e3f76ce7e386f5343a5a1ca37ea3b3d7db7c657"
+    }
   },
   "repos": [
     {
-      "branch": "flow/quiet-tools",
+      "branch": "master",
       "remote": "github.com/Unknownow/pi-config",
       "primary": true
     }

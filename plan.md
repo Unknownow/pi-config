@@ -190,3 +190,5 @@ One commit: `quiet-tools: alt+o hides finished tool rows`, with `pi/agent/extens
 - [x] S4 In the root `README.md:66`, add `quiet-tools` to the extensions list: "`quiet-tools`: `alt+o` / `/quiet` hides finished 
 ## For you after the flow
 - S5 Verify: restart pi so the sync extension mirrors `quiet-tools` into `~/.pi/agent/extensions`, then ask for something tha
+## Outcome
+2026-11-10T19:28:23.948Z — ok: master, 3 commits since the review base, PR #34 MERGED https://github.com/Unknownow/pi-config/pull/34 · 1 human check(s) for you (see the card)
