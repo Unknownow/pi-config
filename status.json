@@ -1,17 +1,31 @@
 {
   "v": 1,
   "flowId": "20261111-0322-orchestrate-extension-where-one-orchestr-f007",
-  "rev": 1,
-  "updated": "2026-11-10T20:22:56.542Z",
+  "rev": 2,
+  "updated": "2026-11-10T20:32:24.193Z",
   "title": "orchestrate extension, where one orchestrator session runs 2–4 workflow sub-sessions in wt worktrees",
-  "stage": 1,
-  "done": [],
+  "stage": 2,
+  "done": [
+    "S1",
+    "S2",
+    "S3",
+    "S4",
+    "S5",
+    "S6",
+    "S7",
+    "S8"
+  ],
   "reviewBase": {
-    "d:/works/pi-config": "d7835b491e41f131470516fa9e41934bbb7285a7"
+    "d:/works/pi-config": "dcaa370041fd5615b8322fb0e03fd862bd2e1e65"
+  },
+  "passedTrees": {
+    "d:/works/pi-config": [
+      "8a717b45a70c5ade0fa88c24872391c2e65073e6"
+    ]
   },
   "repos": [
     {
-      "branch": "master",
+      "branch": "flow/orchestrate-hooks",
       "remote": "github.com/Unknownow/pi-config",
       "primary": true
     }

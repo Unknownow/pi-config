@@ -397,14 +397,14 @@ New or changed tests:
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 Create `shared/claims.ts`: `gatherClaims(emit: (data: unknown) => void, data: object, timeoutMs: number): Promise<unknow
-- [ ] S2 In workflow `emitStatus` (`index.ts:457-472`), add `done`, `total` and `waiting`, taken from the same counts as `view.pr
-- [ ] S3 Add workflow K9: register a `pi.events.on("workflow:start-plan")` listener once in the extension factory, using `lastCtx
-- [ ] S4 Add workflow K10 in the agent_end plan branch (`index.ts:3145-3156`), after `blocked` is computed and before the `cfg.pl
-- [ ] S5 Add workflow K11:
-- [ ] S6 Workflow docs and boundary test:
-- [ ] S7 Add worktree W1:
-- [ ] S8 Backlog, in the same commit as S2–S6 (required by AGENTS.md):
+- [x] S1 Create `shared/claims.ts`: `gatherClaims(emit: (data: unknown) => void, data: object, timeoutMs: number): Promise<unknow
+- [x] S2 In workflow `emitStatus` (`index.ts:457-472`), add `done`, `total` and `waiting`, taken from the same counts as `view.pr
+- [x] S3 Add workflow K9: register a `pi.events.on("workflow:start-plan")` listener once in the extension factory, using `lastCtx
+- [x] S4 Add workflow K10 in the agent_end plan branch (`index.ts:3145-3156`), after `blocked` is computed and before the `cfg.pl
+- [x] S5 Add workflow K11:
+- [x] S6 Workflow docs and boundary test:
+- [x] S7 Add worktree W1:
+- [x] S8 Backlog, in the same commit as S2–S6 (required by AGENTS.md):
 - [ ] S9 Add `orchestrate/config.ts`: `loadConfig()` reads `<agentDir>/orchestrate.json` with the defaults above and validates in
 - [ ] S10 Add `orchestrate/paths.ts`: `globToRegExp(glob)` (supports ``, `*`, `?`, forward slashes, case-insensitive) and `outside
 - [ ] S11 Add `orchestrate/brief.ts`:
