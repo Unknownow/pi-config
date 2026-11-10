@@ -80,3 +80,36 @@ test("publishRefusal never sends the executor to the user", () => {
 	assert.equal(publishRefusal("git push --force is never allowed"), "Refused: git push --force is never allowed.");
 	assert.doesNotMatch(publishRefusal("x"), /user/i);
 });
+
+import { deliverMergeOpen, isMergeDeliver, mergeAmendment, mergeDecisions, mergeDecisionsText } from "./checkpoints.ts";
+
+test("deliverMergeOpen: scoped to the stage, ignores ticked, tag and no-merge steps", () => {
+	const plan = "**S1.** Deliver: merge — core\n**S2.** Deliver: tag v1\n**S3.** Deliver: push — no merge\n**S4.** Deliver: merge — ui";
+	assert.equal(isMergeDeliver(plan, "S1"), true);
+	assert.equal(isMergeDeliver(plan, "S2"), false);
+	assert.equal(isMergeDeliver(plan, "S3"), false);
+	const list = [
+		{ id: "S1", text: "Deliver: merge — core", done: false, stage: 1 },
+		{ id: "S2", text: "Deliver: tag v1", done: false, stage: 1 },
+		{ id: "S3", text: "Deliver: push — no merge", done: false, stage: 1 },
+		{ id: "S4", text: "Deliver: merge — ui", done: false, stage: 2 },
+	];
+	assert.equal(deliverMergeOpen(plan, list, 1), true);
+	assert.equal(deliverMergeOpen(plan, list, 2), true);
+	assert.equal(deliverMergeOpen(plan, list, 3), false);
+	assert.equal(deliverMergeOpen(plan, [{ ...list[0], done: true }, list[1], list[2]], 1), false);
+	assert.equal(deliverMergeOpen(plan, list.slice(1, 3), undefined), false);
+});
+
+test("mergeDecisions reads amendments and round-trips mergeAmendment", () => {
+	const plan = `## Plan: X\n\n${mergeAmendment(1, { by: "arbiter", allowed: true, stage: 2, reason: "S5 publishes\nthe code" })}\n\n${mergeAmendment(2, { by: "user", allowed: false, stage: 0, reason: "not needed" })}`;
+	assert.deepEqual(mergeDecisions(plan), [
+		{ allowed: true, by: "arbiter", stage: 2, reason: "S5 publishes the code" },
+		{ allowed: false, by: "user", stage: 0, reason: "not needed" },
+	]);
+	assert.ok(plan.includes("## Amendment 1 (arbiter: merge)\nMerge allowed in stage 2:"));
+	assert.ok(plan.includes("(user: no merge)\nMerge refused in this flow:"));
+	assert.equal(mergeDecisionsText(plan), "mid-flow merge allowed by arbiter (stage 2): S5 publishes the code; mid-flow merge refused by user (whole flow): not needed");
+	assert.deepEqual(mergeDecisions(undefined), []);
+	assert.equal(mergeDecisionsText("no amendments"), "");
+});

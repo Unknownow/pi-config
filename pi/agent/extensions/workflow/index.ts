@@ -45,7 +45,7 @@ import {
 	type WorkflowConfig,
 } from "./config.ts";
 import { describeRole, parseRoleSpec, pickRoleSpec, roleCompletions, type Thinking } from "../shared/roles.ts";
-import { judgeAddenda, profileRole, nextProfile, handoverAction, handoverKind, preFlowModelAction, gitTaskAllowed, migrateSavedState, afterPass, noChangeStage, arbiterFirst, fixableFindings, canApprove, approvalBlock, addPlanReply, composePlan, type PlanDraft, hasPlanFlaw, planFlawLines, planFlawOnPass,  judgeCapReached, minorFixOpen, passPending, stageEndAction, parseArbiter, phaseAfterFlow, shouldResume, skipJudge } from "./agent-end.ts";
+import { judgeAddenda, profileRole, nextProfile, handoverAction, handoverKind, preFlowModelAction, gitTaskAllowed, migrateSavedState, afterPass, noChangeStage, arbiterFirst, fixableFindings, canApprove, approvalBlock, addPlanReply, composePlan, type PlanDraft, hasPlanFlaw, planFlawLines, planFlawOnPass,  judgeCapReached, minorFixOpen, passPending, stageEndAction, parseArbiter, parseMergeArbiter, phaseAfterFlow, shouldResume, skipJudge } from "./agent-end.ts";
 import { countTokens, fmtTok, type Tok } from "../shared/tokens.ts";
 import { idleReason, notifyCommand, notifyDue } from "./notify.ts";
 import * as prompts from "./prompts.ts";
@@ -54,7 +54,7 @@ import { pathCompletions } from "./pickers.ts";
 import { ghCandidates, withPathDir } from "./gh-path.ts";
 import { citeNames, collectRepoDiff as collectRepoDiffImpl, needsFinalFullReview, shouldSkipRepeatFullReview, type RepoDiff } from "./repo-diff.ts";
 import { GIT_GUARD_ENV, type GitGuardSpec } from "./git-guard.ts";
-import { forkBase, unpushedReason, mergedInStage, baseFromTree, defaultRunner, recordJudged, gateCheck, mergedBase, noMerge } from "./merge-gate.ts";
+import { forkBase, midFlowMergeProblem, unpushedReason, mergedInStage, baseFromTree, defaultRunner, recordJudged, gateCheck, mergedBase, noMerge } from "./merge-gate.ts";
 import { combineRepoTexts, followFolders, parseAddDir, parseWorktreeList, repoKey, uniqueRoots } from "../shared/repos.ts";
 import { askFolderAdd } from "./folder-add.ts";
 import { codePublishProblem, registryPublishCodeProblem, registryPublishProblem, shellProblem } from "./push-guard.ts";
@@ -64,7 +64,7 @@ import { addToRegistry, type BoardEntry, boardLines, boardRows, detailLines, liv
 import { adoptHigher, claimLive, commitRef, dropClaim, pidAlive, readClaim, writeClaim, deleteLocal, deleteRef, deleteReviewRef, fetchMirror, type Git, listRefs, plansDir, pushRef, readLocalStatuses, readPlanMd, refRev, remoteOf, repoInfo, type RefEntry, sweepReviewRefs, writeLocal, writeReviewRef } from "./plan-store.ts";
 import { type FlowFinding, recordFindings, reportFindings, type ReportStep } from "./flow-report.ts";
 import { readOnlyProblem } from "../shared/readonly-bash.ts";
-import { checkpointAmendment, checkpointNote, checkpointOutcome, deliverHint, deliverHintsBlock, deliverStepSpec, hasCheckpointAmendment, checkpointText, isPlannedTag, parseDeliverStep, publishRefusal, withCheckpoints } from "./checkpoints.ts";
+import { deliverMergeOpen, mergeAmendment, mergeDecisions, mergeDecisionsText, checkpointAmendment, checkpointNote, checkpointOutcome, deliverHint, deliverHintsBlock, deliverStepSpec, hasCheckpointAmendment, checkpointText, isPlannedTag, parseDeliverStep, publishRefusal, withCheckpoints } from "./checkpoints.ts";
 import { pushArgs, tagDecision } from "./tags.ts";
 import { type CheckVerdict, autopilotAmendment, autopilotReply, checkTitle, checkVerdict, cleanCheck, waitCheckProblem, type HumanCheck, humanChecks, parseVerifyStep, parseWaitStep, pollDecision, resumePrefix, verifyAmendment, waitAmendment } from "./waits.ts";
 import { nextStage, parseStages, planWaitProblems, stageLine, stageNote, stageStart, stagesOutcome } from "./stages.ts";
@@ -2247,7 +2247,7 @@ export default function workflow(pi: ExtensionAPI) {
 				protectedBranches: cfg.protectedBranches,
 				passedTrees: state.passedTrees ?? {},
 				noMerge: noMerge(state.approvedPlan ?? ""),
-				...(allowed.ungated ? { ungated: true } : {}),
+				...(allowed.ungated ? { ungated: true } : (() => { const mf = midFlowMergeRefusal(); return mf ? { midFlow: mf } : {}; })()),
 			};
 			const task = [
 				params.task.trim(),
@@ -2436,6 +2436,85 @@ export default function workflow(pi: ExtensionAPI) {
 		renderCall(args, theme) {
 			const ids = [...((args.done ?? []) as string[]), ...((args.undone ?? []) as string[]).map((s) => `-${s}`)];
 			return new Text(`${title(theme, "plan_check", "execute")}${theme.fg("accent", ` ${ids.join(", ")}`)}`, 0, 0);
+		},
+	});
+
+	pi.registerTool({
+		name: "request_merge",
+		label: "Request merge",
+		description:
+			"Ask to merge the pull request before the end of the flow, only when a later step cannot run until the change is on the default branch. An arbiter decides; when it cannot, the user is asked. A merge that is not planned (a `Deliver: merge` step) or approved this way is refused by the merge gate.",
+		promptSnippet: "request_merge: ask to merge before the end of the flow (arbiter, then the user)",
+		parameters: Type.Object({
+			reason: Type.String({ description: "Which later step needs the change on the default branch, and why" }),
+			repos: Type.Optional(Type.Array(Type.String(), { description: "The repos concerned, by folder" })),
+		}),
+		async execute(_id, params, _signal, _onUpdate, ctx) {
+			const reply = (text: string) => ({ content: [{ type: "text" as const, text }], details: {} });
+			if (state.phase !== "execute") return reply("request_merge works only while a plan executes. Nothing changed.");
+			const reason = String(params.reason ?? "").replace(/\s+/g, " ").trim();
+			if (!reason) return reply("Give the reason: which later step needs the change merged now.");
+			const allowedText = (why: string) => `Merge allowed: ${why}. Run judge if the tree changed since the last pass, merge with gh pr merge as its own command, then continue on a new branch from the updated default branch.`;
+			const refusedText = (why: string) => `No merge: ${why}. Keep committing and pushing to the branch and continue the plan.`;
+			if (midFlowMergeRefusal() === null) return reply(allowedText("the gate already allows a merge here (the end of the flow, a planned Deliver: merge step or an earlier approval)"));
+			const staged = currentStages();
+			const stage = staged?.current ?? 0;
+			const mine = mergeDecisions(state.approvedPlan).filter((d) => d.stage === 0 || d.stage === stage);
+			const userNo = mine.find((d) => !d.allowed && d.by === "user");
+			if (userNo) return reply(refusedText(`the user refused a merge here: ${userNo.reason}`));
+			const arbiterNo = mine.some((d) => !d.allowed && d.by === "arbiter");
+			let decided: ReturnType<typeof parseMergeArbiter> = null;
+			if (!arbiterNo) {
+				ctx.ui.setWorkingMessage("arbiter checking the merge request…");
+				try {
+					const repoLines: string[] = [];
+					for (const r of await flowRepos(ctx)) {
+						const status = (await git(r.dir, "status", "--short")).stdout.trim();
+						const log = (await git(r.dir, "log", "--oneline", "-20")).stdout.trim();
+						repoLines.push(`### ${r.root}\n${status || "(clean)"}\n${log}`);
+					}
+					const open = (state.checklist ?? []).filter((i) => !isHuman(i) && !i.done && (!staged || i.stage === undefined || i.stage === staged.current));
+					const position = staged ? `Stage ${staged.current} of ${staged.stages.length}: ${staged.stages[staged.current - 1].title}` : "No stages";
+					const { result, run } = await runRole("arbiter", "merge", {
+						systemPrompts: [
+							prompts.MERGE_ARBITER,
+							`## Approved plan\n\n${planForJudge()}`,
+							`## Position\n\n${position}\nOpen steps: ${open.map((i) => `${i.id} ${i.text}`).join("; ") || "none"}`,
+							`## Repos\n\n${repoLines.join("\n\n") || "(none)"}`,
+							`## Executor's reason\n\n${reason}`,
+						],
+						tools: cfg.arbiter.tools,
+						task: "Decide on the merge request in your system prompt.",
+						cwd: ctx.cwd,
+					});
+					if (!result.ok) ctx.ui.notify(`workflow: merge arbiter failed: ${result.error}`, "error");
+					else {
+						decided = parseMergeArbiter(result.text);
+						view.finish(run, true, decided?.decision ?? "no decision");
+					}
+				} finally {
+					ctx.ui.setWorkingMessage();
+				}
+			}
+			if (decided && decided.decision !== "ASK_USER") {
+				const allowed = decided.decision === "MERGE";
+				const why = decided.reason || reason;
+				recordMergeDecision(ctx, "arbiter", allowed, why);
+				return reply(allowed ? allowedText(why) : refusedText(why));
+			}
+			if (!ctx.hasUI) return reply("No merge: nobody to ask. Continue without merging; the pull request is merged at the end of the flow.");
+			const seen = decided ? decided.reason : arbiterNo ? "The arbiter already refused a merge in this stage." : "The arbiter gave no decision.";
+			pi.sendMessage({ customType: "workflow-judge", content: `**Merge request before the end of the flow**\n\nThe executor's reason: ${reason}\n\nThe arbiter's view: ${seen || "it hands the decision to you"}`, display: true }, { triggerTurn: false });
+			let answer: string | undefined;
+			try {
+				answer = await askUser(ctx, `Merge before the end of the flow? ${reason}`, ["Allow the merge", "Don't merge"]);
+			} catch {}
+			const allowed = answer === "Allow the merge";
+			recordMergeDecision(ctx, "user", allowed, reason);
+			return reply(allowed ? allowedText(`you allowed it: ${reason}`) : refusedText("the user did not allow it"));
+		},
+		renderCall(args, theme) {
+			return new Text(`${title(theme, "request_merge", "execute")}${theme.fg("accent", ` ${String(args.reason ?? "").slice(0, 80)}`)}`, 0, 0);
 		},
 	});
 
@@ -2690,6 +2769,8 @@ export default function workflow(pi: ExtensionAPI) {
 				const dir = root ?? ctx.cwd;
 				const key = repoKey(root ?? (await gitRoot(ctx.cwd)) ?? ctx.cwd);
 				if (kind === "merge") await ensureGh(ctx).catch(() => false);
+				const early = noMerge(state.approvedPlan ?? "") ? null : midFlowMergeRefusal();
+				if (early) return early;
 				const res = await gateCheck(defaultRunner, kind, dir, target, { passedTrees: state.passedTrees?.[key] ?? [], noMerge: noMerge(state.approvedPlan ?? ""), repo });
 				if (res.problem) return res.problem;
 				if (res.tree) {
@@ -3207,6 +3288,8 @@ export default function workflow(pi: ExtensionAPI) {
 		const final = stagesOutcome(state.stageOutcomes, staged.stages.length);
 		state.minorRounds = 0;
 		state.minorSentFor = undefined;
+		const decided = mergeDecisionsText(state.approvedPlan);
+		if (decided) outcome = { ...outcome, text: `${outcome.text}; ${decided}` };
 		state.planFlaw = undefined;
 		state.stage = undefined;
 		state.stageOutcomes = undefined;
@@ -3529,10 +3612,43 @@ export default function workflow(pi: ExtensionAPI) {
 		return parts.join("; ");
 	}
 
-	/** Whether a merge is due at this point of the flow: the plan is not staged or this is its last stage. */
+	/** Whether a merge is due at this point of the flow: the plan is not staged or this is its last stage, or a merge was planned or approved for this stage. */
 	function mergeDue(): boolean {
 		const staged = currentStages();
-		return !staged || staged.current >= staged.stages.length;
+		return !staged || staged.current >= staged.stages.length || deliverMergeOpen(state.approvedPlan ?? "", state.checklist, staged.current) || mergeApproved();
+	}
+
+	/** Whether the latest merge decision that covers this stage (or the whole flow) allows a merge. */
+	function mergeApproved(): boolean {
+		const stage = currentStages()?.current ?? 0;
+		const mine = mergeDecisions(state.approvedPlan).filter((d) => d.stage === 0 || d.stage === stage);
+		return mine.length > 0 && mine[mine.length - 1].allowed;
+	}
+
+	/** The refusal of a merge or protected push before the end of the flow (the gate's rules), or null when it is allowed. */
+	function midFlowMergeRefusal(): string | null {
+		const staged = currentStages();
+		const open = (state.checklist ?? []).filter((i) => !isHuman(i) && !i.done && (!staged || i.stage === undefined || i.stage === staged.current));
+		return midFlowMergeProblem({
+			staged: !!staged,
+			current: staged?.current,
+			total: staged?.stages.length,
+			openSteps: open.map((i) => i.id),
+			deliverMergeOpen: deliverMergeOpen(state.approvedPlan ?? "", state.checklist, staged?.current),
+			approved: mergeApproved(),
+		});
+	}
+
+	/** Records a merge decision in the approved plan, tells the user in chat and with a notification. */
+	function recordMergeDecision(ctx: ExtensionContext, by: "arbiter" | "user", allowed: boolean, reason: string, shown?: string): void {
+		const stage = currentStages()?.current ?? 0;
+		state.approvedPlan = `${state.approvedPlan ?? ""}\n\n${mergeAmendment(nextAmendmentNumber(), { by, allowed, stage, reason })}`;
+		refreshChecklist();
+		planMilestone(ctx);
+		persist();
+		const head = by === "arbiter" ? `Arbiter: merge ${allowed ? "allowed" : "refused"} before the end of the flow` : `You ${allowed ? "allowed" : "refused"} a merge before the end of the flow`;
+		pi.sendMessage({ customType: "workflow-judge", content: `**${head}**\n\n${shown ?? reason}`, display: true }, { triggerTurn: false });
+		ctx.ui.notify(`workflow: ${head}: ${reason.split("\n")[0]}`, "info");
 	}
 
 	/** The changed repos of a passed diff with a remote whose work is not pushed yet, by folder name, with the reason. */

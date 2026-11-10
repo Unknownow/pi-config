@@ -232,3 +232,20 @@ test("unpushedReason: dirty, no upstream, ahead, or pushed", () => {
 	assert.equal(unpushedReason({ dirty: false, hasUpstream: true, ahead: 2 }), "ahead");
 	assert.equal(unpushedReason({ dirty: false, hasUpstream: true, ahead: 0 }), null);
 });
+
+import { midFlowMergeProblem } from "./merge-gate.ts";
+
+test("midFlowMergeProblem: the end of the flow, a planned merge step or an approval allow it", () => {
+	const base = { staged: false, openSteps: [] as string[], deliverMergeOpen: false, approved: false };
+	assert.equal(midFlowMergeProblem(base), null);
+	assert.equal(midFlowMergeProblem({ staged: true, current: 3, total: 3, openSteps: [], deliverMergeOpen: false, approved: false }), null);
+	assert.equal(midFlowMergeProblem({ staged: true, current: 1, total: 3, openSteps: ["S2"], deliverMergeOpen: true, approved: false }), null);
+	assert.equal(midFlowMergeProblem({ staged: true, current: 1, total: 3, openSteps: ["S2"], deliverMergeOpen: false, approved: true }), null);
+});
+
+test("midFlowMergeProblem: open steps or an earlier stage refuse and point to request_merge", () => {
+	const p = midFlowMergeProblem({ staged: false, openSteps: ["S4", "S5"], deliverMergeOpen: false, approved: false }) ?? "";
+	assert.ok(p.includes("S4, S5") && p.includes("request_merge") && p.includes("plan_check"));
+	const q = midFlowMergeProblem({ staged: true, current: 1, total: 3, openSteps: [], deliverMergeOpen: false, approved: false }) ?? "";
+	assert.ok(q.includes("stage 1 of 3") && q.includes("request_merge"));
+});

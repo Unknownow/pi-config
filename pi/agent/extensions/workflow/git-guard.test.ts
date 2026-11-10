@@ -39,3 +39,10 @@ test("the handler blocks registry publishing, git without settings, and lets oth
 	assert.match((await run("git status"))?.reason ?? "", /settings are missing/);
 	assert.equal(await run("ls"), undefined);
 });
+
+test("parseGuardSpec keeps midFlow as a string, rejects other types, and omits it when absent", () => {
+	const base = { roots: [], protectedBranches: ["main"], passedTrees: {}, noMerge: false };
+	assert.equal(parseGuardSpec(JSON.stringify({ ...base, midFlow: "not planned" }))?.midFlow, "not planned");
+	assert.equal(parseGuardSpec(JSON.stringify({ ...base, midFlow: 3 })), null);
+	assert.equal("midFlow" in (parseGuardSpec(JSON.stringify(base)) ?? {}), false);
+});

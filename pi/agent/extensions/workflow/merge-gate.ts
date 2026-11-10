@@ -158,3 +158,15 @@ export function unpushedReason(f: { dirty: boolean; hasUpstream: boolean; ahead:
 	if (f.ahead > 0) return "ahead";
 	return null;
 }
+
+/**
+ * Whether a merge or a protected push may happen now, before the judge's own gate. Allowed at the end of the flow (unstaged plan or last stage, no open steps),
+ * at a planned `Deliver: merge` step, or after an approved request_merge. Null when allowed, else the refusal.
+ */
+export function midFlowMergeProblem(f: { staged: boolean; current?: number; total?: number; openSteps: string[]; deliverMergeOpen: boolean; approved: boolean }): string | null {
+	if (f.deliverMergeOpen || f.approved) return null;
+	const atEnd = !f.staged || (f.current !== undefined && f.current === f.total);
+	if (atEnd && f.openSteps.length === 0) return null;
+	const where = [f.staged ? `stage ${f.current} of ${f.total}` : "", f.openSteps.length ? `open steps ${f.openSteps.join(", ")}` : ""].filter(Boolean).join(" / ");
+	return `merging before the end of the flow is not planned (${where}): push and continue, the pull request is merged at the end of the flow. Tick finished steps with plan_check; if a later step needs this merged now, call request_merge with the reason`;
+}

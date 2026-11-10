@@ -177,3 +177,11 @@ test("a quick flow gets the scope-card prompt in plan and the quick line in exec
 	assert.ok(!phaseSection("execute", SECTION_OPTS).includes(QUICK_EXECUTE));
 	assert.equal(phaseSection("plan", SECTION_OPTS), planPhase());
 });
+
+test("merge points: the planner lists them, the executor asks request_merge, the arbiter has a decision line", () => {
+	const p = planPhase();
+	assert.ok(p.includes("Merge points") && p.includes("Propose stages yourself") && !p.includes("delivered in parts"));
+	assert.ok(EXECUTE_PHASE.includes("request_merge"));
+	assert.ok(MERGE_ARBITER.includes("DECISION: MERGE | NO_MERGE | ASK_USER"));
+});
+import { MERGE_ARBITER } from "./prompts.ts";
