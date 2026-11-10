@@ -50,12 +50,24 @@ test("toggling back restores", () => {
 	assert.equal(d.renderResult, rr);
 });
 
-test("self-shell tools stay self", () => {
+test("self-shell tools stay self and are hidden in the TUI", () => {
 	for (const q of [true, false]) {
 		const d = quietDefinition(mk({ renderShell: "self" }), () => q, parts, "t") as any;
 		assert.equal(d.renderShell, "self");
 		assert.equal(d.renderShell, "self");
 	}
+	const on = quietDefinition(mk({ renderShell: "self" }), () => true, parts, "t") as any;
+	void on.renderShell;
+	assert.equal(on.renderCall({}, {}, { isPartial: true }), RUN);
+	assert.equal(on.renderCall({}, {}, { isPartial: false }), EMPTY);
+	assert.equal(on.renderResult(), EMPTY);
+	const off = quietDefinition(mk({ renderShell: "self" }), () => false, parts, "t") as any;
+	void off.renderShell;
+	assert.equal(off.renderCall, rc);
+	assert.equal(off.renderResult, rr);
+	const exp = quietDefinition(mk({ renderShell: "self" }), () => true, parts, "t") as any;
+	assert.equal(exp.renderCall, rc);
+	assert.equal(exp.renderResult, rr);
 });
 
 test("summarizeArgs", () => {

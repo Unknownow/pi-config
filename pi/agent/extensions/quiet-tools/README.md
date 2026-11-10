@@ -32,6 +32,12 @@ Paths relative to `@earendil-works/pi-coding-agent/`:
 - `dist/core/export-html/tool-renderer.js`: export calls `renderCall`/`renderResult` and never reads
   `renderShell`; a wrapper whose `renderShell` was never read therefore always delegates.
 
+- Built-in renderers reuse `context.lastComponent` and assume their own type (`core/tools/renderers/grep.js:59`,
+  `read.js:115`, `write.js:133`). Right after quiet mode is turned off, the first `updateDisplay` passes the
+  quiet part as `lastComponent`; it throws, pi falls back and clears it (`tool-execution.js:205-208`), and the
+  second flip of the refresh renders the row correctly. Keep the two-step refresh (flip, flip back).
+- A running tool shows one blank line (pi's self-shell framing) plus the dim line.
+
 The first `renderShell` read of a wrapper must return the base shell, otherwise a row built while quiet
 would stay blank after quiet mode is turned off. Failure mode on a pi change is cosmetic.
 

@@ -24,7 +24,10 @@ export function quietDefinition<D extends object>(base: D, isQuiet: () => boolea
 		renderShell: {
 			enumerable: true,
 			get() {
-				if (b.renderShell === "self") return "self";
+				if (b.renderShell === "self") {
+					tuiRow = true;
+					return "self";
+				}
 				if (!tuiRow) {
 					tuiRow = true;
 					return baseShell;
