@@ -438,6 +438,8 @@ New or changed tests:
 - [x] S16 Add `orchestrate/boundary.test.ts`. It checks that no file imports `../workflow` or `../worktree`; importing `../shared`
 - [x] S17 Add `orchestrate/README.md`:
 - [x] S18 In `docs/workflow-improvements.md`:
-- [ ] S19 Apply to this machine: run `node bin/import.js` from the repo root and check that its output lists the new `extensions/o
+- [x] S19 Apply to this machine: run `node bin/import.js` from the repo root and check that its output lists the new `extensions/o
 ## For you after the flow
 - S20 Verify: in a scratch GitHub repo:
+## Outcome
+2026-11-10T20:47:55.182Z — ok: stage 1: flow/orchestrate-hooks, 2 commits since the review base, PR #35 OPEN https://github.com/Unknownow/pi-config/pull/35; stage 2: flow/orchestrate-hooks, 2 commits since the review base, PR #35 OPEN https://github.com/Unknownow/pi-config/pull/35; stage 3: master, 5 commits since the review base, PR #35 MERGED https://github.com/Unknownow/pi-config/pull/35 · 1 human check(s) for you (see the card)

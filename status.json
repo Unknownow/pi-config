@@ -1,10 +1,9 @@
 {
   "v": 1,
   "flowId": "20261111-0322-orchestrate-extension-where-one-orchestr-f007",
-  "rev": 4,
-  "updated": "2026-11-10T20:44:35.609Z",
+  "rev": 5,
+  "updated": "2026-11-10T20:47:55.298Z",
   "title": "orchestrate extension, where one orchestrator session runs 2–4 workflow sub-sessions in wt worktrees",
-  "stage": 3,
   "done": [
     "S1",
     "S2",
@@ -23,21 +22,36 @@
     "S15",
     "S16",
     "S17",
-    "S18"
+    "S18",
+    "S19"
   ],
+  "finished": {
+    "at": "2026-11-10T20:47:55.182Z",
+    "ok": true,
+    "text": "stage 1: flow/orchestrate-hooks, 2 commits since the review base, PR #35 OPEN https://github.com/Unknownow/pi-config/pull/35; stage 2: flow/orchestrate-hooks, 2 commits since the review base, PR #35 OPEN https://github.com/Unknownow/pi-config/pull/35; stage 3: master, 5 commits since the review base, PR #35 MERGED https://github.com/Unknownow/pi-config/pull/35 · 1 human check(s) for you (see the card)"
+  },
   "reviewBase": {
-    "d:/works/pi-config": "6679229ca28cf5ce08150ab54f8ea35ec7d41828"
+    "d:/works/pi-config": "7e4b3d639cf9958b74ce565de0c009e3b240dbd2"
   },
   "passedTrees": {
     "d:/works/pi-config": [
       "8a717b45a70c5ade0fa88c24872391c2e65073e6",
       "1cc241a1cc861e22011a464ef19c97ce487c001e",
-      "9292e661c30bf91a39e441e3e343bd7b976614f4"
+      "9292e661c30bf91a39e441e3e343bd7b976614f4",
+      "257c9d89b52374be3363aa3c9db0e7a0039b160e",
+      "af7bd842ea2d35146e32ff074f057ddb4e424132"
     ]
+  },
+  "judgedMerges": {
+    "d:/works/pi-config": {
+      "pr": "35",
+      "tree": "af7bd842ea2d35146e32ff074f057ddb4e424132",
+      "stage": 3
+    }
   },
   "repos": [
     {
-      "branch": "flow/orchestrate-hooks",
+      "branch": "master",
       "remote": "github.com/Unknownow/pi-config",
       "primary": true
     }
