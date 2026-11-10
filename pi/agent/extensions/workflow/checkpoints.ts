@@ -1,4 +1,5 @@
 /** Checkpoints: tags created inside a plan, before the end of a stage or flow. Pure text and rules, kept apart so node tests can reach them. */
+import { parseMirrorStep, parsePublishStep } from "./registry-publish.ts";
 
 /** The text after `Deliver:` of plan step `id`, or null when the step is not a Deliver step. */
 export function parseDeliverStep(plan: string, id: string): string | null {
@@ -115,6 +116,12 @@ export function mergeDecisionsText(plan: string | undefined): string {
 	return mergeDecisions(plan)
 		.map((d) => `mid-flow merge ${d.allowed ? "allowed" : "refused"} by ${d.by} (${d.stage ? `stage ${d.stage}` : "whole flow"}): ${d.reason}`)
 		.join("; ");
+}
+
+/** Whether a step can only run after the final merge: a non-merge Deliver step (a tag), a Publish step or a Mirror step. */
+export function afterMergeStep(plan: string, id: string): boolean {
+	if (parseDeliverStep(plan, id) !== null) return !isMergeDeliver(plan, id);
+	return parsePublishStep(plan, id) !== null || parseMirrorStep(plan, id) !== null;
 }
 
 /** The refusal text for a command the executor may not run. */

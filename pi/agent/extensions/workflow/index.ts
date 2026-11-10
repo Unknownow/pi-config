@@ -64,7 +64,7 @@ import { addToRegistry, type BoardEntry, boardLines, boardRows, detailLines, liv
 import { adoptHigher, claimLive, commitRef, dropClaim, pidAlive, readClaim, writeClaim, deleteLocal, deleteRef, deleteReviewRef, fetchMirror, type Git, listRefs, plansDir, pushRef, readLocalStatuses, readPlanMd, refRev, remoteOf, repoInfo, type RefEntry, sweepReviewRefs, writeLocal, writeReviewRef } from "./plan-store.ts";
 import { type FlowFinding, recordFindings, reportFindings, type ReportStep } from "./flow-report.ts";
 import { readOnlyProblem } from "../shared/readonly-bash.ts";
-import { deliverMergeOpen, mergeAmendment, mergeDecisions, mergeDecisionsText, checkpointAmendment, checkpointNote, checkpointOutcome, deliverHint, deliverHintsBlock, deliverStepSpec, hasCheckpointAmendment, checkpointText, isPlannedTag, parseDeliverStep, publishRefusal, withCheckpoints } from "./checkpoints.ts";
+import { afterMergeStep, deliverMergeOpen, mergeAmendment, mergeDecisions, mergeDecisionsText, checkpointAmendment, checkpointNote, checkpointOutcome, deliverHint, deliverHintsBlock, deliverStepSpec, hasCheckpointAmendment, checkpointText, isPlannedTag, parseDeliverStep, publishRefusal, withCheckpoints } from "./checkpoints.ts";
 import { pushArgs, tagDecision } from "./tags.ts";
 import { type CheckVerdict, autopilotAmendment, autopilotReply, checkTitle, checkVerdict, cleanCheck, waitCheckProblem, type HumanCheck, humanChecks, parseVerifyStep, parseWaitStep, pollDecision, resumePrefix, verifyAmendment, waitAmendment } from "./waits.ts";
 import { nextStage, parseStages, planWaitProblems, stageLine, stageNote, stageStart, stagesOutcome } from "./stages.ts";
@@ -2452,6 +2452,7 @@ export default function workflow(pi: ExtensionAPI) {
 		async execute(_id, params, _signal, _onUpdate, ctx) {
 			const reply = (text: string) => ({ content: [{ type: "text" as const, text }], details: {} });
 			if (state.phase !== "execute") return reply("request_merge works only while a plan executes. Nothing changed.");
+			if (noMerge(state.approvedPlan ?? "")) return reply("No merge: this plan says Delivery: no merge.");
 			const reason = String(params.reason ?? "").replace(/\s+/g, " ").trim();
 			if (!reason) return reply("Give the reason: which later step needs the change merged now.");
 			const allowedText = (why: string) => `Merge allowed: ${why}. Run judge if the tree changed since the last pass, merge with gh pr merge as its own command, then continue on a new branch from the updated default branch.`;
@@ -3275,7 +3276,8 @@ export default function workflow(pi: ExtensionAPI) {
 		state.minorSentFor = undefined;
 		state.planFlaw = undefined;
 		view.stage = "execute";
-		if (!summarizeFlow(outcome.text, outcome.ok)) persist();
+		const decided = mergeDecisionsText(state.approvedPlan);
+		if (!summarizeFlow(decided ? `${outcome.text}; ${decided}` : outcome.text, outcome.ok)) persist();
 		await endFlow(ctx);
 	}
 
@@ -3630,7 +3632,8 @@ export default function workflow(pi: ExtensionAPI) {
 	/** The refusal of a merge or protected push before the end of the flow (the gate's rules), or null when it is allowed. */
 	function midFlowMergeRefusal(): string | null {
 		const staged = currentStages();
-		const open = (state.checklist ?? []).filter((i) => !isHuman(i) && !i.done && (!staged || i.stage === undefined || i.stage === staged.current));
+		const atEnd = !staged || staged.current >= staged.stages.length;
+		const open = (state.checklist ?? []).filter((i) => !isHuman(i) && !i.done && (!staged || i.stage === undefined || i.stage === staged.current) && !(atEnd && afterMergeStep(state.approvedPlan ?? "", i.id)));
 		return midFlowMergeProblem({
 			staged: !!staged,
 			current: staged?.current,
@@ -3717,9 +3720,12 @@ export default function workflow(pi: ExtensionAPI) {
 			state.stageNudgedFor = hash;
 			persist();
 			const lines: string[] = [];
-			if (open.length) lines.push(`Open steps ${open.map((i) => i.id).join(", ")}: finish them (merge, publish), tick them with plan_check, then end your turn.`);
+			const afterOnly = open.length > 0 && open.every((i) => afterMergeStep(state.approvedPlan ?? "", i.id));
+			const openLine = open.length ? `Open steps ${open.map((i) => i.id).join(", ")}: finish them (merge, publish), tick them with plan_check, then end your turn.` : "";
+			if (openLine && !afterOnly) lines.push(openLine);
 			if (unpushed.length) lines.push(`The judge passed: commit and push ${unpushed.join(", ")}, then end your turn.`);
 			if (unmerged.length) lines.push(`The judge passed: merge the pull request (gh pr merge, as its own command)${unmerged.length > 1 || diff.multi ? ` in ${unmerged.join(", ")}` : ""}, then end your turn.`);
+			if (openLine && afterOnly) lines.push(openLine);
 			handover("workflow-open-steps", lines.join("\n"));
 			return;
 		}

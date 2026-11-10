@@ -113,3 +113,10 @@ test("mergeDecisions reads amendments and round-trips mergeAmendment", () => {
 	assert.deepEqual(mergeDecisions(undefined), []);
 	assert.equal(mergeDecisionsText("no amendments"), "");
 });
+
+import { afterMergeStep } from "./checkpoints.ts";
+
+test("afterMergeStep: tag Deliver, Publish and Mirror steps run after the final merge", () => {
+	const plan = "**S1.** Edit code\n**S2.** Deliver: tag v1\n**S3.** Publish: pkg\n**S4.** Mirror: all\n**S5.** Deliver: merge — x\n**S6.** Wait: a person (check: git status)";
+	assert.deepEqual(["S1", "S2", "S3", "S4", "S5", "S6"].map((id) => afterMergeStep(plan, id)), [false, true, true, true, false, false]);
+});
