@@ -1,0 +1,18 @@
+{
+  "v": 1,
+  "flowId": "20261111-0224-quiet-tools-mode-hide-finished-tool-rows-ac44",
+  "rev": 1,
+  "updated": "2026-11-10T19:24:41.536Z",
+  "title": "Quiet tools mode: hide finished tool rows with a shortcut",
+  "done": [],
+  "reviewBase": {
+    "d:/works/pi-config": "36c2b808edbbca35f791782ca050379f8dff6c6f"
+  },
+  "repos": [
+    {
+      "branch": "master",
+      "remote": "github.com/Unknownow/pi-config",
+      "primary": true
+    }
+  ]
+}
