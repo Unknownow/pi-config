@@ -147,6 +147,10 @@ a relative `--project-path`, and commands built at runtime or started from a scr
 
 In a session inside a set, `/folders add <path>` for a git repo attaches that repo's worktree in the set, not the original checkout (the workflow asks through its `workflow:folder-add` event, K6). If a worktree of that repo already sits under the set, it is reused. Otherwise one is created like `/wt new` does: branch `<branchPrefix><set>` from the remote's default branch, gitignored files linked or copied, and the repo added to `.pi-set.json`; a progress line shows while it fetches and creates. A subfolder maps to the same subfolder in the worktree if it exists there, otherwise to the worktree root. Plain folders, folders already in the set and sessions outside a set are left alone. If the worktree cannot be created (target folder taken, branch already exists, no remote, git failure), nothing is added, nothing is left behind and the error is shown. `addFolderWorktree: false` turns this off.
 
+## Contracts
+
+- **W1. `worktree:create` event.** `pi.events.emit("worktree:create", { v: 1, name, claim })`: another extension asks for a set. The listener (registered at session start, claims synchronously) runs what `/wt new <name>` runs, with the name given so there is no prompt, and opens the terminal. The claim resolves to `{ name, branch, cwd, setRoot, launched, text }` (`launched` false when the terminal could not open; `text` says why) or `{ error }` (bad name, not in a git repo, a failed step). Creating fetches, so give it a long timeout. Payload check: `create-event.ts`.
+
 ## Relationship to the workflow extension
 
 The dependency is one-way. This extension uses only the workflow's public contract (see "Public contract for other extensions" in the workflow README): the `session-folders` entry (K1) to learn the added folders, the `--add-dir` flag (K3) when it launches pi, the `workflow:status` event (K4), and the `workflow:folder-add` event (K6) to answer `/folders add` (see "Adding folders inside a set"). The workflow reads nothing of this extension. It imports no workflow code: the shell parser the Unity guard uses is `../shared/readonly-bash.ts`. `boundary.test.ts` enforces both sides.
@@ -175,6 +179,6 @@ The dependency is one-way. This extension uses only the workflow's public contra
 ## Tests
 
 ```
-node --experimental-strip-types --test config.test.ts add-folder.test.ts layout.test.ts files.test.ts git-ops.test.ts manage.test.ts unity-guard.test.ts vscode-bridge.test.ts update.test.ts rename.test.ts progress.test.ts index.test.ts folders.test.ts boundary.test.ts live.test.ts sessions.test.ts meta.test.ts shared-guard.test.ts clean.test.ts exec.test.ts
+node --experimental-strip-types --test create-event.test.ts config.test.ts add-folder.test.ts layout.test.ts files.test.ts git-ops.test.ts manage.test.ts unity-guard.test.ts vscode-bridge.test.ts update.test.ts rename.test.ts progress.test.ts index.test.ts folders.test.ts boundary.test.ts live.test.ts sessions.test.ts meta.test.ts shared-guard.test.ts clean.test.ts exec.test.ts
 node --test vscode/request.test.js
 ```

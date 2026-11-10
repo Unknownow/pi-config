@@ -8,7 +8,7 @@ test("workflow never refers to the worktree extension", () => {
 	const dir = new URL(".", import.meta.url);
 	const files = fs.readdirSync(dir).filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts"));
 	assert.ok(files.length > 10);
-	const banned = [".pi-set.json", "agent/live", "wt-backup", "worktree.json", '"wt/'];
+	const banned = [".pi-set.json", "agent/live", "wt-backup", "worktree.json", '"wt/', "pi/orchestra"];
 	for (const f of files) {
 		const text = fs.readFileSync(new URL(f, dir), "utf8");
 		assert.ok(!/from\s+["'][^"']*\.\.\/worktree/.test(text), `${f} imports from ../worktree`);
