@@ -128,7 +128,7 @@ export function afterMergeStep(plan: string, id: string): boolean {
 export function gateOpenSteps(plan: string, checklist: { id: string; text: string; done: boolean; stage?: number; human?: true }[] | undefined, staged: { current: number; total: number } | undefined): string[] {
 	const atEnd = !staged || staged.current >= staged.total;
 	return (checklist ?? [])
-		.filter((i) => !i.human && !/^verifys*:/i.test(i.text) && !i.done && (!staged || i.stage === undefined || i.stage === staged.current) && !(atEnd && afterMergeStep(plan, i.id)))
+		.filter((i) => !i.human && !/^verify\s*:/i.test(i.text) && !i.done && (!staged || i.stage === undefined || i.stage === staged.current) && !(atEnd && afterMergeStep(plan, i.id)))
 		.map((i) => i.id);
 }
 

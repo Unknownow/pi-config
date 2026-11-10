@@ -129,6 +129,7 @@ test("gateOpenSteps: after-merge steps are ignored only at the end of the flow",
 	assert.deepEqual(gateOpenSteps(plan, [list[1]], { current: 3, total: 3 }), []);
 	assert.deepEqual(gateOpenSteps(plan, [list[1]], undefined), []);
 	assert.deepEqual(gateOpenSteps(plan, list, { current: 3, total: 3 }), ["S1"]);
+	assert.deepEqual(gateOpenSteps(plan, [...list, { id: "S3", text: "Verify : smoke test", done: false, stage: 3 }], { current: 3, total: 3 }), ["S1"]);
 	assert.deepEqual(gateOpenSteps(plan, [list[1]], { current: 1, total: 3 }), []);
 	assert.deepEqual(gateOpenSteps(plan, [{ ...list[1], stage: 1 }], { current: 1, total: 3 }), ["S2"]);
 });
