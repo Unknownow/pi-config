@@ -1,0 +1,18 @@
+{
+  "v": 1,
+  "flowId": "20261110-2252-stages-end-with-a-push-one-pull-request-c08e",
+  "rev": 1,
+  "updated": "2026-11-10T15:52:21.672Z",
+  "title": "Stages end with a push; one pull request merged at the end of the flow; mid-flow merges only when planned or approved by the arbiter",
+  "done": [],
+  "reviewBase": {
+    "d:/works/pi-config": "7ee0d43d2bdac2df1f44793c28cc3d820e74ce03"
+  },
+  "repos": [
+    {
+      "branch": "master",
+      "remote": "github.com/Unknownow/pi-config",
+      "primary": true
+    }
+  ]
+}
