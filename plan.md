@@ -405,11 +405,11 @@ New or changed tests:
 - [x] S6 Workflow docs and boundary test:
 - [x] S7 Add worktree W1:
 - [x] S8 Backlog, in the same commit as S2–S6 (required by AGENTS.md):
-- [ ] S9 Add `orchestrate/config.ts`: `loadConfig()` reads `<agentDir>/orchestrate.json` with the defaults above and validates in
-- [ ] S10 Add `orchestrate/paths.ts`: `globToRegExp(glob)` (supports ``, `*`, `?`, forward slashes, case-insensitive) and `outside
-- [ ] S11 Add `orchestrate/brief.ts`:
-- [ ] S12 Add `orchestrate/store.ts`:
-- [ ] S13 Add `orchestrate/monitor.ts`:
+- [x] S9 Add `orchestrate/config.ts`: `loadConfig()` reads `<agentDir>/orchestrate.json` with the defaults above and validates in
+- [x] S10 Add `orchestrate/paths.ts`: `globToRegExp(glob)` (supports ``, `*`, `?`, forward slashes, case-insensitive) and `outside
+- [x] S11 Add `orchestrate/brief.ts`:
+- [x] S12 Add `orchestrate/store.ts`:
+- [x] S13 Add `orchestrate/monitor.ts`:
 - [ ] S14 Add `orchestrate/index.ts` with the orchestrator side:
 - [ ] S15 In `orchestrate/index.ts`, the sub-session side:
 - [ ] S16 Add `orchestrate/boundary.test.ts`. It checks that no file imports `../workflow` or `../worktree`; importing `../shared`
