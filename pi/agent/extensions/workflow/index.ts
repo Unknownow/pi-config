@@ -69,7 +69,7 @@ import { pushArgs, tagDecision } from "./tags.ts";
 import { type CheckVerdict, autopilotAmendment, autopilotReply, checkTitle, checkVerdict, cleanCheck, waitCheckProblem, type HumanCheck, humanChecks, parseVerifyStep, parseWaitStep, pollDecision, resumePrefix, verifyAmendment, waitAmendment } from "./waits.ts";
 import { nextStage, parseStages, planWaitProblems, stageLine, stageNote, stageStart, stagesOutcome } from "./stages.ts";
 import { planToolProblem, planToolRefused, phaseToolRefusal } from "./readonly-tools.ts";
-import { acceptanceRefusal, exactToolRegexes, parseStartPlan, planReviewAction, START_PLAN_PREFACE } from "./hooks.ts";
+import { acceptanceRefusal, exactToolRegexes, keepExtraTools, parseStartPlan, planReviewAction, planReviewRoute, START_PLAN_PREFACE } from "./hooks.ts";
 import { emitClaims, gatherClaims } from "../shared/claims.ts";
 import { refilterPlanTools, hiddenInPhase, syncFlowOnlyTools } from "./plan-tools.ts";
 import { AGENT_ROLES } from "../agents/config.ts";
@@ -559,6 +559,7 @@ export default function workflow(pi: ExtensionAPI) {
 		}
 		if (!readOnly(phase)) syncFlowOnlyTools(pi, phase); // plan_check and deliver only exist inside a flow
 		if (leavingFlow && state.planDoc && !state.planDoc.finished) planMilestone(ctx, { at: new Date().toISOString(), ok: false, text: "abandoned" });
+		if (!keepExtraTools(state.phase, phase)) state.extraPlanTools = undefined;
 		const samePhase = phase === state.phase; // a repeated setPhase keeps what the judge already passed
 		const modelAction = preFlowModelAction(state.phase, phase);
 		if (modelAction === "save" && ctx.model) state.preFlowModel = { model: `${ctx.model.provider}/${ctx.model.id}`, thinking: pi.getThinkingLevel() };
@@ -3167,7 +3168,7 @@ export default function workflow(pi: ExtensionAPI) {
 			if (planReady && !blocked) {
 				const emitted = composePlan(planDraft);
 				const review = emitClaims((d) => pi.events.emit("workflow:plan-ready", d), { v: 1, title: planTitle(emitted), plan: emitted }, 0);
-				if (review.claimed) {
+				if (planReviewRoute(planReady, !!blocked, review.claimed) === "review") {
 					ctx.ui.notify("workflow: plan sent for review; type go to approve it yourself.", "info");
 					void review.answer.then(async (answer) => {
 						const current = state.phase === "plan" && planReady && composePlan(planDraft) === emitted;
@@ -3926,10 +3927,19 @@ export default function workflow(pi: ExtensionAPI) {
 				const ctx = lastCtx;
 				if (!ctx) return { error: "workflow:start-plan: the workflow is not ready yet" };
 				if (state.phase === "execute" || state.phase === "plan" || state.approvedPlan) return { error: `workflow:start-plan: a flow is already running (phase ${state.phase})` };
+				const prev = state.phase;
 				state.extraPlanTools = req.allowTools.length ? req.allowTools : undefined;
 				await setPhase(ctx, "plan");
+				refilterTools(); // discuss to plan keeps the tool snapshot, so the allowed tools must be put back
 				persist();
-				pi.sendUserMessage(`${START_PLAN_PREFACE}${req.brief}`);
+				try {
+					pi.sendUserMessage(`${START_PLAN_PREFACE}${req.brief}`, { deliverAs: "followUp" });
+				} catch (e) {
+					state.extraPlanTools = undefined;
+					await setPhase(ctx, prev);
+					persist();
+					return { error: `workflow:start-plan: could not send the brief: ${(e as Error).message}` };
+				}
 				return { ok: true };
 			})(),
 		);

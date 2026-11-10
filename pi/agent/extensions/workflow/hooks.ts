@@ -34,11 +34,10 @@ export const ACCEPTANCE_NO_ANSWER = "the acceptance check did not answer";
 export function acceptanceRefusal(answer: unknown): string | null {
 	if (answer === null || answer === undefined) return null;
 	if (typeof answer === "object") {
-		const o = answer as { problem?: unknown; error?: unknown };
-		if (typeof o.problem === "string" && o.problem) return o.problem;
-		if (typeof o.error === "string") return ACCEPTANCE_NO_ANSWER;
+		const p = (answer as { problem?: unknown }).problem;
+		if (typeof p === "string" && p) return p;
 	}
-	return null;
+	return ACCEPTANCE_NO_ANSWER; // an error, or an answer outside the contract: refuse
 }
 
 const SPECIAL = /[.*+?^$()|{}\[\]\\]/g;
@@ -46,4 +45,16 @@ const SPECIAL = /[.*+?^$()|{}\[\]\\]/g;
 /** Exact-name regexes for tools a plan-phase session may use in addition to `planAllowedTools`. */
 export function exactToolRegexes(names: string[] | undefined): RegExp[] {
 	return (names ?? []).map((n) => new RegExp("^" + n.replace(SPECIAL, "\\$&") + "$"));
+}
+
+/** Whether the tools a start-plan caller allowed (K9) stay when the phase changes: they go when the session leaves the flow for off, or leaves execute for anything but plan. */
+export function keepExtraTools(from: string, to: string): boolean {
+	if (to === "off") return false;
+	if (from === "execute" && to !== "plan" && to !== "execute") return false;
+	return true;
+}
+
+/** K10: the plan goes to a reviewer only when it can be approved, nothing blocks it and a listener claimed it; otherwise the usual menu. */
+export function planReviewRoute(planReady: boolean, blocked: boolean, claimed: boolean): "review" | "menu" {
+	return planReady && !blocked && claimed ? "review" : "menu";
 }
