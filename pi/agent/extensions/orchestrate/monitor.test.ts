@@ -70,3 +70,11 @@ test("a change resets the stall", () => {
 	const d = check(first.next, snap({ heartbeat: min(19), done: 1 }), ctx({ now: min(19) }));
 	assert.equal(d.next.changedAt, min(19));
 });
+
+test("the end of a wait is a change, so no stall right after it", () => {
+	const min = (m: number) => T0 + m * 60_000;
+	const waiting = check(undefined, snap({ waiting: true }), ctx());
+	const r = check(waiting.next, snap({ waiting: false, heartbeat: min(25) }), ctx({ now: min(25) }));
+	assert.deepEqual(r.events, []);
+	assert.equal(r.next.changedAt, min(25));
+});

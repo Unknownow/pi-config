@@ -37,7 +37,7 @@ export const OFFLINE_SECONDS = 180;
 
 export function check(prev: Snapshot | undefined, cur: Snapshot, ctx: CheckCtx): { events: MonitorEvent[]; next: Snapshot } {
 	const events: MonitorEvent[] = [];
-	const changed = !prev || prev.head !== cur.head || prev.porcelainHash !== cur.porcelainHash || prev.done !== cur.done;
+	const changed = !prev || prev.head !== cur.head || prev.porcelainHash !== cur.porcelainHash || prev.done !== cur.done || prev.waiting !== cur.waiting || prev.phase !== cur.phase;
 	const changedAt = changed ? ctx.now : prev!.changedAt;
 	const was = prev?.reported ?? { drift: [], overlap: [], offline: false, stalled: false };
 

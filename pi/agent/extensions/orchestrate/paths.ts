@@ -6,7 +6,9 @@ export function normalizePath(p: string): string {
 
 /** `**` crosses folders, `*` and `?` stay inside one. `dir/**` matches everything below dir. */
 export function globToRegExp(glob: string): RegExp {
-	const g = normalizePath(glob);
+	const g = normalizePath(glob).replace(/[/]+$/, "");
+	// a path without wildcards, or ending in a slash, names a folder: everything below it matches
+	const dir = !/[*?]/.test(glob) || /[/\\]$/.test(glob);
 	let re = "";
 	for (let i = 0; i < g.length; i++) {
 		const c = g[i];
@@ -21,7 +23,7 @@ export function globToRegExp(glob: string): RegExp {
 		} else if (c === "?") re += "[^/]";
 		else re += c.replace(/[.+^${}()|[\]\\]/g, "\\$&");
 	}
-	return new RegExp(`^${re}$`, "i");
+	return new RegExp(`^${re}${dir ? "(?:/.*)?" : ""}$`, "i");
 }
 
 export function matchesAny(file: string, globs: string[]): boolean {

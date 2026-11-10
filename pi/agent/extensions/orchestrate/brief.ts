@@ -36,10 +36,9 @@ export const SUB_ID_RE = /^[a-z0-9][a-z0-9-]{0,15}$/;
 export const SET_NAME_RE = /^[a-z0-9][a-z0-9._-]{0,39}$/;
 const ACTIVE: SubState[] = ["spawned", "planning", "executing", "awaiting-acceptance"];
 
-export function validatePackages(pkgs: PackageInput[], maxSubs: number): string[] {
+export function validatePackages(pkgs: PackageInput[]): string[] {
 	const errors: string[] = [];
 	if (pkgs.length < 2) errors.push("a run needs at least 2 packages");
-	if (pkgs.length > maxSubs) errors.push(`at most ${maxSubs} packages (maxSubs)`);
 	const ids = new Set<string>();
 	for (const p of pkgs) {
 		if (!SUB_ID_RE.test(p.id)) errors.push(`bad id "${p.id}": use a-z, 0-9, - (max 16)`);
@@ -93,9 +92,14 @@ export function runStamp(now: Date): string {
 	return `o${pad(now.getMonth() + 1)}${pad(now.getDate())}${pad(now.getHours())}${pad(now.getMinutes())}`;
 }
 
-/** `o<MMDDHHmm>-<title slug>`, at most 30 characters. */
-export function makeRunId(title: string, now: Date): string {
-	const stamp = runStamp(now);
+/** `o<MMDDHHmm>-<title slug>`, at most 30 characters. `existing` run ids: the minute moves on until no run has the same stamp (set names carry only the stamp). */
+export function makeRunId(title: string, now: Date, existing: string[] = []): string {
+	let when = now;
+	let stamp = runStamp(when);
+	while (existing.some((e) => e === stamp || e.startsWith(`${stamp}-`))) {
+		when = new Date(when.getTime() + 60_000);
+		stamp = runStamp(when);
+	}
 	const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 	const room = 30 - stamp.length - 1;
 	const cut = slug.slice(0, room).replace(/-+$/, "");

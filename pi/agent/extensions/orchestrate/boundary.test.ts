@@ -10,6 +10,6 @@ test("orchestrate never imports from the workflow or worktree extensions", () =>
 	assert.ok(files.length >= 5);
 	for (const f of files) {
 		const text = fs.readFileSync(new URL(f, dir), "utf8");
-		assert.ok(!/from\s+["'][^"']*\.\.\/(workflow|worktree)/.test(text), `${f} imports from workflow or worktree`);
+		assert.ok(!/(from\s+|import\s*\(?\s*|require\s*\(\s*)["'][^"']*\.\.\/(workflow|worktree)\//.test(text), `${f} imports from workflow or worktree`);
 	}
 });

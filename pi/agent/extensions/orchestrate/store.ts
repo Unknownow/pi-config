@@ -67,8 +67,15 @@ function writeAtomic(file: string, data: unknown): void {
 	fs.renameSync(tmp, file);
 }
 
+function validRun(r: unknown): boolean {
+	const o = r as Partial<Run> | null;
+	if (!o || o.v !== 1 || typeof o.id !== "string" || !Array.isArray(o.subs)) return false;
+	return o.subs.every((s) => s && typeof s.id === "string" && Array.isArray(s.owns) && typeof s.state === "string");
+}
+
 export function readRun(common: string, id: string): { run?: Run; corrupt?: string } {
 	const r = readJson<Run>(`${runDir(common, id)}/run.json`);
+	if (r.value && !validRun(r.value)) return { corrupt: `${runDir(common, id)}/run.json: not a run file (v, id, subs)` };
 	return { run: r.value, corrupt: r.corrupt };
 }
 
@@ -98,11 +105,15 @@ export function listActiveRuns(common: string): { runs: Run[]; corrupt: string[]
 export function appendMessage(file: string, from: string, msg: Omit<Message, "v" | "id" | "ts">, now: Date = new Date()): Message {
 	fs.mkdirSync(path.dirname(file), { recursive: true });
 	let n = 1;
+	let partial = false;
 	try {
-		n = fs.readFileSync(file, "utf8").split("\n").filter(Boolean).length + 1;
+		const text = fs.readFileSync(file, "utf8");
+		n = text.split("\n").filter(Boolean).length + 1;
+		partial = text.length > 0 && !text.endsWith("\n");
 	} catch {
 		// no file yet
 	}
+	if (partial) fs.appendFileSync(file, "\n"); // a crash left half a line: end it so the new message is its own line
 	const full: Message = { v: 1, id: `${from}-${n}`, ts: now.toISOString(), ...msg };
 	fs.appendFileSync(file, `${JSON.stringify(full)}\n`);
 	return full;

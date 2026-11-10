@@ -23,3 +23,10 @@ test("matching is case-insensitive and takes backslashes", () => {
 test("forbids win over owns", () => {
 	assert.deepEqual(outsideOwned(["src/a.ts", "src/secret/k.ts", "docs/x.md"], ["src/**"], ["src/secret/**"]), ["src/secret/k.ts", "docs/x.md"]);
 });
+
+test("a folder path without wildcards matches everything below it", () => {
+	assert.ok(globToRegExp("src/a").test("src/a/x.ts"));
+	assert.ok(globToRegExp("src/a/").test("src/a/x.ts"));
+	assert.ok(globToRegExp("src/a").test("src/a"));
+	assert.ok(!globToRegExp("src/a").test("src/ab.ts"));
+});

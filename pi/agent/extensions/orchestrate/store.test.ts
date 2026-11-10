@@ -94,3 +94,20 @@ test("commonDir uses the exec it is given", async () => {
 	assert.equal(await commonDir(ok, "x"), "C:/r/.git");
 	assert.equal(await commonDir(async () => ({ stdout: "", code: 128 }), "x"), null);
 });
+
+test("append after an unterminated line keeps the new message", () => {
+	const f = `${tmp()}/o.jsonl`;
+	fs.writeFileSync(f, '{"v":1,"id":"a-1","ts"');
+	appendMessage(f, "orch", { type: "info", text: "fresh" });
+	const r = readNew(f, 0);
+	assert.deepEqual(r.msgs.map((m) => m.text), ["fresh"]);
+	assert.equal(r.bad, 1);
+});
+
+test("a run.json of the wrong shape is reported as corrupt", () => {
+	const common = tmp();
+	fs.mkdirSync(runDir(common, "o8-x"), { recursive: true });
+	fs.writeFileSync(`${runDir(common, "o8-x")}/run.json`, '{"v":1}');
+	assert.ok(readRun(common, "o8-x").corrupt);
+	assert.equal(listActiveRuns(common).corrupt.length, 1);
+});
