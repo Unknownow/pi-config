@@ -15,6 +15,8 @@ export interface Sub {
 	branch?: string;
 	cwd?: string;
 	base?: string;
+	/** Set when its flow ended; the merge is then confirmed with gh on every poll. */
+	endedAt?: string;
 	state: SubState;
 }
 

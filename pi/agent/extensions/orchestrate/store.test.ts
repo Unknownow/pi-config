@@ -111,3 +111,8 @@ test("a run.json of the wrong shape is reported as corrupt", () => {
 	assert.ok(readRun(common, "o8-x").corrupt);
 	assert.equal(listActiveRuns(common).corrupt.length, 1);
 });
+
+test("findSubByToplevel needs the git top level, not a subfolder of it", () => {
+	const runs = [mkRun("o1-x")];
+	assert.equal(findSubByToplevel(runs, "C:/Work/Repo-wt/o1-a/UnityProject", true), null);
+});
