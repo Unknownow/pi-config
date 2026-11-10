@@ -58,6 +58,8 @@ test("phases never hide explore, advisor or test_run; the hook refuses test_run 
 	assert.equal(hiddenInPhase("plan", "git_task", planRefused), true);
 	assert.equal(hiddenInPhase("execute", "edit", planRefused), false);
 	assert.equal(hiddenInPhase("off", "plan_check", planRefused), true);
+	assert.equal(hiddenInPhase("off", "request_merge", planRefused), true);
+	assert.equal(hiddenInPhase("execute", "request_merge", planRefused), false);
 	assert.equal(hiddenInPhase("off", "wait_for_user", planRefused), true);
 	assert.equal(hiddenInPhase("off", "publish_packages", planRefused), true);
 	assert.equal(hiddenInPhase("off", "judge", planRefused), false);

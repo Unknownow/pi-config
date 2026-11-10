@@ -193,3 +193,11 @@ test("quick: defaults, and bad values fall back", () => {
 	assert.equal(roles.quick.model, "claude-bridge/claude-sonnet-5-5");
 	assert.deepEqual(roles["quick-judge"], { model: "claude-bridge/claude-opus-5-5", thinking: "medium" });
 });
+
+test("a leftover stagedPlans key is ignored", () => {
+	const f = tmp();
+	fs.writeFileSync(f, '{"stagedPlans":"onRequest","maxJudgeRounds":3}');
+	const r = loadConfig(f);
+	assert.equal(r.error, undefined);
+	assert.equal((r.config as unknown as { maxJudgeRounds: number }).maxJudgeRounds, 3);
+});

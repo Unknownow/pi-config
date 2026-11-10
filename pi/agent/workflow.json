@@ -46,7 +46,6 @@
   "returnTo": "discuss",
   "planFlaw": "auto",
   "autopilot": true,
-  "stagedPlans": "auto",
   "stageAdvance": "auto",
   "maxPlanRevisions": 2,
   "delivery": {

@@ -234,6 +234,19 @@ export function parseArbiter(text: string): ArbiterDecision | null {
 	return { decision, reason, amendment };
 }
 
+export interface MergeArbiterDecision {
+	decision: "MERGE" | "NO_MERGE" | "ASK_USER";
+	reason: string;
+}
+
+/** Reads the merge arbiter's reply; null when there is no DECISION line. */
+export function parseMergeArbiter(text: string): MergeArbiterDecision | null {
+	const m = /^\s*DECISION:\s*(NO_MERGE|MERGE|ASK_USER)\b/im.exec(text);
+	if (!m) return null;
+	const reason = (/^\s*Reason:\s*([\s\S]*)$/im.exec(text)?.[1] ?? "").trim();
+	return { decision: m[1].toUpperCase() as MergeArbiterDecision["decision"], reason };
+}
+
 /**
  * A staged plan's turn ended with no new changes: advance if the executor handed the stage over (judge called) or `auto` (stageAdvance), else ask the user (UI) or wait.
  * A stage with open steps and no judge call never advances by itself, even with `auto`: it is blocked, not done.

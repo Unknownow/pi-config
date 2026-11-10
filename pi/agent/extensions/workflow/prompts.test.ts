@@ -9,27 +9,26 @@ const PLAN_BATCH = `- Batch tool calls. Each call re-sends the whole conversatio
 
 test("plan phase keeps its batch line", () => {
 	assert.ok(planPhase().includes(PLAN_BATCH));
-	assert.ok(planPhase("onRequest").includes(PLAN_BATCH));
 });
 
 test("execute phase keeps its batch line", () => {
 	assert.ok(EXECUTE_PHASE.includes(BATCH));
 });
 
-const SECTION_OPTS = { staging: "auto" } as const;
+const SECTION_OPTS = {} as const;
 
 test("discuss prompt asks for no plan; the plan prompt no longer calls the planner a discussion partner", () => {
 	const d = phaseSection("discuss", SECTION_OPTS) ?? "";
 	assert.ok(d.includes("## Workflow: DISCUSS phase") && d.includes("Agreed so far"));
 	assert.ok(!/end the reply with a short `Plan:`|propose the plan in a short/.test(d));
 	const p = phaseSection("plan", SECTION_OPTS) ?? "";
-	assert.ok(p.includes("## Workflow: PLAN phase") && p.includes("Staged delivery") && !p.includes("partner in discussion"));
+	assert.ok(p.includes("## Workflow: PLAN phase") && p.includes("Stages: the workflow") && !p.includes("partner in discussion"));
 	assert.ok(PLAN_KICKOFF.includes("## Plan:"));
 });
 
 test("phaseSection gives the plan prompt in the plan phase", () => {
 	const text = phaseSection("plan", SECTION_OPTS);
-	assert.equal(text, planPhase("auto"));
+	assert.equal(text, planPhase());
 	assert.ok(text?.includes("## Workflow: PLAN phase"));
 });
 
@@ -66,7 +65,7 @@ test("execute prompt names deliver and wait_for_user", () => {
 });
 
 test("planner prompts teach Deliver and Wait steps", async () => {
-	for (const text of [planPhase("auto")]) {
+	for (const text of [planPhase()]) {
 		assert.ok(text.includes("Deliver:"));
 		assert.ok(text.includes("Wait:"));
 		assert.ok(text.includes("(after:"));
@@ -88,7 +87,6 @@ test("slow suites run once and rerun only when touched", async () => {
 	for (const x of ["While fixing, run the narrowest check that covers the change", "Run each slow suite in full once, before your first judge call", "After a judge round, rerun a slow suite only if the fix changed files it builds or reads; otherwise cite its last passing run", "then call `judge`"])
 		assert.ok(EXECUTE_PHASE.includes(x), x);
 	assert.ok(planPhase().includes("Mark each suite slower than about 2 minutes as slow"));
-	assert.ok(planPhase("onRequest").includes("Mark each suite slower than about 2 minutes as slow"));
 	assert.ok(EXECUTE_PHASE.includes("When done, run the plan's tests as above"));
 });
 
@@ -108,7 +106,7 @@ test("delivery guidance in the prompts", () => {
 test("the execute prompt makes delivery the executor's job and never the user's", () => {
 	assert.ok(!EXECUTE_PHASE.includes("Never commit, push"));
 	assert.doesNotMatch(EXECUTE_PHASE, /When the judge passes, end your turn/);
-	assert.match(EXECUTE_PHASE, /When the judge passes, finish the delivery \(push, pull request, and the merge unless the plan says/);
+	assert.match(EXECUTE_PHASE, /When the judge passes, tick the finished steps with `plan_check`, then commit and push and open the pull request; merge it only when the flow ends or at a `Deliver: merge` step \(unless the plan says/);
 	assert.ok(EXECUTE_PHASE.includes("git_task"));
 	assert.ok(EXECUTE_PHASE.includes("call `judge`"));
 	assert.doesNotMatch(EXECUTE_PHASE, /ask the user to (push|merge|open)/i);
@@ -148,10 +146,10 @@ test("Publish and Mirror steps are in the planner and executor prompts", () => {
 });
 
 test("the publish syntax is sent only when a flow repo can publish", () => {
-	assert.ok(!planPhase("auto", false).includes("Publish: <package>"));
-	assert.ok(!planPhase("auto", false).includes("Mirror: <folder>|all"));
+	assert.ok(!planPhase(false).includes("Publish: <package>"));
+	assert.ok(!planPhase(false).includes("Mirror: <folder>|all"));
 	assert.ok(!phaseSection("execute", SECTION_OPTS).includes("publish_packages {step}"));
-	assert.ok(planPhase("auto", false).length < planPhase("auto", true).length);
+	assert.ok(planPhase(false).length < planPhase(true).length);
 });
 
 test("fix messages scope the tests to what the fix touched", () => {
@@ -177,5 +175,13 @@ test("a quick flow gets the scope-card prompt in plan and the quick line in exec
 	const exec = phaseSection("execute", { ...SECTION_OPTS, quick: true });
 	assert.equal(exec, `${EXECUTE_PHASE}\n${QUICK_EXECUTE}`);
 	assert.ok(!phaseSection("execute", SECTION_OPTS).includes(QUICK_EXECUTE));
-	assert.equal(phaseSection("plan", SECTION_OPTS), planPhase("auto"));
+	assert.equal(phaseSection("plan", SECTION_OPTS), planPhase());
 });
+
+test("merge points: the planner lists them, the executor asks request_merge, the arbiter has a decision line", () => {
+	const p = planPhase();
+	assert.ok(p.includes("Merge points") && p.includes("Propose stages yourself") && !p.includes("delivered in parts"));
+	assert.ok(EXECUTE_PHASE.includes("request_merge"));
+	assert.ok(MERGE_ARBITER.includes("DECISION: MERGE | NO_MERGE | ASK_USER"));
+});
+import { MERGE_ARBITER } from "./prompts.ts";

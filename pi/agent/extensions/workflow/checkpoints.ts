@@ -1,4 +1,5 @@
 /** Checkpoints: tags created inside a plan, before the end of a stage or flow. Pure text and rules, kept apart so node tests can reach them. */
+import { parseMirrorStep, parsePublishStep } from "./registry-publish.ts";
 
 /** The text after `Deliver:` of plan step `id`, or null when the step is not a Deliver step. */
 export function parseDeliverStep(plan: string, id: string): string | null {
@@ -69,6 +70,66 @@ export function deliverHintsBlock(plan: string, checklist: { id: string; text: s
 		if (hint) lines.push(`- ${i.id} ${hint}`);
 	}
 	return lines.length ? `Deliver steps:\n${lines.join("\n")}` : undefined;
+}
+
+/** Whether a Deliver step asks for a merge ("Deliver: merge — …"); "no merge" and tag steps do not. */
+export function isMergeDeliver(plan: string, id: string): boolean {
+	const t = parseDeliverStep(plan, id);
+	return t !== null && /\bmerge\b/i.test(t) && !/\bno merge\b/i.test(t);
+}
+
+/** Whether the current stage (the whole plan when `stage` is undefined) has an unticked `Deliver: merge` step. */
+export function deliverMergeOpen(plan: string, checklist: { id: string; text: string; done: boolean; stage?: number; human?: true }[] | undefined, stage: number | undefined): boolean {
+	for (const i of checklist ?? []) {
+		if (i.done || i.human || /^verify\s*:/i.test(i.text)) continue;
+		if (stage !== undefined && i.stage !== undefined && i.stage !== stage) continue;
+		if (isMergeDeliver(plan, i.id)) return true;
+	}
+	return false;
+}
+
+export interface MergeDecision {
+	allowed: boolean;
+	by: "arbiter" | "user";
+	/** 0: the whole flow (an unstaged plan). */
+	stage: number;
+	reason: string;
+}
+
+/** The amendment that records a decision about a merge before the end of the flow. `n` is the number of amendments so far + 1. */
+export function mergeAmendment(n: number, d: MergeDecision): string {
+	const where = d.stage ? `stage ${d.stage}` : "this flow";
+	const reason = d.reason.replace(/\s+/g, " ").trim() || "no reason given";
+	return `## Amendment ${n} (${d.by}: ${d.allowed ? "merge" : "no merge"})\nMerge ${d.allowed ? "allowed" : "refused"} in ${where}: ${reason}`;
+}
+
+/** The merge decisions recorded in the approved plan, in order. */
+export function mergeDecisions(plan: string | undefined): MergeDecision[] {
+	const out: MergeDecision[] = [];
+	const re = /^## Amendment \d+ \((arbiter|user): (merge|no merge)\)[ \t]*\r?\nMerge (?:allowed|refused) in (?:stage (\d+)|this flow):[ \t]*(.*)$/gm;
+	for (const m of (plan ?? "").matchAll(re)) out.push({ allowed: m[2] === "merge", by: m[1] as "arbiter" | "user", stage: m[3] ? Number(m[3]) : 0, reason: m[4].trim() });
+	return out;
+}
+
+/** One entry per merge decision for the flow outcome; "" when there are none. */
+export function mergeDecisionsText(plan: string | undefined): string {
+	return mergeDecisions(plan)
+		.map((d) => `mid-flow merge ${d.allowed ? "allowed" : "refused"} by ${d.by} (${d.stage ? `stage ${d.stage}` : "whole flow"}): ${d.reason}`)
+		.join("; ");
+}
+
+/** Whether a step can only run after the final merge: a non-merge Deliver step (a tag), a Publish step or a Mirror step. */
+export function afterMergeStep(plan: string, id: string): boolean {
+	if (parseDeliverStep(plan, id) !== null) return !isMergeDeliver(plan, id);
+	return parsePublishStep(plan, id) !== null || parseMirrorStep(plan, id) !== null;
+}
+
+/** The ids of the open steps the merge gate counts: the unticked, non-human steps of the current stage; at the end of the flow without the steps that run after the merge. */
+export function gateOpenSteps(plan: string, checklist: { id: string; text: string; done: boolean; stage?: number; human?: true }[] | undefined, staged: { current: number; total: number } | undefined): string[] {
+	const atEnd = !staged || staged.current >= staged.total;
+	return (checklist ?? [])
+		.filter((i) => !i.human && !/^verify\s*:/i.test(i.text) && !i.done && (!staged || i.stage === undefined || i.stage === staged.current) && !(atEnd && afterMergeStep(plan, i.id)))
+		.map((i) => i.id);
 }
 
 /** The refusal text for a command the executor may not run. */

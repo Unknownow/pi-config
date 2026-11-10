@@ -28,14 +28,11 @@ test("the plan prompt asks for the final plan with commits and stages", () => {
 	assert.ok(p.includes("8. Risks, rollback"));
 	assert.ok(p.includes("give direction, not implementation"));
 	assert.ok(p.includes("builds on an earlier one"));
-	assert.ok(planPhase("onRequest").includes("Use stages only when the user asks for the work to be delivered in parts"));
-	assert.ok(!planPhase("onRequest").includes("builds on an earlier one"));
 });
 
 test("the plan prompt names both templates and the change sections", () => {
 	const p = planPhase();
 	assert.ok(p.includes("short template") && p.includes("full template"));
 	assert.ok(p.includes("## Plan changes") && p.includes("with no rewrite"));
-	assert.ok(p.includes("Staged delivery") && p.includes("Propose stages yourself"));
-	assert.ok(!planPhase("onRequest").includes("Propose stages yourself"));
+	assert.ok(p.includes("Stages: the workflow") && p.includes("Propose stages yourself"));
 });

@@ -304,3 +304,13 @@ test("only the approval carries a quick profile into execute; every other switch
 	assert.equal(nextProfile("execute", "discuss", undefined, "quick"), undefined);
 	assert.equal(nextProfile("off", "plan", undefined, undefined), undefined);
 });
+
+import { parseMergeArbiter } from "./agent-end.ts";
+
+test("parseMergeArbiter: MERGE, NO_MERGE, ASK_USER and no decision", () => {
+	assert.deepEqual(parseMergeArbiter("DECISION: MERGE\nReason: S5 needs it on main."), { decision: "MERGE", reason: "S5 needs it on main." });
+	assert.equal(parseMergeArbiter("DECISION: NO_MERGE\nReason: a push is enough.\nmore")?.decision, "NO_MERGE");
+	assert.equal(parseMergeArbiter("DECISION: NO_MERGE\nReason: a push is enough.\nmore")?.reason, "a push is enough.\nmore");
+	assert.equal(parseMergeArbiter("decision: ask_user\nReason: unknown")?.decision, "ASK_USER");
+	assert.equal(parseMergeArbiter("I think we should merge"), null);
+});
