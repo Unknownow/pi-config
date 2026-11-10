@@ -155,11 +155,38 @@ Commands, from `pi/agent/extensions/quiet-tools`:
 ### Commits
 One commit: `quiet-tools: alt+o hides finished tool rows`, with `pi/agent/extensions/quiet-tools/{quiet.ts,quiet.test.ts,index.ts,README.md}` and `README.md`.
 
+## Amendment 1 (arbiter)
+**S1 (amended).** In `pi/agent/extensions/quiet-tools/quiet.ts`, function `quietDefinition`, the `renderShell` getter:
+- When `base.renderShell === "self"`, set the per-wrapper `tuiRow = true` and then return `"self"`. The rule "always `"self"`" stays.
+- Why: a read of `renderShell` means the row is in the TUI. A self-shell row needs no first-read protection, because the constructor attaches the same container whatever the mode.
+- Behaviour:
+  - Quiet on, after one `renderShell` read: `renderCall` gives the running part while `isPartial` is true, and the empty part otherwise. `renderResult` gives the empty part.
+  - Quiet off: both are exactly the base functions.
+  - `renderShell` never read (export): both are always the base functions.
+
+**Tests (added to `quiet.test.ts`, "self-shell tools stay self").** Use a base with `renderShell: "self"`.
+- Quiet on, after one `renderShell` read:
+  - `renderCall({}, {}, {isPartial:true})` gives RUN;
+  - `renderCall({}, {}, {isPartial:false})` gives EMPTY;
+  - `renderResult()` gives EMPTY.
+- Quiet off: both are `rc`/`rr`.
+- No `renderShell` read with quiet on: both are `rc`/`rr`.
+- Run `node --experimental-strip-types --test quiet.test.ts`: all must pass.
+
+**S2/S3 note (added).** The built-in renderers reuse `context.lastComponent` and assume their own type (`core/tools/renderers/grep.js:59`, `read.js:115`, `write.js:133`). Right after quiet mode is turned off, the first `updateDisplay` gets the quiet part as `lastComponent`. It throws, and pi falls back and clears it (`tool-execution.js:205-208`). The second flip of the refresh in `toggle` then renders the row correctly.
+- Keep the two-step refresh, `setToolsExpanded(!was)` then `setToolsExpanded(was)`, in this order. Never shorten it to a single re-render.
+- Record this dependency in the README's "pi internals" section.
+
+**S5 (added checks).**
+- With quiet on, an `edit` row disappears after it finishes. `alt+o` shows its diff again.
+- After `alt+o` turns quiet mode off, `read`/`grep`/`bash`/`write` rows that ran while quiet mode was on show their normal renderer, not the generic fallback.
+- Report to the user that a running tool shows as one blank line plus the dim line. pi's self-shell framing adds that blank line, and it can't be removed without copying pi's framing (a rejected alternative). Ask the user whether to accept it. Do not edit the Done when yourself.
+
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 Create `pi/agent/extensions/quiet-tools/quiet.ts` with `quietDefinition` and `summarizeArgs` exactly as described in Des
-- [ ] S2 Create `pi/agent/extensions/quiet-tools/index.ts` with the wiring from Design. Model it on `markdown-view/index.ts` for 
-- [ ] S3 Create `pi/agent/extensions/quiet-tools/README.md`, modelled on `markdown-view/README.md`. It covers:
-- [ ] S4 In the root `README.md:66`, add `quiet-tools` to the extensions list: "`quiet-tools`: `alt+o` / `/quiet` hides finished 
+- [x] S1 Create `pi/agent/extensions/quiet-tools/quiet.ts` with `quietDefinition` and `summarizeArgs` exactly as described in Des
+- [x] S2 Create `pi/agent/extensions/quiet-tools/index.ts` with the wiring from Design. Model it on `markdown-view/index.ts` for 
+- [x] S3 Create `pi/agent/extensions/quiet-tools/README.md`, modelled on `markdown-view/README.md`. It covers:
+- [x] S4 In the root `README.md:66`, add `quiet-tools` to the extensions list: "`quiet-tools`: `alt+o` / `/quiet` hides finished 
 ## For you after the flow
 - S5 Verify: restart pi so the sync extension mirrors `quiet-tools` into `~/.pi/agent/extensions`, then ask for something tha
