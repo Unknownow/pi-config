@@ -1,8 +1,8 @@
 {
   "v": 1,
   "flowId": "20261111-0322-orchestrate-extension-where-one-orchestr-f007",
-  "rev": 3,
-  "updated": "2026-11-10T20:37:24.942Z",
+  "rev": 4,
+  "updated": "2026-11-10T20:44:35.609Z",
   "title": "orchestrate extension, where one orchestrator session runs 2–4 workflow sub-sessions in wt worktrees",
   "stage": 3,
   "done": [
@@ -18,7 +18,12 @@
     "S10",
     "S11",
     "S12",
-    "S13"
+    "S13",
+    "S14",
+    "S15",
+    "S16",
+    "S17",
+    "S18"
   ],
   "reviewBase": {
     "d:/works/pi-config": "6679229ca28cf5ce08150ab54f8ea35ec7d41828"

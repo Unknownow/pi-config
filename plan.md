@@ -395,6 +395,29 @@ New or changed tests:
 - Stage 3:
   - `orchestrate: orchestrator and sub-session wiring`: `orchestrate/index.ts`, `boundary.test.ts`, `README.md`, `docs/workflow-improvements.md`
 
+## Amendment 1 (arbiter)
+**S15a (Design, Message line, and `orch_review_plan`).** Tie each plan verdict to its plan number.
+- `plan-review` already carries `data.n`. `orch_review_plan` gets a required parameter `n: number`, and the `plan-verdict` line carries `data: { approve, n }`. The `orchestrate-events` text for a plan review must show `n`, so the model passes it on.
+- In the sub-session, store `{ n, resolve }` for the pending K10 claim. A `plan-verdict` resolves the claim only when `data.n` equals the pending `n`. Otherwise the sub-session notifies "verdict for plan <n> ignored; plan <pending> is under review" and leaves the claim alone.
+- When a new K10 replaces a pending claim, keep resolving the old one with `null` (as now).
+- Behaviour: an approval can only approve the exact plan file the orchestrator read.
+
+**S14a (watcher merged check).** Make the merged check recover.
+- Keep the set of subs whose flow ended but whose merge is not confirmed. Store it as `endedAt?: string` on the sub in `run.json`, so it survives `/orch watch`.
+- On every `pollGit` tick, run `ghMerged` again for those subs. When it returns true, set `merged` and report it with the existing "ready to spawn / rebase" text.
+- If it is still not merged after one tick, report "ended without merge" once.
+- Add `/orch merged <id>`: it runs the gh check now and sets `merged` on success, otherwise it reports the gh result.
+- Behaviour: a transient gh failure, or a PR merged by hand after the flow ended, still ends up as `merged`, and the dependants become spawnable.
+
+**S14b (drift base).** Compute the diff base on every tick.
+- Each `pollGit` tick computes the base as `git -C cwd merge-base HEAD <default ref>`. The default ref is `origin/HEAD`, or `origin/<default branch>` when that is unset. Fall back to `sub.base` when this fails.
+- Use the same base in the `accept-request` event text.
+- Behaviour: after a rebase onto the updated default branch, files from already-merged packages are not reported as drift.
+
+**Tests.** Pure parts only, because `index.ts` has no unit tests:
+- If the verdict matching is pulled into a small pure helper (`verdictMatches(pendingN, msg)`), test it in a new `orchestrate/inbox.test.ts`: a matching `n` resolves; a mismatched or missing `n` is ignored.
+- The merged retry and the per-tick base are covered by S20. Add one step to it: after `a` merges, rebase `b`'s worktree and check that no drift is reported for `src/a.txt`.
+
 <!-- pi-workflow:status -->
 ## Checklist
 - [x] S1 Create `shared/claims.ts`: `gatherClaims(emit: (data: unknown) => void, data: object, timeoutMs: number): Promise<unknow
@@ -410,11 +433,11 @@ New or changed tests:
 - [x] S11 Add `orchestrate/brief.ts`:
 - [x] S12 Add `orchestrate/store.ts`:
 - [x] S13 Add `orchestrate/monitor.ts`:
-- [ ] S14 Add `orchestrate/index.ts` with the orchestrator side:
-- [ ] S15 In `orchestrate/index.ts`, the sub-session side:
-- [ ] S16 Add `orchestrate/boundary.test.ts`. It checks that no file imports `../workflow` or `../worktree`; importing `../shared`
-- [ ] S17 Add `orchestrate/README.md`:
-- [ ] S18 In `docs/workflow-improvements.md`:
+- [x] S14 Add `orchestrate/index.ts` with the orchestrator side:
+- [x] S15 In `orchestrate/index.ts`, the sub-session side:
+- [x] S16 Add `orchestrate/boundary.test.ts`. It checks that no file imports `../workflow` or `../worktree`; importing `../shared`
+- [x] S17 Add `orchestrate/README.md`:
+- [x] S18 In `docs/workflow-improvements.md`:
 - [ ] S19 Apply to this machine: run `node bin/import.js` from the repo root and check that its output lists the new `extensions/o
 ## For you after the flow
 - S20 Verify: in a scratch GitHub repo:
