@@ -367,6 +367,7 @@ export default function (pi: ExtensionAPI): void {
 				}
 			});
 		}
+		const newlyEnded = ended.map((e) => e.id);
 		if (stateChanges.length) {
 			const ready = await mutate((r) => {
 				for (const [id, st] of stateChanges) {
@@ -375,14 +376,15 @@ export default function (pi: ExtensionAPI): void {
 				}
 			});
 		}
-		events.push(...(await checkEnded(false)));
+		events.push(...(await checkEnded(false, newlyEnded))); // a quick first answer; later polls retry
 		flush();
 	}
 
 	const reportedUnmerged = new Set<string>();
+	let defaultBranch: string | null | undefined;
 
 	/** Confirms with gh the merge of every sub whose flow ended (or of `only`, when asked by hand); returns report lines. Retried on every poll until it succeeds. */
-	async function checkEnded(manual: boolean, only?: string): Promise<string[]> {
+	async function checkEnded(manual: boolean, only?: string[]): Promise<string[]> {
 		const o = owned;
 		const run = current();
 		if (!o || !run) return [];
@@ -390,7 +392,7 @@ export default function (pi: ExtensionAPI): void {
 		const merged: string[] = [];
 		for (const sub of run.subs) {
 			if (sub.state === "merged" || sub.state === "stopped") continue;
-			if (only ? sub.id !== only : !sub.endedAt) continue;
+			if (only ? !only.includes(sub.id) : !sub.endedAt) continue;
 			const ok = sub.branch ? await ghMerged(o, sub.branch) : null;
 			if (ok) merged.push(sub.id);
 			else if (manual || !reportedUnmerged.has(sub.id)) {
@@ -419,7 +421,22 @@ export default function (pi: ExtensionAPI): void {
 	/** Where the sub's own work starts: its merge base with the default branch now (so a rebase does not turn merged packages into drift); the spawn-time commit when that fails. */
 	async function diffBase(sub: Sub): Promise<string | undefined> {
 		if (!sub.cwd) return sub.base;
-		return (await git(sub.cwd, "merge-base", "HEAD", "origin/HEAD")) ?? sub.base;
+		const viaHead = await git(sub.cwd, "merge-base", "HEAD", "origin/HEAD");
+		if (viaHead) return viaHead;
+		// no origin/HEAD (a repo made with git init + remote add): use the default branch name from gh, read once
+		if (defaultBranch === undefined && owned) {
+			try {
+				const g = await exec("gh", ["repo", "view", "--json", "defaultBranchRef", "-q", ".defaultBranchRef.name"], { cwd: owned.repoCwd });
+				defaultBranch = g.code === 0 && g.stdout.trim() ? g.stdout.trim() : null;
+			} catch {
+				defaultBranch = null;
+			}
+		}
+		if (defaultBranch) {
+			const viaName = await git(sub.cwd, "merge-base", "HEAD", `origin/${defaultBranch}`);
+			if (viaName) return viaName;
+		}
+		return sub.base;
 	}
 
 	async function pollGit(): Promise<void> {
@@ -709,7 +726,7 @@ export default function (pi: ExtensionAPI): void {
 					const id = args.trim().split(/\s+/)[1];
 					if (!id) throw new Error("usage: /orch merged <id>");
 					subOf(need().run, id);
-					ctx.ui.notify(`orchestrate: ${(await checkEnded(true, id)).join("\n") || "nothing to check"}`, "info");
+					ctx.ui.notify(`orchestrate: ${(await checkEnded(true, [id])).join("\n") || "nothing to check"}`, "info");
 				} else if (sub === "end") {
 					await mutate((r) => {
 						r.state = "ended";
