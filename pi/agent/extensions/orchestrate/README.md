@@ -46,4 +46,4 @@ Each worktree is its own Unity project; its first open imports every asset (slow
 
 `cd pi/agent/extensions/orchestrate && node --experimental-strip-types --test config.test.ts paths.test.ts brief.test.ts store.test.ts monitor.test.ts inbox.test.ts boundary.test.ts`
 
-`index.ts` needs the pi runtime and has no unit test; the end-to-end check is manual (scratch GitHub repo: two packages `a`, `b` depending on `a`; after `a` merges, rebase `b`'s worktree and check that no drift is reported for `a`'s files).
+`index.ts` needs the pi runtime and has no unit test; the end-to-end check is manual (scratch GitHub repo: two packages `a`, `b` depending on `a`).
