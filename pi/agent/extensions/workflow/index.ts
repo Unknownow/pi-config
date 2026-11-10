@@ -69,6 +69,8 @@ import { pushArgs, tagDecision } from "./tags.ts";
 import { type CheckVerdict, autopilotAmendment, autopilotReply, checkTitle, checkVerdict, cleanCheck, waitCheckProblem, type HumanCheck, humanChecks, parseVerifyStep, parseWaitStep, pollDecision, resumePrefix, verifyAmendment, waitAmendment } from "./waits.ts";
 import { nextStage, parseStages, planWaitProblems, stageLine, stageNote, stageStart, stagesOutcome } from "./stages.ts";
 import { planToolProblem, planToolRefused, phaseToolRefusal } from "./readonly-tools.ts";
+import { acceptanceRefusal, exactToolRegexes, keepExtraTools, parseStartPlan, planReviewAction, planReviewRoute, START_PLAN_PREFACE } from "./hooks.ts";
+import { emitClaims, gatherClaims } from "../shared/claims.ts";
 import { refilterPlanTools, hiddenInPhase, syncFlowOnlyTools } from "./plan-tools.ts";
 import { AGENT_ROLES } from "../agents/config.ts";
 import { countSubagent } from "./agent-events.ts";
@@ -105,6 +107,8 @@ type Phase = "off" | "discuss" | "plan" | "execute";
 
 interface FlowState {
 	phase: Phase;
+	/** Tool names a start-plan caller (K9) allows in discuss and plan on top of planAllowedTools; cleared when the flow ends. */
+	extraPlanTools?: string[];
 	/** Main session is on the escalate model instead of the phase's own. */
 	escalated: boolean;
 	judgeRounds: number;
@@ -401,6 +405,7 @@ export default function workflow(pi: ExtensionAPI) {
 		state.reviewBase = undefined;
 		state.passedTrees = undefined;
 		state.judgedMerges = undefined;
+		state.extraPlanTools = undefined;
 		state.waiting = undefined;
 		stopWaitTimer();
 		updateStatus(ctx);
@@ -456,12 +461,15 @@ export default function workflow(pi: ExtensionAPI) {
 	/** K4: tells other extensions the phase and stage; only when it changed. */
 	function emitStatus(): void {
 		const st = currentStages();
+		const cl = state.approvedPlan && state.phase === "execute" ? state.checklist?.filter((i) => !isHuman(i)) : undefined;
 		const payload = {
 			v: 1,
 			phase: state.phase,
 			...(state.planDoc?.flowId ? { flowId: state.planDoc.flowId } : {}),
 			...(state.approvedPlan ? { title: planTitle(state.approvedPlan) } : {}),
 			...(st ? { stage: st.current, stages: st.stages.length } : {}),
+			...(cl?.length ? { done: cl.filter((i) => i.done).length, total: cl.length } : {}),
+			...(cl && state.waiting ? { waiting: true } : {}),
 		};
 		const json = JSON.stringify(payload);
 		if (json === lastStatusEvent) return;
@@ -551,6 +559,7 @@ export default function workflow(pi: ExtensionAPI) {
 		}
 		if (!readOnly(phase)) syncFlowOnlyTools(pi, phase); // plan_check and deliver only exist inside a flow
 		if (leavingFlow && state.planDoc && !state.planDoc.finished) planMilestone(ctx, { at: new Date().toISOString(), ok: false, text: "abandoned" });
+		if (!keepExtraTools(state.phase, phase)) state.extraPlanTools = undefined;
 		const samePhase = phase === state.phase; // a repeated setPhase keeps what the judge already passed
 		const modelAction = preFlowModelAction(state.phase, phase);
 		if (modelAction === "save" && ctx.model) state.preFlowModel = { model: `${ctx.model.provider}/${ctx.model.id}`, thinking: pi.getThinkingLevel() };
@@ -2194,6 +2203,8 @@ export default function workflow(pi: ExtensionAPI) {
 			const repo = (await flowRepos(ctx)).find((r) => fs.existsSync(path.join(r.root, "scripts", "update-packages.mjs")));
 			if (!repo) return reply("No repo of this flow has scripts/update-packages.mjs (add the unity-packages folder to the flow). Nothing published.");
 			const root = repo.root;
+			const accepted = await acceptanceProblem("publish", root, null);
+			if (accepted) return reply(`${accepted}. Nothing published.`);
 			const wait = (why: string, check: string): ToolReply => {
 				const since = waitSince(publishWaitSince.get(step), new Date().toISOString());
 				publishWaitSince.set(step, since);
@@ -2242,12 +2253,14 @@ export default function workflow(pi: ExtensionAPI) {
 			const cwd = params.repo ? path.resolve(ctx.cwd, params.repo) : ctx.cwd;
 			if (!fs.existsSync(cwd)) return reply(`git_task failed: ${cwd} does not exist.`);
 			const multi = (state.folders?.length ?? 0) > 0 || (state.touchedRepos?.length ?? 0) > 0;
+			const acceptance = allowed.ungated ? null : await acceptanceProblem("merge", cwd, null);
 			const spec: GitGuardSpec = {
 				roots: multi ? repos.map((r) => r.root) : [],
 				protectedBranches: cfg.protectedBranches,
 				passedTrees: state.passedTrees ?? {},
 				noMerge: noMerge(state.approvedPlan ?? ""),
 				...(allowed.ungated ? { ungated: true } : (() => { const mf = midFlowMergeRefusal(); return mf ? { midFlow: mf } : {}; })()),
+				...(acceptance ? { acceptance } : {}),
 			};
 			const task = [
 				params.task.trim(),
@@ -2777,6 +2790,8 @@ export default function workflow(pi: ExtensionAPI) {
 				if (early) return early;
 				const res = await gateCheck(defaultRunner, kind, dir, target, { passedTrees: state.passedTrees?.[key] ?? [], noMerge: noMerge(state.approvedPlan ?? ""), repo });
 				if (res.problem) return res.problem;
+				const accepted = await acceptanceProblem(kind, dir, res.tree ?? null);
+				if (accepted) return accepted;
 				if (res.tree) {
 					const stage = state.stage;
 					const record = kind === "merge" ? { pr: target ?? (await branchOf(dir)), tree: res.tree, ...(stage ? { stage } : {}) } : res.commit ? { commit: res.commit, tree: res.tree, ...(stage ? { stage } : {}) } : undefined;
@@ -2814,14 +2829,20 @@ export default function workflow(pi: ExtensionAPI) {
 		});
 	}
 
+	/** K11: asks the listeners of `workflow:merge-gate` (after the judge gate passed) whether the merge, protected push or publish may go on; a refusal text or null. */
+	async function acceptanceProblem(kind: "merge" | "protected-push" | "publish", cwd: string, tree: string | null): Promise<string | null> {
+		return acceptanceRefusal(await gatherClaims((d) => pi.events.emit("workflow:merge-gate", d), { v: 1, kind, cwd: cwd.replace(/\\/g, "/"), tree }, 30_000));
+	}
+
 	function planAllowedTools(): RegExp[] {
-		return cfg.planAllowedTools.flatMap((p) => {
+		const own = cfg.planAllowedTools.flatMap((p) => {
 			try {
 				return [new RegExp(p)];
 			} catch {
 				return [];
 			}
 		});
+		return [...own, ...exactToolRegexes(state.extraPlanTools)];
 	}
 
 	function planAllow(): RegExp[] {
@@ -3144,6 +3165,26 @@ export default function workflow(pi: ExtensionAPI) {
 			}
 			const blocked = approvalBlock(planDraft, planWaitNow);
 			if (blocked) planReady = false;
+			if (planReady && !blocked) {
+				const emitted = composePlan(planDraft);
+				const review = emitClaims((d) => pi.events.emit("workflow:plan-ready", d), { v: 1, title: planTitle(emitted), plan: emitted }, 0);
+				if (planReviewRoute(planReady, !!blocked, review.claimed) === "review") {
+					ctx.ui.notify("workflow: plan sent for review; type go to approve it yourself.", "info");
+					void review.answer.then(async (answer) => {
+						const current = state.phase === "plan" && planReady && composePlan(planDraft) === emitted;
+						const action = planReviewAction(answer, current);
+						if (action === "approve") {
+							ctx.ui.notify(`workflow: plan approved, executing on ${describeRole(cfg.roles.execute)}`, "info");
+							await approve(lastCtx ?? ctx);
+						} else if (action === "reject") {
+							pi.sendMessage({ customType: "workflow-plan-review", content: `${(answer as { reject: string }).reject}\n\nRevise the plan: reply with the whole plan again as a new \`## Plan:\`.`, display: true }, { triggerTurn: true, deliverAs: "followUp" });
+						} else if (current) {
+							ctx.ui.notify(`workflow: no verdict on the plan (${answer && typeof answer === "object" && "error" in answer ? String((answer as { error: unknown }).error) : "none"}); say go to approve it.`, "warning");
+						}
+					}, () => {});
+					return;
+				}
+			}
 			if (!cfg.planPrompt) {
 				ctx.ui.notify(`workflow: say "go" to execute on ${describeRole(cfg.roles.execute)}, or keep discussing.`, "info");
 				return;
@@ -3873,6 +3914,35 @@ export default function workflow(pi: ExtensionAPI) {
 		if (!(state.phase === "execute" && state.approvedPlan)) return;
 		ctx.ui.notify("workflow: a flow is executing; finish it or leave it with /flow off before switching sessions", "warning");
 		return { cancel: true };
+	});
+
+	// K9: another extension starts a flow at the plan phase from a brief.
+	pi.events.on("workflow:start-plan", (data: unknown) => {
+		const claim = (data as { claim?: unknown } | null)?.claim;
+		if (typeof claim !== "function") return;
+		(claim as (p: Promise<unknown>) => void)(
+			(async () => {
+				const req = parseStartPlan(data);
+				if ("error" in req) return req;
+				const ctx = lastCtx;
+				if (!ctx) return { error: "workflow:start-plan: the workflow is not ready yet" };
+				if (state.phase === "execute" || state.phase === "plan" || state.approvedPlan) return { error: `workflow:start-plan: a flow is already running (phase ${state.phase})` };
+				const prev = state.phase;
+				state.extraPlanTools = req.allowTools.length ? req.allowTools : undefined;
+				await setPhase(ctx, "plan");
+				refilterTools(); // discuss to plan keeps the tool snapshot, so the allowed tools must be put back
+				persist();
+				try {
+					pi.sendUserMessage(`${START_PLAN_PREFACE}${req.brief}`, { deliverAs: "followUp" });
+				} catch (e) {
+					state.extraPlanTools = undefined;
+					await setPhase(ctx, prev);
+					persist();
+					return { error: `workflow:start-plan: could not send the brief: ${(e as Error).message}` };
+				}
+				return { ok: true };
+			})(),
+		);
 	});
 
 	// Explore, advisor and test_run run in the agents extension; a flow counts their usage and metrics.

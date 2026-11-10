@@ -23,6 +23,8 @@ export interface GitGuardSpec {
 	ungated?: boolean;
 	/** Set while a merge or protected push is not allowed before the end of the flow: the refusal text. */
 	midFlow?: string;
+	/** The orchestrator's acceptance refusal (contract K11), asked before the subagent starts: the text that refuses merges, protected pushes and publishes. */
+	acceptance?: string;
 }
 
 const isStrings = (v: unknown): v is string[] => Array.isArray(v) && v.every((s) => typeof s === "string");
@@ -41,10 +43,11 @@ export function parseGuardSpec(raw: string | undefined): GitGuardSpec | null {
 	if (!isStrings(o.roots) || !isStrings(o.protectedBranches) || typeof o.noMerge !== "boolean") return null;
 	if (o.ungated !== undefined && typeof o.ungated !== "boolean") return null;
 	if (o.midFlow !== undefined && typeof o.midFlow !== "string") return null;
+	if (o.acceptance !== undefined && typeof o.acceptance !== "string") return null;
 	const trees = o.passedTrees;
 	if (typeof trees !== "object" || trees === null || Array.isArray(trees)) return null;
 	if (!Object.values(trees).every(isStrings)) return null;
-	return { roots: o.roots, protectedBranches: o.protectedBranches, passedTrees: trees as Record<string, string[]>, noMerge: o.noMerge, ...(o.ungated ? { ungated: true } : {}), ...(o.midFlow ? { midFlow: o.midFlow } : {}) };
+	return { roots: o.roots, protectedBranches: o.protectedBranches, passedTrees: trees as Record<string, string[]>, noMerge: o.noMerge, ...(o.ungated ? { ungated: true } : {}), ...(o.midFlow ? { midFlow: o.midFlow } : {}), ...(o.acceptance ? { acceptance: o.acceptance } : {}) };
 }
 
 function gitOut(dir: string, args: string[]): string {
@@ -69,6 +72,7 @@ export default function gitGuard(pi: ExtensionAPI): void {
 		const gate = async (kind: "merge" | "protected-push", root: string | undefined, target: string | undefined, repo?: string): Promise<string | null> => {
 			if (spec.ungated) return null;
 			if (spec.midFlow && !spec.noMerge) return spec.midFlow;
+			if (spec.acceptance) return spec.acceptance;
 			const dir = root ?? ctx.cwd;
 			const key = repoKey(gitOut(dir, ["rev-parse", "--show-toplevel"]) || dir);
 			const res = await gateCheck(defaultRunner, kind, dir, target, { passedTrees: spec.passedTrees[key] ?? [], noMerge: spec.noMerge, repo });

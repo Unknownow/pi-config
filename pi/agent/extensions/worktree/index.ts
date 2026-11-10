@@ -8,6 +8,7 @@
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { parseCreate } from "./create-event.ts";
 import { CURRENT_SESSION_VERSION, getAgentDir, SessionManager, type ExtensionAPI, type ExtensionCommandContext, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_LINK, loadConfig, type WtConfig } from "./config.ts";
 import { isLink, unlinkLink } from "./files.ts";
@@ -72,8 +73,11 @@ async function launchCwdOf(git: Git, cfg: WtConfig, sessionCwd: string): Promise
 	return main ?? cfg.root;
 }
 
+/** What creating a set uses of the context; a command context and a plain event context both have it. */
+type SetCtx = Pick<ExtensionContext, "cwd" | "ui" | "hasUI" | "sessionManager">;
+
 /** The folders added to this session, from the workflow's public `session-folders` entry (absolute, forward slashes). */
-function addedFolders(ctx: ExtensionCommandContext): string[] {
+function addedFolders(ctx: SetCtx): string[] {
 	return foldersFromEntries(ctx.sessionManager.getBranch() as { type: string; customType?: string; data?: unknown }[]);
 }
 
@@ -113,7 +117,7 @@ interface Collected {
 }
 
 /** Split the working folder and added folders into git repos and plain folders. */
-async function collect(git: Git, ctx: ExtensionCommandContext): Promise<Collected | string> {
+async function collect(git: Git, ctx: SetCtx): Promise<Collected | string> {
 	const top = async (d: string) => {
 		const r = await git(d, ["rev-parse", "--show-toplevel"]);
 		return r.code === 0 ? slash(r.stdout.trim()) : null;
@@ -193,7 +197,7 @@ async function suggestName(git: Git, cfg: WtConfig, repos: string[]): Promise<st
 }
 
 /** Create a set for the working repo and the added folders (no terminal, no session). Reports problems itself and returns null. */
-async function createSet(pi: ExtensionAPI, ctx: ExtensionCommandContext, name: string, progress: Progress): Promise<Created | null> {
+async function createSet(pi: ExtensionAPI, ctx: SetCtx, name: string, progress: Progress): Promise<Created | null> {
 	const fail = (m: string) => {
 		ctx.ui.notify(m, "error");
 		return null;
@@ -245,15 +249,33 @@ async function createSet(pi: ExtensionAPI, ctx: ExtensionCommandContext, name: s
 	return { cfg, name, cwd, workingTarget: targetOf(found.workingTop), folders: found.order.map(targetOf), lines, workingTop: found.workingTop, setRoot: setRootOf(cfg, name) };
 }
 
-async function newSet(pi: ExtensionAPI, ctx: ExtensionCommandContext, name: string, progress: Progress): Promise<void> {
+interface Launched {
+	name: string;
+	branch: string;
+	cwd: string;
+	setRoot: string;
+	launched: boolean;
+	text: string;
+	/** The notification text: header, creation lines and the launch result. */
+	report: string;
+	warn: boolean;
+}
+
+/** Creates the set and opens its terminal; null when creating failed (createSet has reported why). */
+async function createAndLaunch(pi: ExtensionAPI, ctx: SetCtx, name: string, progress: Progress): Promise<Launched | null> {
 	const c = await createSet(pi, ctx, name, progress);
-	if (!c) return;
-	name = c.name;
+	if (!c) return null;
 	progress.stage("opening terminal");
 	const git = makeGit(pi);
-	const l = await launch(c.cfg, name, await launchCwdOf(git, c.cfg, c.workingTop), c.cwd, c.folders, freshSessionFile(c.cwd));
-	const head = `Worktree set "${name}" (branch ${branchOf(c.cfg, name)}) in ${c.setRoot}`;
-	ctx.ui.notify([head, ...c.lines, l.error ?? l.text].join("\n"), l.error ? "warning" : "info");
+	const l = await launch(c.cfg, c.name, await launchCwdOf(git, c.cfg, c.workingTop), c.cwd, c.folders, freshSessionFile(c.cwd));
+	const branch = branchOf(c.cfg, c.name);
+	const head = `Worktree set "${c.name}" (branch ${branch}) in ${c.setRoot}`;
+	return { name: c.name, branch, cwd: c.cwd, setRoot: c.setRoot, launched: !l.error, text: l.error ?? l.text, report: [head, ...c.lines, l.error ?? l.text].join("\n"), warn: !!l.error };
+}
+
+async function newSet(pi: ExtensionAPI, ctx: ExtensionCommandContext, name: string, progress: Progress): Promise<void> {
+	const r = await createAndLaunch(pi, ctx, name, progress);
+	if (r) ctx.ui.notify(r.report, r.warn ? "warning" : "info");
 }
 
 /** `/wt rename [OLD] [NEW]`: rename an unused, unpushed workspace. */
@@ -746,6 +768,7 @@ export default function worktree(pi: ExtensionAPI) {
 	let liveTimers: ReturnType<typeof setInterval>[] = [];
 	let unsubStatus: (() => void) | undefined;
 	let unsubFolderAdd: (() => void) | undefined;
+	let unsubCreate: (() => void) | undefined;
 	let addFolderCfg: WtConfig | null = null;
 	const publishLive = () => {
 		const c = liveCtx;
@@ -854,6 +877,41 @@ export default function worktree(pi: ExtensionAPI) {
 				})(),
 			);
 		});
+		unsubCreate?.();
+		// W1: another extension asks for a set by name (no name prompt, no menus).
+		unsubCreate = pi.events.on("worktree:create", (d) => {
+			const claim = (d as { claim?: unknown } | null)?.claim;
+			if (typeof claim !== "function") return;
+			(claim as (p: Promise<unknown>) => void)(
+				(async () => {
+					const req = parseCreate(d);
+					if ("error" in req) return req;
+					if (!repoRoot) return { error: "worktree:create: this session is not in a git repo" };
+					const progress = new Progress(ctx.hasUI ? ctx.ui : null, `worktree create (${req.name})`, truncateToWidth);
+					const errors: string[] = [];
+					const quiet: SetCtx = {
+						cwd: ctx.cwd,
+						hasUI: ctx.hasUI,
+						sessionManager: ctx.sessionManager,
+						ui: Object.assign(Object.create(ctx.ui), {
+							notify: (m: string, t?: "info" | "warning" | "error") => {
+								if (t === "error") errors.push(m);
+								ctx.ui.notify(m, t);
+							},
+						}),
+					};
+					try {
+						const r = await createAndLaunch(pi, quiet, req.name, progress);
+						if (!r) return { error: errors.join("\n") || "worktree:create failed" };
+						return { name: r.name, branch: r.branch, cwd: r.cwd, setRoot: r.setRoot, launched: r.launched, text: r.text };
+					} catch (e) {
+						return { error: (e as Error).message };
+					} finally {
+						progress.done();
+					}
+				})(),
+			);
+		});
 		startLive(ctx);
 		// Interactive sessions only: a headless pi (subagent, `pi -p`) in the set must not move files under its parent.
 		if (!session || !autoUpdate || !ctx.hasUI || (event.reason !== "startup" && event.reason !== "resume")) return;
@@ -879,6 +937,8 @@ export default function worktree(pi: ExtensionAPI) {
 		stopLive();
 		unsubFolderAdd?.();
 		unsubFolderAdd = undefined;
+		unsubCreate?.();
+		unsubCreate = undefined;
 		try {
 			if (event.reason !== "quit" || !session || !ctx.hasUI || !process.stderr.isTTY) return;
 			if (!repoDirsIn(session.setRoot).length) return;

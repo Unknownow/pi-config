@@ -46,3 +46,25 @@ test("parseGuardSpec keeps midFlow as a string, rejects other types, and omits i
 	assert.equal(parseGuardSpec(JSON.stringify({ ...base, midFlow: 3 })), null);
 	assert.equal("midFlow" in (parseGuardSpec(JSON.stringify(base)) ?? {}), false);
 });
+
+test("parseGuardSpec keeps acceptance as a string and rejects other types", () => {
+	const base = { roots: [], protectedBranches: ["main"], passedTrees: {}, noMerge: false };
+	assert.equal(parseGuardSpec(JSON.stringify({ ...base, acceptance: "not accepted" }))?.acceptance, "not accepted");
+	assert.equal(parseGuardSpec(JSON.stringify({ ...base, acceptance: 3 })), null);
+	assert.equal("acceptance" in (parseGuardSpec(JSON.stringify(base)) ?? {}), false);
+});
+
+test("acceptance refuses a merge, and ungated overrides it", async () => {
+	const base = { roots: [], protectedBranches: ["main"], passedTrees: {}, noMerge: false, acceptance: "ACCEPT-FIRST" };
+	process.env.PI_WORKFLOW_GIT_GUARD = JSON.stringify(base);
+	try {
+		const r = await handler()({ toolName: "bash", input: { command: "gh pr merge 5 --merge" } }, { cwd: process.cwd() });
+		assert.equal(r?.block, true);
+		assert.match(r?.reason ?? "", /ACCEPT-FIRST/);
+		process.env.PI_WORKFLOW_GIT_GUARD = JSON.stringify({ ...base, ungated: true });
+		const u = await handler()({ toolName: "bash", input: { command: "gh pr merge 5 --merge" } }, { cwd: process.cwd() });
+		assert.equal(u, undefined);
+	} finally {
+		delete process.env.PI_WORKFLOW_GIT_GUARD;
+	}
+});
