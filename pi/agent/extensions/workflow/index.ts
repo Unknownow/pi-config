@@ -2526,7 +2526,7 @@ export default function workflow(pi: ExtensionAPI) {
 		name: "judge",
 		label: "Judge",
 		description:
-			"Adversarial review of the diff since the flow's review base (committed or not, plus untracked files) of every git repo in this flow (the working folder's, the /folders ones, and repos edited this flow) by a stronger model that assumes the change is wrong. Returns one line per finding and VERDICT: PASS or FAIL. Call it when the diff is ready; fix blocker and major findings and call it again. On a pass, finish the delivery (push, pull request, and the merge unless the plan says Delivery: no merge), tick the steps and end your turn: the workflow decides whether minor findings get a fix round. Rounds after the first review only the changes since the last round, with its findings. Commits are free; merge, a protected push and publish_packages need a PASS on their exact tree.",
+			"Adversarial review of the diff since the flow's review base (committed or not, plus untracked files) of every git repo in this flow (the working folder's, the /folders ones, and repos edited this flow) by a stronger model that assumes the change is wrong. Returns one line per finding and VERDICT: PASS or FAIL. Call it when the diff is ready; fix blocker and major findings and call it again. On a pass, finish the delivery (push, pull request, and the merge unless the plan says Delivery: no merge), tick any steps not ticked yet and end your turn: the workflow decides whether minor findings get a fix round. Rounds after the first review only the changes since the last round, with its findings. Commits are free; merge, a protected push and publish_packages need a PASS on their exact tree.",
 		promptSnippet: "judge: adversarial review of the current diff; must PASS before a merge, a protected push or a publish",
 		parameters: Type.Object({
 			focus: Type.Optional(Type.String({ description: "What the change is meant to do, or areas to scrutinize" })),
@@ -2554,8 +2554,8 @@ export default function workflow(pi: ExtensionAPI) {
 			let text = r.text;
 			if (r.verdict === "PASS" && state.phase === "execute" && !hasPlanFlaw(r.text) && !noMerge(state.approvedPlan ?? "") && (await flowHasRemote(ctx))) {
 				text += mergeDue()
-					? "\n\nTick the finished steps with plan_check. Now deliver this exact tree: commit, push, open or update the pull request and merge it with gh pr merge (as its own command), then end your turn."
-					: "\n\nNow commit and push this exact tree to the flow branch (no merge: the pull request is merged at the end of the flow), tick the finished steps with plan_check, then end your turn.";
+					? "\n\nTick any finished steps not ticked yet with plan_check. Now deliver this exact tree: commit, push, open or update the pull request and merge it with gh pr merge (as its own command), then end your turn."
+					: "\n\nNow commit and push this exact tree to the flow branch (no merge: the pull request is merged at the end of the flow), tick any finished steps not ticked yet with plan_check, then end your turn.";
 			}
 			if (r.verdict === "PASS") {
 				const knowledge = state.lastKnowledge?.hash === diff.hash ? state.lastKnowledge : undefined;

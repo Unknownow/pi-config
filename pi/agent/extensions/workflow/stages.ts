@@ -72,8 +72,8 @@ export function planWaitProblems(plan: string, isReadOnly: (c: string) => string
 export function stageStart(stages: PlanStage[], current: number): string {
 	const s = stages[current - 1];
 	const last = current < stages.length
-		? " Once it passes, commit and push the stage (no merge: the pull request is merged at the end of the flow or at a planned `Deliver: merge` step), tick its steps and end your turn. The workflow then sends you the next stage."
-		: " This is the last stage. Once it passes, tick the steps, commit, push, open or update the pull request and merge it.";
+		? " Once it passes, commit and push the stage (no merge: the pull request is merged at the end of the flow or at a planned `Deliver: merge` step), tick any of its steps not ticked yet and end your turn. The workflow then sends you the next stage."
+		: " This is the last stage. Once it passes, tick any steps not ticked yet, commit, push, open or update the pull request and merge it.";
 	return `This plan has ${stages.length} stages. Do stage ${current} only: "${s.title}". Don't start a later stage. When it is done, run its tests and call \`judge\`. ${last}`;
 }
 

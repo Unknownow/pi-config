@@ -103,10 +103,18 @@ test("delivery guidance in the prompts", () => {
 	assert.doesNotMatch(planPhase(), /\(delivery:/);
 });
 
+test("the execute prompt ticks steps as they finish", () => {
+	assert.ok(EXECUTE_PHASE.includes("as soon as it is implemented"));
+	assert.ok(EXECUTE_PHASE.includes("not judged"));
+	assert.ok(EXECUTE_PHASE.includes("`undone`"));
+	assert.match(EXECUTE_PHASE, /Tick a `Deliver:`, `Publish:`/);
+	assert.doesNotMatch(EXECUTE_PHASE, /tick the finished steps/);
+});
+
 test("the execute prompt makes delivery the executor's job and never the user's", () => {
 	assert.ok(!EXECUTE_PHASE.includes("Never commit, push"));
 	assert.doesNotMatch(EXECUTE_PHASE, /When the judge passes, end your turn/);
-	assert.match(EXECUTE_PHASE, /When the judge passes, tick the finished steps with `plan_check`, then commit and push and open the pull request; merge it only when the flow ends or at a `Deliver: merge` step \(unless the plan says/);
+	assert.match(EXECUTE_PHASE, /When the judge passes, tick any finished steps not ticked yet with `plan_check`, then commit and push and open the pull request; merge it only when the flow ends or at a `Deliver: merge` step \(unless the plan says/);
 	assert.ok(EXECUTE_PHASE.includes("git_task"));
 	assert.ok(EXECUTE_PHASE.includes("call `judge`"));
 	assert.doesNotMatch(EXECUTE_PHASE, /ask the user to (push|merge|open)/i);
