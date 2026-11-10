@@ -51,6 +51,8 @@ test("stageStart and nextStage", () => {
 	assert.ok(!t.includes("the workflow delivers"));
 	assert.ok(t.includes("This is the last stage."));
 	assert.ok(!stageStart(s, 1).includes("last stage"));
+	assert.ok(t.includes("not ticked yet") && stageStart(s, 1).includes("not ticked yet"));
+	assert.ok(!t.includes("tick its steps and") && !stageStart(s, 1).includes("tick its steps and"));
 	assert.ok(nextStage(s, 2, "committed").startsWith('Stage 1 ("A") is committed and pushed: committed'));
 });
 
