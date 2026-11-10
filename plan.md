@@ -71,6 +71,8 @@
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 Rewrite the per-step tick rule in `pi/agent/extensions/workflow/prompts.ts:111` (`EXECUTE_PHASE`). Replace "After finish
-- [ ] S2 Change the four "tick at pass" phrases into catch-ups. The wording must say "not ticked yet" or "still open", so it is c
-- [ ] S3 Add a row to `docs/workflow-improvements.md` in section D, with the next free ID D38 (the last one is D37). Follow the r
+- [x] S1 Rewrite the per-step tick rule in `pi/agent/extensions/workflow/prompts.ts:111` (`EXECUTE_PHASE`). Replace "After finish
+- [x] S2 Change the four "tick at pass" phrases into catch-ups. The wording must say "not ticked yet" or "still open", so it is c
+- [x] S3 Add a row to `docs/workflow-improvements.md` in section D, with the next free ID D38 (the last one is D37). Follow the r
+## Outcome
+2026-11-10T19:11:27.138Z — ok: master, 2 commits since the review base, PR #33 MERGED https://github.com/Unknownow/pi-config/pull/33

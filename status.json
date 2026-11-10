@@ -1,12 +1,32 @@
 {
   "v": 1,
   "flowId": "20261111-0209-tick-plan-steps-when-they-are-finished-n-54c2",
-  "rev": 1,
-  "updated": "2026-11-10T19:09:32.985Z",
+  "rev": 2,
+  "updated": "2026-11-10T19:11:27.282Z",
   "title": "Tick plan steps when they are finished, not after the judge passes",
-  "done": [],
+  "done": [
+    "S1",
+    "S2",
+    "S3"
+  ],
+  "finished": {
+    "at": "2026-11-10T19:11:27.138Z",
+    "ok": true,
+    "text": "master, 2 commits since the review base, PR #33 MERGED https://github.com/Unknownow/pi-config/pull/33"
+  },
   "reviewBase": {
-    "d:/works/pi-config": "766f5928bc2c4b40c09fc8452f3d0c0c0b7ccd39"
+    "d:/works/pi-config": "ac23ef0a27b2b6e8b8b4e8782292de4b1c7e6918"
+  },
+  "passedTrees": {
+    "d:/works/pi-config": [
+      "3868803667c62f55883ea04c461e7d3d4b5f7d56"
+    ]
+  },
+  "judgedMerges": {
+    "d:/works/pi-config": {
+      "pr": "33",
+      "tree": "3868803667c62f55883ea04c461e7d3d4b5f7d56"
+    }
   },
   "repos": [
     {
