@@ -1,0 +1,18 @@
+{
+  "v": 1,
+  "flowId": "20261111-0209-tick-plan-steps-when-they-are-finished-n-54c2",
+  "rev": 1,
+  "updated": "2026-11-10T19:09:32.985Z",
+  "title": "Tick plan steps when they are finished, not after the judge passes",
+  "done": [],
+  "reviewBase": {
+    "d:/works/pi-config": "766f5928bc2c4b40c09fc8452f3d0c0c0b7ccd39"
+  },
+  "repos": [
+    {
+      "branch": "master",
+      "remote": "github.com/Unknownow/pi-config",
+      "primary": true
+    }
+  ]
+}
