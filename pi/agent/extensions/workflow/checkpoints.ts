@@ -124,6 +124,14 @@ export function afterMergeStep(plan: string, id: string): boolean {
 	return parsePublishStep(plan, id) !== null || parseMirrorStep(plan, id) !== null;
 }
 
+/** The ids of the open steps the merge gate counts: the unticked, non-human steps of the current stage; at the end of the flow without the steps that run after the merge. */
+export function gateOpenSteps(plan: string, checklist: { id: string; text: string; done: boolean; stage?: number; human?: true }[] | undefined, staged: { current: number; total: number } | undefined): string[] {
+	const atEnd = !staged || staged.current >= staged.total;
+	return (checklist ?? [])
+		.filter((i) => !i.human && !/^verifys*:/i.test(i.text) && !i.done && (!staged || i.stage === undefined || i.stage === staged.current) && !(atEnd && afterMergeStep(plan, i.id)))
+		.map((i) => i.id);
+}
+
 /** The refusal text for a command the executor may not run. */
 export function publishRefusal(problem: string): string {
 	return `Refused: ${problem}.`;

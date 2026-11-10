@@ -117,6 +117,18 @@ test("mergeDecisions reads amendments and round-trips mergeAmendment", () => {
 import { afterMergeStep } from "./checkpoints.ts";
 
 test("afterMergeStep: tag Deliver, Publish and Mirror steps run after the final merge", () => {
-	const plan = "**S1.** Edit code\n**S2.** Deliver: tag v1\n**S3.** Publish: pkg\n**S4.** Mirror: all\n**S5.** Deliver: merge — x\n**S6.** Wait: a person (check: git status)";
+	const plan = "**S1.** Edit code\n**S2.** Deliver: tag v1\n**S3.** Publish: com.iecgames.core\n**S4.** Mirror: all\n**S5.** Deliver: merge — x\n**S6.** Wait: a person (check: git status)";
 	assert.deepEqual(["S1", "S2", "S3", "S4", "S5", "S6"].map((id) => afterMergeStep(plan, id)), [false, true, true, true, false, false]);
+});
+
+import { gateOpenSteps } from "./checkpoints.ts";
+
+test("gateOpenSteps: after-merge steps are ignored only at the end of the flow", () => {
+	const plan = "**S1.** Edit code\n**S2.** Deliver: tag v1";
+	const list = [{ id: "S1", text: "Edit code", done: false, stage: 3 }, { id: "S2", text: "Deliver: tag v1", done: false, stage: 3 }];
+	assert.deepEqual(gateOpenSteps(plan, [list[1]], { current: 3, total: 3 }), []);
+	assert.deepEqual(gateOpenSteps(plan, [list[1]], undefined), []);
+	assert.deepEqual(gateOpenSteps(plan, list, { current: 3, total: 3 }), ["S1"]);
+	assert.deepEqual(gateOpenSteps(plan, [list[1]], { current: 1, total: 3 }), []);
+	assert.deepEqual(gateOpenSteps(plan, [{ ...list[1], stage: 1 }], { current: 1, total: 3 }), ["S2"]);
 });

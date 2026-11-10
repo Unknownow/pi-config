@@ -64,7 +64,7 @@ import { addToRegistry, type BoardEntry, boardLines, boardRows, detailLines, liv
 import { adoptHigher, claimLive, commitRef, dropClaim, pidAlive, readClaim, writeClaim, deleteLocal, deleteRef, deleteReviewRef, fetchMirror, type Git, listRefs, plansDir, pushRef, readLocalStatuses, readPlanMd, refRev, remoteOf, repoInfo, type RefEntry, sweepReviewRefs, writeLocal, writeReviewRef } from "./plan-store.ts";
 import { type FlowFinding, recordFindings, reportFindings, type ReportStep } from "./flow-report.ts";
 import { readOnlyProblem } from "../shared/readonly-bash.ts";
-import { afterMergeStep, deliverMergeOpen, mergeAmendment, mergeDecisions, mergeDecisionsText, checkpointAmendment, checkpointNote, checkpointOutcome, deliverHint, deliverHintsBlock, deliverStepSpec, hasCheckpointAmendment, checkpointText, isPlannedTag, parseDeliverStep, publishRefusal, withCheckpoints } from "./checkpoints.ts";
+import { afterMergeStep, gateOpenSteps, deliverMergeOpen, mergeAmendment, mergeDecisions, mergeDecisionsText, checkpointAmendment, checkpointNote, checkpointOutcome, deliverHint, deliverHintsBlock, deliverStepSpec, hasCheckpointAmendment, checkpointText, isPlannedTag, parseDeliverStep, publishRefusal, withCheckpoints } from "./checkpoints.ts";
 import { pushArgs, tagDecision } from "./tags.ts";
 import { type CheckVerdict, autopilotAmendment, autopilotReply, checkTitle, checkVerdict, cleanCheck, waitCheckProblem, type HumanCheck, humanChecks, parseVerifyStep, parseWaitStep, pollDecision, resumePrefix, verifyAmendment, waitAmendment } from "./waits.ts";
 import { nextStage, parseStages, planWaitProblems, stageLine, stageNote, stageStart, stagesOutcome } from "./stages.ts";
@@ -2474,7 +2474,8 @@ export default function workflow(pi: ExtensionAPI) {
 						const log = (await git(r.dir, "log", "--oneline", "-20")).stdout.trim();
 						repoLines.push(`### ${r.root}\n${status || "(clean)"}\n${log}`);
 					}
-					const open = (state.checklist ?? []).filter((i) => !isHuman(i) && !i.done && (!staged || i.stage === undefined || i.stage === staged.current));
+					const openIds = gateOpenSteps(state.approvedPlan ?? "", state.checklist, staged ? { current: staged.current, total: staged.stages.length } : undefined);
+					const open = (state.checklist ?? []).filter((i) => openIds.includes(i.id));
 					const position = staged ? `Stage ${staged.current} of ${staged.stages.length}: ${staged.stages[staged.current - 1].title}` : "No stages";
 					const { result, run } = await runRole("arbiter", "merge", {
 						systemPrompts: [
@@ -3632,13 +3633,12 @@ export default function workflow(pi: ExtensionAPI) {
 	/** The refusal of a merge or protected push before the end of the flow (the gate's rules), or null when it is allowed. */
 	function midFlowMergeRefusal(): string | null {
 		const staged = currentStages();
-		const atEnd = !staged || staged.current >= staged.stages.length;
-		const open = (state.checklist ?? []).filter((i) => !isHuman(i) && !i.done && (!staged || i.stage === undefined || i.stage === staged.current) && !(atEnd && afterMergeStep(state.approvedPlan ?? "", i.id)));
+		const open = gateOpenSteps(state.approvedPlan ?? "", state.checklist, staged ? { current: staged.current, total: staged.stages.length } : undefined);
 		return midFlowMergeProblem({
 			staged: !!staged,
 			current: staged?.current,
 			total: staged?.stages.length,
-			openSteps: open.map((i) => i.id),
+			openSteps: open,
 			deliverMergeOpen: deliverMergeOpen(state.approvedPlan ?? "", state.checklist, staged?.current),
 			approved: mergeApproved(),
 		});
