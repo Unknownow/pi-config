@@ -1,8 +1,8 @@
 {
   "v": 1,
   "flowId": "20261110-2252-stages-end-with-a-push-one-pull-request-c08e",
-  "rev": 2,
-  "updated": "2026-11-10T16:02:57.748Z",
+  "rev": 3,
+  "updated": "2026-11-10T16:07:27.129Z",
   "title": "Stages end with a push; one pull request merged at the end of the flow; mid-flow merges only when planned or approved by the arbiter",
   "done": [
     "S1",
@@ -19,12 +19,30 @@
     "S12",
     "S13"
   ],
+  "finished": {
+    "at": "2026-11-10T16:07:26.993Z",
+    "ok": true,
+    "text": "master, 8 commits since the review base, PR #32 MERGED https://github.com/Unknownow/pi-config/pull/32 · 1 human check(s) for you (see the card)"
+  },
   "reviewBase": {
-    "d:/works/pi-config": "7ee0d43d2bdac2df1f44793c28cc3d820e74ce03"
+    "d:/works/pi-config": "82d41e5d46a8b77e467f2db5d75fce794555b37a"
+  },
+  "passedTrees": {
+    "d:/works/pi-config": [
+      "2095b8c3df169f992fb95166e92f953f3d877fa7",
+      "0e946d3a19353e16cb6a217ec2729de6bdfcdb2d",
+      "877fc3120ebffb4b06af7ffc1134f4a35c0476c8"
+    ]
+  },
+  "judgedMerges": {
+    "d:/works/pi-config": {
+      "pr": "32",
+      "tree": "877fc3120ebffb4b06af7ffc1134f4a35c0476c8"
+    }
   },
   "repos": [
     {
-      "branch": "flow/stages-push-one-pr",
+      "branch": "master",
       "remote": "github.com/Unknownow/pi-config",
       "primary": true
     }
