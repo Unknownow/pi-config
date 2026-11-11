@@ -213,7 +213,7 @@ its plan and hand over, even when you said "fix it" or "do it for me".
   `ag --pager`, `less -o`, `date -s`, `hostname <name>`, `git diff --ext-diff` / `--textconv`.
 - A repository's own git config (`core.fsmonitor`, `diff.external`, textconv) can still run programs on a
   plain `git status` / `git diff`: plan an untrusted repo in a throwaway clone.
-- **`run_code`** (the sandbox extension, `readonly-tools.ts`) is checked too: its JavaScript is refused
+- **`run_code`** (the sandbox extension, `shared/readonly-tools.ts`) is checked too: its JavaScript is refused
   when the code writes, deletes, runs programs, `eval`s, or sends a POST, PUT, PATCH or DELETE
   request, or builds names at runtime (`fs['wri'+'te']`, `require(x)`). `fetch_url` only reads; `video_frames` (sandbox) only writes frames into the temp folder. MCP tools
   are also refused when an argument holds a statement that changes data (`INSERT`, `UPDATE ... SET`,
@@ -224,7 +224,7 @@ its plan and hand over, even when you said "fix it" or "do it for me".
 - It is a guard against the planner drifting into execution, not a sandbox. The code checks are
   regexes: a determined disguise (a computed lookup on an alias of `require('fs')`, say) can still get
   past them.
-- Tests: `node --experimental-strip-types --test agent-end.test.ts hooks.test.ts delivery.test.ts merge-gate.test.ts folder-add.test.ts readonly-tools.test.ts plan-tools.test.ts push-guard.test.ts knowledge.test.ts registry-publish.test.ts agent-events.test.ts notify.test.ts repos.test.ts stages.test.ts git-guard.test.ts repo-diff.test.ts prompts.test.ts config.test.ts metrics.test.ts plan-store.test.ts boundary.test.ts plan-doc.test.ts  flow-report.test.ts view.test.ts waits.test.ts checkpoints.test.ts tags.test.ts`.
+- Tests: `node --experimental-strip-types --test agent-end.test.ts hooks.test.ts delivery.test.ts merge-gate.test.ts folder-add.test.ts plan-tools.test.ts push-guard.test.ts knowledge.test.ts registry-publish.test.ts agent-events.test.ts notify.test.ts repos.test.ts stages.test.ts git-guard.test.ts repo-diff.test.ts prompts.test.ts config.test.ts metrics.test.ts plan-store.test.ts boundary.test.ts plan-doc.test.ts  flow-report.test.ts view.test.ts waits.test.ts checkpoints.test.ts tags.test.ts`.
 
 ## Test phase (removed)
 

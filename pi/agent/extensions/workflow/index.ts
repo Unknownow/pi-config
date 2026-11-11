@@ -68,7 +68,7 @@ import { afterMergeStep, gateOpenSteps, deliverMergeOpen, mergeAmendment, mergeD
 import { pushArgs, tagDecision } from "./tags.ts";
 import { type CheckVerdict, autopilotAmendment, autopilotReply, checkTitle, checkVerdict, cleanCheck, waitCheckProblem, type HumanCheck, humanChecks, parseVerifyStep, parseWaitStep, pollDecision, resumePrefix, verifyAmendment, waitAmendment } from "./waits.ts";
 import { nextStage, parseStages, planWaitProblems, stageLine, stageNote, stageStart, stagesOutcome } from "./stages.ts";
-import { planToolProblem, planToolRefused, phaseToolRefusal } from "./readonly-tools.ts";
+import { planToolProblem, planToolRefused, phaseToolRefusal } from "../shared/readonly-tools.ts";
 import { acceptanceRefusal, exactToolRegexes, keepExtraTools, parseStartPlan, planReviewAction, planReviewRoute, START_PLAN_PREFACE } from "./hooks.ts";
 import { emitClaims, gatherClaims } from "../shared/claims.ts";
 import { refilterPlanTools, hiddenInPhase, syncFlowOnlyTools } from "./plan-tools.ts";

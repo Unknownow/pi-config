@@ -17,7 +17,9 @@ import { Type } from "typebox";
 import { emitClaims } from "../shared/claims.ts";
 import { activeCount, kickoffText, makeRunId, readyToSpawn, renderBrief, setName, validatePackages, type PackageInput, type Run, type Sub } from "./brief.ts";
 import { verdictMatches } from "./inbox.ts";
-import { loadConfig, type OrchestrateConfig } from "./config.ts";
+import { loadConfig, DEFAULTS, type OrchestrateConfig } from "./config.ts";
+import { isProposalReady, MODE_ENTRY, modeFromEntries, onTyped, toolRefusal, type Mode } from "./mode.ts";
+import { section } from "./prompts.ts";
 import { check, type Snapshot } from "./monitor.ts";
 import {
 	addAccepted, appendMessage, commonDir, findSubByToplevel, listActiveRuns, norm, orchestraDir, readAccepted, readCursor, readNew, readRun, readStatus, runDir, subDir, writeCursor, writeRun, writeStatus,
@@ -134,6 +136,10 @@ export default function (pi: ExtensionAPI): void {
 		if (!data || typeof data !== "object") return;
 		const k = data as Record<string, unknown>;
 		lastK4 = k;
+		if (mode !== "off" && !me && typeof k.phase === "string" && k.phase !== "off" && !k4Warned) {
+			k4Warned = true;
+			say(`the workflow is in phase ${k.phase} while orchestrator mode is ${mode}; the read-only guard stays on (/orch off lifts it)`, "warning");
+		}
 		const waiters = k4Waiters;
 		k4Waiters = [];
 		for (const w of waiters) w();
@@ -267,6 +273,66 @@ export default function (pi: ExtensionAPI): void {
 		started = true;
 		writeMyStatus();
 	}
+
+	// ---------------------------------------------------------------- orchestrator mode
+
+	let mode: Mode = "off";
+	let proposalReady = false;
+	let k4Warned = false;
+	const goRe = (): RegExp => {
+		try {
+			return new RegExp(cfg.approvePattern, "i");
+		} catch {
+			return new RegExp(DEFAULTS.approvePattern, "i");
+		}
+	};
+	function setMode(m: Mode, announce = true): void {
+		mode = m;
+		proposalReady = false;
+		k4Warned = false;
+		try {
+			pi.appendEntry(MODE_ENTRY, { v: 1, mode: m });
+		} catch (e) {
+			say(`could not save the mode: ${(e as Error).message}`, "warning");
+		}
+		if (announce) say(m === "off" ? "orchestrator mode off: the guard is lifted" : `orchestrator mode: ${m}`);
+	}
+	const assistantText = (m: unknown): string => {
+		const a = m as { role?: string; content?: unknown } | undefined;
+		if (!a || a.role !== "assistant" || !Array.isArray(a.content)) return "";
+		return a.content.filter((c: { type?: string }) => c.type === "text").map((c: { text: string }) => c.text).join("\n");
+	};
+
+	// The section is always set (empty when off) so pi's patch replay of the system prompt stays stable.
+	pi.on("before_agent_start", async (event) => {
+		const sections = (event as { systemPromptOptions?: { sections?: Record<string, string> } }).systemPromptOptions?.sections;
+		if (sections) sections.orchestrate = me ? "" : section(mode);
+	});
+
+	pi.on("tool_call", async (event) => {
+		if (me || mode === "off") return;
+		const why = toolRefusal(mode, event.toolName, (event.input ?? {}) as Record<string, unknown>);
+		if (why) return { block: true, reason: why };
+	});
+
+	pi.on("input", async (event) => {
+		if (me || mode === "off" || event.source === "extension" || event.streamingBehavior) return { action: "continue" as const };
+		const typed = event.text.trim();
+		if (typed.startsWith("/")) return { action: "continue" as const };
+		const t = onTyped(mode, typed, proposalReady, goRe());
+		proposalReady = false;
+		if (!t) return { action: "continue" as const };
+		setMode(t.mode);
+		return { action: "transform" as const, text: `${typed}\n\n${t.append}` };
+	});
+
+	pi.on("agent_end", async (event) => {
+		if (me || (mode !== "propose" && mode !== "discuss")) return;
+		const msgs = (event as { messages?: Array<{ role?: string; stopReason?: string }> }).messages ?? [];
+		const last = [...msgs].reverse().find((m) => m.role === "assistant");
+		const body = assistantText(last).trim();
+		proposalReady = mode === "propose" && isProposalReady(body, last?.stopReason === "stop" && body.length > 0);
+	});
 
 	// ---------------------------------------------------------------- orchestrator side
 
@@ -538,6 +604,7 @@ export default function (pi: ExtensionAPI): void {
 		parameters: Type.Object({ title: Type.String({ description: "Short title of the whole job" }), packages: Type.Array(pkgSchema) }),
 		async execute(_id, params, _signal, _u, ctx) {
 			uiCtx = ctx;
+			if (mode !== "off" && mode !== "run") throw new Error("approve the packages first (/orch, then go)");
 			const common = await commonDir(exec, ctx.cwd);
 			if (!common) throw new Error("not in a git repository");
 			const active = listActiveRuns(common).runs;
@@ -713,26 +780,47 @@ export default function (pi: ExtensionAPI): void {
 	});
 
 	pi.registerCommand("orch", {
-		description: "Orchestrated run: status, watch (resume watching a run), merged <id> (check a PR merge now), end",
+		description: "Orchestrator mode and run: start (read-only discussion), off, status, watch (resume watching a run), merged <id> (check a PR merge now), end",
 		getArgumentCompletions: (prefix) =>
-			["status", "watch", "merged", "end"].filter((s) => s.startsWith(prefix.trim())).map((s) => ({ value: s, label: s })),
+			["start", "off", "status", "watch", "merged", "end"].filter((s) => s.startsWith(prefix.trim())).map((s) => ({ value: s, label: s })),
 		handler: async (args, ctx) => {
 			uiCtx = ctx;
-			const sub = args.trim().split(/\s+/)[0] || "status";
+			let sub = args.trim().split(/\s+/)[0];
+			if (!sub) sub = owned || me ? "status" : mode === "off" ? "start" : "mode";
 			try {
-				if (sub === "status") {
+				if (sub === "start") {
+					if (me) throw new Error("this is a sub-session of a run; start orchestrating from another session");
+					if (lastK4 && typeof lastK4.phase === "string" && lastK4.phase !== "off") throw new Error(`the workflow is in phase ${lastK4.phase}; end it (/flow off) before /orch start`);
+					const common = await commonDir(exec, ctx.cwd);
+					if (!common) throw new Error("not in a git repository");
+					const active = listActiveRuns(common).runs[0];
+					if (active) throw new Error(`run ${active.id} is still active in this repo; resume it with /orch watch or end it with /orch end`);
+					setMode("discuss", false);
+					const title = args.trim().slice("start".length).trim();
+					ctx.ui.notify("orchestrate: discuss mode (read-only). Say \"go\" for the package proposal, \"go\" again to run it; /orch off lifts the guard.", "info");
+					if (title) pi.sendUserMessage(title, { deliverAs: "followUp" });
+				} else if (sub === "mode") {
+					ctx.ui.notify(`orchestrate: mode ${mode}${mode === "discuss" ? "; \"go\" asks for the package proposal" : mode === "propose" ? "; \"go\" on a finished proposal starts the run" : ""}; /orch off lifts the guard`, "info");
+				} else if (sub === "off") {
+					setMode("off");
+					if (owned) ctx.ui.notify(`orchestrate: the watcher keeps running run ${owned.runId}`, "info");
+				} else if (sub === "status") {
 					ctx.ui.notify(await table(), "info");
 				} else if (sub === "merged") {
 					const id = args.trim().split(/\s+/)[1];
 					if (!id) throw new Error("usage: /orch merged <id>");
 					subOf(need().run, id);
 					ctx.ui.notify(`orchestrate: ${(await checkEnded(true, [id])).join("\n") || "nothing to check"}`, "info");
+				} else if (sub === "end" && !owned) {
+					if (mode === "off") throw new Error("no active run in this session");
+					setMode("off");
 				} else if (sub === "end") {
 					await mutate((r) => {
 						r.state = "ended";
 					});
 					const id = owned?.runId;
 					stopWatcher();
+					if (mode !== "off") setMode("off", false);
 					ctx.ui.notify(`orchestrate: run ${id} ended; the worktrees stay (remove them with /wt)`, "info");
 				} else if (sub === "watch") {
 					const common = await commonDir(exec, ctx.cwd);
@@ -743,12 +831,13 @@ export default function (pi: ExtensionAPI): void {
 					const alive = run.owner.host === os.hostname() && pidAlive(run.owner.pid) && run.owner.pid !== process.pid;
 					if (!mine && alive) throw new Error(`run ${run.id} is watched by another live session (pid ${run.owner.pid})`);
 					startWatcher({ common, runId: run.id, repoCwd: ctx.cwd });
+					setMode("run", false);
 					await mutate((r) => {
 						r.owner = { pid: process.pid, host: os.hostname(), session: ctx.sessionManager.getSessionFile() ?? "" };
 					});
 					ctx.ui.notify(`orchestrate: watching run ${run.id}`, "info");
 				} else {
-					ctx.ui.notify("usage: /orch status | watch | merged <id> | end", "warning");
+					ctx.ui.notify("usage: /orch start [title] | off | status | watch | merged <id> | end", "warning");
 				}
 			} catch (e) {
 				ctx.ui.notify(`orchestrate: ${(e as Error).message}`, "error");
@@ -775,6 +864,9 @@ export default function (pi: ExtensionAPI): void {
 		started = false;
 		pendingAsk = new Map();
 		k10 = null;
+		mode = modeFromEntries(ctx.sessionManager.getBranch());
+		proposalReady = false;
+		k4Warned = false;
 		const gen = ++generation;
 		const loaded = loadConfig(getAgentDir());
 		cfg = loaded.config;
@@ -791,6 +883,7 @@ export default function (pi: ExtensionAPI): void {
 		const become = (hit: { run: Run; sub: Sub }) => {
 			const m: Me = { common, run: hit.run, sub: hit.sub, dir: subDir(common, hit.run.id, hit.sub.id) };
 			me = m;
+			mode = "off";
 			const fresh = !fs.existsSync(`${m.dir}/status.json`);
 			started = !fresh;
 			prevPhase = "off";

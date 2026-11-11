@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { refilterPlanTools } from "./plan-tools.ts";
-import { planToolRefused, phaseToolRefusal } from "./readonly-tools.ts";
+import { planToolRefused, phaseToolRefusal } from "../shared/readonly-tools.ts";
 
 function fakePi(initial: string[]) {
 	const pi = {

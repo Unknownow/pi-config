@@ -14,9 +14,15 @@ export interface OrchestrateConfig {
 	askTimeoutMinutes: number;
 	/** Ask the person before a plan is approved. */
 	confirmPlans: boolean;
+	/** Regex (case-insensitive) for the typed "go" that moves orchestrator mode on. */
+	approvePattern: string;
 }
 
-export const DEFAULTS: OrchestrateConfig = { maxSubs: 4, pollSeconds: 60, stallMinutes: 20, askTimeoutMinutes: 15, confirmPlans: true };
+/** Copy of the default `approvePattern` in workflow/config.ts: the same words mean "go" in both. */
+const GO_PATTERN =
+	"^((ok(ay)?|yes|yeah|yep|sure|alright|fine|great|good)[,.! ]+)?(then[, ]+)?(go|go ahead|go for it|do it|do that|do this|do them|do (it )?all( of (it|that|them))?|approved?|lgtm|ship it|execute( it| that| this| the plan)?|proceed|start|let'?s go|let'?s do it|run it|implement( it| that| this| the plan)?|build it|make it so)( for me)?( now)?( please)?[.! ]*$";
+
+export const DEFAULTS: OrchestrateConfig = { maxSubs: 4, pollSeconds: 60, stallMinutes: 20, askTimeoutMinutes: 15, confirmPlans: true, approvePattern: GO_PATTERN };
 
 const INT_KEYS = ["maxSubs", "pollSeconds", "stallMinutes", "askTimeoutMinutes"] as const;
 
@@ -36,6 +42,19 @@ export function parseConfig(raw: unknown): { config: OrchestrateConfig; warning?
 	if ("confirmPlans" in o) {
 		if (typeof o.confirmPlans === "boolean") config.confirmPlans = o.confirmPlans;
 		else bad.push("confirmPlans");
+	}
+	if ("approvePattern" in o) {
+		let ok = false;
+		if (typeof o.approvePattern === "string") {
+			try {
+				new RegExp(o.approvePattern, "i");
+				ok = true;
+			} catch {
+				// falls through to bad
+			}
+		}
+		if (ok) config.approvePattern = o.approvePattern as string;
+		else bad.push("approvePattern");
 	}
 	return { config, warning: bad.length ? `orchestrate.json: bad value for ${bad.join(", ")}; using the default` : undefined };
 }
