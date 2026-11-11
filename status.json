@@ -1,17 +1,31 @@
 {
   "v": 1,
   "flowId": "20261111-1014-orchestrator-mode-multi-repo-packages-an-109e",
-  "rev": 1,
-  "updated": "2026-11-11T03:14:01.005Z",
+  "rev": 2,
+  "updated": "2026-11-11T03:19:57.245Z",
   "title": "Orchestrator mode, multi-repo packages and a run visualizer for `orchestrate`",
-  "stage": 1,
-  "done": [],
+  "stage": 2,
+  "done": [
+    "S1",
+    "S2",
+    "S3",
+    "S4",
+    "S5",
+    "S6",
+    "S7"
+  ],
   "reviewBase": {
-    "d:/works/pi-config": "1c16417fd9b22069cafd773ca17dcc08599c4c2f"
+    "d:/works/pi-config": "78dfaaeffc94b3c5c641114d0f5bf0e16f8ec684"
+  },
+  "passedTrees": {
+    "d:/works/pi-config": [
+      "118364da462705a95b8faf7f7bb9e38c2b361916",
+      "96fa52e799b5abad5919cc9fa75e0d29d0def59f"
+    ]
   },
   "repos": [
     {
-      "branch": "master",
+      "branch": "flow/orchestrator-mode",
       "remote": "github.com/Unknownow/pi-config",
       "primary": true
     }

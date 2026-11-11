@@ -396,13 +396,13 @@ Manual end-to-end (Verify step S18).
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 Move `workflow/readonly-tools.ts` to `shared/readonly-tools.ts`, and `workflow/readonly-tools.test.ts` to `shared/readon
-- [ ] S2 Add `orchestrate/mode.ts`, pure, with:
-- [ ] S3 Add `orchestrate/prompts.ts` with `DISCUSS`, `PROPOSE`, `RUN`, `PROPOSE_KICKOFF` and `RUN_KICKOFF`, and `section(mode, r
-- [ ] S4 In `config.ts`, add `approvePattern` (the default copied from the workflow, with a comment). A regex that does not compi
-- [ ] S5 Wire the mode in `orchestrate/index.ts`:
-- [ ] S6 Update `orchestrate/README.md` (Usage: `/orch` → discuss → go → propose → go → run, `/orch off`, the `approvePattern` co
-- [ ] S7 In `docs/workflow-improvements.md`, add row A43 (orchestrator mode with a read-only discussion and proposal; readonly-to
+- [x] S1 Move `workflow/readonly-tools.ts` to `shared/readonly-tools.ts`, and `workflow/readonly-tools.test.ts` to `shared/readon
+- [x] S2 Add `orchestrate/mode.ts`, pure, with:
+- [x] S3 Add `orchestrate/prompts.ts` with `DISCUSS`, `PROPOSE`, `RUN`, `PROPOSE_KICKOFF` and `RUN_KICKOFF`, and `section(mode, r
+- [x] S4 In `config.ts`, add `approvePattern` (the default copied from the workflow, with a comment). A regex that does not compi
+- [x] S5 Wire the mode in `orchestrate/index.ts`:
+- [x] S6 Update `orchestrate/README.md` (Usage: `/orch` → discuss → go → propose → go → run, `/orch off`, the `approvePattern` co
+- [x] S7 In `docs/workflow-improvements.md`, add row A43 (orchestrator mode with a read-only discussion and proposal; readonly-to
 - [ ] S8 In worktree W1:
 - [ ] S9 Add `orchestrate/folders.ts`, which reads K1 (a copy of `worktree/folders.ts` logic with a comment), and `orchestrate/re
 - [ ] S10 In `brief.ts`:
