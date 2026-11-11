@@ -11,7 +11,7 @@ export function foldersFromEntries(entries: { type: string; customType?: string;
 }
 
 const norm = (p: string) => {
-	const s = p.split(String.fromCharCode(92)).join("/").replace(//+$/, "");
+	const s = p.split(String.fromCharCode(92)).join("/").replace(/\/+$/, "");
 	return process.platform === "win32" ? s.toLowerCase() : s;
 };
 
