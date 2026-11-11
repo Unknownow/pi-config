@@ -55,7 +55,13 @@ export interface View {
 /** What is still unanswered: questions without an answer, plans without a verdict, accept-requests without a verdict of the same tree and repo. `outbox` is sub → orchestrator, `inbox` the reverse. */
 export function pendingOf(outbox: Message[], inbox: Message[]): Pending[] {
 	const out: Pending[] = [];
+	// a newer plan-review or accept-request (per repo) supersedes the older ones: only the latest can still get a verdict
+	const latestPlan = [...outbox].reverse().find((m) => m.type === "plan-review");
+	const latestAccept = new Map<string, Message>();
+	for (const m of outbox) if (m.type === "accept-request") latestAccept.set(String(m.data?.repo ?? ""), m);
 	for (const m of outbox) {
+		if (m.type === "plan-review" && m !== latestPlan) continue;
+		if (m.type === "accept-request" && latestAccept.get(String(m.data?.repo ?? "")) !== m) continue;
 		if (m.type === "question") {
 			if (!inbox.some((x) => x.type === "answer" && x.replyTo === m.id)) out.push({ kind: "question", ref: m.id, text: m.text });
 		} else if (m.type === "plan-review") {
@@ -127,7 +133,7 @@ export function buildView(run: Run, now: number, maxSubs: number, inputs: Map<st
 			accepted: i.accepted,
 			repos: all.map((k) => ({ key: k, files: count.get(k) ?? 0, drift: drift.get(k) ?? [], pr: i.prs?.get(k) })),
 			overlap: i.overlap ?? [],
-			pending: pendingOf(i.outbox, i.inbox),
+			pending: s.state === "merged" || s.state === "stopped" ? [] : pendingOf(i.outbox, i.inbox),
 			recent: [...last("out"), ...last("in")].sort((a, b) => a.ts.localeCompare(b.ts)),
 		};
 	});

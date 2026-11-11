@@ -11,12 +11,20 @@ const run = (subs: Sub[]): Run => ({ v: 1, id: "r1", title: "T", created: "", ow
 
 test("pendingOf: questions, plans, accepts", () => {
 	const out = [msg("q1", "question"), msg("p1", "plan-review", { data: { n: 1 } }), msg("p2", "plan-review", { data: { n: 2 } }), msg("a1", "accept-request", { data: { tree: "t1", repo: "web" } })];
-	assert.deepEqual(pendingOf(out, []).map((p) => p.kind), ["question", "plan", "plan", "accept"]);
+	assert.deepEqual(pendingOf(out, []).map((p) => p.kind), ["question", "plan", "accept"]);
 	const inb = [msg("x", "answer", { replyTo: "q1" }), msg("y", "plan-verdict", { data: { n: 1 } })];
 	const left = pendingOf(out, inb);
 	assert.deepEqual(left.map((p) => p.kind + p.ref), ["plan2", "acceptt1"]);
 	assert.equal(pendingOf(out, [...inb, msg("z", "accept-verdict", { data: { tree: "t1", repo: "api" } })]).length, 2);
 	assert.equal(pendingOf(out, [...inb, msg("z", "accept-verdict", { data: { tree: "t1", repo: "web" } })]).length, 1);
+});
+
+test("pendingOf: superseded requests and plans are not pending", () => {
+	const acc = (id: string, tree: string) => msg(id, "accept-request", { data: { tree, repo: "web" } });
+	assert.deepEqual(pendingOf([acc("a1", "t1"), acc("a2", "t2")], [msg("z", "accept-verdict", { data: { tree: "t2", repo: "web" } })]), []);
+	assert.deepEqual(pendingOf([msg("p1", "plan-review", { data: { n: 1 } }), msg("p2", "plan-review", { data: { n: 2 } })], [msg("y", "plan-verdict", { data: { n: 2 } })]), []);
+	const merged = buildView(run([sub("a", { state: "merged" })]), 1, 4, new Map([["a", { outbox: [msg("q1", "question")], inbox: [], accepted: [] }]]), 180);
+	assert.deepEqual(merged.subs[0].pending, []);
 });
 
 test("buildView groups canonical files per repo", () => {

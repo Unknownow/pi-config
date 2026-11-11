@@ -1128,9 +1128,13 @@ export default function (pi: ExtensionAPI): void {
 		if (!common) throw new Error("not in a git repository");
 		const runId = owned?.runId ?? me?.run.id ?? listActiveRuns(common).runs[0]?.id;
 		if (!runId) throw new Error("no active run in this repo");
+		let warned = false;
 		const read = (): View | null => {
 			const r = readView(common, runId);
-			if (r.corrupt) say(r.corrupt, "warning");
+			if (r.corrupt && !warned) {
+				warned = true;
+				say(r.corrupt, "warning");
+			}
 			return r.view ?? null;
 		};
 		let view = read();
