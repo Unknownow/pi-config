@@ -1,7 +1,7 @@
 // node --experimental-strip-types --test repos.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { buildRepos, canonical, hasKeyPrefix, foldersFor, repoKey, split, subRepos, worktreesOf } from "./repos.ts";
+import { buildRepos, canonical, crossRunOverlaps, hasKeyPrefix, foldersFor, repoKey, split, subRepos, worktreesOf } from "./repos.ts";
 
 const repos = [{ key: "api", top: "D:/w/api" }, { key: "web", top: "D:/w/web" }];
 
@@ -49,4 +49,15 @@ test("hasKeyPrefix", () => {
 	assert.equal(hasKeyPrefix("api:src/**"), true);
 	assert.equal(hasKeyPrefix("src/**"), false);
 	assert.equal(hasKeyPrefix("D:/x/**"), false);
+});
+
+test("crossRunOverlaps finds a run in web that owns paths in api, and a legacy run in web", () => {
+	const mine = [{ key: "api", top: "D:/w/api" }, { key: "web", top: "D:/w/web" }];
+	const pk = [{ id: "p", owns: ["api:src/a/**"] }];
+	const r = { id: "R", repos: [{ key: "web", top: "D:/w/web" }, { key: "api", top: "D:/w/api" }], subs: [{ id: "s", state: "executing", owns: ["api:src/**"] }, { id: "done", state: "merged", owns: ["api:src/**"] }] };
+	const got = crossRunOverlaps(mine, pk, "D:/w/web", r);
+	assert.equal(got.length, 1);
+	assert.match(got[0], /package s in the active run R/);
+	assert.deepEqual(crossRunOverlaps(mine, pk, "D:/w/web", { id: "L", subs: [{ id: "s", state: "spawned", owns: ["src/**"] }] }), []);
+	assert.equal(crossRunOverlaps(mine, [{ id: "q", owns: ["web:src/x.ts"] }], "D:/w/web", { id: "L", subs: [{ id: "s", state: "spawned", owns: ["src/**"] }] }).length, 1);
 });

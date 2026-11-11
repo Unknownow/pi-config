@@ -5,6 +5,8 @@ export interface Repo {
 	top: string;
 }
 
+import { globsMayOverlap } from "./paths.ts";
+
 const KEYED = /^([a-z0-9._-]+):(.*)$/i;
 const slash = (p: string) => p.split(String.fromCharCode(92)).join("/").replace(/\/+$/, "");
 
@@ -79,4 +81,30 @@ export function foldersFor(sub: { repos?: string[] }, added: string[], keyOfFold
 		const k = keyOfFolder(f);
 		return k === null || need.has(k);
 	});
+}
+
+const samePath = (a: string, b: string): boolean => (process.platform === "win32" ? slash(a).toLowerCase() === slash(b).toLowerCase() : slash(a) === slash(b));
+
+/** D7: owned paths of the new packages that may overlap with the paths an active run `other` (found from the repo checked out at `scannedTop`) still owns, wherever those paths are. Pure. */
+export function crossRunOverlaps(
+	myRepos: Repo[],
+	packages: Array<{ id: string; owns?: string[] }>,
+	scannedTop: string,
+	other: { id: string; repos?: Repo[]; subs: Array<{ id: string; state: string; owns: string[] }> },
+): string[] {
+	const found: string[] = [];
+	for (const os of other.subs) {
+		if (os.state === "merged" || os.state === "stopped") continue;
+		for (const og of os.owns) {
+			const sp = split(og);
+			const otherTop = sp.key ? other.repos?.find((r) => r.key === sp.key)?.top : scannedTop; // a legacy run owns paths in the repo it lives in
+			if (!otherTop) continue;
+			for (const p of packages) for (const g of p.owns ?? []) {
+				const mine = split(g);
+				const myTop = myRepos.find((r) => r.key === mine.key)?.top;
+				if (myTop && samePath(myTop, otherTop) && globsMayOverlap(`r:${mine.path}`, `r:${sp.path}`)) found.push(`${p.id} owns "${g}", which may overlap "${og}" of package ${os.id} in the active run ${other.id}`);
+			}
+		}
+	}
+	return found;
 }

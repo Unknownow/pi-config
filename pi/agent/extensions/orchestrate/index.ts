@@ -17,8 +17,7 @@ import { Type } from "typebox";
 import { emitClaims } from "../shared/claims.ts";
 import { activeCount, canonicalPackages, kickoffText, makeRunId, readyToSpawn, renderBrief, setName, validatePackages, type PackageInput, type Run, type Sub } from "./brief.ts";
 import { foldersFromEntries } from "./folders.ts";
-import { globsMayOverlap } from "./paths.ts";
-import { buildRepos, foldersFor, hasKeyPrefix, split, subRepos, worktreesOf, type Repo, type Worktree } from "./repos.ts";
+import { buildRepos, crossRunOverlaps, foldersFor, hasKeyPrefix, subRepos, worktreesOf, type Repo, type Worktree } from "./repos.ts";
 import { verdictMatches } from "./inbox.ts";
 import { loadConfig, DEFAULTS, type OrchestrateConfig } from "./config.ts";
 import { isProposalReady, MODE_ENTRY, modeFromEntries, onTyped, toolRefusal, type Mode } from "./mode.ts";
@@ -676,33 +675,23 @@ export default function (pi: ExtensionAPI): void {
 	}
 
 	/** D7: owned paths that may overlap with active runs of the session's other repos; the user decides. One-sided: only runs found from this session's repos. */
-	async function confirmOverlaps(ctx: ExtensionContext, repos: Repo[], packages: PackageInput[]): Promise<void> {
+	async function confirmOverlaps(ctx: ExtensionContext, repos: Repo[], packages: PackageInput[]): Promise<string | undefined> {
 		const found: string[] = [];
+		const seen = new Set<string>();
 		for (const repo of repos.slice(1)) {
 			const common2 = await commonDir(exec, repo.top);
 			if (!common2) continue;
 			for (const other of listActiveRuns(common2).runs) {
-				for (const os2 of other.subs) {
-					if (os2.state === "merged" || os2.state === "stopped") continue;
-					for (const og of os2.owns) {
-						const sp = split(og);
-						const otherTop = sp.key ? other.repos?.find((r) => r.key === sp.key)?.top : repo.top;
-						if (!otherTop || !sameDir(otherTop, repo.top)) continue;
-						for (const p of packages) for (const g of p.owns ?? []) {
-							const mine = split(g);
-							const myTop = repos.find((r) => r.key === mine.key)?.top;
-							if (myTop && sameDir(myTop, repo.top) && globsMayOverlap(`r:${mine.path}`, `r:${sp.path}`)) found.push(`${p.id} owns "${g}", which may overlap "${og}" of package ${os2.id} in the active run ${other.id}`);
-						}
-					}
-				}
+				if (seen.has(`${common2}|${other.id}`)) continue;
+				seen.add(`${common2}|${other.id}`);
+				found.push(...crossRunOverlaps(repos, packages, repo.top, other));
 			}
 		}
-		if (!found.length) return;
+		if (!found.length) return undefined;
 		const list = [...new Set(found)].slice(0, 10).join("\n- ");
-		if (ctx.hasUI) {
-			const pick = await ctx.ui.select(`Owned paths overlap with other active runs:\n- ${list}`, ["Create anyway", "Cancel"]);
-			if (pick === "Create anyway") return;
-		}
+		if (!ctx.hasUI) return `WARNING: owned paths may overlap with active runs in other repos (no UI to ask; created anyway):\n- ${list}`;
+		const pick = await ctx.ui.select(`Owned paths overlap with other active runs:\n- ${list}`, ["Create anyway", "Cancel"]);
+		if (pick === "Create anyway") return `Note: owned paths may overlap with active runs in other repos (you chose to continue):\n- ${list}`;
 		throw new Error(`cancelled: owned paths overlap with active runs in other repos:\n- ${list}`);
 	}
 
@@ -740,7 +729,7 @@ export default function (pi: ExtensionAPI): void {
 			const errors = validatePackages(params.packages as PackageInput[], repos);
 			if (errors.length) throw new Error(`invalid packages:\n- ${errors.join("\n- ")}`);
 			const packages = repos ? canonicalPackages(params.packages as PackageInput[], repos).packages : (params.packages as PackageInput[]);
-			if (repos) await confirmOverlaps(ctx, repos, packages);
+			const overlapNote = repos ? await confirmOverlaps(ctx, repos, packages) : undefined;
 			let existing: string[] = [];
 			try {
 				existing = fs.readdirSync(orchestraDir(common));
@@ -765,7 +754,7 @@ export default function (pi: ExtensionAPI): void {
 			}
 			writeRun(common, run);
 			startWatcher({ common, runId: id, repoCwd: ctx.cwd });
-			return text(`Run ${id} created with ${subs.length} packages${repos ? ` over ${repos.length} repos (${repos.map((r) => r.key).join(", ")})` : ""}. Ready to spawn: ${readyToSpawn(run).join(", ") || "none"}. Briefs are in ${runDir(common, id)}/<id>/brief.md.`);
+			return text(`Run ${id} created with ${subs.length} packages${repos ? ` over ${repos.length} repos (${repos.map((r) => r.key).join(", ")})` : ""}. Ready to spawn: ${readyToSpawn(run).join(", ") || "none"}. Briefs are in ${runDir(common, id)}/<id>/brief.md.${overlapNote ? `\n${overlapNote}` : ""}`);
 		},
 	});
 
