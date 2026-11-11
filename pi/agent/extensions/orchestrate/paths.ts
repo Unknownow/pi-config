@@ -35,3 +35,21 @@ export function matchesAny(file: string, globs: string[]): boolean {
 export function outsideOwned(files: string[], owns: string[], forbids: string[]): string[] {
 	return files.filter((f) => matchesAny(f, forbids) || !matchesAny(f, owns));
 }
+
+/** The folder part of a glob before its first wildcard, without a trailing slash ("" when the glob starts with one). */
+function literalDir(glob: string): string {
+	const g = normalizePath(glob).toLowerCase();
+	const i = g.search(/[*?]/);
+	const lit = i < 0 ? g : g.slice(0, g.lastIndexOf("/", i) + 1 > 0 ? g.lastIndexOf("/", i) + 1 : 0);
+	return lit.replace(/\/+$/, "");
+}
+
+/** Whether two canonical globs (`key:path` or bare) may match the same file. Conservative: equal or nested literal folders count. Different repo keys never overlap. */
+export function globsMayOverlap(a: string, b: string): boolean {
+	const ka = /^([a-z0-9._-]+):/i.exec(a)?.[1].toLowerCase() ?? "";
+	const kb = /^([a-z0-9._-]+):/i.exec(b)?.[1].toLowerCase() ?? "";
+	if (ka !== kb) return false;
+	const pa = literalDir(ka ? a.slice(ka.length + 1) : a);
+	const pb = literalDir(kb ? b.slice(kb.length + 1) : b);
+	return pa === pb || pa === "" || pb === "" || pa.startsWith(`${pb}/`) || pb.startsWith(`${pa}/`);
+}

@@ -5,7 +5,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { test } from "node:test";
 import type { Run } from "./brief.ts";
-import { addAccepted, appendMessage, commonDir, findSubByToplevel, listActiveRuns, readAccepted, readCursor, readNew, readRun, readStatus, runDir, writeCursor, writeRun, writeStatus } from "./store.ts";
+import { addAccepted, appendMessage, commonDir, findSubByToplevel, listActiveRuns, readAccepted, readCursor, readNew, readRun, readStatus, readView, runDir, viewPath, writeCursor, writeRun, writeStatus, writeView } from "./store.ts";
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "orch-store-")).replace(/\\/g, "/");
 const mkRun = (id: string, state: Run["state"] = "active", cwd = "C:/Work/Repo-wt/o1-a"): Run => ({
@@ -115,4 +115,16 @@ test("a run.json of the wrong shape is reported as corrupt", () => {
 test("findSubByToplevel needs the git top level, not a subfolder of it", () => {
 	const runs = [mkRun("o1-x")];
 	assert.equal(findSubByToplevel(runs, "C:/Work/Repo-wt/o1-a/UnityProject", true), null);
+});
+
+test("view.json round trip and a corrupt file", () => {
+	const common = tmp();
+	assert.deepEqual(readView(common, "r1"), { view: undefined, corrupt: undefined });
+	const v = { v: 1 as const, runId: "r1", title: "T", updated: "x", maxSubs: 4, subs: [] };
+	writeView(common, "r1", v);
+	assert.deepEqual(readView(common, "r1").view, v);
+	fs.writeFileSync(viewPath(common, "r1"), "{nope");
+	assert.ok(readView(common, "r1").corrupt);
+	fs.writeFileSync(viewPath(common, "r1"), JSON.stringify({ v: 2 }));
+	assert.match(readView(common, "r1").corrupt ?? "", /not a view file/);
 });

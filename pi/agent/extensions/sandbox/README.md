@@ -9,7 +9,7 @@ package (no dependencies, short tool descriptions).
 | `fetch_url {url, force?}` | GET (http/https only, redirects followed, 30 s timeout, 5 MB limit). HTML is converted to markdown, JSON is pretty-printed, other text is kept. The file is saved to `<tmpdir>/pi-fetch/<sha1(url)>.<md\|json\|txt>` and reused for 1 hour unless `force`. Returns URL, status, type, size, title, up to 40 headings, the first 2,000 characters and the saved path; use `grep` or `read` on the file for more. |
 
 The workflow extension lets both tools through in the plan phase; `run_code`'s code goes through the
-same JS write checks as the former context-mode code tool (`readonly-tools.ts`).
+same JS write checks as the former context-mode code tool (`shared/readonly-tools.ts`).
 
 Not replaced: context-mode's session memory and `/ctx-stats`.
 

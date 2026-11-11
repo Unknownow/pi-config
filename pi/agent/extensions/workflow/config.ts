@@ -8,7 +8,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { UNITY_PLAN_ALLOW } from "../shared/readonly-bash.ts";
-import { PLAN_TOOLS } from "./readonly-tools.ts";
+import { PLAN_TOOLS } from "../shared/readonly-tools.ts";
 import type { MergeMethod } from "./delivery.ts";
 import { DEFAULT_TOKEN_WEIGHTS, type TokenWeights } from "../shared/tokens.ts";
 import type { KnowledgeConfig } from "../agents/types.ts";

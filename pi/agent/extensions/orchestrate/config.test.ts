@@ -33,3 +33,11 @@ test("loadConfig: no file, a file, a corrupt file", () => {
 	assert.equal(r.config.maxSubs, 4);
 	assert.ok(r.warning);
 });
+
+test("approvePattern: a bad regex falls back with a warning", () => {
+	const r = parseConfig({ approvePattern: "(" });
+	assert.equal(r.config.approvePattern, DEFAULTS.approvePattern);
+	assert.match(r.warning!, /approvePattern/);
+	assert.equal(parseConfig({ approvePattern: "^yes$" }).config.approvePattern, "^yes$");
+	assert.ok(new RegExp(DEFAULTS.approvePattern, "i").test("ok go"));
+});

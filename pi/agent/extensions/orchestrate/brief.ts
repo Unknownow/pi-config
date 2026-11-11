@@ -1,5 +1,7 @@
 /** Work packages: validation, waves, ids, brief and kickoff text. Pure. */
 
+import { canonical, split, type Repo, type Worktree } from "./repos.ts";
+
 export type SubState = "planned" | "spawned" | "planning" | "executing" | "awaiting-acceptance" | "merged" | "stopped";
 
 export interface Sub {
@@ -13,8 +15,12 @@ export interface Sub {
 	notes?: string;
 	name: string;
 	branch?: string;
+	/** The worktree of the working repo (a sub-session finds itself by it). */
 	cwd?: string;
 	base?: string;
+	/** Multi-repo runs: the repo keys this package works in, and its worktree in each (the working one included). */
+	repos?: string[];
+	worktrees?: Worktree[];
 	/** Set when its flow ended; the merge is then confirmed with gh on every poll. */
 	endedAt?: string;
 	state: SubState;
@@ -27,19 +33,48 @@ export interface Run {
 	created: string;
 	owner: { pid: number; host: string; session: string };
 	state: "active" | "ended";
+	/** Multi-repo runs: the working repo first. Absent in a single-repo run (working key ""). */
+	repos?: Repo[];
 	subs: Sub[];
 }
 
 /** The input of one package, before names and states are assigned. */
-export type PackageInput = Pick<Sub, "id" | "goal"> & Partial<Pick<Sub, "criteria" | "owns" | "forbids" | "dependsOn" | "decisions" | "notes">>;
+export type PackageInput = Pick<Sub, "id" | "goal"> & Partial<Pick<Sub, "criteria" | "owns" | "forbids" | "dependsOn" | "decisions" | "notes">> & { repos?: string[] };
 
 export const SUB_ID_RE = /^[a-z0-9][a-z0-9-]{0,15}$/;
 /** Copy of BRANCH_RE in worktree/layout.ts:7 (orchestrate never imports worktree). */
 export const SET_NAME_RE = /^[a-z0-9][a-z0-9._-]{0,39}$/;
 const ACTIVE: SubState[] = ["spawned", "planning", "executing", "awaiting-acceptance"];
 
-export function validatePackages(pkgs: PackageInput[]): string[] {
+/** Canonicalises owns and forbids against the run's repos (`key:glob`; a bare glob is the working repo) and checks the extra repos. Returns the canonical packages and the key errors. */
+export function canonicalPackages(pkgs: PackageInput[], repos: Repo[]): { packages: PackageInput[]; errors: string[] } {
 	const errors: string[] = [];
+	const workingKey = repos[0]?.key ?? "";
+	const conv = (p: PackageInput, globs: string[] | undefined): string[] | undefined =>
+		globs?.map((g) => {
+			const c = canonical(g, repos, workingKey);
+			if ("error" in c) {
+				errors.push(`${p.id}: ${c.error}`);
+				return g;
+			}
+			return c.value;
+		});
+	const packages = pkgs.map((p) => {
+		const extra = (p.repos ?? []).map((k) => k.toLowerCase());
+		for (const k of extra) if (!repos.some((r) => r.key === k)) errors.push(`${p.id}: unknown repo "${k}" in repos (have: ${repos.map((r) => r.key).join(", ")})`);
+		return { ...p, owns: conv(p, p.owns), forbids: conv(p, p.forbids), repos: p.repos ? extra : undefined };
+	});
+	return { packages, errors };
+}
+
+/** Errors in the packages. With `repos` (a multi-repo run) globs are canonicalised first; the duplicate-owner check then runs on the canonical form. */
+export function validatePackages(pkgs: PackageInput[], repos?: Repo[]): string[] {
+	const errors: string[] = [];
+	if (repos?.length) {
+		const c = canonicalPackages(pkgs, repos);
+		errors.push(...c.errors);
+		pkgs = c.packages;
+	}
 	if (pkgs.length < 2) errors.push("a run needs at least 2 packages");
 	const ids = new Set<string>();
 	for (const p of pkgs) {
@@ -114,6 +149,9 @@ export function setName(runId: string, subId: string): string | null {
 	return SET_NAME_RE.test(name) && !name.endsWith(".") && !name.includes("..") ? name : null;
 }
 
+/** The repo key of a canonical glob; "" when bare. */
+export const keyOf = (g: string): string => split(g).key;
+
 const list = (items: string[], empty: string) => (items.length ? items.map((i) => `- ${i}`).join("\n") : `- ${empty}`);
 
 export function renderBrief(sub: Sub, run: Run): string {
@@ -133,6 +171,14 @@ export function renderBrief(sub: Sub, run: Run): string {
 		"## Paths you must not touch",
 		list(sub.forbids, "none beyond the paths other packages own"),
 		"",
+		...(run.repos?.length
+			? [
+					"## Repos",
+					run.repos.map((r) => `- ${r.key}: ${r.top}${sub.repos && !sub.repos.includes(r.key) ? " (not in your package)" : ""}`).join("\n"),
+					"Paths above are written `repo:path`. These are the orchestrator's checkouts; your worktree of each repo is in your session's folders.",
+					"",
+				]
+			: []),
 		"## Decisions already made",
 		list(sub.decisions, "none"),
 		...(sub.notes ? ["", "## Notes", sub.notes] : []),
@@ -149,6 +195,7 @@ export function kickoffText(sub: Sub, run: Run, briefPath: string): string {
 	return [
 		`You are package "${sub.id}" of the orchestrated run "${run.title}". Read the brief at ${briefPath} first; it is the whole job.`,
 		"",
+		...(sub.worktrees?.length ? ["Your worktrees:", ...sub.worktrees.map((w) => `- ${w.key || "(working repo)"}: ${w.cwd}`), ""] : []),
 		"Rules:",
 		`- Stay inside your owned paths (${sub.owns.join(", ")}).`,
 		`- Never touch: ${sub.forbids.length ? sub.forbids.join(", ") : "paths owned by other packages"}.`,

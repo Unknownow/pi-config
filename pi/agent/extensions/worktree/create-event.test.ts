@@ -14,3 +14,10 @@ test("parseCreate rejects a bad name with the checkName message, a wrong v and a
 	assert.ok("error" in parseCreate({ v: 1, name: 3 }));
 	assert.ok("error" in parseCreate(null));
 });
+
+test("parseCreate accepts folders, rejects a non-array, and omits the field when absent", () => {
+	assert.deepEqual(parseCreate({ v: 1, name: "a", folders: ["D:/x"] }), { name: "a", folders: ["D:/x"] });
+	assert.ok("error" in parseCreate({ v: 1, name: "a", folders: "D:/x" }));
+	assert.ok("error" in parseCreate({ v: 1, name: "a", folders: [1] }));
+	assert.equal("folders" in (parseCreate({ v: 1, name: "a" }) as object), false);
+});

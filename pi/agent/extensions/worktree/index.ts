@@ -12,7 +12,7 @@ import { parseCreate } from "./create-event.ts";
 import { CURRENT_SESSION_VERSION, getAgentDir, SessionManager, type ExtensionAPI, type ExtensionCommandContext, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_LINK, loadConfig, type WtConfig } from "./config.ts";
 import { isLink, unlinkLink } from "./files.ts";
-import { foldersFromEntries } from "./folders.ts";
+import { foldersFromEntries, keepFolders } from "./folders.ts";
 import { sessionLines, pidAlive, readLive, removeLive, setInUse, writeLive, type LiveEntry } from "./live.ts";
 import { readMeta, writeMeta } from "./meta.ts";
 import { latestSession, newSessionFile } from "./sessions.ts";
@@ -117,7 +117,7 @@ interface Collected {
 }
 
 /** Split the working folder and added folders into git repos and plain folders. */
-async function collect(git: Git, ctx: SetCtx): Promise<Collected | string> {
+async function collect(git: Git, ctx: SetCtx, only?: string[]): Promise<Collected | string> {
 	const top = async (d: string) => {
 		const r = await git(d, ["rev-parse", "--show-toplevel"]);
 		return r.code === 0 ? slash(r.stdout.trim()) : null;
@@ -126,7 +126,7 @@ async function collect(git: Git, ctx: SetCtx): Promise<Collected | string> {
 	if (!workingTop) return "run /wt new from a git repo";
 	const repos = [workingTop];
 	const order: string[] = [];
-	for (const f of addedFolders(ctx)) {
+	for (const f of keepFolders(addedFolders(ctx), only)) {
 		const t = await top(f);
 		const entry = t ?? f;
 		if (t && !repos.includes(t)) repos.push(t);
@@ -186,6 +186,8 @@ interface Created {
 	/** The original working repo. */
 	workingTop: string;
 	setRoot: string;
+	/** Every git repo in the set: the original top level and its worktree root (forward slashes). */
+	repos: { top: string; cwd: string }[];
 }
 
 /** The next free `w<N>`: no set folder and no such branch in any of the repos. */
@@ -197,14 +199,14 @@ async function suggestName(git: Git, cfg: WtConfig, repos: string[]): Promise<st
 }
 
 /** Create a set for the working repo and the added folders (no terminal, no session). Reports problems itself and returns null. */
-async function createSet(pi: ExtensionAPI, ctx: SetCtx, name: string, progress: Progress): Promise<Created | null> {
+async function createSet(pi: ExtensionAPI, ctx: SetCtx, name: string, progress: Progress, only?: string[]): Promise<Created | null> {
 	const fail = (m: string) => {
 		ctx.ui.notify(m, "error");
 		return null;
 	};
 	const git = progress.wrap(makeGit(pi));
 	progress.stage("checking repos (fetching)");
-	const found = await collect(git, ctx);
+	const found = await collect(git, ctx, only);
 	if (typeof found === "string") return fail(found);
 	const loaded = await sessionConfig(git, getAgentDir(), found.workingTop);
 	const cfg = loaded.cfg;
@@ -246,11 +248,12 @@ async function createSet(pi: ExtensionAPI, ctx: SetCtx, name: string, progress: 
 	const targetOf = (top: string) => pre.plan.find((p) => p.info.top === top)?.target ?? top;
 	const rel = path.relative(found.workingTop, ctx.cwd).replace(/\\/g, "/");
 	const cwd = rel && !rel.startsWith("..") ? `${targetOf(found.workingTop)}/${rel}` : targetOf(found.workingTop);
-	return { cfg, name, cwd, workingTarget: targetOf(found.workingTop), folders: found.order.map(targetOf), lines, workingTop: found.workingTop, setRoot: setRootOf(cfg, name) };
+	return { cfg, name, cwd, workingTarget: targetOf(found.workingTop), folders: found.order.map(targetOf), lines, workingTop: found.workingTop, setRoot: setRootOf(cfg, name), repos: pre.plan.map((p) => ({ top: slash(p.info.top), cwd: slash(p.target) })) };
 }
 
 interface Launched {
 	name: string;
+	repos: { top: string; cwd: string }[];
 	branch: string;
 	cwd: string;
 	setRoot: string;
@@ -262,15 +265,15 @@ interface Launched {
 }
 
 /** Creates the set and opens its terminal; null when creating failed (createSet has reported why). */
-async function createAndLaunch(pi: ExtensionAPI, ctx: SetCtx, name: string, progress: Progress): Promise<Launched | null> {
-	const c = await createSet(pi, ctx, name, progress);
+async function createAndLaunch(pi: ExtensionAPI, ctx: SetCtx, name: string, progress: Progress, only?: string[]): Promise<Launched | null> {
+	const c = await createSet(pi, ctx, name, progress, only);
 	if (!c) return null;
 	progress.stage("opening terminal");
 	const git = makeGit(pi);
 	const l = await launch(c.cfg, c.name, await launchCwdOf(git, c.cfg, c.workingTop), c.cwd, c.folders, freshSessionFile(c.cwd));
 	const branch = branchOf(c.cfg, c.name);
 	const head = `Worktree set "${c.name}" (branch ${branch}) in ${c.setRoot}`;
-	return { name: c.name, branch, cwd: c.cwd, setRoot: c.setRoot, launched: !l.error, text: l.error ?? l.text, report: [head, ...c.lines, l.error ?? l.text].join("\n"), warn: !!l.error };
+	return { name: c.name, repos: c.repos, branch, cwd: c.cwd, setRoot: c.setRoot, launched: !l.error, text: l.error ?? l.text, report: [head, ...c.lines, l.error ?? l.text].join("\n"), warn: !!l.error };
 }
 
 async function newSet(pi: ExtensionAPI, ctx: ExtensionCommandContext, name: string, progress: Progress): Promise<void> {
@@ -901,9 +904,9 @@ export default function worktree(pi: ExtensionAPI) {
 						}),
 					};
 					try {
-						const r = await createAndLaunch(pi, quiet, req.name, progress);
+						const r = await createAndLaunch(pi, quiet, req.name, progress, req.folders);
 						if (!r) return { error: errors.join("\n") || "worktree:create failed" };
-						return { name: r.name, branch: r.branch, cwd: r.cwd, setRoot: r.setRoot, launched: r.launched, text: r.text };
+						return { name: r.name, branch: r.branch, cwd: r.cwd, setRoot: r.setRoot, launched: r.launched, text: r.text, repos: r.repos };
 					} catch (e) {
 						return { error: (e as Error).message };
 					} finally {

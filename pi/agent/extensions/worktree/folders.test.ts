@@ -1,7 +1,7 @@
 // node --experimental-strip-types --test folders.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { foldersFromEntries } from "./folders.ts";
+import { foldersFromEntries, keepFolders } from "./folders.ts";
 
 const entry = (data: unknown) => ({ type: "custom", customType: "session-folders", data });
 
@@ -14,4 +14,12 @@ test("foldersFromEntries returns [] without a valid entry", () => {
 	assert.deepEqual(foldersFromEntries([]), []);
 	assert.deepEqual(foldersFromEntries([{ type: "custom", customType: "workflow-state", data: { folders: ["D:/x"] } }]), []);
 	assert.deepEqual(foldersFromEntries([entry({ v: 2, folders: ["D:/x"] })]), []);
+});
+
+test("keepFolders keeps all without `only`, filters by slash-insensitive match and ignores unknown entries", () => {
+	const added = ["D:/b", "D:/c"];
+	assert.deepEqual(keepFolders(added, undefined), added);
+	assert.deepEqual(keepFolders(added, ["D:/c/", "D:/zzz"]), ["D:/c"]);
+	assert.deepEqual(keepFolders(added, []), []);
+	if (process.platform === "win32") assert.deepEqual(keepFolders(added, ["d:/B"]), ["D:/b"]);
 });

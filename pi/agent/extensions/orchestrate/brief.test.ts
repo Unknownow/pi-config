@@ -51,3 +51,20 @@ test("makeRunId moves on to the next minute when the stamp is taken", () => {
 	assert.equal(makeRunId("other", now, [first]), "o11110906-other");
 	assert.equal(makeRunId("t", now, ["o11110905", "o11110906-x"]), "o11110907-t");
 });
+
+const repos = [{ key: "api", top: "D:/w/api" }, { key: "web", top: "D:/w/web" }];
+
+test("validatePackages with repos canonicalises, finds duplicates across forms and unknown keys", () => {
+	assert.deepEqual(validatePackages([pkg("a", { owns: ["src/**"] }), pkg("b", { owns: ["web:src/**"] })], repos), []);
+	assert.match(validatePackages([pkg("a", { owns: ["src/**"] }), pkg("b", { owns: ["api:src/**"] })], repos).join("|"), /both own/);
+	assert.match(validatePackages([pkg("a", { owns: ["zzz:x"] }), pkg("b")], repos).join("|"), /unknown repo "zzz"/);
+	assert.match(validatePackages([pkg("a", { repos: ["nope"] }), pkg("b")], repos).join("|"), /unknown repo "nope"/);
+});
+
+test("renderBrief lists the repos and kickoffText the worktrees", () => {
+	const s: Sub = { ...sub("a", "spawned"), repos: ["api"], worktrees: [{ key: "api", cwd: "D:/s/api" }] };
+	const r: Run = { ...run([s]), repos };
+	assert.match(renderBrief(s, r), /## Repos[\s\S]*- api: D:\/w\/api[\s\S]*- web: D:\/w\/web \(not in your package\)/);
+	assert.match(kickoffText(s, r, "b.md"), /Your worktrees:\n- api: D:\/s\/api/);
+	assert.doesNotMatch(renderBrief(sub("a", "spawned"), run([sub("a", "spawned")])), /## Repos/);
+});
