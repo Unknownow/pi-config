@@ -3,6 +3,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Run, Sub } from "./brief.ts";
+import type { View } from "./view.ts";
 
 export type Exec = (command: string, args: string[], opts?: { cwd?: string }) => Promise<{ stdout: string; stderr?: string; code: number }>;
 
@@ -178,4 +179,17 @@ export function findSubByToplevel(runs: Run[], toplevel: string, ci: boolean = p
 	const want = key(toplevel);
 	for (const run of runs) for (const sub of run.subs) if (sub.cwd && key(sub.cwd) === want) return { run, sub };
 	return null;
+}
+
+export const viewPath = (common: string, runId: string): string => `${runDir(common, runId)}/view.json`;
+
+/** view.json: written by the orchestrator's watcher only (tmp + rename). */
+export function writeView(common: string, runId: string, view: View): void {
+	writeAtomic(viewPath(common, runId), view);
+}
+
+export function readView(common: string, runId: string): { view?: View; corrupt?: string } {
+	const r = readJson<View>(viewPath(common, runId));
+	if (r.value && (r.value.v !== 1 || !Array.isArray(r.value.subs))) return { corrupt: `${viewPath(common, runId)}: not a view file (v, subs)` };
+	return { view: r.value, corrupt: r.corrupt };
 }

@@ -10,7 +10,14 @@ One orchestrator session splits a job into 2-4 work packages and runs each as a 
    - The guard is code, in every mode but off: `shared/readonly-tools.ts` refuses changing tools, writing bash commands and PowerShell, and `orch_run`/`orch_spawn` before run. The orchestrator stays read-only during the run too (`orch_status`, `orch_send`, `orch_review_plan`, `orch_accept` stay allowed). `/orch off` (or `/orch end`) lifts the guard. `/orch start` is refused while the workflow phase is not `off` or while a run is active in the repo. The mode is saved in the session (`orchestrate-mode` entry); `/orch watch` sets run.
 2. The agent calls `orch_run` (packages: `id`, `goal`, `criteria`, `owns`, `forbids`, `dependsOn`, `decisions`) and then `orch_spawn` for the packages whose dependencies are merged (at most `maxSubs` run at once).
 3. Messages arrive from the watcher (no model tokens while nothing happens): `question`, `plan-review`, `accept-request`, `flow-ended`, `drift`, `overlap`, `offline`, `stalled`. The agent answers with `orch_send`, `orch_review_plan` (the user confirms approvals when `confirmPlans` is on) and `orch_accept` (it refuses when the tree changed since the request).
-4. `/orch start [title] | off | status | watch | merged <id> | end`. `merged` checks a PR merge with gh now; the watcher also retries it on every poll after a flow ended, so a failed gh call or a PR merged by hand still ends as `merged`. `watch` resumes watching after a restart (it takes over from a dead owner). A crashed sub-session is only reported; reopen it with `/wt open <name>`.
+4. `/orch start [title] | off | status | board | watch | merged <id> | end`. `merged` checks a PR merge with gh now; the watcher also retries it on every poll after a flow ended, so a failed gh call or a PR merged by hand still ends as `merged`. `watch` resumes watching after a restart (it takes over from a dead owner). A crashed sub-session is only reported; reopen it with `/wt open <name>`.
+
+### Visualizer
+
+- **Widget** in the orchestrator session (key `orchestrate`): one line `orch ▸ discuss` or `▸ propose` while discussing; during a run a header (`orch <runId> ▸ run  n/maxSubs running`) and one row per package: id, repos, state, phase and done/total, pending markers (`? question`, `plan n review`, `⚠ accept <repo> <tree7>`), changed files per repo, `drift`, `overlap`, `offline`, `stalled` and `(after a,b)` for packages not started. It is removed when the mode is off and no run is watched.
+- **`view.json`** is written by the watcher (its only writer, tmp + rename) after each outbox read and git poll, only when its content changed. It holds per package the state, phase, steps, heartbeat, per-repo file counts, drift and last PR state (from the merge check), overlaps, pending items (a question until its answer, plan n until its verdict, an accept-request until a verdict with the same tree and repo) and the last 5 messages each way.
+- **`/orch board`** (any session of the repo with an active run) opens an overlay that re-reads `view.json` every 2 s: list on the left, details of the selected package on the right (goal, criteria, owns, files and PR per repo, pending, accepted trees, recent messages). Keys: up/down, enter for details only, esc. Without a TUI it prints the board with `notify`. A missing `view.json` is an error; a corrupt one is reported and the last good view stays.
+- **Sub-session status line** (`orch <runId>/<subId>`): adds ` · waiting for orchestrator: plan review | answer | acceptance` while a plan is under review, an `ask_orchestrator` question is open or an accept-request has no verdict.
 
 ### Several repos
 
@@ -32,6 +39,7 @@ Under `<git common dir>/pi/orchestra/<runId>/` (single writer per file; messages
 
 ```
 run.json                  orchestrator (tmp + rename)
+view.json                 orchestrator's watcher (tmp + rename; the run as data for the widget and /orch board)
 <sub>/brief.md            orchestrator
 <sub>/status.json         sub-session (K4 events and a 60 s heartbeat)
 <sub>/outbox.jsonl        sub-session -> orchestrator: question, plan-review, accept-request, flow-ended, note
@@ -59,6 +67,6 @@ Each worktree is its own Unity project; its first open imports every asset (slow
 
 ## Tests
 
-`cd pi/agent/extensions/orchestrate && node --experimental-strip-types --test config.test.ts paths.test.ts brief.test.ts store.test.ts monitor.test.ts inbox.test.ts boundary.test.ts mode.test.ts repos.test.ts folders.test.ts`
+`cd pi/agent/extensions/orchestrate && node --experimental-strip-types --test config.test.ts paths.test.ts brief.test.ts store.test.ts monitor.test.ts inbox.test.ts boundary.test.ts mode.test.ts repos.test.ts folders.test.ts view.test.ts`
 
 `index.ts` needs the pi runtime and has no unit test; the end-to-end check is manual (scratch GitHub repo: two packages `a`, `b` depending on `a`).

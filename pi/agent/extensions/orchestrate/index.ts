@@ -12,6 +12,7 @@ import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import { getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { truncateToWidth } from "@earendil-works/pi-tui";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { emitClaims } from "../shared/claims.ts";
@@ -22,9 +23,10 @@ import { verdictMatches } from "./inbox.ts";
 import { loadConfig, DEFAULTS, type OrchestrateConfig } from "./config.ts";
 import { isProposalReady, MODE_ENTRY, modeFromEntries, onTyped, toolRefusal, type Mode } from "./mode.ts";
 import { repoTableText, section } from "./prompts.ts";
-import { check, type Snapshot } from "./monitor.ts";
+import { check, OFFLINE_SECONDS, type Snapshot } from "./monitor.ts";
+import { boardLines, buildView, pendingOf, viewSig, widgetLines, type Paint, type SubInput, type View } from "./view.ts";
 import {
-	addAccepted, appendMessage, commonDir, findSubByToplevel, listActiveRuns, norm, orchestraDir, readAccepted, readCursor, readNew, readRun, readStatus, runDir, subDir, writeCursor, writeRun, writeStatus,
+	addAccepted, appendMessage, commonDir, findSubByToplevel, listActiveRuns, norm, orchestraDir, readAccepted, readCursor, readNew, readRun, readStatus, readView, runDir, subDir, writeCursor, writeRun, writeStatus, writeView,
 	type Exec, type Message, type Status,
 } from "./store.ts";
 
@@ -172,6 +174,7 @@ export default function (pi: ExtensionAPI): void {
 		(d.claim as (p: Promise<unknown>) => void)(new Promise((resolve) => {
 			k10 = { n, resolve };
 		}));
+		updateSubStatus();
 	});
 
 	/** K11: a merge needs the orchestrator's acceptance of the same tree. */
@@ -204,6 +207,7 @@ export default function (pi: ExtensionAPI): void {
 				if (!requestedTrees.has(token)) {
 					requestedTrees.add(token);
 					post("accept-request", `Package ${m.sub.id} asks to merge tree ${tree}${key ? ` of repo ${key}` : ""}.`, { tree, repo: key });
+					updateSubStatus();
 				}
 				return { problem: `The orchestrator has not accepted tree ${tree}${key ? ` of repo ${key}` : ""} yet. An acceptance request was sent; end your turn. You get a message when it answers; then retry the merge.` };
 			})(),
@@ -238,6 +242,30 @@ export default function (pi: ExtensionAPI): void {
 		}
 		if (r.cursor !== readCursor(cur) || r.bad) writeCursor(cur, r.cursor);
 		if (r.bad) say(`${r.bad} unreadable line(s) in the inbox were skipped`, "warning");
+		updateSubStatus();
+	}
+
+	/** Sub-session status line: the package, and what it waits for from the orchestrator. */
+	function updateSubStatus(): void {
+		const ui = uiCtx?.ui;
+		if (!me || !ui || !uiCtx?.hasUI) return;
+		let waiting = "";
+		if (k10) waiting = "plan review";
+		else if (pendingAsk.size) waiting = "answer";
+		else {
+			try {
+				const out = readNew(f(me, "outbox.jsonl"), 0).msgs;
+				const inb = readNew(f(me, "inbox.jsonl"), 0).msgs;
+				if (pendingOf(out, inb).some((p) => p.kind === "accept")) waiting = "acceptance";
+			} catch {
+				/* the status line is only informative */
+			}
+		}
+		try {
+			ui.setStatus("orchestrate", `orch ${me.run.id}/${me.sub.id}${waiting ? ` · waiting for orchestrator: ${waiting}` : ""}`);
+		} catch {
+			/* no status support */
+		}
 	}
 
 	pi.registerTool({
@@ -255,12 +283,14 @@ export default function (pi: ExtensionAPI): void {
 				const done = (v: Message | null) => {
 					clearTimeout(timeout);
 					pendingAsk.delete(q.id);
+					updateSubStatus();
 					signal?.removeEventListener("abort", onAbort);
 					resolve(v);
 				};
 				const onAbort = () => done(null);
 				const timeout = setTimeout(() => done(null), minutes * 60_000);
 				pendingAsk.set(q.id, done);
+				updateSubStatus();
 				signal?.addEventListener("abort", onAbort);
 			});
 			if (signal?.aborted) throw new Error("cancelled");
@@ -311,6 +341,7 @@ export default function (pi: ExtensionAPI): void {
 			say(`could not save the mode: ${(e as Error).message}`, "warning");
 		}
 		if (announce) say(m === "off" ? "orchestrator mode off: the guard is lifted" : `orchestrator mode: ${m}`);
+		updateWidget();
 	}
 	const assistantText = (m: unknown): string => {
 		const a = m as { role?: string; content?: unknown } | undefined;
@@ -370,6 +401,18 @@ export default function (pi: ExtensionAPI): void {
 	}
 	let owned: Owned | null = null;
 	const snaps = new Map<string, Snapshot>();
+	/** Last known PR state per sub and repo key (from checkEnded). */
+	const prs = new Map<string, Map<string, "merged" | "not merged" | "unknown">>();
+	const setPr = (id: string, key: string, ok: boolean | null): void => {
+		const m = prs.get(id) ?? new Map();
+		m.set(key, ok === null ? "unknown" : ok ? "merged" : "not merged");
+		prs.set(id, m);
+	};
+	let currentView: View | null = null;
+	let lastViewSig = "";
+	let viewWarned = false;
+	let widgetTui: { requestRender(): void } | undefined;
+	let widgetMounted = false;
 	let events: string[] = [];
 	const spawning = new Set<string>();
 	let queue: Promise<unknown> = Promise.resolve();
@@ -406,8 +449,80 @@ export default function (pi: ExtensionAPI): void {
 		stopTimers();
 		owned = null;
 		snaps.clear();
+		prs.clear();
 		defaultBranches.clear();
 		events = [];
+		currentView = null;
+		lastViewSig = "";
+		updateWidget();
+	}
+
+	const paintWith = (theme: { fg: (c: string, t: string) => string }): Paint => (kind, t) => {
+		const c = { accent: "accent", dim: "dim", warn: "warning", ok: "success", err: "error", plain: "" }[kind];
+		return c ? theme.fg(c, t) : t;
+	};
+
+	/** The widget lives while a mode is on or a run is watched; it re-renders from `currentView`. */
+	function updateWidget(): void {
+		const ui = uiCtx?.ui;
+		if (!ui || !uiCtx?.hasUI) return;
+		if (mode === "off" && !owned) {
+			if (widgetMounted) ui.setWidget("orchestrate", undefined);
+			widgetMounted = false;
+			widgetTui = undefined;
+			return;
+		}
+		if (!widgetMounted) {
+			widgetMounted = true;
+			ui.setWidget("orchestrate", (tui: { requestRender(): void }, theme: { fg: (c: string, t: string) => string }) => {
+				widgetTui = tui;
+				return {
+					render: (width: number) => widgetLines(currentView, mode, Date.now(), paintWith(theme), width).map((l) => truncateToWidth(l, width)),
+					invalidate: () => undefined,
+					dispose: () => {
+						widgetTui = undefined;
+						widgetMounted = false;
+					},
+				};
+			});
+		}
+		widgetTui?.requestRender();
+	}
+
+	/** Builds view.json from the files and snapshots; writes it (this watcher is its only writer) and redraws only when it changed. */
+	function refreshView(): void {
+		const o = owned;
+		const run = current();
+		if (!o || !run) return;
+		try {
+			const inputs = new Map<string, SubInput>();
+			for (const s of run.subs) {
+				const snap = snaps.get(s.id);
+				inputs.set(s.id, {
+					status: readStatus(sf(o, s.id, "status.json")).status,
+					files: snap?.files,
+					drift: snap?.reported.drift,
+					overlap: snap?.reported.overlap,
+					stalled: snap?.reported.stalled,
+					outbox: readNew(sf(o, s.id, "outbox.jsonl"), 0).msgs,
+					inbox: readNew(sf(o, s.id, "inbox.jsonl"), 0).msgs,
+					accepted: readAccepted(sf(o, s.id, "accepted.json")),
+					prs: prs.get(s.id),
+				});
+			}
+			const v = buildView(run, Date.now(), cfg.maxSubs, inputs, OFFLINE_SECONDS);
+			currentView = v;
+			const sig = viewSig(v);
+			if (sig === lastViewSig) return;
+			lastViewSig = sig;
+			writeView(o.common, o.runId, v);
+			updateWidget();
+		} catch (e) {
+			if (!viewWarned) {
+				viewWarned = true;
+				say(`could not write view.json: ${(e as Error).message}`, "warning");
+			}
+		}
 	}
 
 	function flush(): void {
@@ -479,6 +594,7 @@ export default function (pi: ExtensionAPI): void {
 		}
 		events.push(...(await checkEnded(false, newlyEnded))); // a quick first answer; later polls retry
 		flush();
+		refreshView();
 	}
 
 	const reportedUnmerged = new Set<string>();
@@ -496,6 +612,7 @@ export default function (pi: ExtensionAPI): void {
 			if (only ? !only.includes(sub.id) : !sub.endedAt) continue;
 			const res = !sub.branch ? { ok: null, missing: [] as string[] } : run.repos ? await mergedPerRepo(o, run, sub) : { ok: await ghMerged(o.repoCwd, sub.branch), missing: [] as string[] };
 			const ok = res.ok;
+			if (!run.repos && sub.branch) setPr(sub.id, "", ok);
 			if (ok) merged.push(sub.id);
 			else if (manual || !reportedUnmerged.has(sub.id)) {
 				reportedUnmerged.add(sub.id);
@@ -535,6 +652,7 @@ export default function (pi: ExtensionAPI): void {
 				continue;
 			}
 			const ok = await ghMerged(topOfKey(o, run, wt.key), sub.branch ?? "");
+			setPr(sub.id, wt.key, ok);
 			if (ok === null) unknown = true;
 			if (!ok) missing.push(`no merged PR in ${wt.key}`);
 		}
@@ -631,15 +749,21 @@ export default function (pi: ExtensionAPI): void {
 		}
 		events.push(...(await checkEnded(false)));
 		flush();
+		refreshView();
 	}
 
 	function startWatcher(o: Owned): void {
 		stopTimers();
 		owned = o;
 		snaps.clear();
+		prs.clear();
 		defaultBranches.clear();
+		currentView = null;
+		lastViewSig = "";
 		every(5_000, readOutboxes);
 		every(cfg.pollSeconds * 1000, pollGit);
+		refreshView();
+		updateWidget();
 	}
 
 	async function table(): Promise<string> {
@@ -933,7 +1057,7 @@ export default function (pi: ExtensionAPI): void {
 	pi.registerCommand("orch", {
 		description: "Orchestrator mode and run: start (read-only discussion), off, status, watch (resume watching a run), merged <id> (check a PR merge now), end",
 		getArgumentCompletions: (prefix) =>
-			["start", "off", "status", "watch", "merged", "end"].filter((s) => s.startsWith(prefix.trim())).map((s) => ({ value: s, label: s })),
+			["start", "off", "status", "board", "watch", "merged", "end"].filter((s) => s.startsWith(prefix.trim())).map((s) => ({ value: s, label: s })),
 		handler: async (args, ctx) => {
 			uiCtx = ctx;
 			let sub = args.trim().split(/\s+/)[0];
@@ -957,6 +1081,8 @@ export default function (pi: ExtensionAPI): void {
 					if (owned) ctx.ui.notify(`orchestrate: the watcher keeps running run ${owned.runId}`, "info");
 				} else if (sub === "status") {
 					ctx.ui.notify(await table(), "info");
+				} else if (sub === "board") {
+					await showBoard(ctx);
 				} else if (sub === "merged") {
 					const id = args.trim().split(/\s+/)[1];
 					if (!id) throw new Error("usage: /orch merged <id>");
@@ -988,13 +1114,72 @@ export default function (pi: ExtensionAPI): void {
 					});
 					ctx.ui.notify(`orchestrate: watching run ${run.id}`, "info");
 				} else {
-					ctx.ui.notify("usage: /orch start [title] | off | status | watch | merged <id> | end", "warning");
+					ctx.ui.notify("usage: /orch start [title] | off | status | board | watch | merged <id> | end", "warning");
 				}
 			} catch (e) {
 				ctx.ui.notify(`orchestrate: ${(e as Error).message}`, "error");
 			}
 		},
 	});
+
+	/** /orch board: reads view.json every 2 s; works in any session of the repo with an active run. */
+	async function showBoard(ctx: ExtensionContext): Promise<void> {
+		const common = await commonDir(exec, ctx.cwd);
+		if (!common) throw new Error("not in a git repository");
+		const runId = owned?.runId ?? me?.run.id ?? listActiveRuns(common).runs[0]?.id;
+		if (!runId) throw new Error("no active run in this repo");
+		const read = (): View | null => {
+			const r = readView(common, runId);
+			if (r.corrupt) say(r.corrupt, "warning");
+			return r.view ?? null;
+		};
+		let view = read();
+		if (!view) throw new Error("no view.json yet; the orchestrator writes it every few seconds");
+		if ((ctx as { mode?: string }).mode !== "tui" || !ctx.hasUI) {
+			ctx.ui.notify(boardLines(view, 0, false, 200, Date.now()).join("\n"), "info");
+			return;
+		}
+		let stop = () => {};
+		try {
+			await ctx.ui.custom<undefined>((tui, theme, keybindings, done) => {
+				let selected = 0;
+				let detail = false;
+				const timer = setInterval(() => {
+					view = read() ?? view;
+					tui.requestRender();
+				}, 2_000);
+				timer.unref?.();
+				stop = () => clearInterval(timer);
+				const paint = paintWith(theme);
+				return {
+					render(width: number): string[] {
+						const v = view as View;
+						const body = boardLines(v, selected, detail, width, Date.now(), paint);
+						return [theme.fg("accent", `orch board · ${v.runId} · ${v.subs.length} packages`), ...body, theme.fg("dim", "↑↓ select · enter details · esc back/close · refreshes every 2s")].map((l) => truncateToWidth(l, width));
+					},
+					handleInput(data: string): void {
+						const n = (view as View).subs.length;
+						if (keybindings.matches(data, "tui.select.up")) selected = Math.max(0, selected - 1);
+						else if (keybindings.matches(data, "tui.select.down")) selected = Math.min(Math.max(0, n - 1), selected + 1);
+						else if (keybindings.matches(data, "tui.select.confirm")) {
+							if (n) detail = true;
+						} else if (keybindings.matches(data, "tui.select.cancel")) {
+							if (detail) detail = false;
+							else {
+								stop();
+								done(undefined);
+								return;
+							}
+						} else return;
+						tui.requestRender();
+					},
+					invalidate() {},
+				};
+			}, { overlay: true });
+		} finally {
+			stop();
+		}
+	}
 
 	function pidAlive(pid: number): boolean {
 		try {
@@ -1018,6 +1203,11 @@ export default function (pi: ExtensionAPI): void {
 		mode = modeFromEntries(ctx.sessionManager.getBranch());
 		proposalReady = false;
 		k4Warned = false;
+		widgetMounted = false;
+		widgetTui = undefined;
+		currentView = null;
+		lastViewSig = "";
+		updateWidget();
 		const gen = ++generation;
 		const loaded = loadConfig(getAgentDir());
 		cfg = loaded.config;
@@ -1040,6 +1230,7 @@ export default function (pi: ExtensionAPI): void {
 			prevPhase = "off";
 			every(3_000, deliverInbox);
 			every(60_000, writeMyStatus);
+			updateSubStatus();
 			if (fresh) void startSubSession(m, ctx).catch((e: Error) => ctx.ui.notify(`orchestrate: ${e.message}`, "error"));
 		};
 		const hit = top ? findSubByToplevel(listed.runs, top) : null;
@@ -1072,6 +1263,11 @@ export default function (pi: ExtensionAPI): void {
 
 	pi.on("session_shutdown", async () => {
 		stopTimers();
+		try {
+			uiCtx?.ui.setStatus("orchestrate", undefined);
+		} catch {
+			/* ignore */
+		}
 		k10?.resolve(null);
 		k10 = null;
 		generation++;
