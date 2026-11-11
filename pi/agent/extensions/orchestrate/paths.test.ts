@@ -1,7 +1,7 @@
 // node --experimental-strip-types --test paths.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { globToRegExp, outsideOwned } from "./paths.ts";
+import { globsMayOverlap, globToRegExp, outsideOwned } from "./paths.ts";
 
 test("globs", () => {
 	assert.ok(globToRegExp("src/**").test("src/a/b.ts"));
@@ -29,4 +29,13 @@ test("a folder path without wildcards matches everything below it", () => {
 	assert.ok(globToRegExp("src/a/").test("src/a/x.ts"));
 	assert.ok(globToRegExp("src/a").test("src/a"));
 	assert.ok(!globToRegExp("src/a").test("src/ab.ts"));
+});
+
+test("globsMayOverlap", () => {
+	assert.equal(globsMayOverlap("api:src/**", "api:src/a/*.ts"), true);
+	assert.equal(globsMayOverlap("api:src/**", "api:docs/**"), false);
+	assert.equal(globsMayOverlap("api:src/**", "web:src/**"), false);
+	assert.equal(globsMayOverlap("api:**", "api:anything/x.ts"), true);
+	assert.equal(globsMayOverlap("api:src", "api:srcx/**"), false);
+	assert.equal(globsMayOverlap("src/a*.ts", "src/ab/**"), true);
 });

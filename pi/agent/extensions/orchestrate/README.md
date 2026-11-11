@@ -12,6 +12,18 @@ One orchestrator session splits a job into 2-4 work packages and runs each as a 
 3. Messages arrive from the watcher (no model tokens while nothing happens): `question`, `plan-review`, `accept-request`, `flow-ended`, `drift`, `overlap`, `offline`, `stalled`. The agent answers with `orch_send`, `orch_review_plan` (the user confirms approvals when `confirmPlans` is on) and `orch_accept` (it refuses when the tree changed since the request).
 4. `/orch start [title] | off | status | watch | merged <id> | end`. `merged` checks a PR merge with gh now; the watcher also retries it on every poll after a flow ended, so a failed gh call or a PR merged by hand still ends as `merged`. `watch` resumes watching after a restart (it takes over from a dead owner). A crashed sub-session is only reported; reopen it with `/wt open <name>`.
 
+### Several repos
+
+When the session has added repos with `/folders add`, one run can span them. `orch_run` takes the working repo (first) and the git repos of the added folders as the run's `repos`, each with a key: the lowercased folder name (characters outside `a-z0-9._-` become `-`; two repos with one key are an error naming both paths). The propose and run prompts list the keys.
+- `owns` and `forbids` are `key:glob` (`web:src/**`); a glob with no key means the working repo. Duplicate owners are checked on the canonical form (`src/**` and `api:src/**` clash when api is the working repo). The optional `repos` field of a package lists extra repo keys it only reads. A run with no added git repos is a single-repo run: plain globs, no keys (a keyed glob is refused).
+- `orch_spawn` sends W1 `folders`: only the added folders of the repos the package uses (and plain folders) go into its set, and the answer's `repos` (`{ top, cwd }`) become `Sub.worktrees`. An old worktree extension that answers without `repos` leaves only the working repo watched; the spawn line says so. A needed repo missing from the answer is a warning line.
+- Drift and overlap use `key:path` files, so a file in another repo counts as drift. The diff base, the default-branch fallback and the gh call are per repo.
+- **Acceptance is per repo**: the accept-request carries `{ tree, repo }`, `orch_accept` takes an optional `repo` (default: the repo of the latest request) and checks the tree of that repo's worktree; `accepted.json` stores `<key>:<tree>`; the verdict carries `repo`. A merge from a worktree that is not one of the package's is refused.
+- **Merged** per repo: a repo is touched when its worktree has commits since its spawn base or is dirty; a package is merged when every touched repo has a merged PR for the branch. The report names the repos that miss one.
+- **Other runs**: runs are not locked against each other. `orch_run` reads the active runs of the session's other repos and, when owned paths may overlap (same repo, nested literal folders), asks "Create anyway / Cancel". Detection is one-sided: a run started from another repo that includes this one is not found from here.
+- Limit: a repo added inside a sub-session with `/folders add` is not watched.
+- Old runs (no `repos` in `run.json`) behave as before.
+
 Tools: `orch_run`, `orch_spawn`, `orch_status`, `orch_send`, `orch_review_plan`, `orch_accept`; in sub-sessions also `ask_orchestrator`.
 
 ## Files
@@ -39,7 +51,7 @@ Ids: `runId` = `o<MMDDHHmm>-<title slug>` (30 characters at most); set name `o<M
 
 Only public events, never imports of `../workflow` or `../worktree` (`boundary.test.ts`): workflow K4 `workflow:status`, K9 `workflow:start-plan`, K10 `workflow:plan-ready`, K11 `workflow:merge-gate` (see `workflow/README.md`); worktree W1 `worktree:create` (see `worktree/README.md`); claims through `../shared/claims.ts`.
 
-A sub-session is recognised at `session_start` by its git top level matching the `cwd` of a sub in an active run. `orch_review_plan` needs the plan number `n` from the `plan-review` message; a verdict counts only for that plan. A merge is refused until the orchestrator accepted the same tree the judge passed. Acceptance needs both `accepted.json` and an `accept-verdict` message naming the tree; the files are plain, so this is trust-based against a hostile sub-session agent. Drift is computed against the merge base with `origin/HEAD` on every poll. Limit: a `git_task` merge asks K11 once before its subagent starts, so accept first, then call it.
+Worktree W1 is used with its optional `folders` payload field and the `repos` answer field (both optional; the version stays 1). A sub-session is recognised at `session_start` by its git top level matching the `cwd` of a sub in an active run. `orch_review_plan` needs the plan number `n` from the `plan-review` message; a verdict counts only for that plan. A merge is refused until the orchestrator accepted the same tree the judge passed. Acceptance needs both `accepted.json` and an `accept-verdict` message naming the tree; the files are plain, so this is trust-based against a hostile sub-session agent. Drift is computed against the merge base with `origin/HEAD` on every poll. Limit: a `git_task` merge asks K11 once before its subagent starts, so accept first, then call it.
 
 ## Unity
 
@@ -47,6 +59,6 @@ Each worktree is its own Unity project; its first open imports every asset (slow
 
 ## Tests
 
-`cd pi/agent/extensions/orchestrate && node --experimental-strip-types --test config.test.ts paths.test.ts brief.test.ts store.test.ts monitor.test.ts inbox.test.ts boundary.test.ts mode.test.ts`
+`cd pi/agent/extensions/orchestrate && node --experimental-strip-types --test config.test.ts paths.test.ts brief.test.ts store.test.ts monitor.test.ts inbox.test.ts boundary.test.ts mode.test.ts repos.test.ts folders.test.ts`
 
 `index.ts` needs the pi runtime and has no unit test; the end-to-end check is manual (scratch GitHub repo: two packages `a`, `b` depending on `a`).

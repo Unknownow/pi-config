@@ -22,6 +22,14 @@ export const PROPOSE_KICKOFF = "The discussion is over. Propose the work package
 /** Sent when the user approves the proposal. */
 export const RUN_KICKOFF = "The user approved these packages. Call orch_run with exactly them, then orch_spawn the ready ones.";
 
+/** The repo-key table of a multi-repo session (working repo first), for the propose and run texts. */
+export function repoTableText(repos: Array<{ key: string; top: string }>): string {
+	return [
+		"Repos of this session (write owns and forbids as `key:glob`; a glob with no key means the working repo, the first one; list in `repos` the keys a package only reads). Give each package only the repos it needs.",
+		...repos.map((r, i) => `- ${r.key}: ${r.top}${i === 0 ? " (working repo)" : ""}`),
+	].join("\n");
+}
+
 /** Text of the `orchestrate` section. Empty when the mode is off. */
 export function section(mode: Mode, repoTable?: string): string {
 	if (mode === "off") return "";

@@ -78,3 +78,11 @@ test("the end of a wait is a change, so no stall right after it", () => {
 	assert.deepEqual(r.events, []);
 	assert.equal(r.next.changedAt, min(25));
 });
+
+test("canonical files: drift in another repo and overlap on the same repo:path", () => {
+	const r = check(undefined, snap({ files: ["api:src/x.ts", "web:package.json"] }), ctx({ owns: ["api:**"] }));
+	assert.deepEqual(types(r), ["drift"]);
+	assert.deepEqual(r.events[0].files, ["web:package.json"]);
+	const o = check(undefined, snap({ files: ["api:src/x.ts"] }), ctx({ owns: ["api:**"], otherFiles: new Map([["b", ["api:src/x.ts"]], ["c", ["web:src/x.ts"]]]) }));
+	assert.deepEqual(types(o), ["overlap"]);
+});

@@ -15,11 +15,14 @@ import { getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { emitClaims } from "../shared/claims.ts";
-import { activeCount, kickoffText, makeRunId, readyToSpawn, renderBrief, setName, validatePackages, type PackageInput, type Run, type Sub } from "./brief.ts";
+import { activeCount, canonicalPackages, kickoffText, makeRunId, readyToSpawn, renderBrief, setName, validatePackages, type PackageInput, type Run, type Sub } from "./brief.ts";
+import { foldersFromEntries } from "./folders.ts";
+import { globsMayOverlap } from "./paths.ts";
+import { buildRepos, foldersFor, hasKeyPrefix, split, subRepos, worktreesOf, type Repo, type Worktree } from "./repos.ts";
 import { verdictMatches } from "./inbox.ts";
 import { loadConfig, DEFAULTS, type OrchestrateConfig } from "./config.ts";
 import { isProposalReady, MODE_ENTRY, modeFromEntries, onTyped, toolRefusal, type Mode } from "./mode.ts";
-import { section } from "./prompts.ts";
+import { repoTableText, section } from "./prompts.ts";
 import { check, type Snapshot } from "./monitor.ts";
 import {
 	addAccepted, appendMessage, commonDir, findSubByToplevel, listActiveRuns, norm, orchestraDir, readAccepted, readCursor, readNew, readRun, readStatus, runDir, subDir, writeCursor, writeRun, writeStatus,
@@ -27,6 +30,7 @@ import {
 } from "./store.ts";
 
 const ACTIVE: Sub["state"][] = ["spawned", "planning", "executing", "awaiting-acceptance"];
+const sameDir = (a: string, b: string): boolean => (process.platform === "win32" ? norm(a).toLowerCase() === norm(b).toLowerCase() : norm(a) === norm(b));
 const text = (t: string) => ({ content: [{ type: "text" as const, text: t }], details: {} });
 
 export default function (pi: ExtensionAPI): void {
@@ -181,16 +185,28 @@ export default function (pi: ExtensionAPI): void {
 			(async () => {
 				if (readRun(m.common, m.run.id).run?.state === "ended") return null; // the run is over: nobody can accept any more
 				const dir = typeof d.cwd === "string" && d.cwd ? d.cwd : m.sub.cwd ?? "";
+				// a multi-repo run is accepted per repo: find the worktree this merge is in
+				let key = "";
+				const fresh = readRun(m.common, m.run.id).run ?? m.run;
+				if (fresh.repos?.length) {
+					const top = norm((await git(dir, "rev-parse", "--show-toplevel")) ?? dir);
+					const sub = fresh.subs.find((x) => x.id === m.sub.id) ?? m.sub;
+					const wt = worktreesOf(sub, fresh).find((w) => sameDir(w.cwd, top));
+					if (!wt) return { problem: `${top} is not a worktree of package ${m.sub.id} (its repos: ${worktreesOf(sub, fresh).map((w) => w.key).join(", ") || "none"}); the orchestrator accepts only the repos of the package.` };
+					key = wt.key;
+				}
 				const tree = typeof d.tree === "string" && d.tree ? d.tree : await git(dir, "rev-parse", "HEAD^{tree}");
 				if (!tree) return { problem: "The orchestrator's acceptance check could not read the tree of this worktree." };
-				// both the orchestrator's accepted.json and its accept-verdict message must name the tree
-				const verdict = readNew(f(m, "inbox.jsonl"), 0).msgs.some((x) => x.type === "accept-verdict" && x.data?.accept === true && x.data?.tree === tree);
-				if (verdict && readAccepted(f(m, "accepted.json")).includes(tree)) return null;
-				if (!requestedTrees.has(tree)) {
-					requestedTrees.add(tree);
-					post("accept-request", `Package ${m.sub.id} asks to merge tree ${tree}.`, { tree });
+				const token = key ? `${key}:${tree}` : tree;
+				// both the orchestrator's accepted.json and its accept-verdict message must name the tree (and the repo; a missing repo is the working repo)
+				const workKey = fresh.repos?.[0]?.key ?? "";
+				const verdict = readNew(f(m, "inbox.jsonl"), 0).msgs.some((x) => x.type === "accept-verdict" && x.data?.accept === true && x.data?.tree === tree && String(x.data?.repo ?? workKey) === key);
+				if (verdict && readAccepted(f(m, "accepted.json")).includes(token)) return null;
+				if (!requestedTrees.has(token)) {
+					requestedTrees.add(token);
+					post("accept-request", `Package ${m.sub.id} asks to merge tree ${tree}${key ? ` of repo ${key}` : ""}.`, { tree, repo: key });
 				}
-				return { problem: `The orchestrator has not accepted tree ${tree} yet. An acceptance request was sent; end your turn. You get a message when it answers; then retry the merge.` };
+				return { problem: `The orchestrator has not accepted tree ${tree}${key ? ` of repo ${key}` : ""} yet. An acceptance request was sent; end your turn. You get a message when it answers; then retry the merge.` };
 			})(),
 		);
 	});
@@ -304,9 +320,21 @@ export default function (pi: ExtensionAPI): void {
 	};
 
 	// The section is always set (empty when off) so pi's patch replay of the system prompt stays stable.
-	pi.on("before_agent_start", async (event) => {
+	let repoTableCache: { key: string; text: string | undefined } | undefined;
+	pi.on("before_agent_start", async (event, ctx) => {
 		const sections = (event as { systemPromptOptions?: { sections?: Record<string, string> } }).systemPromptOptions?.sections;
-		if (sections) sections.orchestrate = me ? "" : section(mode);
+		if (!sections) return;
+		let table: string | undefined;
+		if (!me && (mode === "propose" || mode === "run")) {
+			try {
+				const key = `${ctx.cwd}|${addedOf(ctx).join("|")}`;
+				if (repoTableCache?.key !== key) repoTableCache = { key, text: ((r) => (r ? repoTableText(r) : undefined))(await sessionRepos(ctx)) };
+				table = repoTableCache.text;
+			} catch {
+				table = undefined;
+			}
+		}
+		sections.orchestrate = me ? "" : section(mode, table);
 	});
 
 	pi.on("tool_call", async (event) => {
@@ -379,6 +407,7 @@ export default function (pi: ExtensionAPI): void {
 		stopTimers();
 		owned = null;
 		snaps.clear();
+		defaultBranches.clear();
 		events = [];
 	}
 
@@ -389,9 +418,14 @@ export default function (pi: ExtensionAPI): void {
 		sendToModel("orchestrate-events", content);
 	}
 
-	async function ghMerged(o: Owned, branch: string): Promise<boolean | null> {
+	const workingKey = (run: Run): string => run.repos?.[0]?.key ?? "";
+	/** The orchestrator's checkout of the repo `key` (the working repo for key ""). */
+	const topOfKey = (o: Owned, run: Run, key: string): string => run.repos?.find((r) => r.key === key)?.top ?? o.repoCwd;
+	const prefix = (key: string, file: string): string => (key ? `${key}:${norm(file)}` : norm(file));
+
+	async function ghMerged(cwd: string, branch: string): Promise<boolean | null> {
 		try {
-			const r = await exec("gh", ["pr", "list", "--head", branch, "--state", "merged", "--json", "number"], { cwd: o.repoCwd });
+			const r = await exec("gh", ["pr", "list", "--head", branch, "--state", "merged", "--json", "number"], { cwd });
 			if (r.code !== 0) return null;
 			const arr = JSON.parse(r.stdout || "[]") as unknown;
 			return Array.isArray(arr) && arr.length > 0;
@@ -417,7 +451,9 @@ export default function (pi: ExtensionAPI): void {
 				else if (m.type === "plan-review") events.push(`${head} plan ${String(m.data?.n ?? "?")} ready: ${String(m.data?.file ?? "")}\nRead it against the brief (${sf(o, sub.id, "brief.md")}), then call orch_review_plan with n=${String(m.data?.n ?? "?")}.`);
 				else if (m.type === "accept-request") {
 					stateChanges.push([sub.id, "awaiting-acceptance"]);
-					events.push(`${head} asks to merge tree ${String(m.data?.tree ?? "?")}. Check its diff against the brief's criteria (git -C ${sub.cwd} diff ${await diffBase(sub)}...HEAD), then call orch_accept.`);
+					const repoKey = String(m.data?.repo ?? workingKey(run));
+					const wt = worktreesOf(sub, run).find((w) => w.key === repoKey) ?? { key: repoKey, cwd: sub.cwd ?? "", base: sub.base };
+					events.push(`${head} asks to merge tree ${String(m.data?.tree ?? "?")}${run.repos ? ` of repo ${repoKey}` : ""}. Check its diff against the brief's criteria (git -C ${wt.cwd} diff ${await diffBase(wt, o, run)}...HEAD), then call orch_accept${run.repos ? ` with repo "${repoKey}"` : ""}.`);
 				} else if (m.type === "flow-ended") ended.push(sub);
 				else events.push(`${head} ${m.type}: ${m.text}`);
 			}
@@ -447,7 +483,7 @@ export default function (pi: ExtensionAPI): void {
 	}
 
 	const reportedUnmerged = new Set<string>();
-	let defaultBranch: string | null | undefined;
+	const defaultBranches = new Map<string, string | null>();
 
 	/** Confirms with gh the merge of every sub whose flow ended (or of `only`, when asked by hand); returns report lines. Retried on every poll until it succeeds. */
 	async function checkEnded(manual: boolean, only?: string[]): Promise<string[]> {
@@ -459,11 +495,12 @@ export default function (pi: ExtensionAPI): void {
 		for (const sub of run.subs) {
 			if (sub.state === "merged" || sub.state === "stopped") continue;
 			if (only ? !only.includes(sub.id) : !sub.endedAt) continue;
-			const ok = sub.branch ? await ghMerged(o, sub.branch) : null;
+			const res = !sub.branch ? { ok: null, missing: [] as string[] } : run.repos ? await mergedPerRepo(o, run, sub) : { ok: await ghMerged(o.repoCwd, sub.branch), missing: [] as string[] };
+			const ok = res.ok;
 			if (ok) merged.push(sub.id);
 			else if (manual || !reportedUnmerged.has(sub.id)) {
 				reportedUnmerged.add(sub.id);
-				lines.push(`[${sub.id}] ${manual ? "not confirmed merged" : "its flow ended"} ${ok === null ? "(the merge could not be checked with gh)" : "without a merged pull request"} (branch ${sub.branch}). ${manual ? "" : "It is checked again on every poll; /orch merged <id> checks now. "}Ask it (orch_send) or check the PR.`);
+				lines.push(`[${sub.id}] ${manual ? "not confirmed merged" : "its flow ended"} ${ok === null ? "(the merge could not be checked with gh)" : "without a merged pull request"}${res.missing.length ? ` (${res.missing.join("; ")})` : ""} (branch ${sub.branch}). ${manual ? "" : "It is checked again on every poll; /orch merged <id> checks now. "}Ask it (orch_send) or check the PR.`);
 			}
 		}
 		if (merged.length) {
@@ -484,25 +521,49 @@ export default function (pi: ExtensionAPI): void {
 		return lines;
 	}
 
+	/** Multi-repo merge check: a repo is touched when its worktree has commits since its base or is dirty; merged = every touched repo has a merged PR for the branch. */
+	async function mergedPerRepo(o: Owned, run: Run, sub: Sub): Promise<{ ok: boolean | null; missing: string[] }> {
+		const missing: string[] = [];
+		let touched = 0;
+		let unknown = false;
+		for (const wt of worktreesOf(sub, run)) {
+			const dirty = ((await git(wt.cwd, "status", "--porcelain")) ?? "").trim().length > 0;
+			const count = wt.base ? Number((await git(wt.cwd, "rev-list", "--count", `${wt.base}..HEAD`)) ?? "1") : 1;
+			if (!dirty && !(count > 0)) continue;
+			touched++;
+			if (!(count > 0)) {
+				missing.push(`uncommitted changes in ${wt.key}`);
+				continue;
+			}
+			const ok = await ghMerged(topOfKey(o, run, wt.key), sub.branch ?? "");
+			if (ok === null) unknown = true;
+			if (!ok) missing.push(`no merged PR in ${wt.key}`);
+		}
+		if (!touched) return { ok: false, missing: ["no repo has changes"] };
+		if (missing.length) return { ok: unknown && missing.every((x) => x.startsWith("no merged PR")) ? null : false, missing };
+		return { ok: true, missing };
+	}
+
 	/** Where the sub's own work starts: its merge base with the default branch now (so a rebase does not turn merged packages into drift); the spawn-time commit when that fails. */
-	async function diffBase(sub: Sub): Promise<string | undefined> {
-		if (!sub.cwd) return sub.base;
-		const viaHead = await git(sub.cwd, "merge-base", "HEAD", "origin/HEAD");
+	async function diffBase(wt: Worktree, o: Owned, run: Run): Promise<string | undefined> {
+		if (!wt.cwd) return wt.base;
+		const viaHead = await git(wt.cwd, "merge-base", "HEAD", "origin/HEAD");
 		if (viaHead) return viaHead;
-		// no origin/HEAD (a repo made with git init + remote add): use the default branch name from gh, read once
-		if (defaultBranch === undefined && owned) {
+		// no origin/HEAD (a repo made with git init + remote add): use the default branch name from gh, read once per repo
+		if (!defaultBranches.has(wt.key)) {
 			try {
-				const g = await exec("gh", ["repo", "view", "--json", "defaultBranchRef", "-q", ".defaultBranchRef.name"], { cwd: owned.repoCwd });
-				defaultBranch = g.code === 0 && g.stdout.trim() ? g.stdout.trim() : null;
+				const g = await exec("gh", ["repo", "view", "--json", "defaultBranchRef", "-q", ".defaultBranchRef.name"], { cwd: topOfKey(o, run, wt.key) });
+				defaultBranches.set(wt.key, g.code === 0 && g.stdout.trim() ? g.stdout.trim() : null);
 			} catch {
-				defaultBranch = null;
+				defaultBranches.set(wt.key, null);
 			}
 		}
-		if (defaultBranch) {
-			const viaName = await git(sub.cwd, "merge-base", "HEAD", `origin/${defaultBranch}`);
+		const name = defaultBranches.get(wt.key);
+		if (name) {
+			const viaName = await git(wt.cwd, "merge-base", "HEAD", `origin/${name}`);
 			if (viaName) return viaName;
 		}
-		return sub.base;
+		return wt.base;
 	}
 
 	async function pollGit(): Promise<void> {
@@ -520,15 +581,23 @@ export default function (pi: ExtensionAPI): void {
 				events.push(`[${sub.id}] status.json is unreadable: ${st.corrupt}`);
 			}
 			if (!st.status) continue;
-			const head = (await git(sub.cwd, "rev-parse", "HEAD")) ?? "";
-			const base = await diffBase(sub);
-			const diff = base ? ((await git(sub.cwd, "diff", "--name-only", `${base}...HEAD`)) ?? "") : "";
-			const por = (await git(sub.cwd, "status", "--porcelain")) ?? "";
-			const dirty = por
-				.split("\n")
-				.filter(Boolean)
-				.map((l) => l.slice(3).replace(/^.* -> /, "").replace(/^"|"$/g, ""));
-			const files = [...new Set([...diff.split("\n").filter(Boolean), ...dirty])].map(norm);
+			const heads: string[] = [];
+			let por = "";
+			const all = new Set<string>();
+			for (const wt of worktreesOf(sub, run)) {
+				heads.push((await git(wt.cwd, "rev-parse", "HEAD")) ?? "");
+				const base = await diffBase(wt, o, run);
+				const diff = base ? ((await git(wt.cwd, "diff", "--name-only", `${base}...HEAD`)) ?? "") : "";
+				const p = (await git(wt.cwd, "status", "--porcelain")) ?? "";
+				por += `${wt.key}\n${p}\n`;
+				const dirty = p
+					.split("\n")
+					.filter(Boolean)
+					.map((l) => l.slice(3).replace(/^.* -> /, "").replace(/^"|"$/g, ""));
+				for (const file of [...diff.split("\n").filter(Boolean), ...dirty]) all.add(prefix(wt.key, file));
+			}
+			const head = heads.join(",");
+			const files = [...all];
 			const prev = snaps.get(sub.id);
 			cur.set(sub.id, {
 				head,
@@ -569,6 +638,7 @@ export default function (pi: ExtensionAPI): void {
 		stopTimers();
 		owned = o;
 		snaps.clear();
+		defaultBranches.clear();
 		every(5_000, readOutboxes);
 		every(cfg.pollSeconds * 1000, pollGit);
 	}
@@ -585,15 +655,67 @@ export default function (pi: ExtensionAPI): void {
 		return `Run ${run.id} (${run.title}), running ${activeCount(run)}/${cfg.maxSubs}\n${rows.join("\n")}`;
 	}
 
+	const addedOf = (ctx: ExtensionContext): string[] => foldersFromEntries(ctx.sessionManager.getBranch() as { type: string; customType?: string; data?: unknown }[]);
+	const topOf = async (dir: string): Promise<string | null> => {
+		const t = await git(dir, "rev-parse", "--show-toplevel");
+		return t ? norm(t) : null;
+	};
+
+	/** The run's repos: the working repo and the git repos of the added folders. Undefined when only one repo (a single-repo run). Throws on a key collision. */
+	async function sessionRepos(ctx: ExtensionContext): Promise<Repo[] | undefined> {
+		const working = await topOf(ctx.cwd);
+		if (!working) throw new Error("not in a git repository");
+		const added: string[] = [];
+		for (const dir of addedOf(ctx)) {
+			const t = await topOf(dir);
+			if (t) added.push(t);
+		}
+		const built = buildRepos(working, added);
+		if (built.error) throw new Error(built.error);
+		return built.repos.length > 1 ? built.repos : undefined;
+	}
+
+	/** D7: owned paths that may overlap with active runs of the session's other repos; the user decides. One-sided: only runs found from this session's repos. */
+	async function confirmOverlaps(ctx: ExtensionContext, repos: Repo[], packages: PackageInput[]): Promise<void> {
+		const found: string[] = [];
+		for (const repo of repos.slice(1)) {
+			const common2 = await commonDir(exec, repo.top);
+			if (!common2) continue;
+			for (const other of listActiveRuns(common2).runs) {
+				for (const os2 of other.subs) {
+					if (os2.state === "merged" || os2.state === "stopped") continue;
+					for (const og of os2.owns) {
+						const sp = split(og);
+						const otherTop = sp.key ? other.repos?.find((r) => r.key === sp.key)?.top : repo.top;
+						if (!otherTop || !sameDir(otherTop, repo.top)) continue;
+						for (const p of packages) for (const g of p.owns ?? []) {
+							const mine = split(g);
+							const myTop = repos.find((r) => r.key === mine.key)?.top;
+							if (myTop && sameDir(myTop, repo.top) && globsMayOverlap(`r:${mine.path}`, `r:${sp.path}`)) found.push(`${p.id} owns "${g}", which may overlap "${og}" of package ${os2.id} in the active run ${other.id}`);
+						}
+					}
+				}
+			}
+		}
+		if (!found.length) return;
+		const list = [...new Set(found)].slice(0, 10).join("\n- ");
+		if (ctx.hasUI) {
+			const pick = await ctx.ui.select(`Owned paths overlap with other active runs:\n- ${list}`, ["Create anyway", "Cancel"]);
+			if (pick === "Create anyway") return;
+		}
+		throw new Error(`cancelled: owned paths overlap with active runs in other repos:\n- ${list}`);
+	}
+
 	const pkgSchema = Type.Object({
 		id: Type.String({ description: "Short slug [a-z0-9-], up to 16 characters" }),
 		goal: Type.String({ description: "What this package delivers" }),
 		criteria: Type.Optional(Type.Array(Type.String(), { description: "Acceptance criteria, each checkable" })),
-		owns: Type.Array(Type.String(), { description: "Globs of the paths this package may change (src/a/**); no two packages own the same glob" }),
+		owns: Type.Array(Type.String(), { description: "Globs of the paths this package may change (src/a/**); no two packages own the same glob. With added repos (/folders) write `repo:glob` (api:src/**); a glob with no repo means the working repo" }),
 		forbids: Type.Optional(Type.Array(Type.String(), { description: "Globs it must not touch" })),
 		dependsOn: Type.Optional(Type.Array(Type.String(), { description: "Package ids that must be merged first" })),
 		decisions: Type.Optional(Type.Array(Type.String(), { description: "Decisions already made with the user" })),
 		notes: Type.Optional(Type.String()),
+		repos: Type.Optional(Type.Array(Type.String(), { description: "Multi-repo runs: extra repo keys the package needs to read (repos it owns paths in are included on their own)" })),
 	});
 
 	pi.registerTool({
@@ -610,8 +732,15 @@ export default function (pi: ExtensionAPI): void {
 			if (!common) throw new Error("not in a git repository");
 			const active = listActiveRuns(common).runs;
 			if (active.length) throw new Error(`run ${active[0].id} is still active in this repo; finish it or end it with /orch end`);
-			const errors = validatePackages(params.packages as PackageInput[]);
+			const repos = await sessionRepos(ctx);
+			if (!repos) {
+				const keyed = (params.packages as PackageInput[]).flatMap((p) => [...(p.owns ?? []), ...(p.forbids ?? [])]).filter(hasKeyPrefix);
+				if (keyed.length) throw new Error(`invalid packages: no other repos in this session, so use plain globs (not ${keyed.slice(0, 3).join(", ")}); add repos with /folders add`);
+			}
+			const errors = validatePackages(params.packages as PackageInput[], repos);
 			if (errors.length) throw new Error(`invalid packages:\n- ${errors.join("\n- ")}`);
+			const packages = repos ? canonicalPackages(params.packages as PackageInput[], repos).packages : (params.packages as PackageInput[]);
+			if (repos) await confirmOverlaps(ctx, repos, packages);
 			let existing: string[] = [];
 			try {
 				existing = fs.readdirSync(orchestraDir(common));
@@ -620,12 +749,15 @@ export default function (pi: ExtensionAPI): void {
 			}
 			const id = makeRunId(params.title, new Date(), existing);
 			const subs: Sub[] = [];
-			for (const p of params.packages as PackageInput[]) {
+			for (const p of packages) {
 				const name = setName(id, p.id);
 				if (!name) throw new Error(`package id "${p.id}" gives an invalid worktree name`);
-				subs.push({ id: p.id, goal: p.goal, criteria: p.criteria ?? [], owns: p.owns ?? [], forbids: p.forbids ?? [], dependsOn: p.dependsOn ?? [], decisions: p.decisions ?? [], notes: p.notes, name, state: "planned" });
+				subs.push({
+					id: p.id, goal: p.goal, criteria: p.criteria ?? [], owns: p.owns ?? [], forbids: p.forbids ?? [], dependsOn: p.dependsOn ?? [], decisions: p.decisions ?? [], notes: p.notes, name, state: "planned",
+					...(repos ? { repos: subRepos(p, repos[0].key) } : {}),
+				});
 			}
-			const run: Run = { v: 1, id, title: params.title, created: new Date().toISOString(), owner: { pid: process.pid, host: os.hostname(), session: ctx.sessionManager.getSessionFile() ?? "" }, state: "active", subs };
+			const run: Run = { v: 1, id, title: params.title, created: new Date().toISOString(), owner: { pid: process.pid, host: os.hostname(), session: ctx.sessionManager.getSessionFile() ?? "" }, state: "active", ...(repos ? { repos } : {}), subs };
 			fs.mkdirSync(runDir(common, id), { recursive: true });
 			for (const s of subs) {
 				fs.mkdirSync(subDir(common, id, s.id), { recursive: true });
@@ -633,7 +765,7 @@ export default function (pi: ExtensionAPI): void {
 			}
 			writeRun(common, run);
 			startWatcher({ common, runId: id, repoCwd: ctx.cwd });
-			return text(`Run ${id} created with ${subs.length} packages. Ready to spawn: ${readyToSpawn(run).join(", ") || "none"}. Briefs are in ${runDir(common, id)}/<id>/brief.md.`);
+			return text(`Run ${id} created with ${subs.length} packages${repos ? ` over ${repos.length} repos (${repos.map((r) => r.key).join(", ")})` : ""}. Ready to spawn: ${readyToSpawn(run).join(", ") || "none"}. Briefs are in ${runDir(common, id)}/<id>/brief.md.`);
 		},
 	});
 
@@ -662,20 +794,46 @@ export default function (pi: ExtensionAPI): void {
 				spawning.add(id);
 				running++;
 				try {
-					const claims = emitClaims((d) => pi.events.emit("worktree:create", d), { v: 1, name: sub.name }, 120_000);
+					// multi-repo: only the added folders this package needs go into its set (plain folders always do)
+					let payload: Record<string, unknown> = { v: 1, name: sub.name };
+					if (run.repos) {
+						const added = addedOf(ctx);
+						const keyOf = new Map<string, string | null>();
+						for (const dir of added) {
+							const t = await topOf(dir);
+							keyOf.set(dir, t ? (run.repos.find((r) => sameDir(r.top, t))?.key ?? "?") : null);
+						}
+						payload = { ...payload, folders: foldersFor(sub, added, (dir) => keyOf.get(dir) ?? null) };
+					}
+					const claims = emitClaims((d) => pi.events.emit("worktree:create", d), payload, 120_000);
 					if (!claims.claimed) throw new Error("worktree extension not loaded");
-					const ans = (await claims.answer) as { error?: string; cwd?: string; branch?: string; launched?: boolean; text?: string } | null;
+					const ans = (await claims.answer) as { error?: string; cwd?: string; branch?: string; launched?: boolean; text?: string; repos?: Array<{ top?: string; cwd?: string }> } | null;
 					if (!ans || ans.error || !ans.cwd) throw new Error(ans?.error ?? "worktree extension gave no answer");
 					const top = norm((await git(ans.cwd, "rev-parse", "--show-toplevel")) ?? ans.cwd); // a sub-session finds itself by its git top level
 					const base = (await git(top, "rev-parse", "HEAD")) ?? undefined;
+					const wts: Worktree[] = [];
+					const notes: string[] = [];
+					if (run.repos) {
+						wts.push({ key: run.repos[0].key, cwd: top, base });
+						for (const r of Array.isArray(ans.repos) ? ans.repos : []) {
+							if (typeof r?.top !== "string" || typeof r.cwd !== "string") continue;
+							const key = run.repos.find((x) => sameDir(x.top, r.top as string))?.key;
+							if (!key || wts.some((w) => w.key === key)) continue;
+							const wtop = norm((await git(r.cwd, "rev-parse", "--show-toplevel")) ?? r.cwd);
+							wts.push({ key, cwd: wtop, base: (await git(wtop, "rev-parse", "HEAD")) ?? undefined });
+						}
+						if (!Array.isArray(ans.repos)) notes.push("the worktree extension did not report its repos (old version): only the working repo is watched");
+						else for (const k of sub.repos ?? []) if (!wts.some((w) => w.key === k)) notes.push(`no worktree for repo ${k}`);
+					}
 					await mutate((r) => {
 						const s = subOf(r, id);
 						s.cwd = top;
 						s.branch = ans.branch;
 						s.base = base;
+						if (run.repos) s.worktrees = wts;
 						s.state = "spawned";
 					});
-					lines.push(`${id}: spawned in ${top} (${ans.branch ?? "branch ?"})${ans.launched ? "" : "; the terminal did not open, use /wt open " + sub.name}`);
+					lines.push(`${id}: spawned in ${top} (${ans.branch ?? "branch ?"})${ans.launched ? "" : "; the terminal did not open, use /wt open " + sub.name}${wts.length > 1 ? `; worktrees: ${wts.map((w) => w.key).join(", ")}` : ""}${notes.length ? `. WARNING: ${notes.join("; ")}` : ""}`);
 				} catch (e) {
 					running--;
 					lines.push(`${id}: failed: ${(e as Error).message} (still planned)`);
@@ -754,29 +912,32 @@ export default function (pi: ExtensionAPI): void {
 		label: "Orchestrate: accept",
 		description: "Accept or refuse the result a sub-session asked to merge, after checking its diff against the brief's criteria. Acceptance covers the tree it requested; if the worktree changed since, accept again after a new request.",
 		promptSnippet: "orch_accept: accept or refuse a sub-session's merge request",
-		parameters: Type.Object({ id: Type.String(), accept: Type.Boolean(), reasons: Type.Optional(Type.String({ description: "Required when refusing" })) }),
+		parameters: Type.Object({ id: Type.String(), accept: Type.Boolean(), reasons: Type.Optional(Type.String({ description: "Required when refusing" })), repo: Type.Optional(Type.String({ description: "Multi-repo runs: the repo key of the request; default the repo of its latest request" })) }),
 		async execute(_id, params) {
 			const { o, run } = need();
 			const sub = subOf(run, params.id);
-			const reqs = readNew(sf(o, params.id, "outbox.jsonl"), 0).msgs.filter((m) => m.type === "accept-request");
+			const wantRepo = params.repo?.toLowerCase();
+			const reqs = readNew(sf(o, params.id, "outbox.jsonl"), 0).msgs.filter((m) => m.type === "accept-request" && (wantRepo === undefined || String(m.data?.repo ?? workingKey(run)) === wantRepo));
 			const tree = reqs.length ? String(reqs[reqs.length - 1].data?.tree ?? "") : "";
-			if (!tree) throw new Error(`${params.id} has not asked for acceptance yet`);
+			if (!tree) throw new Error(`${params.id} has not asked for acceptance${wantRepo ? ` in repo ${wantRepo}` : ""} yet`);
+			const repo = reqs.length ? String(reqs[reqs.length - 1].data?.repo ?? workingKey(run)) : workingKey(run);
 			if (!params.accept && !params.reasons) throw new Error("reasons are required when refusing");
 			if (params.accept) {
-				const now = sub.cwd ? await git(sub.cwd, "rev-parse", "HEAD^{tree}") : null;
+				const wt = worktreesOf(sub, run).find((w) => w.key === repo);
+				const now = wt ? await git(wt.cwd, "rev-parse", "HEAD^{tree}") : null;
 				if (now !== tree) throw new Error(`the sub-session changed since its request (requested tree ${tree}, now ${now ?? "unknown"}); wait for its next accept-request`);
-				addAccepted(sf(o, params.id, "accepted.json"), tree);
+				addAccepted(sf(o, params.id, "accepted.json"), repo ? `${repo}:${tree}` : tree);
 			}
 			appendMessage(sf(o, params.id, "inbox.jsonl"), "orch", {
 				type: "accept-verdict",
-				text: params.accept ? `Tree ${tree} accepted; retry the merge.` : `Not accepted: ${params.reasons}`,
-				data: { accept: params.accept, tree },
+				text: params.accept ? `Tree ${tree}${repo ? ` of repo ${repo}` : ""} accepted; retry the merge.` : `Not accepted${repo ? ` (repo ${repo})` : ""}: ${params.reasons}`,
+				data: { accept: params.accept, tree, repo },
 			});
 			if (!params.accept) await mutate((r) => {
 				const s = subOf(r, params.id);
 				if (s.state === "awaiting-acceptance") s.state = "executing";
 			});
-			return text(params.accept ? `accepted tree ${tree} of ${params.id}` : `refused ${params.id}: ${params.reasons}`);
+			return text(params.accept ? `accepted tree ${tree}${repo ? ` of repo ${repo}` : ""} of ${params.id}` : `refused ${params.id}: ${params.reasons}`);
 		},
 	});
 
