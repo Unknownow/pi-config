@@ -409,9 +409,11 @@ Manual end-to-end (Verify step S18).
 - [x] S11 In `paths.ts`, add `globsMayOverlap(a, b)` (pure, case-insensitive, canonical globs).
 - [x] S12 Orchestrate `index.ts` multi-repo:
 - [x] S13 Update the orchestrate README: the `key:glob` format, the `repos` field, per-repo checks, the W1 fields used, cross-run 
-- [ ] S14 Add `orchestrate/view.ts` (pure) as designed: `buildView`, `pendingOf`, `widgetLines` and `boardLines`.
-- [ ] S15 In `store.ts`, add `viewPath(common, runId)` and `writeView` / `readView` (tmp + rename via `writeAtomic`; reading retur
-- [ ] S16 In orchestrate `index.ts`:
-- [ ] S17 Update the orchestrate README (Visualizer section, the `view.json` row in Files). In `docs/workflow-improvements.md`, ad
+- [x] S14 Add `orchestrate/view.ts` (pure) as designed: `buildView`, `pendingOf`, `widgetLines` and `boardLines`.
+- [x] S15 In `store.ts`, add `viewPath(common, runId)` and `writeView` / `readView` (tmp + rename via `writeAtomic`; reading retur
+- [x] S16 In orchestrate `index.ts`:
+- [x] S17 Update the orchestrate README (Visualizer section, the `view.json` row in Files). In `docs/workflow-improvements.md`, ad
 ## For you after the flow
 - S18 Verify:
+## Outcome
+2026-11-11T03:37:56.894Z — ok: stage 1: flow/orchestrator-mode, 3 commits since the review base, PR #36 OPEN https://github.com/Unknownow/pi-config/pull/36; stage 2: flow/orchestrator-mode, 6 commits since the review base, PR #36 OPEN https://github.com/Unknownow/pi-config/pull/36; stage 3: master, 3 commits since the review base, PR #36 MERGED https://github.com/Unknownow/pi-config/pull/36 · 1 human check(s) for you (see the card)

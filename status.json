@@ -1,10 +1,9 @@
 {
   "v": 1,
   "flowId": "20261111-1014-orchestrator-mode-multi-repo-packages-an-109e",
-  "rev": 3,
-  "updated": "2026-11-11T03:33:11.563Z",
+  "rev": 4,
+  "updated": "2026-11-11T03:37:57.024Z",
   "title": "Orchestrator mode, multi-repo packages and a run visualizer for `orchestrate`",
-  "stage": 3,
   "done": [
     "S1",
     "S2",
@@ -18,21 +17,38 @@
     "S10",
     "S11",
     "S12",
-    "S13"
+    "S13",
+    "S14",
+    "S15",
+    "S16",
+    "S17"
   ],
+  "finished": {
+    "at": "2026-11-11T03:37:56.894Z",
+    "ok": true,
+    "text": "stage 1: flow/orchestrator-mode, 3 commits since the review base, PR #36 OPEN https://github.com/Unknownow/pi-config/pull/36; stage 2: flow/orchestrator-mode, 6 commits since the review base, PR #36 OPEN https://github.com/Unknownow/pi-config/pull/36; stage 3: master, 3 commits since the review base, PR #36 MERGED https://github.com/Unknownow/pi-config/pull/36 · 1 human check(s) for you (see the card)"
+  },
   "reviewBase": {
-    "d:/works/pi-config": "d4e02ba9359f061824b989defbbf36e8e7c09341"
+    "d:/works/pi-config": "d167aac798d3c7d15e3f1e8652d5f0db0ccb22ff"
   },
   "passedTrees": {
     "d:/works/pi-config": [
       "118364da462705a95b8faf7f7bb9e38c2b361916",
       "96fa52e799b5abad5919cc9fa75e0d29d0def59f",
-      "770db5f0d11fdcbaf104d3e854c7d3978db73f88"
+      "770db5f0d11fdcbaf104d3e854c7d3978db73f88",
+      "5d0fe60c6e09dfcaf24a417426bec624930a6525"
     ]
+  },
+  "judgedMerges": {
+    "d:/works/pi-config": {
+      "pr": "36",
+      "tree": "5d0fe60c6e09dfcaf24a417426bec624930a6525",
+      "stage": 3
+    }
   },
   "repos": [
     {
-      "branch": "flow/orchestrator-mode",
+      "branch": "master",
       "remote": "github.com/Unknownow/pi-config",
       "primary": true
     }
