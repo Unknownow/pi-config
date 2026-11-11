@@ -403,12 +403,12 @@ Manual end-to-end (Verify step S18).
 - [x] S5 Wire the mode in `orchestrate/index.ts`:
 - [x] S6 Update `orchestrate/README.md` (Usage: `/orch` → discuss → go → propose → go → run, `/orch off`, the `approvePattern` co
 - [x] S7 In `docs/workflow-improvements.md`, add row A43 (orchestrator mode with a read-only discussion and proposal; readonly-to
-- [ ] S8 In worktree W1:
-- [ ] S9 Add `orchestrate/folders.ts`, which reads K1 (a copy of `worktree/folders.ts` logic with a comment), and `orchestrate/re
-- [ ] S10 In `brief.ts`:
-- [ ] S11 In `paths.ts`, add `globsMayOverlap(a, b)` (pure, case-insensitive, canonical globs).
-- [ ] S12 Orchestrate `index.ts` multi-repo:
-- [ ] S13 Update the orchestrate README: the `key:glob` format, the `repos` field, per-repo checks, the W1 fields used, cross-run 
+- [x] S8 In worktree W1:
+- [x] S9 Add `orchestrate/folders.ts`, which reads K1 (a copy of `worktree/folders.ts` logic with a comment), and `orchestrate/re
+- [x] S10 In `brief.ts`:
+- [x] S11 In `paths.ts`, add `globsMayOverlap(a, b)` (pure, case-insensitive, canonical globs).
+- [x] S12 Orchestrate `index.ts` multi-repo:
+- [x] S13 Update the orchestrate README: the `key:glob` format, the `repos` field, per-repo checks, the W1 fields used, cross-run 
 - [ ] S14 Add `orchestrate/view.ts` (pure) as designed: `buildView`, `pendingOf`, `widgetLines` and `boardLines`.
 - [ ] S15 In `store.ts`, add `viewPath(common, runId)` and `writeView` / `readView` (tmp + rename via `writeAtomic`; reading retur
 - [ ] S16 In orchestrate `index.ts`:

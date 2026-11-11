@@ -1,10 +1,10 @@
 {
   "v": 1,
   "flowId": "20261111-1014-orchestrator-mode-multi-repo-packages-an-109e",
-  "rev": 2,
-  "updated": "2026-11-11T03:19:57.245Z",
+  "rev": 3,
+  "updated": "2026-11-11T03:33:11.563Z",
   "title": "Orchestrator mode, multi-repo packages and a run visualizer for `orchestrate`",
-  "stage": 2,
+  "stage": 3,
   "done": [
     "S1",
     "S2",
@@ -12,15 +12,22 @@
     "S4",
     "S5",
     "S6",
-    "S7"
+    "S7",
+    "S8",
+    "S9",
+    "S10",
+    "S11",
+    "S12",
+    "S13"
   ],
   "reviewBase": {
-    "d:/works/pi-config": "78dfaaeffc94b3c5c641114d0f5bf0e16f8ec684"
+    "d:/works/pi-config": "d4e02ba9359f061824b989defbbf36e8e7c09341"
   },
   "passedTrees": {
     "d:/works/pi-config": [
       "118364da462705a95b8faf7f7bb9e38c2b361916",
-      "96fa52e799b5abad5919cc9fa75e0d29d0def59f"
+      "96fa52e799b5abad5919cc9fa75e0d29d0def59f",
+      "770db5f0d11fdcbaf104d3e854c7d3978db73f88"
     ]
   },
   "repos": [
