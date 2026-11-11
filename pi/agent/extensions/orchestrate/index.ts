@@ -604,6 +604,7 @@ export default function (pi: ExtensionAPI): void {
 		parameters: Type.Object({ title: Type.String({ description: "Short title of the whole job" }), packages: Type.Array(pkgSchema) }),
 		async execute(_id, params, _signal, _u, ctx) {
 			uiCtx = ctx;
+			// The check applies only while the guard is on: /orch off lifts it (D1).
 			if (mode !== "off" && mode !== "run") throw new Error("approve the packages first (/orch, then go)");
 			const common = await commonDir(exec, ctx.cwd);
 			if (!common) throw new Error("not in a git repository");
