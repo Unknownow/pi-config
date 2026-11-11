@@ -19,7 +19,7 @@
     }
   ],
   "tuiMode": "fullscreen",
-  "hideThinkingBlock": false,
+  "hideThinkingBlock": true,
   "extensions": [
     "__PI_CONFIG_REPO__/extension"
   ],
