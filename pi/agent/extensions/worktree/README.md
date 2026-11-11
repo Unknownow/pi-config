@@ -149,7 +149,7 @@ In a session inside a set, `/folders add <path>` for a git repo attaches that re
 
 ## Contracts
 
-- **W1. `worktree:create` event.** `pi.events.emit("worktree:create", { v: 1, name, claim })`: another extension asks for a set. The listener (registered at session start, claims synchronously) runs what `/wt new <name>` runs, with the name given so there is no prompt, and opens the terminal. The claim resolves to `{ name, branch, cwd, setRoot, launched, text }` (`launched` false when the terminal could not open; `text` says why) or `{ error }` (bad name, not in a git repo, a failed step). Creating fetches, so give it a long timeout. Payload check: `create-event.ts`.
+- **W1. `worktree:create` event.** `pi.events.emit("worktree:create", { v: 1, name, folders?, claim })`: another extension asks for a set. The optional `folders` (array of strings) limits which of the session's added folders go into the set (compared without trailing slashes, case-insensitive on Windows; unknown entries are ignored; the working repo is always included); without it all added folders are used. The listener (registered at session start, claims synchronously) runs what `/wt new <name>` runs, with the name given so there is no prompt, and opens the terminal. The claim resolves to `{ name, branch, cwd, setRoot, launched, text, repos }` (`repos`: `{ top, cwd }` for every git repo in the set, the original top level and its worktree root, forward slashes) (`launched` false when the terminal could not open; `text` says why) or `{ error }` (bad name, not in a git repo, a failed step). Creating fetches, so give it a long timeout. Payload check: `create-event.ts`.
 
 ## Relationship to the workflow extension
 
