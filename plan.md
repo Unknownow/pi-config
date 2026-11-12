@@ -274,7 +274,7 @@ Merge allowed in stage 1: The approved plan names S7 as a merge point in section
 - [x] S4 `testPlan()` in `test-flow.ts:207-229`.
 - [x] S5 Tests (approved by approving this plan).
 - [x] S6 pi-config backlog.
-- [ ] S7 Deliver: pi-config.
+- [x] S7 Deliver: pi-config.
 - [ ] S8 Branch. In `D:/works/annamites/knowledge`, pull `main`, enable the hooks, and create branch `feat/new-tests-on-request`.
 - [ ] S9 New files. Add `entries/eng/rule/new-tests-on-request.md` and `entries/design/decision/new-tests-on-request.md` as descr
 - [ ] S10 `design.decision.test-rules`.
