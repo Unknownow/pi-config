@@ -119,12 +119,14 @@
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 Create `pi/agent/extensions/shared/transcript.ts` with `clipMiddle` and `branchTranscript` as specified in Design. Move 
-- [ ] S2 Add `maxDiscussionChars: number` to the `judge` type in `workflow/config.ts:136` with a short doc comment ("transcript l
-- [ ] S3 In `workflow/prompts.ts`:
-- [ ] S4 Create `workflow/discussion-review.ts` with `lastAgreedList`, `discussionVerdict` and `discussionReviewPrompts` (Design)
-- [ ] S5 In `workflow/index.ts`, add `async function reviewDiscussion(ctx)`. Put it next to `reviewDiff` (`index.ts:3383`) and mo
-- [ ] S6 Change `case "judge"` at `index.ts:4261`: when `state.phase === "discuss"`, call `reviewDiscussion(ctx)`. Otherwise keep
-- [ ] S7 Docs:
+- [x] S1 Create `pi/agent/extensions/shared/transcript.ts` with `clipMiddle` and `branchTranscript` as specified in Design. Move 
+- [x] S2 Add `maxDiscussionChars: number` to the `judge` type in `workflow/config.ts:136` with a short doc comment ("transcript l
+- [x] S3 In `workflow/prompts.ts`:
+- [x] S4 Create `workflow/discussion-review.ts` with `lastAgreedList`, `discussionVerdict` and `discussionReviewPrompts` (Design)
+- [x] S5 In `workflow/index.ts`, add `async function reviewDiscussion(ctx)`. Put it next to `reviewDiff` (`index.ts:3383`) and mo
+- [x] S6 Change `case "judge"` at `index.ts:4261`: when `state.phase === "discuss"`, call `reviewDiscussion(ctx)`. Otherwise keep
+- [x] S7 Docs:
 ## For you after the flow
 - S8 Verify: start pi, run `/flow discuss`, discuss a small change until the model writes `Agreed so far:`, then run `/flow j
+## Outcome
+2026-11-12T03:45:10.908Z — ok: master, 4 commits since the review base, PR #37 MERGED https://github.com/Unknownow/pi-config/pull/37 · 1 human check(s) for you (see the card)

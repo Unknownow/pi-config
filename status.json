@@ -1,12 +1,36 @@
 {
   "v": 1,
   "flowId": "20261112-1041-manual-judge-review-of-the-discussion-s-c81b",
-  "rev": 1,
-  "updated": "2026-11-12T03:41:43.620Z",
+  "rev": 2,
+  "updated": "2026-11-12T03:45:11.025Z",
   "title": "Manual judge review of the discussion's conclusion (`/flow judge` in discuss)",
-  "done": [],
+  "done": [
+    "S1",
+    "S2",
+    "S3",
+    "S4",
+    "S5",
+    "S6",
+    "S7"
+  ],
+  "finished": {
+    "at": "2026-11-12T03:45:10.908Z",
+    "ok": true,
+    "text": "master, 4 commits since the review base, PR #37 MERGED https://github.com/Unknownow/pi-config/pull/37 · 1 human check(s) for you (see the card)"
+  },
   "reviewBase": {
-    "d:/works/pi-config": "2dab940f116b101b43a87e24b626c582b190c307"
+    "d:/works/pi-config": "dba0a600c9f4997eb9be0d6c36b4368c4cd427de"
+  },
+  "passedTrees": {
+    "d:/works/pi-config": [
+      "814a1d845b840ba21ac805088baa83f182fb3e52"
+    ]
+  },
+  "judgedMerges": {
+    "d:/works/pi-config": {
+      "pr": "37",
+      "tree": "814a1d845b840ba21ac805088baa83f182fb3e52"
+    }
   },
   "repos": [
     {
