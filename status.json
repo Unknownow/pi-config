@@ -1,10 +1,10 @@
 {
   "v": 1,
   "flowId": "20261112-1946-make-new-tests-optional-and-ask-the-user-a728",
-  "rev": 6,
-  "updated": "2026-11-12T12:58:36.770Z",
+  "rev": 7,
+  "updated": "2026-11-12T12:58:49.968Z",
   "title": "Make new tests optional and ask the user each time (workflow, knowledge, game-template, city-bus-flow)",
-  "stage": 3,
+  "stage": 4,
   "done": [
     "S1",
     "S2",
@@ -27,10 +27,10 @@
     "S19"
   ],
   "reviewBase": {
-    "d:/works/annamites/city-bus-flow": "86e5f3392d5d552fa37e6b848feca78f297a2db5",
-    "d:/works/annamites/game-template": "680a38a1e60e8abcdc6a59fa9155e62ecec192b7",
-    "d:/works/annamites/knowledge": "fe3998b3ebbc9563f1c44ebec235f7673243df60",
-    "d:/works/pi-config": "28fde6d99d9cb253d224e36c3b9b71235b282681"
+    "d:/works/annamites/city-bus-flow": "9ea8a9c22203c2383e5185d3e744b776ee638cf4",
+    "d:/works/annamites/game-template": "66ab8b53d8209eda8b682c083c78b2d32a1045b1",
+    "d:/works/annamites/knowledge": "5454d506a3d992978d31cf20af67df00c520a3b8",
+    "d:/works/pi-config": "64d65d8e22b19d04541e66cf653d8fd762b4b284"
   },
   "passedTrees": {
     "d:/works/annamites/city-bus-flow": [
