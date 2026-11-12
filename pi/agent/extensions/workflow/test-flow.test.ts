@@ -61,6 +61,10 @@ test("testPlan", () => {
 	assert.ok(sec.goal && sec.decisions && sec.doneWhen && sec.commits);
 	assert.deepEqual(parseChecklist(plan).map((c) => c.id), ["S1", "S2"]);
 	assert.ok(plan.includes("D2. S3: yes"));
+	assert.ok(plan.includes("D3. Tests: write, change or delete none"));
+	const nums = plan.split("\n").flatMap((l) => (/^D\d+\./.exec(l) ?? []).map((m) => m));
+	assert.equal(new Set(nums).size, nums.length);
+	assert.ok(!plan.includes("regression test"));
 	assert.ok(plan.endsWith(tail));
 	assert.equal(amendmentTail(plan), tail);
 	assert.equal(amendmentTail("## Plan: x\nno tail"), "");

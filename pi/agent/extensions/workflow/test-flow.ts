@@ -148,7 +148,7 @@ export function skipItem(flow: TestFlow, id: string): Full {
 	return { ...f, skipped: f.skipped.includes(id) ? f.skipped : [...f.skipped, id].sort(byId), pending: f.pending.filter((p) => p.id !== id) };
 }
 
-/** The user answered a question: recorded as `D<n>. <ID>: <answer>`, n continuing after D1. */
+/** The user answered a question: recorded as `D<n>. <ID>: <answer>`, n continuing after D1. An approval for a test is an answer on the bug item (`D<n>. <ID>: approve updating <test>`). */
 export function answerItem(flow: TestFlow, id: string, answer: string): Full {
 	const f = normalize(flow);
 	const n = f.answers.length + 2;
@@ -214,16 +214,17 @@ export function testPlan(flow: TestFlow, tail = ""): string {
 		"2. User decisions:",
 		`D1. Test scope: ${f.scope.replace(/\s*\r?\n\s*/g, " ")}`,
 		...f.answers,
+		`D${f.answers.length + 2}. Tests: write, change or delete none unless the user approved it in an answer above; a fix that needs one is reported as not done, with the reason.`,
 		"3. Facts:",
 		...f.ran.map((r) => `Ran: ${r}`),
 		"5. Steps:",
 		...steps,
 		"7. Done when:",
 		"- each step's Expected holds and its repro passes in the next test round",
-		"- each step has a regression test that fails without the fix, or the executor's report says why none can exist for that layer",
+		"- no test written, changed or deleted beyond the user's answers; a step that needs one is reported as not done, with the reason",
 		"- the suites under Facts pass",
 		"9. Commits:",
-		"- one commit per step: fix: <title> (S<n>), with its regression test",
+		"- one commit per step: fix: <title> (S<n>)",
 	].join("\n");
 	return tail.trim() ? `${text}\n\n${tail.trim()}` : text;
 }

@@ -55,7 +55,7 @@ ${batchLine("a codemode script, run_code for read-only analysis, or one bash com
 3. Facts the executor needs, with file:line.
 4. Design, only when the change adds or reshapes components, interfaces, data or concurrency: components and responsibilities; interfaces and contracts (signatures, message or file formats); data model and migration or compatibility; failure handling; scale assumptions with numbers, and the limit at which this design stops working; alternatives rejected and why.
 5. Steps in order. Number every step S1, S2, ... across the whole plan (don't restart per stage); start its first line with \`**S<n>.**\`. For each: the file and function (file:line anchor); what to change and why, in words; the behaviour it must have (inputs, outputs, edge cases, error handling); the existing code to model it on (file:line).
-6. Tests: each new or changed test (file, name, input, expected result), plus the commands to run and the expected output. Mark each suite slower than about 2 minutes as slow and give its fast command for fixing and its full command, run once.
+6. Tests: only the tests the user approved (a User decision): file, name, input, expected result; none when the user approved none. Plus the commands to run and the expected output. Mark each suite slower than about 2 minutes as slow and give its fast command for fixing and its full command, run once.
 7. Done when: acceptance criteria.
 8. Risks, rollback, and what not to touch.
 9. Commits: how the change splits into commits by function, one line each: the commit message subject and its files. A change with one function is one commit; tests go with the code they test.
@@ -139,10 +139,10 @@ Trust:
 - Target: the plan's Goal, Non-goals, User decisions and Done when are the user's intent. Judge the change against them; do not reopen them. Only a target that is unsafe or contradicts itself is a finding, tagged [plan-flaw].
 - Everything else is a claim to verify against the code: the plan's steps, file:line facts and design reasoning; code comments; commit messages; test names; the executor's disputes; and earlier judge rounds. "The plan says so" is never evidence. Code that follows the plan exactly but misses the target is a finding, tagged [plan-flaw].
 - The focus line is the executor's framing. It does not narrow your review.
-- You cannot run code. Treat any claim that tests pass as unverified. Check that the tests exist, test the target and would fail without the change.
+- You cannot run code. Treat any claim that tests pass as unverified. When the user approved new or changed tests (a User decision), check that those exist, test the target and would fail without the change. Never ask for other tests.
 Check, in this order:
 1. Correctness: logic errors, unhandled inputs and edge cases, broken callers, error handling, concurrency and ordering.
-2. The plan: every step done; nothing beyond it that changes behaviour; missing or weak tests for what changed.
+2. The plan: every step done; nothing beyond it that changes behaviour; the tests the user approved are present, and no others were added.
 3. Security: injection, secrets, unsafe defaults, checks that can be bypassed.
 4. The long run: failure under load or growth, unbounded data, state that drifts or corrupts, compatibility, Windows/macOS/Linux differences.
 5. Design and architecture: coupling and hidden dependencies, duplicated rules that will drift apart, interfaces that leak internals, data or state that cannot be migrated, concurrency and ordering assumptions, and whether the design holds at the scale stated in the plan, or at a sensible scale if the plan does not state one. Report these only with a concrete scenario where it bites.
@@ -153,7 +153,7 @@ Read budget: the diff is already in your prompt. Read other code only where the 
 Output, nothing else. For each finding:
 path:line - blocker|major|minor - [bug|plan|test|security|longrun|design|plan-flaw] the problem in one line
   Why: the scenario or evidence, with file:line.
-  Fix: concrete steps a less capable model can follow: files, functions, what to change, which test to add.
+  Fix: concrete steps a less capable model can follow: files, functions, what to change.
 Then a final line: VERDICT: PASS or VERDICT: FAIL
 FAIL if there is any blocker or major finding that is not a [plan-flaw]. blocker: wrong results, data loss or a security hole. major: a likely bug, or a design problem that will cost real rework. minor: worth fixing, not worth another round. No praise, no style nits. If you find nothing, write only the verdict line.`;
 
@@ -167,7 +167,7 @@ Check:
 3. Unstated assumptions.
 4. Claims about the code: verify them with your tools.
 5. Scope creep, or missing non-goals.
-6. Missing acceptance criteria or tests.
+6. Missing acceptance criteria.
 7. Scale stated without numbers.
 8. Open questions that block a plan.
 Read budget: aim for at most about 15 tool calls; prefer \`grep -n\` and reads with offset/limit.
