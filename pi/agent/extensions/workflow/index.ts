@@ -49,6 +49,8 @@ import { judgeAddenda, profileRole, nextProfile, handoverAction, handoverKind, p
 import { countTokens, fmtTok, type Tok } from "../shared/tokens.ts";
 import { idleReason, notifyCommand, notifyDue } from "./notify.ts";
 import * as prompts from "./prompts.ts";
+import { discussionReviewPrompts, discussionVerdict, lastAgreedList } from "./discussion-review.ts";
+import { branchTranscript } from "../shared/transcript.ts";
 import { planTitle } from "./delivery.ts";
 import { pathCompletions } from "./pickers.ts";
 import { ghCandidates, withPathDir } from "./gh-path.ts";
@@ -3380,6 +3382,48 @@ export default function workflow(pi: ExtensionAPI) {
 	}
 
 	/** diff ready -> judge -> fix loop, or commit (and push) once it passes. */
+	/** `/flow judge` in discuss: the judge reviews the discussion's conclusion. Advisory; changes no flow or judge state. */
+	async function reviewDiscussion(ctx: ExtensionContext): Promise<void> {
+		const branch = ctx.sessionManager.getBranch();
+		const assistantTexts: string[] = [];
+		for (const entry of branch) {
+			const m = entry.type === "message" ? (entry as { message?: { role?: string; content?: unknown } }).message : undefined;
+			if (m?.role !== "assistant") continue;
+			const text = Array.isArray(m.content)
+				? m.content.filter((p: { type?: string }) => p?.type === "text").map((p: { text?: string }) => p.text ?? "").join("
+")
+				: typeof m.content === "string" ? m.content : "";
+			if (text.trim()) assistantTexts.push(text);
+		}
+		const transcript = branchTranscript(branch, cfg.judge.maxDiscussionChars);
+		if (!transcript.trim()) {
+			ctx.ui.notify("workflow: nothing to review yet", "info");
+			return;
+		}
+		const conclusion = lastAgreedList(assistantTexts);
+		ctx.ui.setWorkingMessage("judge reviewing the discussion…");
+		try {
+			const { result, run } = await runRole("judge", "discussion review", {
+				systemPrompts: discussionReviewPrompts(conclusion, transcript, state.folders ?? []),
+				tools: cfg.judge.tools,
+				task: "Review the discussion's conclusion as described in your system prompt.",
+				cwd: ctx.cwd,
+			});
+			if (!result.ok) {
+				ctx.ui.notify(`workflow: discussion review failed: ${result.error}`, "error");
+				return;
+			}
+			const verdict = discussionVerdict(result.text);
+			view.finish(run, verdict === "PASS", `${verdict} · discussion`);
+			pi.sendMessage({ customType: "workflow-discussion-review", content: `**Discussion review: ${verdict}**
+
+${result.text}`, display: true }, { triggerTurn: false });
+			ctx.ui.notify(`workflow: discussion review ${verdict}${conclusion ? "" : " (no Agreed so far: list found)"}`, verdict === "PASS" ? "info" : "warning");
+		} finally {
+			ctx.ui.setWorkingMessage();
+		}
+	}
+
 	async function reviewDiff(ctx: ExtensionContext, manual: boolean): Promise<void> {
 		const baseNote = await refreshReviewBase(ctx);
 		const diff = await collectFlowDiff(ctx);
@@ -3979,7 +4023,7 @@ export default function workflow(pi: ExtensionAPI) {
 		{ value: "off", label: "off - leave the workflow; restore the model from before the flow" },
 		{ value: "escalate", label: "escalate - switch to the escalate model (Fable)" },
 		{ value: "back", label: "back - return to the phase's own model" },
-		{ value: "judge", label: "judge - review the current diff now" },
+		{ value: "judge", label: "judge - review the current diff now (in discuss: the discussion's conclusion)" },
 		{ value: "tokens", label: "tokens - token breakdown of the current flow so far" },
 		{ value: "model", label: "model [role] [provider/id[:thinking]] - set a role's model (lists when left out)" },
 		{ value: "autopilot", label: "autopilot [on|off] - resolve waits and routine menus without asking (no argument toggles)" },
@@ -4259,7 +4303,8 @@ export default function workflow(pi: ExtensionAPI) {
 					await deescalate(ctx);
 					return;
 				case "judge":
-					await reviewDiff(ctx, true);
+					if (state.phase === "discuss") await reviewDiscussion(ctx);
+					else await reviewDiff(ctx, true);
 					return;
 				case "tokens":
 					if (!view.hasFlowUsage()) {

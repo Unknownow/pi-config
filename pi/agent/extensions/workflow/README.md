@@ -183,6 +183,8 @@ A session shows a desktop notification (Windows toast, `osascript` on macOS, `no
 
 The discuss phase uses exactly the same rules as plan.
 
+`/flow judge` in discuss sends the last `Agreed so far:` list and the session transcript to the judge model for an adversarial review. It posts the findings with PASS/FAIL as a message without starting a turn, and blocks nothing. The transcript is clipped to `judge.maxDiscussionChars` (default 400000).
+
 **Tools per phase:** normal mode does not declare `plan_check`, `deliver`, `wait_for_user` and `publish_packages`; execute declares everything; discuss and plan declare only the reading tools below. `explore`, `advisor` and `test_run` are never removed from the active list; the `tool_call` hook refuses `test_run` in discuss and plan (`plan-tools.ts`).
 
 Only tools matching `planAllowedTools` (regexes over the tool name) can be called: read, grep, find,
@@ -347,7 +349,7 @@ next run starts.
 | `/flow discuss` / `plan` / `execute` / `off` | switch phase (`off` restores the model and thinking level from before the flow). `/flow plan` from discuss also asks the planner for the `Plan:`; `/flow approve` in discuss does the same |
 | `/flow approve` | approve the plan: switch to execute and start (also offered when a plan ends) |
 | `/flow escalate` (`fable`) / `/flow back` (`opusplan`) | manual escalation and return |
-| `/flow judge` | review the current diff now |
+| `/flow judge` | review the current diff now (in discuss: reviews the discussion's conclusion, the last `Agreed so far:` list and the transcript; findings and PASS/FAIL, blocks nothing) |
 | `/flow tokens` | token breakdown of the current flow so far |
 | `/flow model [role] [provider/id[:thinking]]` | set a workflow role's model (discuss, plan, execute, judge, commit, arbiter, escalate, quick, quick-judge) and save it to workflow.json; left out, it lists the roles, the models with auth and the thinking levels (Tab completes model IDs). explore, advisor and runner are set with `/agents model` |
 | `/flow reload` | re-read workflow.json |

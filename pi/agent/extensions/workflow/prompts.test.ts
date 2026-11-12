@@ -1,7 +1,7 @@
 // node --experimental-strip-types --test prompts.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { ARBITER, COMMIT, EXECUTE_PHASE, FIX_MESSAGE, FIX_TESTS, JUDGE, JUDGE_KNOWLEDGE_ONLY, NO_SLEEP, NO_WORKFLOW, PACE, deliveryGuidance, JUDGE_MAJOR_ONLY, minorFixMessage, phaseSection, PLAN_KICKOFF, planPhase, workspaceSection, QUICK_EXECUTE, quickPlanPhase } from "./prompts.ts";
+import { ARBITER, COMMIT, EXECUTE_PHASE, FIX_MESSAGE, FIX_TESTS, JUDGE, JUDGE_DISCUSSION, JUDGE_KNOWLEDGE_ONLY, NO_SLEEP, NO_WORKFLOW, PACE, deliveryGuidance, JUDGE_MAJOR_ONLY, minorFixMessage, phaseSection, PLAN_KICKOFF, planPhase, workspaceSection, QUICK_EXECUTE, quickPlanPhase } from "./prompts.ts";
 import { ADVISOR, EXPLORE, RUNNER } from "../agents/prompts.ts";
 
 const BATCH = `- Batch tool calls. Each call re-sends the whole conversation, so ten small calls at 150k context re-send 1.5M tokens. Put independent reads and commands in one call (a codemode script, run_code, or one bash command joined with && or ;) and print only what you need. Don't spend a call on something you could have added to the previous one.`;
@@ -193,3 +193,8 @@ test("merge points: the planner lists them, the executor asks request_merge, the
 	assert.ok(MERGE_ARBITER.includes("DECISION: MERGE | NO_MERGE | ASK_USER"));
 });
 import { MERGE_ARBITER } from "./prompts.ts";
+
+test("JUDGE_DISCUSSION and the discuss prompt mention the discussion review", () => {
+	assert.ok(JUDGE_DISCUSSION.includes("VERDICT: PASS or VERDICT: FAIL") && JUDGE_DISCUSSION.includes("Agreed so far"));
+	assert.ok((phaseSection("discuss", SECTION_OPTS) ?? "").includes("/flow judge"));
+});
