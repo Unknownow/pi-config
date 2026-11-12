@@ -263,14 +263,17 @@ The policy is defined once, in a knowledge rule with its decision entry. The oth
 - **game-template:** `AGENTS: new tests only when the user approves them (K…)`: `AGENTS.md`, `docs/tasks.json`, `docs/progress.md`.
 - **city-bus-flow:** `Take template <sha>: new tests only on request (K…)`: `AGENTS.md`, `docs/tasks.json`, `docs/progress.md`.
 
+## Amendment 1 (arbiter: merge)
+Merge allowed in stage 1: The approved plan names S7 as a merge point in section 2: "`pi-config sync` pushes straight to pi-config `master`. This is how the repo syncs." That puts this merge inside the user's approved intent, so it isn't something the executor added for convenience. Section 7's "Done when" also requires "pi-config `master` has the change and A47, and `pi-config status` shows no differences." pi-config has no PR flow, and its HEAD is already on `master` (`.git/HEAD` → `refs/heads/master`, commit `cc50eb9` "workflow: tests only when the user approves them (A47)"). So pushing a branch can't deliver this step; the push to `master` is the delivery. The executor says the judge passed; stage 1's other steps (S1–S6) are checked off.
+
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 Plan template, `prompts.ts:58`.
-- [ ] S2 Judge prompt.
-- [ ] S3 Discussion judge, `prompts.ts:170`: becomes "6. Missing acceptance criteria."
-- [ ] S4 `testPlan()` in `test-flow.ts:207-229`.
-- [ ] S5 Tests (approved by approving this plan).
-- [ ] S6 pi-config backlog.
+- [x] S1 Plan template, `prompts.ts:58`.
+- [x] S2 Judge prompt.
+- [x] S3 Discussion judge, `prompts.ts:170`: becomes "6. Missing acceptance criteria."
+- [x] S4 `testPlan()` in `test-flow.ts:207-229`.
+- [x] S5 Tests (approved by approving this plan).
+- [x] S6 pi-config backlog.
 - [ ] S7 Deliver: pi-config.
 - [ ] S8 Branch. In `D:/works/annamites/knowledge`, pull `main`, enable the hooks, and create branch `feat/new-tests-on-request`.
 - [ ] S9 New files. Add `entries/eng/rule/new-tests-on-request.md` and `entries/design/decision/new-tests-on-request.md` as descr
