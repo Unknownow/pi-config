@@ -269,6 +269,9 @@ Merge allowed in stage 1: The approved plan names S7 as a merge point in section
 ## Plan choices upheld at a pass
 D:/works/annamites/game-template/AGENTS.md:31 - minor - [plan-flaw] Rule 2a points to `eng.rule.new-tests-on-request`, but that rule is not on knowledge `main` yet. The game-template PR merges at S20, while the knowledge PR merges "at the end of the flow" (D6, S16). Until then the reference leads nowhere.
 
+## Amendment 2 (arbiter: merge)
+Merge allowed in stage 3: The plan names this merge point itself. Section 2, "Merge points", says: "S20: game-template must be merged before city-bus-flow can take its commit SHA". S20 is "Deliver: merge the game-template PR. Stage 4 needs its merged SHA." Stage 4 can't start without it. D3 has city-bus-flow follow game-template upstream through a "Take template <sha>" PR, and S21 to S23 build that PR from the merged commit on the template's `main`. Pushing the branch only would leave no merged SHA to take. D6 lets the executor merge the game-template PR itself once the judge passes and the checks are green. The executor says the judge passed and S19's checks are done. game-template is clean at `6a4b608`. At the pass, the judge accepted the dangling link from rule 2a to `eng.rule.new-tests-on-request`, which is not on knowledge `main` until the knowledge PR merges at the end. That note doesn't block this merge.
+
 <!-- pi-workflow:status -->
 ## Checklist
 - [x] S1 Plan template, `prompts.ts:58`.
