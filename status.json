@@ -1,8 +1,8 @@
 {
   "v": 1,
   "flowId": "20261112-1946-make-new-tests-optional-and-ask-the-user-a728",
-  "rev": 7,
-  "updated": "2026-11-12T12:58:49.968Z",
+  "rev": 8,
+  "updated": "2026-11-12T12:59:27.808Z",
   "title": "Make new tests optional and ask the user each time (workflow, knowledge, game-template, city-bus-flow)",
   "stage": 4,
   "done": [

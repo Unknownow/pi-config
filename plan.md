@@ -272,6 +272,9 @@ D:/works/annamites/game-template/AGENTS.md:31 - minor - [plan-flaw] Rule 2a poin
 ## Amendment 2 (arbiter: merge)
 Merge allowed in stage 3: The plan names this merge point itself. Section 2, "Merge points", says: "S20: game-template must be merged before city-bus-flow can take its commit SHA". S20 is "Deliver: merge the game-template PR. Stage 4 needs its merged SHA." Stage 4 can't start without it. D3 has city-bus-flow follow game-template upstream through a "Take template <sha>" PR, and S21 to S23 build that PR from the merged commit on the template's `main`. Pushing the branch only would leave no merged SHA to take. D6 lets the executor merge the game-template PR itself once the judge passes and the checks are green. The executor says the judge passed and S19's checks are done. game-template is clean at `6a4b608`. At the pass, the judge accepted the dangling link from rule 2a to `eng.rule.new-tests-on-request`, which is not on knowledge `main` until the knowledge PR merges at the end. That note doesn't block this merge.
 
+## Amendment 3 (arbiter: merge)
+Merge allowed in stage 4: The plan names this merge itself. Section 2 "Merge points" says "S20: game-template must be merged before city-bus-flow can take its commit SHA", and S20 reads "Deliver: merge the game-template PR. Stage 4 needs its merged SHA." S21–S23 build the city-bus-flow "Take template <sha>" PR (D3) from a commit on game-template `main`, so pushing the branch alone would leave no SHA to take. D6 lets the executor merge after the judge passes and the checks are green. S17–S19 are checked off, and game-template is clean at `6a4b608` (K078 done, rule 2a and the checklist item are in). Amendment 2 already allowed this merge for S20. The judge accepted the dangling `eng.rule.new-tests-on-request` link, so it does not block.
+
 <!-- pi-workflow:status -->
 ## Checklist
 - [x] S1 Plan template, `prompts.ts:58`.
