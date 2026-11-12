@@ -1,0 +1,18 @@
+{
+  "v": 1,
+  "flowId": "20261112-1041-manual-judge-review-of-the-discussion-s-c81b",
+  "rev": 1,
+  "updated": "2026-11-12T03:41:43.620Z",
+  "title": "Manual judge review of the discussion's conclusion (`/flow judge` in discuss)",
+  "done": [],
+  "reviewBase": {
+    "d:/works/pi-config": "2dab940f116b101b43a87e24b626c582b190c307"
+  },
+  "repos": [
+    {
+      "branch": "master",
+      "remote": "github.com/Unknownow/pi-config",
+      "primary": true
+    }
+  ]
+}
