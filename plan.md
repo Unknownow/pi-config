@@ -266,6 +266,9 @@ The policy is defined once, in a knowledge rule with its decision entry. The oth
 ## Amendment 1 (arbiter: merge)
 Merge allowed in stage 1: The approved plan names S7 as a merge point in section 2: "`pi-config sync` pushes straight to pi-config `master`. This is how the repo syncs." That puts this merge inside the user's approved intent, so it isn't something the executor added for convenience. Section 7's "Done when" also requires "pi-config `master` has the change and A47, and `pi-config status` shows no differences." pi-config has no PR flow, and its HEAD is already on `master` (`.git/HEAD` → `refs/heads/master`, commit `cc50eb9` "workflow: tests only when the user approves them (A47)"). So pushing a branch can't deliver this step; the push to `master` is the delivery. The executor says the judge passed; stage 1's other steps (S1–S6) are checked off.
 
+## Plan choices upheld at a pass
+D:/works/annamites/game-template/AGENTS.md:31 - minor - [plan-flaw] Rule 2a points to `eng.rule.new-tests-on-request`, but that rule is not on knowledge `main` yet. The game-template PR merges at S20, while the knowledge PR merges "at the end of the flow" (D6, S16). Until then the reference leads nowhere.
+
 <!-- pi-workflow:status -->
 ## Checklist
 - [x] S1 Plan template, `prompts.ts:58`.
@@ -284,9 +287,9 @@ Merge allowed in stage 1: The approved plan names S7 as a merge point in section
 - [x] S14 `docs/plans/design.md`.
 - [x] S15 `skills/base-game/SKILL.md:52`:
 - [x] S16 Check and PR. Run `knowledge.bat check`, which must pass. Open the PR. Merge at the end of the flow (D6).
-- [ ] S17 Branch. In `D:/works/annamites/game-template`, pull `main` (5 commits behind) and create branch `docs/new-tests-on-reque
-- [ ] S18 `AGENTS.md`.
-- [ ] S19 Task, checks and PR.
+- [x] S17 Branch. In `D:/works/annamites/game-template`, pull `main` (5 commits behind) and create branch `docs/new-tests-on-reque
+- [x] S18 `AGENTS.md`.
+- [x] S19 Task, checks and PR.
 - [ ] S20 Deliver: merge the game-template PR. Stage 4 needs its merged SHA.
 - [ ] S21 Worktree.
 - [ ] S22 `AGENTS.md`.
