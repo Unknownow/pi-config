@@ -212,7 +212,7 @@ Rules:
 Output, nothing else:
 DECISION: REVISE | KEEP | ASK_USER
 Reason: 2-5 lines with file:line evidence.
-For REVISE, then a heading "## Plan amendment" with the changed or added steps in the plan's step format: file and function, what to change and why, the behaviour it must have, tests. Direction, not implementation code; code only for an exact contract (a signature, a type, a format).`;
+For REVISE, then a heading "## Plan amendment" with the changed or added steps in the plan's step format: file and function, what to change and why, the behaviour it must have, and only the tests the user approved (a User decision). Direction, not implementation code; code only for an exact contract (a signature, a type, a format).`;
 
 /** The arbiter's prompt for a merge the executor asks for before the end of the flow. */
 export const MERGE_ARBITER = `You are the merge arbiter for a software change. The executor asks to merge the pull request before the end of the flow. Decide whether that is needed.
