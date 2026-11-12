@@ -12,11 +12,11 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import { type Message, StringEnum } from "@earendil-works/pi-ai";
-import { convertToLlm, type ExtensionAPI, type ExtensionContext, serializeConversation } from "@earendil-works/pi-coding-agent";
+import { StringEnum } from "@earendil-works/pi-ai";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
+import { branchTranscript } from "../shared/transcript.ts";
 import { AGENT_ROLES, type AgentRole, CONFIG_PATH, loadConfig, saveRole } from "./config.ts";
 import * as prompts from "./prompts.ts";
 import { renderRuns, toolProgress } from "./render.ts";
@@ -109,19 +109,7 @@ export default function agents(pi: ExtensionAPI) {
 
 	/** The whole branch, compactions included, as text. */
 	function transcript(ctx: ExtensionContext): string {
-		const messages: AgentMessage[] = [];
-		for (const entry of ctx.sessionManager.getBranch()) {
-			if (entry.type === "message") messages.push((entry as { message: AgentMessage }).message);
-			else if (entry.type === "custom_message") {
-				const e = entry as { content: Message["content"]; timestamp?: string };
-				messages.push({ role: "user", content: e.content, timestamp: Date.now() } as AgentMessage);
-			}
-		}
-		const text = serializeConversation(convertToLlm(messages));
-		const max = loadConfig().config.advisor.maxTranscriptChars;
-		if (text.length <= max) return text;
-		const head = Math.floor(max * 0.3);
-		return `${text.slice(0, head)}\n\n[... ${text.length - max} characters of the middle omitted ...]\n\n${text.slice(text.length - (max - head))}`;
+		return branchTranscript(ctx.sessionManager.getBranch(), loadConfig().config.advisor.maxTranscriptChars);
 	}
 
 	/** Folders the workflow extension added to this session (newest `session-folders` entry for this working folder) that still exist. */
