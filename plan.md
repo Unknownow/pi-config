@@ -275,15 +275,15 @@ Merge allowed in stage 1: The approved plan names S7 as a merge point in section
 - [x] S5 Tests (approved by approving this plan).
 - [x] S6 pi-config backlog.
 - [x] S7 Deliver: pi-config.
-- [ ] S8 Branch. In `D:/works/annamites/knowledge`, pull `main`, enable the hooks, and create branch `feat/new-tests-on-request`.
-- [ ] S9 New files. Add `entries/eng/rule/new-tests-on-request.md` and `entries/design/decision/new-tests-on-request.md` as descr
-- [ ] S10 `design.decision.test-rules`.
-- [ ] S11 `design.decision.tests-on-request`: add the new decision to `related`, with one cross-link line in the body.
-- [ ] S12 `testing-the-base`.
-- [ ] S13 Other entries. Rewrite every line in section 3's "rewrite" list the same way.
-- [ ] S14 `docs/plans/design.md`.
-- [ ] S15 `skills/base-game/SKILL.md:52`:
-- [ ] S16 Check and PR. Run `knowledge.bat check`, which must pass. Open the PR. Merge at the end of the flow (D6).
+- [x] S8 Branch. In `D:/works/annamites/knowledge`, pull `main`, enable the hooks, and create branch `feat/new-tests-on-request`.
+- [x] S9 New files. Add `entries/eng/rule/new-tests-on-request.md` and `entries/design/decision/new-tests-on-request.md` as descr
+- [x] S10 `design.decision.test-rules`.
+- [x] S11 `design.decision.tests-on-request`: add the new decision to `related`, with one cross-link line in the body.
+- [x] S12 `testing-the-base`.
+- [x] S13 Other entries. Rewrite every line in section 3's "rewrite" list the same way.
+- [x] S14 `docs/plans/design.md`.
+- [x] S15 `skills/base-game/SKILL.md:52`:
+- [x] S16 Check and PR. Run `knowledge.bat check`, which must pass. Open the PR. Merge at the end of the flow (D6).
 - [ ] S17 Branch. In `D:/works/annamites/game-template`, pull `main` (5 commits behind) and create branch `docs/new-tests-on-reque
 - [ ] S18 `AGENTS.md`.
 - [ ] S19 Task, checks and PR.
