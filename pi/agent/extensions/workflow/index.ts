@@ -3381,7 +3381,6 @@ export default function workflow(pi: ExtensionAPI) {
 		return true;
 	}
 
-	/** diff ready -> judge -> fix loop, or commit (and push) once it passes. */
 	/** `/flow judge` in discuss: the judge reviews the discussion's conclusion. Advisory; changes no flow or judge state. */
 	async function reviewDiscussion(ctx: ExtensionContext): Promise<void> {
 		const branch = ctx.sessionManager.getBranch();
@@ -3390,8 +3389,7 @@ export default function workflow(pi: ExtensionAPI) {
 			const m = entry.type === "message" ? (entry as { message?: { role?: string; content?: unknown } }).message : undefined;
 			if (m?.role !== "assistant") continue;
 			const text = Array.isArray(m.content)
-				? m.content.filter((p: { type?: string }) => p?.type === "text").map((p: { text?: string }) => p.text ?? "").join("
-")
+				? m.content.filter((p: { type?: string }) => p?.type === "text").map((p: { text?: string }) => p.text ?? "").join("\n")
 				: typeof m.content === "string" ? m.content : "";
 			if (text.trim()) assistantTexts.push(text);
 		}
@@ -3415,15 +3413,14 @@ export default function workflow(pi: ExtensionAPI) {
 			}
 			const verdict = discussionVerdict(result.text);
 			view.finish(run, verdict === "PASS", `${verdict} · discussion`);
-			pi.sendMessage({ customType: "workflow-discussion-review", content: `**Discussion review: ${verdict}**
-
-${result.text}`, display: true }, { triggerTurn: false });
+			pi.sendMessage({ customType: "workflow-discussion-review", content: `**Discussion review: ${verdict}**\n\n${result.text}`, display: true }, { triggerTurn: false });
 			ctx.ui.notify(`workflow: discussion review ${verdict}${conclusion ? "" : " (no Agreed so far: list found)"}`, verdict === "PASS" ? "info" : "warning");
 		} finally {
 			ctx.ui.setWorkingMessage();
 		}
 	}
 
+	/** diff ready -> judge -> fix loop, or commit (and push) once it passes. */
 	async function reviewDiff(ctx: ExtensionContext, manual: boolean): Promise<void> {
 		const baseNote = await refreshReviewBase(ctx);
 		const diff = await collectFlowDiff(ctx);
