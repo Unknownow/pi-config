@@ -1,10 +1,9 @@
 {
   "v": 1,
   "flowId": "20261112-1946-make-new-tests-optional-and-ask-the-user-a728",
-  "rev": 8,
-  "updated": "2026-11-12T12:59:27.808Z",
+  "rev": 9,
+  "updated": "2026-11-12T13:08:16.412Z",
   "title": "Make new tests optional and ask the user each time (workflow, knowledge, game-template, city-bus-flow)",
-  "stage": 4,
   "done": [
     "S1",
     "S2",
@@ -24,13 +23,21 @@
     "S16",
     "S17",
     "S18",
-    "S19"
+    "S19",
+    "S21",
+    "S22",
+    "S23"
   ],
+  "finished": {
+    "at": "2026-11-12T13:08:16.232Z",
+    "ok": true,
+    "text": "stage 1: city-bus-flow: fix/k207-bus-car-skin, 0 commits since the review base; stage 2: knowledge: feat/new-tests-on-request, 2 commits since the review base, PR #30 OPEN https://github.com/Annamites/knowledge/pull/30; stage 3: game-template: docs/new-tests-on-request, 9 commits since the review base, PR #93 OPEN https://github.com/Annamites/game-template/pull/93; stage 4: city-bus-flow: fix/k207-bus-car-skin, 0 commits since the review base; game-template: docs/new-tests-on-request, 0 commits since the review base, PR #93 OPEN https://github.com/Annamites/game-template/pull/93; knowledge: feat/new-tests-on-request, 0 commits since the review base, PR #30 OPEN https://github.com/Annamites/knowledge/pull/30; pi-config: master, 0 commits since the review base; mid-flow merge allowed by arbiter (stage 1): The approved plan names S7 as a merge point in section 2: \"`pi-config sync` pushes straight to pi-config `master`. This is how the repo syncs.\" That puts this merge inside the user's approved intent, so it isn't something the executor added for convenience. Section 7's \"Done when\" also requires \"pi-config `master` has the change and A47, and `pi-config status` shows no differences.\" pi-config has no PR flow, and its HEAD is already on `master` (`.git/HEAD` → `refs/heads/master`, commit `cc50eb9` \"workflow: tests only when the user approves them (A47)\"). So pushing a branch can't deliver this step; the push to `master` is the delivery. The executor says the judge passed; stage 1's other steps (S1–S6) are checked off.; mid-flow merge allowed by arbiter (stage 3): The plan names this merge point itself. Section 2, \"Merge points\", says: \"S20: game-template must be merged before city-bus-flow can take its commit SHA\". S20 is \"Deliver: merge the game-template PR. Stage 4 needs its merged SHA.\" Stage 4 can't start without it. D3 has city-bus-flow follow game-template upstream through a \"Take template <sha>\" PR, and S21 to S23 build that PR from the merged commit on the template's `main`. Pushing the branch only would leave no merged SHA to take. D6 lets the executor merge the game-template PR itself once the judge passes and the checks are green. The executor says the judge passed and S19's checks are done. game-template is clean at `6a4b608`. At the pass, the judge accepted the dangling link from rule 2a to `eng.rule.new-tests-on-request`, which is not on knowledge `main` until the knowledge PR merges at the end. That note doesn't block this merge.; mid-flow merge allowed by arbiter (stage 4): The plan names this merge itself. Section 2 \"Merge points\" says \"S20: game-template must be merged before city-bus-flow can take its commit SHA\", and S20 reads \"Deliver: merge the game-template PR. Stage 4 needs its merged SHA.\" S21–S23 build the city-bus-flow \"Take template <sha>\" PR (D3) from a commit on game-template `main`, so pushing the branch alone would leave no SHA to take. D6 lets the executor merge after the judge passes and the checks are green. S17–S19 are checked off, and game-template is clean at `6a4b608` (K078 done, rule 2a and the checklist item are in). Amendment 2 already allowed this merge for S20. The judge accepted the dangling `eng.rule.new-tests-on-request` link, so it does not block."
+  },
   "reviewBase": {
-    "d:/works/annamites/city-bus-flow": "9ea8a9c22203c2383e5185d3e744b776ee638cf4",
-    "d:/works/annamites/game-template": "66ab8b53d8209eda8b682c083c78b2d32a1045b1",
-    "d:/works/annamites/knowledge": "5454d506a3d992978d31cf20af67df00c520a3b8",
-    "d:/works/pi-config": "64d65d8e22b19d04541e66cf653d8fd762b4b284"
+    "d:/works/annamites/city-bus-flow": "2525b5a52fd9a7c60b79b30e5ea669e13b9c5213",
+    "d:/works/annamites/game-template": "9cb9f9f62dbffde3f877cf04c30dbde0fd83e4da",
+    "d:/works/annamites/knowledge": "d53c26df89698b245bcc23f46b209b85965328f2",
+    "d:/works/pi-config": "e6d13bfc4d8ee57bf5fa31b7cbfa168e5c4c3830"
   },
   "passedTrees": {
     "d:/works/annamites/city-bus-flow": [
