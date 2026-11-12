@@ -136,6 +136,8 @@ export interface WorkflowConfig {
 	judge: {
 		tools: string[];
 		maxDiffChars: number;
+		/** Transcript limit for `/flow judge` in discuss. */
+		maxDiscussionChars: number;
 		/** Rounds after the first review only the changes since the last round, with its findings. */
 		recheck: boolean;
 		/** Thinking level of those re-reviews. */
@@ -202,6 +204,7 @@ export const DEFAULTS: WorkflowConfig = {
 	judge: {
 		tools: ["read", "grep", "find", "ls"],
 		maxDiffChars: 400_000,
+		maxDiscussionChars: 400_000,
 		recheck: true,
 		recheckThinking: "medium",
 		recheckMaxShare: 0.5,

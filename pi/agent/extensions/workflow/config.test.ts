@@ -201,3 +201,10 @@ test("a leftover stagedPlans key is ignored", () => {
 	assert.equal(r.error, undefined);
 	assert.equal((r.config as unknown as { maxJudgeRounds: number }).maxJudgeRounds, 3);
 });
+
+test("judge.maxDiscussionChars defaults to 400000, also when the file lacks it", () => {
+	assert.equal(DEFAULTS.judge.maxDiscussionChars, 400_000);
+	const f = tmp();
+	fs.writeFileSync(f, `{"judge":{"maxDiffChars":1}}`);
+	assert.equal(loadConfig(f).config.judge.maxDiscussionChars, 400_000);
+});
