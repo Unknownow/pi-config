@@ -4,7 +4,7 @@ import { test } from "node:test";
 import type { Run, Sub } from "./brief.ts";
 import type { Item } from "./items.ts";
 import type { Message } from "./store.ts";
-import { boardLines, buildView, pendingOf, widgetLines, type SubInput } from "./view.ts";
+import { boardLines, buildView, pendingFromItems, pendingMark, pendingOf, widgetLines, type SubInput } from "./view.ts";
 
 const msg = (id: string, type: string, o: Partial<Message> = {}): Message => ({ v: 1, id, ts: `2026-01-01T00:00:0${id.length}Z`, type, text: `${type} ${id}`, ...o });
 const sub = (id: string, o: Partial<Sub> = {}): Sub => ({ id, goal: `goal of ${id}`, criteria: ["c1"], owns: [`api:src/${id}/**`], forbids: [], dependsOn: [], decisions: [], name: `n-${id}`, state: "executing", ...o });
@@ -67,4 +67,12 @@ test("escalated items: marker, header count and board mark", () => {
 	assert.match(lines[1], /\? question menu judge-cap ‼ you: f:4 idle plan 2 review/);
 	assert.match(boardLines(v, 0, false, 100, 1000)[0], /‼/);
 	assert.equal(buildView(run([sub("a")]), 1000, 4, new Map(), 180).waitingForUser, undefined);
+});
+
+test("a parked wait is pending with its own mark and does not wait for the user", () => {
+	const it: Item = { ref: "f:1", sub: "a", kind: "wait", postedAt: 0, state: "open", reminders: 0, idleMs: 0, userMsgs: [], summary: "s", waitKind: "external", checkStatus: "pending", parked: true };
+	const [p] = pendingFromItems([it]);
+	assert.equal(p.parked, true);
+	assert.equal(pendingMark(p), "wait (resumes itself)");
+	assert.equal(p.escalated, undefined);
 });

@@ -53,3 +53,16 @@ export function globsMayOverlap(a: string, b: string): boolean {
 	const pb = literalDir(kb ? b.slice(kb.length + 1) : b);
 	return pa === pb || pa === "" || pb === "" || pa.startsWith(`${pb}/`) || pb.startsWith(`${pa}/`);
 }
+
+/** The files of `git status --porcelain=v1 -z` (untrimmed output): entries are `XY path`, split on NUL; after a rename or copy the next entry is the old path and is skipped. Pure. */
+export function parsePorcelainZ(out: string): string[] {
+	const parts = out.split("\0");
+	const files: string[] = [];
+	for (let i = 0; i < parts.length; i++) {
+		const e = parts[i];
+		if (e.length < 4) continue;
+		files.push(e.slice(3));
+		if (e[0] === "R" || e[0] === "C" || e[1] === "R" || e[1] === "C") i++;
+	}
+	return files;
+}

@@ -6,7 +6,7 @@ import * as path from "node:path";
 import { test } from "node:test";
 import { readItems, writeItems } from "./store.ts";
 import {
-	acceptRef, close, closeIdle, countersOf, emptyItems, ESCALATE_CEILING_MS, escalate, findItem, idleAllowed, liveItems, markStale, openItem, orphanDue, planRef, quoteOk, recordUserMessage, setFingerprint, tick, waitingForUser,
+	acceptRef, close, closeIdle, countersOf, emptyItems, ESCALATE_CEILING_MS, escalate, findItem, idleAllowed, isParkedWait, liveItems, markStale, openItem, orphanDue, planRef, quoteOk, recordUserMessage, setFingerprint, tick, waitingForUser,
 	type Caps, type ItemsFile, type OpenMsg,
 } from "./items.ts";
 
@@ -326,4 +326,63 @@ test("orphanDue (D10): same host, dead owner, older than 30 min, once per item",
 	assert.equal(orphanDue({ ...base, ownerAlive: true }), false);
 	assert.equal(orphanDue({ ...base, ownerHost: "other" }), false);
 	assert.equal(orphanDue({ ...base, ageMs: 29 * MIN }), false);
+});
+
+const waitAsk = (id: string, wait: Record<string, unknown>, sub = "a"): OpenMsg => ({ sub, type: "ask", id: `m${++seq}`, text: "w", data: { id, key: "wait", kind: "wait", title: "Waiting", wait: { reason: "other PR", manual: false, ...wait } } });
+const EXT = { waitKind: "external", check: "gh pr list", checkStatus: "pending" };
+
+test("an external pending wait with a check is parked: no escalation, no timers", () => {
+	const f = emptyItems();
+	assert.deepEqual(open(f, waitAsk("f:1", EXT)), []);
+	assert.equal(f.items[0].parked, true);
+	assert.equal(isParkedWait({ ...EXT, manual: true } as never), true);
+	assert.deepEqual(tick(f, T0 + 31 * MIN, true, 31 * MIN), []);
+	assert.equal(f.items[0].state, "open");
+	assert.equal(f.items[0].idleMs, 0);
+	assert.equal(liveItems(f, "a").length, 1);
+	assert.equal(idleAllowed("executing", { plan: false, ask: true, question: false, accept: false }), false);
+});
+
+test("stopped, broken and passed external waits escalate with their reason", () => {
+	for (const [st, re] of [["stopped", /stopped checking "gh pr list"/], ["broken", /can't run/], ["passed", /autoResume is off/]] as const) {
+		const f = emptyItems();
+		const acts = open(f, waitAsk("f:1", { ...EXT, checkStatus: st }));
+		assert.equal(acts.length, 1);
+		assert.match((acts[0] as { why: string }).why, re);
+		assert.equal(f.items[0].parked, undefined);
+	}
+});
+
+test("waits that are not external, pending and checked escalate as before", () => {
+	for (const w of [{ check: "x", checkStatus: "pending" }, { waitKind: "external", checkStatus: "pending" }, { waitKind: "external", check: "x" }, { manual: true }]) {
+		const acts = open(emptyItems(), waitAsk("f:1", w));
+		assert.equal(acts.length, 1);
+		assert.match((acts[0] as { why: string }).why, /always needs a person/);
+	}
+});
+
+test("safety net: a new wait makes the sub's old wait stale; a menu leaves a wait live", () => {
+	const f = emptyItems();
+	open(f, waitAsk("f:4", {}));
+	open(f, waitAsk("f:5", {}));
+	assert.equal(findItem(f, "a", "f:4")?.state, "stale");
+	assert.deepEqual(waitingForUser(f).map((i) => i.ref), ["f:5"]);
+	open(f, ask("judge-error"));
+	assert.equal(findItem(f, "a", "f:5")?.state, "escalated");
+});
+
+test("replay of run o11131503: raw waits all escalate, upgraded ones are all parked; nothing stays live", () => {
+	const seqOps: [string, number][] = [["ask", 1], ["done", 1], ["ask", 2], ["ask", 3], ["done", 3], ["ask", 4], ["ask", 5], ["done", 5], ["ask", 6], ["ask", 7], ["done", 7], ["ask", 8], ["ask", 9], ["ask", 10], ["done", 10], ["ask", 11], ["ask", 12], ["done", 12], ["ask", 13], ["ask", 14], ["done", 14]];
+	const play = (extra: Record<string, unknown>) => {
+		const f = emptyItems();
+		let esc = 0;
+		for (const [op, n] of seqOps) {
+			const ref = `f:${n}`;
+			if (op === "ask") esc += open(f, waitAsk(ref, { manual: true, check: "gh pr list", ...extra })).filter((a) => a.type === "escalate").length;
+			else close(f, "a", ref, { how: "answered" });
+		}
+		return { esc, live: liveItems(f).length };
+	};
+	assert.deepEqual(play({}), { esc: 14, live: 0 });
+	assert.deepEqual(play({ waitKind: "external", checkStatus: "pending" }), { esc: 0, live: 0 });
 });

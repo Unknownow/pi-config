@@ -205,3 +205,17 @@ test("bumpAskId persists the sequence in the state; waitDonePayload needs an ask
 	assert.equal(waitDonePayload({}), undefined);
 	assert.equal(waitDonePayload(undefined), undefined);
 });
+
+test("waitPayload carries waitKind and checkStatus (only with a check); restoreAsks keeps waitKind", () => {
+	const p = waitPayload("f:7", { reason: "r", check: "c", waitKind: "external" }, undefined, "pending") as { wait: object };
+	assert.deepEqual(p.wait, { reason: "r", check: "c", manual: false, waitKind: "external", checkStatus: "pending" });
+	assert.deepEqual((waitPayload("f:8", { reason: "r" }, undefined, "pending") as { wait: object }).wait, { reason: "r", manual: false });
+	assert.deepEqual(restoreAsks({ waiting: { askId: "f:2", reason: "r", check: "c", waitKind: "external" } }), { resendWait: { id: "f:2", wait: { reason: "r", check: "c", waitKind: "external" } } });
+});
+
+test("a resumed external wait is asked again with waitKind and checkStatus pending", () => {
+	const saved = { askId: "f:9", reason: "r", check: "c", waitKind: "external" as const };
+	const r = restoreAsks({ waiting: saved }).resendWait;
+	assert.equal(r?.wait.waitKind, "external");
+	assert.equal(((waitPayload(r!.id, r!.wait, undefined, "pending") as { wait: { checkStatus?: string; waitKind?: string } }).wait).checkStatus, "pending");
+});

@@ -164,7 +164,7 @@ export interface PlanStatus {
 	done: string[];
 	finished?: Finished;
 	/** The wait the flow is in, so a resumed flow keeps waiting. */
-	waiting?: { reason: string; check?: string; since: string; planned?: boolean; atStageStart?: boolean; held?: string };
+	waiting?: { reason: string; check?: string; waitKind?: "external"; since: string; planned?: boolean; atStageStart?: boolean; held?: string };
 	/** Checkpoints delivered mid-plan. */
 	checkpoints?: { step?: string; stage?: number; text: string; ok: boolean }[];
 	/** Per repo key: the commit the judge diffs from. */
@@ -230,7 +230,7 @@ export function parseStatus(json: string): PlanStatus | null {
 	const f = o.finished;
 	if (f !== undefined && !(f && isStr(f.at) && typeof f.ok === "boolean" && isStr(f.text))) return null;
 	const w = o.waiting;
-	if (w !== undefined && !(w && isStr(w.reason) && isStr(w.since) && (w.check === undefined || isStr(w.check)) && (w.held === undefined || isStr(w.held)) && (w.planned === undefined || typeof w.planned === "boolean") && (w.atStageStart === undefined || typeof w.atStageStart === "boolean"))) return null;
+	if (w !== undefined && !(w && isStr(w.reason) && isStr(w.since) && (w.check === undefined || isStr(w.check)) && (w.waitKind === undefined || w.waitKind === "external") && (w.held === undefined || isStr(w.held)) && (w.planned === undefined || typeof w.planned === "boolean") && (w.atStageStart === undefined || typeof w.atStageStart === "boolean"))) return null;
 	const cps = o.checkpoints;
 	if (cps !== undefined && !(Array.isArray(cps) && cps.every((c: any) => c && isStr(c.text) && typeof c.ok === "boolean" && (c.step === undefined || isStr(c.step)) && (c.stage === undefined || Number.isInteger(c.stage))))) return null;
 	const isMap = (v: any) => v && typeof v === "object" && !Array.isArray(v);

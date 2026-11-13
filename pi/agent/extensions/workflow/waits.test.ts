@@ -126,3 +126,36 @@ test("parseWaitStep backticked check", () => {
 test("parseWaitStep keeps a check with nested parentheses", () => {
 	assert.deepEqual(parseWaitStep("**S4.** Wait: open the Editor (check: echo $(x))", "S4"), { reason: "open the Editor", check: "echo $(x)" });
 });
+
+test("waitLimitMs: a claimed wait polls longer; a lost claim falls back to maxMs", async () => {
+	const { waitLimitMs, pollDecision } = await import("./waits.ts");
+	const w = { maxMs: 3_600_000, claimedMaxMs: 14_400_000 };
+	assert.equal(waitLimitMs(true, w), 14_400_000);
+	assert.equal(waitLimitMs(false, w), 3_600_000);
+	const o = { waiting: true, hasCheck: true, idle: true, elapsedMs: 90 * 60_000 };
+	assert.equal(pollDecision({ ...o, maxMs: waitLimitMs(true, w) }), "run");
+	assert.equal(pollDecision({ ...o, maxMs: waitLimitMs(false, w) }), "stop");
+});
+
+test("waitKindProblem and autopilotSkipsWait: external needs a check and pauses under autopilot", async () => {
+	const { waitKindProblem, autopilotSkipsWait } = await import("./waits.ts");
+	assert.match(waitKindProblem("external", undefined) ?? "", /needs a check/);
+	assert.equal(waitKindProblem("external", "gh pr list"), undefined);
+	assert.equal(waitKindProblem("act", undefined), undefined);
+	assert.equal(autopilotSkipsWait(true, false, "external"), false);
+	assert.equal(autopilotSkipsWait(true, false, "act"), true);
+	assert.equal(autopilotSkipsWait(true, true, "act"), false);
+	assert.equal(autopilotSkipsWait(false, false, "act"), false);
+});
+
+test("replaceWait ends the old ask and drops its claim, in that order; nothing without an askId", async () => {
+	const { replaceWait } = await import("./waits.ts");
+	const calls: string[] = [];
+	const deps = { endAsk: (w: { askId?: string }) => calls.push(`end ${w.askId}`), unclaim: (id: string) => calls.push(`unclaim ${id}`), stopTimer: () => calls.push("stop") };
+	replaceWait({ askId: "f:4" }, deps);
+	assert.deepEqual(calls, ["end f:4", "unclaim f:4", "stop"]);
+	calls.length = 0;
+	replaceWait({}, deps);
+	replaceWait(undefined, deps);
+	assert.deepEqual(calls, []);
+});

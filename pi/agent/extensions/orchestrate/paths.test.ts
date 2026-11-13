@@ -1,7 +1,7 @@
 // node --experimental-strip-types --test paths.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { globsMayOverlap, globToRegExp, outsideOwned } from "./paths.ts";
+import { globsMayOverlap, globToRegExp, outsideOwned, parsePorcelainZ } from "./paths.ts";
 
 test("globs", () => {
 	assert.ok(globToRegExp("src/**").test("src/a/b.ts"));
@@ -38,4 +38,17 @@ test("globsMayOverlap", () => {
 	assert.equal(globsMayOverlap("api:**", "api:anything/x.ts"), true);
 	assert.equal(globsMayOverlap("api:src", "api:srcx/**"), false);
 	assert.equal(globsMayOverlap("src/a*.ts", "src/ab/**"), true);
+});
+
+test("parsePorcelainZ keeps the first letter of the first path and skips rename sources", () => {
+	assert.deepEqual(parsePorcelainZ(" M unity/a.cs\0?? b.txt\0"), ["unity/a.cs", "b.txt"]);
+	assert.deepEqual(parsePorcelainZ("R  new.cs\0old.cs\0 M x.cs\0"), ["new.cs", "x.cs"]);
+	assert.deepEqual(parsePorcelainZ("?? my file.txt\0"), ["my file.txt"]);
+	assert.deepEqual(parsePorcelainZ(""), []);
+});
+
+test("an owned dirty file is not drift", () => {
+	const files = parsePorcelainZ(" M unity/Assets/_Project/Scripts/NewGameplay/Core/FailReason.cs\0");
+	assert.deepEqual(files, ["unity/Assets/_Project/Scripts/NewGameplay/Core/FailReason.cs"]);
+	assert.deepEqual(outsideOwned(files, ["unity/Assets/_Project/Scripts/NewGameplay/Core/**","unity/Assets/_Project/Scripts/NewGameplay/Compare/**","unity/Assets/_Project/Scripts/NewGameplay/Sandbox/**","unity/Assets/_Project/Resources/Content/newgameplay/settings.json","unity/Assets/_Project/Content/Levels/**","unity/Assets/_Project/Resources/Levels/**","tools/levelkit/**","unity/Assets/_Project/Scripts/Simulation/Tests/**","unity/Assets/_Project/Scripts/Gameplay/Tests/**","docs/design/gameplay/new-gameplay/mechanics.md","docs/design/gameplay/new-gameplay/README.md","docs/design/gameplay/new-gameplay/handoffs.md","docs/design/gameplay/new-gameplay/boosters.md","docs/design/gameplay/new-gameplay/rules/**","docs/decisions/**","docs/tasks.json","docs/progress.md"], ["unity/Assets/_Project/Scripts/NewGameplay/View/**","unity/Assets/_Project/Scripts/NewGameplay/Session/**","unity/Assets/_Project/Resources/Board/**","unity/Packages/**"]), []);
 });

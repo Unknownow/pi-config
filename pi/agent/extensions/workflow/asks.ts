@@ -50,14 +50,19 @@ export function askAnswer(answer: unknown, options: readonly string[] | undefine
 	return { kind: "invalid" };
 }
 
+export type CheckStatus = "pending" | "stopped" | "broken" | "passed";
+
 export interface WaitInfo {
 	reason: string;
 	check?: string;
 	manual?: boolean;
+	/** "external": nothing for a person (another package's PR, CI, a release); the check resumes it. */
+	waitKind?: "external";
 }
 
-export function waitPayload(id: string, w: WaitInfo, detail?: string): object {
-	return { v: 1, id, key: "wait", kind: "wait", title: `Waiting: ${w.reason}`, wait: { reason: w.reason, ...(w.check ? { check: w.check } : {}), manual: !!w.manual }, ...(detail ? { detail } : {}) };
+export function waitPayload(id: string, w: WaitInfo, detail?: string, checkStatus?: CheckStatus): object {
+	const wait = { reason: w.reason, ...(w.check ? { check: w.check } : {}), manual: !!w.manual, ...(w.waitKind ? { waitKind: w.waitKind } : {}), ...(w.check && checkStatus ? { checkStatus } : {}) };
+	return { v: 1, id, key: "wait", kind: "wait", title: `Waiting: ${w.reason}`, wait, ...(detail ? { detail } : {}) };
 }
 
 export interface MenuRequest {
@@ -118,7 +123,7 @@ export async function askMenu(deps: MenuDeps, req: MenuRequest): Promise<string 
 export function restoreAsks(saved: { openAsk?: OpenAsk; waiting?: { askId?: string } & WaitInfo }): { withdraw?: string; resendWait?: { id: string; wait: WaitInfo } } {
 	const out: { withdraw?: string; resendWait?: { id: string; wait: WaitInfo } } = {};
 	if (saved.openAsk) out.withdraw = saved.openAsk.id;
-	if (saved.waiting?.askId) out.resendWait = { id: saved.waiting.askId, wait: { reason: saved.waiting.reason, ...(saved.waiting.check ? { check: saved.waiting.check } : {}), ...(saved.waiting.manual ? { manual: true } : {}) } };
+	if (saved.waiting?.askId) out.resendWait = { id: saved.waiting.askId, wait: { reason: saved.waiting.reason, ...(saved.waiting.check ? { check: saved.waiting.check } : {}), ...(saved.waiting.manual ? { manual: true } : {}), ...(saved.waiting.waitKind ? { waitKind: saved.waiting.waitKind } : {}) } };
 	return out;
 }
 

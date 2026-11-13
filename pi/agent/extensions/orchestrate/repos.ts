@@ -74,6 +74,11 @@ export function worktreesOf(sub: { cwd?: string; base?: string; worktrees?: Work
 	return sub.cwd ? [{ key: run.repos?.[0]?.key ?? "", cwd: sub.cwd, base: sub.base }] : [];
 }
 
+/** The diff base: the first merge base that exists, in the order target, origin/HEAD, default branch name, spawn-time commit. Pure. */
+export function pickDiffBase(c: { viaTarget?: string | null; viaHead?: string | null; viaName?: string | null; spawn?: string }): string | undefined {
+	return c.viaTarget || c.viaHead || c.viaName || c.spawn || undefined;
+}
+
 /** Of the added folders: plain folders (`keyOfFolder` gives null) and folders of the sub's repos stay; other repos go. */
 export function foldersFor(sub: { repos?: string[] }, added: string[], keyOfFolder: (folder: string) => string | null): string[] {
 	const need = new Set(sub.repos ?? []);

@@ -17,6 +17,8 @@ export interface Pending {
 	key?: string;
 	/** The orchestrator escalated it: the user must answer. */
 	escalated?: boolean;
+	/** wait: an external wait that resumes by itself. */
+	parked?: true;
 }
 
 export interface ViewRepo {
@@ -87,7 +89,7 @@ export function pendingOf(outbox: Message[], inbox: Message[]): Pending[] {
 export function pendingFromItems(items: Item[]): Pending[] {
 	return items.filter(isLive).map((i): Pending => {
 		const escalated = i.state === "escalated" ? true : undefined;
-		const base = { text: i.summary, escalated };
+		const base = { text: i.summary, escalated, ...(i.parked ? { parked: true as const } : {}) };
 		if (i.kind === "plan-review") return { kind: "plan", ref: String(i.n ?? i.ref), ...base };
 		if (i.kind === "accept-request") return { kind: "accept", ref: i.tree ?? i.ref, repo: i.repo ?? "", ...base };
 		if (i.kind === "menu") return { kind: "menu", ref: i.ref, key: i.key, ...base };
@@ -185,6 +187,7 @@ export const pendingMark = (p: Pending): string => {
 	if (p.kind === "question") return "? question";
 	if (p.kind === "plan") return `plan ${p.ref} review`;
 	if (p.kind === "menu") return `menu ${p.key ?? ""}`.trim();
+	if (p.kind === "wait" && p.parked) return "wait (resumes itself)";
 	if (p.kind === "wait" || p.kind === "idle") return p.kind;
 	return `⚠ accept ${p.repo ? `${p.repo} ` : ""}${p.ref.slice(0, 7)}`;
 };

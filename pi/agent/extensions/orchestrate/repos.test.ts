@@ -1,7 +1,7 @@
 // node --experimental-strip-types --test repos.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { buildRepos, canonical, crossRunOverlaps, hasKeyPrefix, foldersFor, repoKey, split, subRepos, worktreesOf } from "./repos.ts";
+import { buildRepos, canonical, crossRunOverlaps, hasKeyPrefix, foldersFor, pickDiffBase, repoKey, split, subRepos, worktreesOf } from "./repos.ts";
 
 const repos = [{ key: "api", top: "D:/w/api" }, { key: "web", top: "D:/w/web" }];
 
@@ -60,4 +60,12 @@ test("crossRunOverlaps finds a run in web that owns paths in api, and a legacy r
 	assert.match(got[0], /package s in the active run R/);
 	assert.deepEqual(crossRunOverlaps(mine, pk, "D:/w/web", { id: "L", subs: [{ id: "s", state: "spawned", owns: ["src/**"] }] }), []);
 	assert.equal(crossRunOverlaps(mine, [{ id: "q", owns: ["web:src/x.ts"] }], "D:/w/web", { id: "L", subs: [{ id: "s", state: "spawned", owns: ["src/**"] }] }).length, 1);
+});
+
+test("pickDiffBase prefers the target, then origin/HEAD, the default branch name, the spawn commit", () => {
+	assert.equal(pickDiffBase({ viaTarget: "t", viaHead: "h", viaName: "n", spawn: "s" }), "t");
+	assert.equal(pickDiffBase({ viaTarget: null, viaHead: "h", viaName: "n", spawn: "s" }), "h");
+	assert.equal(pickDiffBase({ viaHead: "", viaName: "n", spawn: "s" }), "n");
+	assert.equal(pickDiffBase({ spawn: "s" }), "s");
+	assert.equal(pickDiffBase({}), undefined);
 });
