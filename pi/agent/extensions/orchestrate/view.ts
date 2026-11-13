@@ -114,7 +114,7 @@ export function buildView(run: Run, now: number, maxSubs: number, inputs: Map<st
 			...i.inbox.map((m) => ({ dir: "in" as const, type: m.type, text: clip(m.text, 120), ts: m.ts })),
 		];
 		const last = (d: "in" | "out") => recent.filter((r) => r.dir === d).slice(-5);
-		const active = ["spawned", "planning", "executing", "awaiting-acceptance"].includes(s.state);
+		const active = ["spawning", "spawned", "planning", "executing", "awaiting-acceptance"].includes(s.state);
 		return {
 			id: s.id,
 			state: s.state,
@@ -166,7 +166,7 @@ export function widgetLines(view: View | null, mode: string, _now: number, paint
 		if (mode === "run") return [fit([["accent", "orch ▸ run"], ["dim", " (no data yet)"]], width, paint)];
 		return [];
 	}
-	const running = view.subs.filter((s) => ["spawned", "planning", "executing", "awaiting-acceptance"].includes(s.state)).length;
+	const running = view.subs.filter((s) => ["spawning", "spawned", "planning", "executing", "awaiting-acceptance"].includes(s.state)).length;
 	const lines = [fit([["accent", `orch ${view.runId} ▸ ${mode === "off" ? "watching" : mode}`], ["dim", `  ${running}/${view.maxSubs} running`]], width, paint)];
 	for (const s of view.subs) {
 		const segs: Seg[] = [["plain", s.id.padEnd(12)]];

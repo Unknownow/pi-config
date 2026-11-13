@@ -9,17 +9,18 @@ import { DEFAULTS, loadConfig, parseConfig } from "./config.ts";
 test("defaults", () => {
 	assert.deepEqual(parseConfig(undefined), { config: DEFAULTS });
 	assert.equal(DEFAULTS.maxSubs, 4);
-	assert.equal(DEFAULTS.confirmPlans, true);
+	assert.equal(DEFAULTS.confirmPlans, false);
 });
 
 test("good values are taken, bad ones fall back with a warning", () => {
-	const r = parseConfig({ maxSubs: 3, pollSeconds: 0, stallMinutes: 1.5, confirmPlans: "yes", extra: 1 });
+	const r = parseConfig({ maxSubs: 3, pollSeconds: 0, stallMinutes: 1.5, confirmPlans: "yes", extra: 1, askTimeoutMinutes: 15 });
 	assert.equal(r.config.maxSubs, 3);
 	assert.equal(r.config.pollSeconds, DEFAULTS.pollSeconds);
 	assert.equal(r.config.stallMinutes, DEFAULTS.stallMinutes);
-	assert.equal(r.config.confirmPlans, true);
+	assert.equal(r.config.confirmPlans, false);
+	assert.equal("askTimeoutMinutes" in r.config, false); // an old key is ignored without a warning
 	assert.match(r.warning!, /pollSeconds, stallMinutes, confirmPlans/);
-	assert.equal(parseConfig({ confirmPlans: false }).config.confirmPlans, false);
+	assert.equal(parseConfig({ confirmPlans: true }).config.confirmPlans, true);
 	assert.ok(parseConfig([]).warning);
 });
 

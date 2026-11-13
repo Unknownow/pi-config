@@ -10,14 +10,17 @@
 
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
+import { execFile } from "node:child_process";
 import * as os from "node:os";
 import { getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth } from "@earendil-works/pi-tui";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { emitClaims } from "../shared/claims.ts";
-import { activeCount, canonicalPackages, kickoffText, makeRunId, readyToSpawn, renderBrief, setName, validatePackages, type PackageInput, type Run, type Sub } from "./brief.ts";
+import { activeCount, canonicalPackages, kickoffText, makeRunId, readyToSpawn, renderBrief, revertSpawning, setName, staleSpawning, validatePackages, type PackageInput, type Run, type Sub } from "./brief.ts";
 import { foldersFromEntries } from "./folders.ts";
+import { HeldQueue, resolveAllPending, RUN_ENDED_ANSWER, type Identity } from "./identity.ts";
+import { decideTrust } from "./trust.ts";
 import { buildRepos, crossRunOverlaps, foldersFor, hasKeyPrefix, subRepos, worktreesOf, type Repo, type Worktree } from "./repos.ts";
 import { verdictMatches } from "./inbox.ts";
 import { loadConfig, DEFAULTS, type OrchestrateConfig } from "./config.ts";
@@ -26,12 +29,11 @@ import { repoTableText, section } from "./prompts.ts";
 import { check, OFFLINE_SECONDS, type Snapshot } from "./monitor.ts";
 import { boardLines, buildView, pendingOf, viewSig, widgetLines, type Paint, type SubInput, type View } from "./view.ts";
 import {
-	addAccepted, appendMessage, commonDir, findSubByToplevel, listActiveRuns, norm, orchestraDir, readAccepted, readCursor, readNew, readRun, readStatus, readView, runDir, subDir, writeCursor, writeRun, writeStatus, writeView,
+	addAccepted, appendMessage, commonDir, findSubByToplevel, listActiveRuns, norm, orchestraDir, readAccepted, readCursor, readNew, readRun, readStatus, readView, runDir, sameDir, subDir, writeCursor, writeRun, writeStatus, writeView,
 	type Exec, type Message, type Status,
 } from "./store.ts";
 
-const ACTIVE: Sub["state"][] = ["spawned", "planning", "executing", "awaiting-acceptance"];
-const sameDir = (a: string, b: string): boolean => (process.platform === "win32" ? norm(a).toLowerCase() === norm(b).toLowerCase() : norm(a) === norm(b));
+const ACTIVE: Sub["state"][] = ["spawning", "spawned", "planning", "executing", "awaiting-acceptance"];
 const text = (t: string) => ({ content: [{ type: "text" as const, text: t }], details: {} });
 
 export default function (pi: ExtensionAPI): void {
@@ -79,7 +81,39 @@ export default function (pi: ExtensionAPI): void {
 	let prevPhase = "off";
 	let prevFlowId: string | undefined;
 	let k4Waiters: Array<() => void> = [];
-	let pendingAsk = new Map<string, (m: Message) => void>();
+	let pendingAsk = new Map<string, (m: { text: string }) => void>();
+	/** Who this session is: claims of K10-K13 are held while it is unknown (identity.ts). */
+	let identity: Identity = "unknown";
+	const heldPlan = new HeldQueue<unknown>();
+	const heldMerge = new HeldQueue<unknown>();
+	const heldAsk = new HeldQueue<unknown>();
+	const heldIdle = new HeldQueue<unknown>();
+	const releaseHeld = (): void => {
+		for (const q of [heldPlan, heldMerge, heldAsk, heldIdle]) q.release();
+	};
+	type Claim = (p: Promise<unknown>) => void;
+	/** One claim event: held while the identity is unknown, handled as a sub, left alone as anything else. */
+	function route(held: HeldQueue<unknown>, handle: (data: unknown, claim: Claim) => void, data: unknown): void {
+		if (identity === "not-sub" || !data || typeof data !== "object") return;
+		const claim = (data as { claim?: unknown }).claim;
+		if (typeof claim !== "function") return;
+		if (identity === "unknown") {
+			(claim as Claim)(held.hold(data));
+			return;
+		}
+		handle(data, claim as Claim);
+	}
+	function becomeSub(): void {
+		identity = "sub";
+		heldPlan.replay(handlePlanReady);
+		heldMerge.replay(handleMergeGate);
+		heldAsk.replay(() => {}); // K12 and K13: nothing answers them yet, so they show locally
+		heldIdle.replay(() => {});
+	}
+	function becomeNotSub(): void {
+		identity = "not-sub";
+		releaseHeld();
+	}
 	let k10: { n: number; resolve: (v: unknown) => void } | null = null;
 	const requestedTrees = new Set<string>();
 	let generation = 0;
@@ -157,10 +191,11 @@ export default function (pi: ExtensionAPI): void {
 	});
 
 	/** K10: the plan goes to the orchestrator instead of the menu. */
-	pi.events.on("workflow:plan-ready", (data: unknown) => {
-		if (!me || !started || !data || typeof data !== "object") return;
-		const d = data as { title?: unknown; plan?: unknown; claim?: unknown };
-		if (typeof d.claim !== "function" || typeof d.plan !== "string") return;
+	pi.events.on("workflow:plan-ready", (data: unknown) => route(heldPlan, handlePlanReady, data));
+	function handlePlanReady(data: unknown, claim: Claim): void {
+		if (!me || !started) return;
+		const d = data as { title?: unknown; plan?: unknown };
+		if (typeof d.plan !== "string") return;
 		let n = 1;
 		try {
 			while (fs.existsSync(f(me, `plan-${n}.md`))) n++;
@@ -171,19 +206,22 @@ export default function (pi: ExtensionAPI): void {
 			return;
 		}
 		k10?.resolve(null);
-		(d.claim as (p: Promise<unknown>) => void)(new Promise((resolve) => {
+		claim(new Promise((resolve) => {
 			k10 = { n, resolve };
 		}));
 		updateSubStatus();
-	});
+	}
+
+	pi.events.on("workflow:ask", (data: unknown) => route(heldAsk, () => {}, data));
+	pi.events.on("workflow:idle", (data: unknown) => route(heldIdle, () => {}, data));
 
 	/** K11: a merge needs the orchestrator's acceptance of the same tree. */
-	pi.events.on("workflow:merge-gate", (data: unknown) => {
-		if (!me || !started || !data || typeof data !== "object") return;
-		const d = data as { cwd?: unknown; tree?: unknown; claim?: unknown };
-		if (typeof d.claim !== "function") return;
+	pi.events.on("workflow:merge-gate", (data: unknown) => route(heldMerge, handleMergeGate, data));
+	function handleMergeGate(data: unknown, claim: Claim): void {
+		if (!me || !started) return;
+		const d = data as { cwd?: unknown; tree?: unknown };
 		const m = me;
-		(d.claim as (p: Promise<unknown>) => void)(
+		claim(
 			(async () => {
 				if (readRun(m.common, m.run.id).run?.state === "ended") return null; // the run is over: nobody can accept any more
 				const dir = typeof d.cwd === "string" && d.cwd ? d.cwd : m.sub.cwd ?? "";
@@ -212,10 +250,18 @@ export default function (pi: ExtensionAPI): void {
 				return { problem: `The orchestrator has not accepted tree ${tree}${key ? ` of repo ${key}` : ""} yet. An acceptance request was sent; end your turn. You get a message when it answers; then retry the merge.` };
 			})(),
 		);
-	});
+	}
 
 	function deliverInbox(): void {
 		if (!me) return;
+		// the run is over: nobody will answer any more (every wait ends, no claim stays open)
+		if (readRun(me.common, me.run.id).run?.state === "ended") {
+			const n = resolveAllPending(pendingAsk, RUN_ENDED_ANSWER);
+			k10?.resolve(null);
+			k10 = null;
+			releaseHeld();
+			if (n) updateSubStatus();
+		}
 		const file = f(me, "inbox.jsonl");
 		const cur = f(me, "inbox.read");
 		const r = readNew(file, readCursor(cur));
@@ -275,26 +321,23 @@ export default function (pi: ExtensionAPI): void {
 		promptSnippet: "ask_orchestrator: ask the orchestrating session a question (orchestrated sub-sessions only)",
 		parameters: Type.Object({ question: Type.String({ description: "The question, with what you already tried" }) }),
 		async execute(_id, params, signal) {
-			if (!me || !started) throw new Error("this session was not started by an orchestrator; use wait_for_user to ask the user");
+			if (!me || !started) throw new Error("this session was not started by an orchestrator; ask the user directly");
 			const q = post("question", params.question);
 			if (!q) throw new Error("could not write the question");
-			const minutes = cfg.askTimeoutMinutes;
-			const answer = await new Promise<Message | null>((resolve) => {
-				const done = (v: Message | null) => {
-					clearTimeout(timeout);
+			// no timeout and no fallback to the user: the wait ends on an answer, an abort or the end of the run
+			const answer = await new Promise<{ text: string } | null>((resolve) => {
+				const done = (v: { text: string } | null) => {
 					pendingAsk.delete(q.id);
 					updateSubStatus();
 					signal?.removeEventListener("abort", onAbort);
 					resolve(v);
 				};
 				const onAbort = () => done(null);
-				const timeout = setTimeout(() => done(null), minutes * 60_000);
 				pendingAsk.set(q.id, done);
 				updateSubStatus();
 				signal?.addEventListener("abort", onAbort);
 			});
-			if (signal?.aborted) throw new Error("cancelled");
-			if (!answer) return text(`No answer in ${minutes} min. Call wait_for_user with this question; the user answers.`);
+			if (!answer) return text("cancelled; the question stays open and a late answer arrives as a message");
 			return text(answer.text);
 		},
 	});
@@ -431,6 +474,24 @@ export default function (pi: ExtensionAPI): void {
 		});
 		queue = p.catch(() => {});
 		return p;
+	}
+	/** Whether the project is trusted now (stored on the run: only then are spawned worktrees trusted). A throw counts as not trusted. */
+	const projectTrusted = (ctx: ExtensionContext): boolean => {
+		try {
+			return ctx.isProjectTrusted() === true;
+		} catch {
+			return false;
+		}
+	};
+	/** Subs stuck in `spawning` go back to `planned` (a crash during orch_spawn): reported, not silent. */
+	async function resetStaleSpawning(run: Run): Promise<void> {
+		const alive = run.owner.host !== os.hostname() || pidAlive(run.owner.pid) || run.owner.pid === process.pid;
+		const stale = staleSpawning(run, Date.now(), alive);
+		if (!stale.length) return;
+		await mutate((r) => {
+			for (const id of stale) revertSpawning(subOf(r, id));
+		});
+		for (const id of stale) say(`reset ${id} to planned; if a worktree exists use /wt open or /wt remove`, "warning");
 	}
 	const current = (): Run | null => (owned ? readRun(owned.common, owned.runId).run ?? null : null);
 	const need = (): { o: Owned; run: Run } => {
@@ -870,7 +931,7 @@ export default function (pi: ExtensionAPI): void {
 					...(repos ? { repos: subRepos(p, repos[0].key) } : {}),
 				});
 			}
-			const run: Run = { v: 1, id, title: params.title, created: new Date().toISOString(), owner: { pid: process.pid, host: os.hostname(), session: ctx.sessionManager.getSessionFile() ?? "" }, state: "active", ...(repos ? { repos } : {}), subs };
+			const run: Run = { v: 1, id, title: params.title, created: new Date().toISOString(), owner: { pid: process.pid, host: os.hostname(), session: ctx.sessionManager.getSessionFile() ?? "" }, state: "active", originTrusted: projectTrusted(ctx), ...(repos ? { repos } : {}), subs };
 			fs.mkdirSync(runDir(common, id), { recursive: true });
 			for (const s of subs) {
 				fs.mkdirSync(subDir(common, id, s.id), { recursive: true });
@@ -893,7 +954,7 @@ export default function (pi: ExtensionAPI): void {
 			const { o, run } = need();
 			const ready = readyToSpawn(run);
 			const lines: string[] = [];
-			let running = activeCount(run) + spawning.size;
+			let running = activeCount(run) + [...spawning].filter((sid) => subOf(run, sid).state === "planned").length; // a set member is counted once: run.json shows it as spawning from the first write
 			for (const id of params.ids) {
 				const sub = subOf(run, id);
 				if (!ready.includes(id) || spawning.has(id)) {
@@ -907,6 +968,12 @@ export default function (pi: ExtensionAPI): void {
 				spawning.add(id);
 				running++;
 				try {
+					// the trust handler of the new session waits for this mark (a worktree is trusted only while its run knows it)
+					await mutate((r) => {
+						const s = subOf(r, id);
+						s.state = "spawning";
+						s.spawningAt = new Date().toISOString();
+					});
 					// multi-repo: only the added folders this package needs go into its set (plain folders always do)
 					let payload: Record<string, unknown> = { v: 1, name: sub.name };
 					if (run.repos) {
@@ -945,10 +1012,12 @@ export default function (pi: ExtensionAPI): void {
 						s.base = base;
 						if (run.repos) s.worktrees = wts;
 						s.state = "spawned";
+						delete s.spawningAt;
 					});
 					lines.push(`${id}: spawned in ${top} (${ans.branch ?? "branch ?"})${ans.launched ? "" : "; the terminal did not open, use /wt open " + sub.name}${wts.length > 1 ? `; worktrees: ${wts.map((w) => w.key).join(", ")}` : ""}${notes.length ? `. WARNING: ${notes.join("; ")}` : ""}`);
 				} catch (e) {
 					running--;
+					await mutate((r) => revertSpawning(subOf(r, id))).catch(() => {});
 					lines.push(`${id}: failed: ${(e as Error).message} (still planned)`);
 				} finally {
 					spawning.delete(id);
@@ -1109,6 +1178,7 @@ export default function (pi: ExtensionAPI): void {
 					if (!mine && alive) throw new Error(`run ${run.id} is watched by another live session (pid ${run.owner.pid})`);
 					startWatcher({ common, runId: run.id, repoCwd: ctx.cwd });
 					setMode("run", false);
+					await resetStaleSpawning(run); // before the owner changes: a dead owner is part of the test
 					await mutate((r) => {
 						r.owner = { pid: process.pid, host: os.hostname(), session: ctx.sessionManager.getSessionFile() ?? "" };
 					});
@@ -1204,6 +1274,8 @@ export default function (pi: ExtensionAPI): void {
 		started = false;
 		pendingAsk = new Map();
 		k10 = null;
+		releaseHeld();
+		identity = "unknown";
 		mode = modeFromEntries(ctx.sessionManager.getBranch());
 		proposalReady = false;
 		k4Warned = false;
@@ -1216,9 +1288,10 @@ export default function (pi: ExtensionAPI): void {
 		const loaded = loadConfig(getAgentDir());
 		cfg = loaded.config;
 		if (loaded.warning) say(loaded.warning, "warning");
-		if (!ctx.hasUI) return;
+		if (!ctx.hasUI) return becomeNotSub();
 		const common = await commonDir(exec, ctx.cwd);
-		if (!common) return;
+		if (gen !== generation) return;
+		if (!common) return becomeNotSub();
 		const listed = listActiveRuns(common);
 		for (const c of listed.corrupt) if (!corruptSeen.has(c)) {
 			corruptSeen.add(c);
@@ -1235,8 +1308,10 @@ export default function (pi: ExtensionAPI): void {
 			every(3_000, deliverInbox);
 			every(60_000, writeMyStatus);
 			updateSubStatus();
+			becomeSub();
 			if (fresh) void startSubSession(m, ctx).catch((e: Error) => ctx.ui.notify(`orchestrate: ${e.message}`, "error"));
 		};
+		if (!listed.runs.length) return becomeNotSub();
 		const hit = top ? findSubByToplevel(listed.runs, top) : null;
 		if (hit) {
 			become(hit);
@@ -1247,8 +1322,10 @@ export default function (pi: ExtensionAPI): void {
 		if (mine) {
 			startWatcher({ common, runId: mine.id, repoCwd: ctx.cwd });
 			say(`resumed watching run ${mine.id}`);
-			return;
+			void resetStaleSpawning(mine).catch((e: Error) => say(e.message, "warning"));
+			return becomeNotSub();
 		}
+		if (mode !== "off" || !top) return becomeNotSub();
 		// the terminal may open before orch_spawn has written this worktree into run.json: look again for about 15 s
 		if (top) {
 			void (async () => {
@@ -1261,6 +1338,7 @@ export default function (pi: ExtensionAPI): void {
 						return;
 					}
 				}
+				if (gen === generation && !me) becomeNotSub();
 			})();
 		}
 	});
@@ -1274,6 +1352,33 @@ export default function (pi: ExtensionAPI): void {
 		}
 		k10?.resolve(null);
 		k10 = null;
+		releaseHeld();
 		generation++;
+	});
+
+	// Worktrees that an orchestrated run spawned are trusted without a prompt (never remembered: trust.json is not written).
+	pi.on("project_trust", async (event) => {
+		const cwd = (event as { cwd?: string }).cwd;
+		if (!cwd) return { trusted: "undecided" as const };
+		try {
+			const r = await decideTrust(
+				{
+					locate: (dir) =>
+						new Promise((resolve) => {
+							execFile("git", ["rev-parse", "--path-format=absolute", "--git-common-dir", "--show-toplevel"], { cwd: dir, timeout: 5000 }, (err, stdout) => {
+								const [common, top] = String(stdout).split(/\r?\n/).map((l) => l.trim());
+								resolve(err || !common || !top ? null : { common: norm(common), top: norm(top) });
+							});
+						}),
+					listRuns: (common) => listActiveRuns(common).runs,
+					sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+					now: () => Date.now(),
+				},
+				cwd,
+			);
+			return r === "yes" ? { trusted: "yes" as const, remember: false } : { trusted: "undecided" as const };
+		} catch {
+			return { trusted: "undecided" as const };
+		}
 	});
 }

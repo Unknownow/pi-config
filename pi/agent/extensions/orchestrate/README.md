@@ -9,7 +9,7 @@ One orchestrator session splits a job into 2-4 work packages and runs each as a 
    - A second "go" on a finished proposal (a reply with a `## Packages` heading that does not end on a question) moves to **run** and unlocks `orch_run` and `orch_spawn`.
    - The guard is code, in every mode but off: `shared/readonly-tools.ts` refuses changing tools, writing bash commands and PowerShell, and `orch_run`/`orch_spawn` before run. The orchestrator stays read-only during the run too (`orch_status`, `orch_send`, `orch_review_plan`, `orch_accept` stay allowed). `/orch off` (or `/orch end`) lifts the guard. `/orch start` is refused while the workflow phase is not `off` or while a run is active in the repo. The mode is saved in the session (`orchestrate-mode` entry); `/orch watch` sets run.
 2. The agent calls `orch_run` (packages: `id`, `goal`, `criteria`, `owns`, `forbids`, `dependsOn`, `decisions`) and then `orch_spawn` for the packages whose dependencies are merged (at most `maxSubs` run at once).
-3. Messages arrive from the watcher (no model tokens while nothing happens): `question`, `plan-review`, `accept-request`, `flow-ended`, `drift`, `overlap`, `offline`, `stalled`. The agent answers with `orch_send`, `orch_review_plan` (the user confirms approvals when `confirmPlans` is on) and `orch_accept` (it refuses when the tree changed since the request).
+3. Messages arrive from the watcher (no model tokens while nothing happens): `question`, `plan-review`, `accept-request`, `flow-ended`, `drift`, `overlap`, `offline`, `stalled`. The agent answers with `orch_send`, `orch_review_plan` (the orchestrator reviews plans itself; the user confirms approvals only when `confirmPlans` is set to `true`) and `orch_accept` (it refuses when the tree changed since the request).
 4. `/orch start [title] | off | status | board | watch | merged <id> | end`. `merged` checks a PR merge with gh now; the watcher also retries it on every poll after a flow ended, so a failed gh call or a PR merged by hand still ends as `merged`. `watch` resumes watching after a restart (it takes over from a dead owner). A crashed sub-session is only reported; reopen it with `/wt open <name>`.
 
 ### Visualizer
@@ -33,6 +33,13 @@ When the session has added repos with `/folders add`, one run can span them. `or
 
 Tools: `orch_run`, `orch_spawn`, `orch_status`, `orch_send`, `orch_review_plan`, `orch_accept`; in sub-sessions also `ask_orchestrator`.
 
+### Spawning and trust
+
+- **`spawning` state.** `orch_spawn` writes `state: "spawning"` and `spawningAt` to `run.json` before it asks the worktree extension for the worktree (W1), then `spawned` (the mark is removed). On a failure the package goes back to `planned`. `spawning` counts toward `maxSubs` and shows as `spawning`. A package stuck in `spawning` (no `spawningAt`, older than 3 min, or its owner is dead) is reset to `planned` by `/orch watch` and by the orchestrator's `session_start`, with the message "reset <id> to planned; if a worktree exists use /wt open or /wt remove".
+- **Auto-trust.** `orch_run` stores `originTrusted` (`ctx.isProjectTrusted()`; temporary and CLI trust count) in `run.json`. A `project_trust` handler answers `{ trusted: "yes", remember: false }` for a worktree that is the `cwd` of a package (or one of its repo worktrees) of an active run with `originTrusted: true`, in the states spawned, planning, executing or awaiting-acceptance. While a fresh `spawning` package exists it re-reads the runs every 500 ms (15 s at most), because the new session asks before `run.json` has the worktree. Otherwise it answers `undecided` and never prompts. `trust.json` is never written, so the trust ends with the process. A `/resume` into a sub worktree is the same match. Another user or CLI extension that answers yes or no first wins. Worktrees without `.pi` or `.agents/skills` never ask for trust. Runs from before this change have no `originTrusted`: the trust prompt is shown.
+- **Identity and held claims.** A sub-session is found by its worktree in `run.json`, which may be written a few seconds after its terminal opens. Until the session knows what it is (`unknown`), the K10, K11, K12 and K13 claims are held. As a sub they are handled; as anything else (no UI, no git repo, no active run, the run owner or orchestrator mode, or no match after the 15 s retry) they resolve to `null`, so the workflow shows its local menu as before. K12 and K13 have no handler yet: they resolve to `null`. Held claims also resolve at `session_shutdown` and when the run has ended.
+- **`ask_orchestrator` has no timeout** and never falls back to `wait_for_user`. It ends on an answer, on an abort (the question stays open; a late answer arrives as a message) or when the run has ended (then it answers "the run ended; finish what you can without this answer").
+
 ## Files
 
 Under `<git common dir>/pi/orchestra/<runId>/` (single writer per file; messages are append-only JSON lines, a last line without newline is ignored until complete):
@@ -53,7 +60,7 @@ Ids: `runId` = `o<MMDDHHmm>-<title slug>` (30 characters at most); set name `o<M
 
 ## Config
 
-`~/.pi/agent/orchestrate.json` (optional): `{ "maxSubs": 4, "pollSeconds": 60, "stallMinutes": 20, "askTimeoutMinutes": 15, "confirmPlans": true, "approvePattern": "..." }`. `approvePattern` is the regex (case-insensitive) for the typed "go"; its default is a copy of the workflow's. A bad value falls back to the default with a warning.
+`~/.pi/agent/orchestrate.json` (optional): `{ "maxSubs": 4, "pollSeconds": 60, "stallMinutes": 20, "confirmPlans": false, "approvePattern": "..." }`. `approvePattern` is the regex (case-insensitive) for the typed "go"; its default is a copy of the workflow's. A bad value falls back to the default with a warning.
 
 ## Contracts used
 
@@ -67,6 +74,6 @@ Each worktree is its own Unity project; its first open imports every asset (slow
 
 ## Tests
 
-`cd pi/agent/extensions/orchestrate && node --experimental-strip-types --test config.test.ts paths.test.ts brief.test.ts store.test.ts monitor.test.ts inbox.test.ts boundary.test.ts mode.test.ts repos.test.ts folders.test.ts view.test.ts`
+`cd pi/agent/extensions/orchestrate && node --experimental-strip-types --test config.test.ts paths.test.ts brief.test.ts store.test.ts monitor.test.ts inbox.test.ts boundary.test.ts mode.test.ts repos.test.ts folders.test.ts view.test.ts trust.test.ts identity.test.ts`
 
 `index.ts` needs the pi runtime and has no unit test; the end-to-end check is manual (scratch GitHub repo: two packages `a`, `b` depending on `a`).

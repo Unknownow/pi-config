@@ -10,8 +10,6 @@ export interface OrchestrateConfig {
 	pollSeconds: number;
 	/** Minutes without any change in execute before a sub-session counts as stalled. */
 	stallMinutes: number;
-	/** Minutes ask_orchestrator waits for an answer. */
-	askTimeoutMinutes: number;
 	/** Ask the person before a plan is approved. */
 	confirmPlans: boolean;
 	/** Regex (case-insensitive) for the typed "go" that moves orchestrator mode on. */
@@ -22,9 +20,9 @@ export interface OrchestrateConfig {
 const GO_PATTERN =
 	"^((ok(ay)?|yes|yeah|yep|sure|alright|fine|great|good)[,.! ]+)?(then[, ]+)?(go|go ahead|go for it|do it|do that|do this|do them|do (it )?all( of (it|that|them))?|approved?|lgtm|ship it|execute( it| that| this| the plan)?|proceed|start|let'?s go|let'?s do it|run it|implement( it| that| this| the plan)?|build it|make it so)( for me)?( now)?( please)?[.! ]*$";
 
-export const DEFAULTS: OrchestrateConfig = { maxSubs: 4, pollSeconds: 60, stallMinutes: 20, askTimeoutMinutes: 15, confirmPlans: true, approvePattern: GO_PATTERN };
+export const DEFAULTS: OrchestrateConfig = { maxSubs: 4, pollSeconds: 60, stallMinutes: 20, confirmPlans: false, approvePattern: GO_PATTERN };
 
-const INT_KEYS = ["maxSubs", "pollSeconds", "stallMinutes", "askTimeoutMinutes"] as const;
+const INT_KEYS = ["maxSubs", "pollSeconds", "stallMinutes"] as const;
 
 /** Merge a parsed JSON value into the defaults. Pure. */
 export function parseConfig(raw: unknown): { config: OrchestrateConfig; warning?: string } {

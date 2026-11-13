@@ -1,7 +1,7 @@
 // node --experimental-strip-types --test brief.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { kickoffText, makeRunId, readyToSpawn, renderBrief, setName, SET_NAME_RE, validatePackages, type PackageInput, type Run, type Sub } from "./brief.ts";
+import { kickoffText, makeRunId, readyToSpawn, renderBrief, revertSpawning, setName, staleSpawning, SET_NAME_RE, validatePackages, type PackageInput, type Run, type Sub } from "./brief.ts";
 
 const pkg = (id: string, o: Partial<PackageInput> = {}): PackageInput => ({ id, goal: `do ${id}`, owns: [`src/${id}/**`], ...o });
 
@@ -41,6 +41,7 @@ test("renderBrief and kickoffText", () => {
 	for (const s of ["goal b", "crit b", "src/b/**", "secret/**", "use X", "src/a/**", "depends on a"]) assert.ok(b.includes(s), s);
 	const k = kickoffText(r.subs[1], r, "C:/x/brief.md");
 	assert.ok(k.includes("C:/x/brief.md") && k.includes("ask_orchestrator") && k.includes("secret/**"));
+	assert.ok(k.includes("it always answers") && !k.includes("wait_for_user"));
 });
 
 test("makeRunId moves on to the next minute when the stamp is taken", () => {
@@ -67,4 +68,28 @@ test("renderBrief lists the repos and kickoffText the worktrees", () => {
 	assert.match(renderBrief(s, r), /## Repos[\s\S]*- api: D:\/w\/api[\s\S]*- web: D:\/w\/web \(not in your package\)/);
 	assert.match(kickoffText(s, r, "b.md"), /Your worktrees:\n- api: D:\/s\/api/);
 	assert.doesNotMatch(renderBrief(sub("a", "spawned"), run([sub("a", "spawned")])), /## Repos/);
+});
+
+test("staleSpawning: missing mark, older than 3 min, or a dead owner", () => {
+	const now = Date.parse("2026-01-01T00:10:00Z");
+	const s = (id: string, at?: string): Sub => ({ ...sub(id, "spawning"), spawningAt: at });
+	const r = run([s("fresh", "2026-01-01T00:09:00Z"), s("old", "2026-01-01T00:06:00Z"), s("none"), { ...sub("x", "planned") }]);
+	assert.deepEqual(staleSpawning(r, now, true), ["old", "none"]);
+	assert.deepEqual(staleSpawning(r, now, false), ["fresh", "old", "none"]);
+	assert.deepEqual(staleSpawning(run([s("bad", "garbage")]), now, true), ["bad"]);
+});
+
+test("revertSpawning puts a failed spawn back to planned and drops the mark", () => {
+	const s: Sub = { ...sub("a", "spawning"), spawningAt: "2026-01-01T00:00:00Z" };
+	revertSpawning(s);
+	assert.equal(s.state, "planned");
+	assert.equal(s.spawningAt, undefined);
+	const m: Sub = { ...sub("b", "merged") };
+	revertSpawning(m);
+	assert.equal(m.state, "merged");
+});
+
+test("a spawning sub counts toward the active subs", async () => {
+	const { activeCount } = await import("./brief.ts");
+	assert.equal(activeCount(run([sub("a", "spawning"), sub("b", "planned")])), 1);
 });

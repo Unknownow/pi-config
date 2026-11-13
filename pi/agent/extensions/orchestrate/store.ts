@@ -35,6 +35,11 @@ export function norm(p: string): string {
 	return p.replace(/[\\]/g, "/").replace(/\/+$/, "");
 }
 
+/** Whether two paths are the same directory: forward slashes, no trailing slash, lowercase when `ci` (default: Windows). */
+export function sameDir(a: string, b: string, ci: boolean = process.platform === "win32"): boolean {
+	return ci ? norm(a).toLowerCase() === norm(b).toLowerCase() : norm(a) === norm(b);
+}
+
 /** Absolute git common dir of the repo at cwd, forward slashes; null outside a repo. */
 export async function commonDir(exec: Exec, cwd: string): Promise<string | null> {
 	const r = await exec("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd });
