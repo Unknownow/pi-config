@@ -1,21 +1,4 @@
 {
   "v": 1,
-  "entries": [
-    {
-      "runId": "o11131503-port-the-remaining-p",
-      "common": "D:/works/annamites/city-bus-flow/.git",
-      "sub": "core",
-      "state": "spawning",
-      "at": "2026-11-13T08:03:10.277Z",
-      "tops": []
-    },
-    {
-      "runId": "o11131503-port-the-remaining-p",
-      "common": "D:/works/annamites/city-bus-flow/.git",
-      "sub": "view",
-      "state": "spawning",
-      "at": "2026-11-13T08:10:42.249Z",
-      "tops": []
-    }
-  ]
+  "entries": []
 }
