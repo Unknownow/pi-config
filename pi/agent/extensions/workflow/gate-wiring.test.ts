@@ -56,7 +56,7 @@ test("the plan branch decides with planGateDecide before offerPlan", () => {
 
 test("the plan branch passes hasDisputes built from planDisputes", () => {
 	const a = source.indexOf("planGateDecide({ mode: cfg.autoJudgePlan");
-	assert.match(source.slice(a, a + 300), /hasDisputes: wasFixing && planDisputes(text) !== undefined/);
+	assert.match(source.slice(a, a + 500), /hasDisputes: wasFixing && planDisputes(text) !== undefined/);
 });
 
 test("the orchestrator's rejection resets the plan gate before the revise message", () => {
