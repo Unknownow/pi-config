@@ -70,6 +70,16 @@ A package is confirmed merged by its **last delivered tree per repo**, not by it
 - Limits: one flow per package (the brief and the plan review say so; a stopped flow may be resumed); a `git_task` merge of an earlier tree is not recorded; a verdict without `ask` (an old run) counts as a merge; a head pushed after the gate needs `--force`; undelivered later commits are only a note; runs without `targets` use the checkout's `@{u}` at check time; a manual `/flow plan` that never returns is only noticed by the K13 idle message (the stall monitor fires only in `execute`), and `/orch merged` or `--force` closes it; more than 1000 PRs merged since the run was created cannot be checked (use `--force`).
 - After an install restart every pi session, the orchestrator and the subs: install `workflow`, `orchestrate` and `shared` together (the gate needs K11 `ask`, the end needs K14).
 
+### Proposal gate
+
+With `autoJudgeProposal: "auto"` (the default), a typed "go" on a finished `## Packages:` proposal first runs a judge (read-only subagent, `roles.judge`, in the orchestrator's working folder) instead of starting the run. It checks that every agreed item is in exactly one package, that `owns` globs match real files and do not overlap, `forbids`, `dependsOn` (cycles, order), that each package is testable alone, that criteria are checkable and that shared interfaces are settled in `decisions`. The widget shows `propose (judging proposal)` meanwhile. A full pass takes about 1-3 min, a recheck under 90 s.
+
+- A clean PASS starts the run. `fix: auto` findings go back to the orchestrator for a revised proposal, which is rechecked (up to `maxProposalJudgeRounds` runs per "go"; then the run starts with the open findings in its kickoff). A `fix: user` finding pauses: answer it, then say "go" again.
+- Esc, any other typed message or `/orch judge cancel` cancels the judge without counting a round; a second "go" only shows a notice. A judge error never blocks: the run starts with a note.
+- `/orch go force` (propose, finished proposal only) starts the run without the judge and carries the matching open findings.
+- Rollback: `autoJudgeProposal: "off"`.
+- With `confirmPlans` on, the approval prompt shows the sub's `judge:` line.
+
 ## Files
 
 Under `<git common dir>/pi/orchestra/<runId>/` (single writer per file; messages are append-only JSON lines, a last line without newline is ignored until complete):

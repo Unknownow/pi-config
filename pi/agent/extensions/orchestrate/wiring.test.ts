@@ -54,3 +54,33 @@ test("orch_review_plan builds the confirm title from the sub's judgeLine", () =>
 	const b = slice('name: "orch_review_plan"', 4500);
 	assert.ok(b.includes("confirmPlanTitle(") && b.includes("judgeLine"));
 });
+
+test("the propose go branch runs the gate and is handled; rounds reset on go", () => {
+	const b = slice('pi.on("input"', 2600);
+	assert.match(b, /runProposalGate\(ctx, \w+, true\)/);
+	assert.ok(b.includes('return { action: "handled" as const }'));
+	assert.ok(b.includes("proposalGateStart(") && b.includes("onTyped(mode, typed, !!lastProposal"));
+});
+
+test("agent_end hook: ctx, nextLastProposal, fix reply, recheck without reset", () => {
+	const a = source.indexOf(String.raw`pi.on("agent_end", async (event, ctx)`);
+	const b = source.slice(a, a + 1500);
+	assert.ok(b.startsWith('pi.on("agent_end", async (event, ctx)'));
+	assert.ok(b.includes("nextLastProposal(") && b.includes("proposalGateAfterFixReply(") && b.includes('runProposalGate(ctx, "recheck", false)'));
+});
+
+test("runProposalGate: rounds helper, signal, offEsc in finally", () => {
+	const b = slice("async function runProposalGate(", 4500);
+	assert.ok(b.includes("proposalGateRounds({ resetRounds") && b.includes("run.controller.signal"));
+	const f = b.indexOf("finally {");
+	assert.ok(f > 0 && b.indexOf("run.offEsc?.()", f) > f);
+	assert.ok(slice("async function runJudge(", 700).includes("signal"));
+});
+
+test("setMode aborts the proposal run; the widget gets the judging label; commands and import", () => {
+	assert.ok(slice("function setMode(", 1800).includes("abortProposal("));
+	assert.ok(source.includes('proposalRun ? "proposal" : undefined'));
+	assert.ok(source.includes('"go", "judge"'));
+	assert.ok(source.includes('import { runSubagent } from "../agents/subagent.ts"'));
+	assert.ok(source.includes("go force") && source.includes("judge cancel"));
+});

@@ -46,3 +46,8 @@ test("confirmPlanTitle: the judge line is added only when there is one", () => {
 	assert.equal(confirmPlanTitle("a", "S", ""), "Approve plan of a? S");
 	assert.equal(confirmPlanTitle("a", "S", "judge: PASS (1 runs)"), "Approve plan of a? S\njudge: PASS (1 runs)");
 });
+
+test("phaseLabel: proposal judging", () => {
+	assert.equal(phaseLabel("propose", "proposal"), "propose (judging proposal)");
+	assert.equal(phaseLabel("propose"), "propose");
+});

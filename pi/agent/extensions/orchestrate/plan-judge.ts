@@ -58,5 +58,5 @@ ${judgeLine}` : `Approve plan of ${id}? ${summary}`;
 
 /** The phase as the board and table show it. */
 export function phaseLabel(phase: string, judging?: string): string {
-	return judging === "plan" || judging === "discussion" ? `${phase} (judging ${judging})` : phase;
+	return judging === "plan" || judging === "discussion" || judging === "proposal" ? `${phase} (judging ${judging})` : phase;
 }

@@ -85,3 +85,18 @@ export function lastAgreedList(assistantTexts: string[]): string | undefined {
 export function judgeVerdict(text: string): "PASS" | "FAIL" {
 	return /VERDICT:\s*PASS/i.test(text) && !/VERDICT:\s*FAIL/i.test(text) ? "PASS" : "FAIL";
 }
+
+/** The text of every assistant message among session branch entries (entries of type "message"), oldest first. */
+export function branchAssistantTexts(branch: readonly unknown[]): string[] {
+	const out: string[] = [];
+	for (const entry of branch) {
+		const e = entry as { type?: string; message?: { role?: string; content?: unknown } };
+		const m = e.type === "message" ? e.message : undefined;
+		if (m?.role !== "assistant") continue;
+		const t = Array.isArray(m.content)
+			? m.content.filter((p: { type?: string }) => p?.type === "text").map((p: { text?: string }) => p.text ?? "").join("\n")
+			: typeof m.content === "string" ? m.content : "";
+		if (t.trim()) out.push(t);
+	}
+	return out;
+}

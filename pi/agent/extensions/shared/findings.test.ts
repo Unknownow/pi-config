@@ -43,3 +43,14 @@ test("judgeVerdict", () => {
 	assert.equal(judgeVerdict(REPLY), "FAIL");
 	assert.equal(judgeVerdict("no verdict"), "FAIL");
 });
+
+test("branchAssistantTexts reads message entries only", async () => {
+	const { branchAssistantTexts } = await import("./findings.ts");
+	const b = [
+		{ type: "message", message: { role: "user", content: "hi" } },
+		{ type: "message", message: { role: "assistant", content: [{ type: "text", text: "a" }, { type: "toolCall" }, { type: "text", text: "b" }] } },
+		{ type: "custom", message: { role: "assistant", content: "x" } },
+		{ type: "message", message: { role: "assistant", content: "plain" } },
+	];
+	assert.deepEqual(branchAssistantTexts(b), ["a\nb", "plain"]);
+});
