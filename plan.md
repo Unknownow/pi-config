@@ -491,13 +491,13 @@ Also:
 - [x] S3 In the `/flow` handler (`workflow/index.ts:4746`), add `/flow plan force` (`sub` is `plan` and `rest[0] === "force"`), h
 - [x] S4 In `workflow/README.md`:
 - [x] S5 In `docs/workflow-improvements.md`, add these rows:
-- [ ] S6 Extend `OrchestrateConfig` in `orchestrate/config.ts`:
-- [ ] S7 Create `pi/agent/orchestrate.json` with exactly the D1 values, plus a `_comment` string modeled on `pi/agent/agents.json
-- [ ] S8 Create `orchestrate/proposal-gate.ts` with `SavedModel`, `roleSwitch`, `roleWarnText` and `roleOnRestore` from the Desig
-- [ ] S9 Change `setMode` (`orchestrate/index.ts:537`) to `setMode(m, announce = true, ctx?: ExtensionContext)`:
-- [ ] S10 Add `confirmPlanTitle(id, summary, judgeLine?)` to `orchestrate/plan-judge.ts`. With a non-empty `judgeLine` it returns 
-- [ ] S11 Add scans to `orchestrate/wiring.test.ts`:
-- [ ] S12 Update the docs:
+- [x] S6 Extend `OrchestrateConfig` in `orchestrate/config.ts`:
+- [x] S7 Create `pi/agent/orchestrate.json` with exactly the D1 values, plus a `_comment` string modeled on `pi/agent/agents.json
+- [x] S8 Create `orchestrate/proposal-gate.ts` with `SavedModel`, `roleSwitch`, `roleWarnText` and `roleOnRestore` from the Desig
+- [x] S9 Change `setMode` (`orchestrate/index.ts:537`) to `setMode(m, announce = true, ctx?: ExtensionContext)`:
+- [x] S10 Add `confirmPlanTitle(id, summary, judgeLine?)` to `orchestrate/plan-judge.ts`. With a non-empty `judgeLine` it returns 
+- [x] S11 Add scans to `orchestrate/wiring.test.ts`:
+- [x] S12 Update the docs:
 - [ ] S13 Add four prompts to `orchestrate/prompts.ts`:
 - [ ] S14 Add the gate helpers from the Design to `orchestrate/proposal-gate.ts`. `proposalReviewPrompts` returns:
 - [ ] S15 Show the judging label in the widget without changing the mode argument:
