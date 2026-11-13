@@ -319,17 +319,19 @@ Expected:
 - [x] S5 Tests:
 - [x] S6 `docs/workflow-improvements.md`, following its section "Keeping this file current":
 - [x] S7 Run the workflow tests (see Tests), then commit and push. The stage ends here.
-- [ ] S8 New `orchestrate/delivery.ts` with every function from the Design. Model the pure style on `repos.ts` and `monitor.ts`.
-- [ ] S9 `orchestrate/store.ts`: add `readMerges(file)` and `appendMerges(file, records)`, modelled on `readAccepted` and `addAcc
-- [ ] S10 `orchestrate/index.ts`, sub side:
-- [ ] S11 `orchestrate/index.ts`, `readOutboxes`:
-- [ ] S12 `orchestrate/index.ts`, `checkEnded`, `mergedPerRepo`, `ghMerged`:
-- [ ] S13 `orchestrate/index.ts`, other places:
-- [ ] S14 `orchestrate/brief.ts:229`: replace the delivery line with:
-- [ ] S15 `orchestrate/README.md`:
-- [ ] S16 Tests:
-- [ ] S17 Deliver: merge — the install in S19 copies the merged `master`.
-- [ ] S18 The read-only check on `o11131503`. Run it before S17's merge and record its output; it changes nothing.
-- [ ] S19 The install, from the updated `master` checkout:
+- [x] S8 New `orchestrate/delivery.ts` with every function from the Design. Model the pure style on `repos.ts` and `monitor.ts`.
+- [x] S9 `orchestrate/store.ts`: add `readMerges(file)` and `appendMerges(file, records)`, modelled on `readAccepted` and `addAcc
+- [x] S10 `orchestrate/index.ts`, sub side:
+- [x] S11 `orchestrate/index.ts`, `readOutboxes`:
+- [x] S12 `orchestrate/index.ts`, `checkEnded`, `mergedPerRepo`, `ghMerged`:
+- [x] S13 `orchestrate/index.ts`, other places:
+- [x] S14 `orchestrate/brief.ts:229`: replace the delivery line with:
+- [x] S15 `orchestrate/README.md`:
+- [x] S16 Tests:
+- [x] S17 Deliver: merge — the install in S19 copies the merged `master`.
+- [x] S18 The read-only check on `o11131503`. Run it before S17's merge and record its output; it changes nothing.
+- [x] S19 The install, from the updated `master` checkout:
 ## For you after the flow
 - S20 Verify: start a new orchestra run after the restart, with a non-default target branch, in a repo where gh resolves elsew
+## Outcome
+2026-11-13T14:56:17.248Z — ok: stage 1: flow/orchestrate-delivery, 1 commit since the review base; stage 2: master, 2 commits since the review base, PR #40 MERGED https://github.com/Unknownow/pi-config/pull/40 · 1 human check(s) for you (see the card)

@@ -1,10 +1,9 @@
 {
   "v": 1,
   "flowId": "20261113-2145-orchestrate-merge-confirmation-by-delive-50b4",
-  "rev": 2,
-  "updated": "2026-11-13T14:48:52.605Z",
+  "rev": 3,
+  "updated": "2026-11-13T14:56:17.366Z",
   "title": "Orchestrate merge confirmation by delivered trees (bug 3) plus watcher fixes",
-  "stage": 2,
   "done": [
     "S1",
     "S2",
@@ -12,20 +11,47 @@
     "S4",
     "S5",
     "S6",
-    "S7"
+    "S7",
+    "S8",
+    "S9",
+    "S10",
+    "S11",
+    "S12",
+    "S13",
+    "S14",
+    "S15",
+    "S16",
+    "S17",
+    "S18",
+    "S19"
   ],
+  "finished": {
+    "at": "2026-11-13T14:56:17.248Z",
+    "ok": true,
+    "text": "stage 1: flow/orchestrate-delivery, 1 commit since the review base; stage 2: master, 2 commits since the review base, PR #40 MERGED https://github.com/Unknownow/pi-config/pull/40 · 1 human check(s) for you (see the card)"
+  },
   "reviewBase": {
-    "d:/works/pi-config": "66ba9e93e7ab38c8c1e72897b46a890050690ad4"
+    "d:/works/pi-config": "755e081cd51fbe6c7f0c5f350e512cf2c9dd05c2"
   },
   "passedTrees": {
     "d:/works/pi-config": [
       "d11a1638f2c905bdeadf79d1f70783790d9272bb",
-      "552f7d53cf70ef11a330a49c0555eff9788a0e7b"
+      "552f7d53cf70ef11a330a49c0555eff9788a0e7b",
+      "d21db068344b37021928f304cf9e61ac0645b71b",
+      "de096cabbaff3053a768ae52d565303799d104fc",
+      "7701753714939ab2dce9d6f8350e2c0cbb13d4f6"
     ]
+  },
+  "judgedMerges": {
+    "d:/works/pi-config": {
+      "pr": "40",
+      "tree": "7701753714939ab2dce9d6f8350e2c0cbb13d4f6",
+      "stage": 2
+    }
   },
   "repos": [
     {
-      "branch": "flow/orchestrate-delivery",
+      "branch": "master",
       "remote": "github.com/Unknownow/pi-config",
       "primary": true
     }
