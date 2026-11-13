@@ -1,10 +1,9 @@
 {
   "v": 1,
   "flowId": "20261114-0108-proposal-judge-orchestrator-role-and-for-29c5",
-  "rev": 4,
-  "updated": "2026-11-13T18:20:14.047Z",
+  "rev": 5,
+  "updated": "2026-11-13T18:20:47.785Z",
   "title": "Proposal judge, orchestrator role and forced moves for orchestrate",
-  "stage": 3,
   "done": [
     "S1",
     "S2",
@@ -31,10 +30,17 @@
     "S23",
     "S24",
     "S25",
-    "S26"
+    "S26",
+    "S27",
+    "S28"
   ],
+  "finished": {
+    "at": "2026-11-13T18:20:47.667Z",
+    "ok": true,
+    "text": "stage 1: flow/orch-proposal-judge, 2 commits since the review base, PR #42 OPEN https://github.com/Unknownow/pi-config/pull/42; stage 2: flow/orch-proposal-judge, 3 commits since the review base, PR #42 OPEN https://github.com/Unknownow/pi-config/pull/42; stage 3: master, 3 commits since the review base, PR #42 MERGED https://github.com/Unknownow/pi-config/pull/42 · 1 human check(s) for you (see the card)"
+  },
   "reviewBase": {
-    "d:/works/pi-config": "eef7692cc63883fce7a2897a9af4dd787ede4e55"
+    "d:/works/pi-config": "367562eaeb678ebcbd784c6c5b34f7bfd9fb69ed"
   },
   "passedTrees": {
     "d:/works/pi-config": [
@@ -44,9 +50,16 @@
       "fd5848b3cdc5a10058978ad6c6f36fb0a0fba3c8"
     ]
   },
+  "judgedMerges": {
+    "d:/works/pi-config": {
+      "pr": "42",
+      "tree": "fd5848b3cdc5a10058978ad6c6f36fb0a0fba3c8",
+      "stage": 3
+    }
+  },
   "repos": [
     {
-      "branch": "flow/orch-proposal-judge",
+      "branch": "master",
       "remote": "github.com/Unknownow/pi-config",
       "primary": true
     }

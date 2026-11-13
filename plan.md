@@ -516,5 +516,7 @@ Hand checks (S26): overlapping owns caught by the proposal judge; Esc during the
 - [x] S24 In `docs/workflow-improvements.md`, mark D49 Done (naming the files) and update the Status line.
 - [x] S25 Run all the suites (see Tests) and fix failures until the expected results hold.
 - [x] S26 Verify these by hand; they are listed for you:
-- [ ] S27 Deliver: merge — the install in S28 copies the merged `master`.
-- [ ] S28 On `master` after the merge:
+- [x] S27 Deliver: merge — the install in S28 copies the merged `master`.
+- [x] S28 On `master` after the merge:
+## Outcome
+2026-11-13T18:20:47.667Z — ok: stage 1: flow/orch-proposal-judge, 2 commits since the review base, PR #42 OPEN https://github.com/Unknownow/pi-config/pull/42; stage 2: flow/orch-proposal-judge, 3 commits since the review base, PR #42 OPEN https://github.com/Unknownow/pi-config/pull/42; stage 3: master, 3 commits since the review base, PR #42 MERGED https://github.com/Unknownow/pi-config/pull/42 · 1 human check(s) for you (see the card)
