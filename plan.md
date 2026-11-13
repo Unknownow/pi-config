@@ -298,13 +298,13 @@ Waits that aren't parked keep today's text.
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 `orchestrate/paths.ts`: add `parsePorcelainZ(out: string): string[]`, a pure function.
-- [ ] S2 `orchestrate/index.ts:47`: add `gitRaw(cwd, ...args)`, the same as `git()` but without `.trim()`. In `pollGit` (`:1086-1
-- [ ] S3 `orchestrate/brief.ts` `Run`: add `targets?: Record<string, string>` with a doc comment ("the remote ref the packages' P
-- [ ] S4 `orchestrate/index.ts` `orch_run` (`:1226`): add an optional parameter `targets: string[]`. Each entry is either `branch
-- [ ] S5 `orchestrate/repos.ts` (next to `worktreesOf`): add `pickDiffBase(c: { viaTarget?: string | null; viaHead?: string | nul
-- [ ] S6 `orchestrate/README.md`: one line in the `run.json` layout about `targets`, and one sentence that drift and overlap are 
-- [ ] S7 `docs/workflow-improvements.md`:
+- [x] S1 `orchestrate/paths.ts`: add `parsePorcelainZ(out: string): string[]`, a pure function.
+- [x] S2 `orchestrate/index.ts:47`: add `gitRaw(cwd, ...args)`, the same as `git()` but without `.trim()`. In `pollGit` (`:1086-1
+- [x] S3 `orchestrate/brief.ts` `Run`: add `targets?: Record<string, string>` with a doc comment ("the remote ref the packages' P
+- [x] S4 `orchestrate/index.ts` `orch_run` (`:1226`): add an optional parameter `targets: string[]`. Each entry is either `branch
+- [x] S5 `orchestrate/repos.ts` (next to `worktreesOf`): add `pickDiffBase(c: { viaTarget?: string | null; viaHead?: string | nul
+- [x] S6 `orchestrate/README.md`: one line in the `run.json` layout about `targets`, and one sentence that drift and overlap are 
+- [x] S7 `docs/workflow-improvements.md`:
 - [ ] S8 `workflow/index.ts`: add `setWaiting(next: FlowState["waiting"])`.
 - [ ] S9 `workflow/asks.ts`:
 - [ ] S10 `workflow/index.ts` `sendWaitAsk`: add an optional `checkStatus` parameter.
