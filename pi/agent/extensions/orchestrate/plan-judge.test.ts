@@ -1,7 +1,7 @@
 // node --experimental-strip-types --test plan-judge.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { judgeSection, parsePlanJudge, phaseLabel, planReviewJudgeLine } from "./plan-judge.ts";
+import { confirmPlanTitle, judgeSection, parsePlanJudge, phaseLabel, planReviewJudgeLine } from "./plan-judge.ts";
 
 const ok = { ran: true, verdict: "PASS", rounds: 2, spec: "agreed", findings: [], userFindings: [] };
 
@@ -39,4 +39,10 @@ test("phaseLabel", () => {
 test("judgeSection: a run that did not run lists no stale findings", () => {
 	const s = judgeSection(parsePlanJudge({ ...ok, ran: false, verdict: "cancelled", findings: ["old"] }));
 	assert.ok(s.includes("did not run (cancelled)") && !s.includes("old") && !s.includes("Open after the cap"));
+});
+
+test("confirmPlanTitle: the judge line is added only when there is one", () => {
+	assert.equal(confirmPlanTitle("a", "S"), "Approve plan of a? S");
+	assert.equal(confirmPlanTitle("a", "S", ""), "Approve plan of a? S");
+	assert.equal(confirmPlanTitle("a", "S", "judge: PASS (1 runs)"), "Approve plan of a? S\njudge: PASS (1 runs)");
 });

@@ -94,6 +94,23 @@ Ids: `runId` = `o<MMDDHHmm>-<title slug>` (30 characters at most); set name `o<M
 
 `~/.pi/agent/orchestrate.json` (optional): `{ "maxSubs": 4, "pollSeconds": 60, "stallMinutes": 20, "confirmPlans": false, "maxPlanRejections": 3, "maxReplans": 2, "maxAutoAnswers": 2, "maxIdleAnswers": 3, "approvePattern": "..." }`. `approvePattern` is the regex (case-insensitive) for the typed "go"; its default is a copy of the workflow's. A bad value falls back to the default with a warning.
 
+New keys (all optional; a bad value falls back with a warning naming its key path):
+
+| Key | Default | Meaning |
+|---|---|---|
+| `roles.orchestrator` | none | `{ "model": "provider/id", "thinking": "high" }`. The orchestrator session switches to it when orchestrator mode turns on and back when it turns off. `false` means none. |
+| `roles.judge` | session model, thinking `high` | Model of the proposal judge. |
+| `autoJudgeProposal` | `"auto"` | `"off"` or `"auto"`. |
+| `maxProposalJudgeRounds` | 2 | Judge runs per "go" before open auto findings go to the run. |
+| `judge.tools` / `timeoutMs` / `idleTimeoutMs` | `["read","grep","find","ls"]` / 900000 / 300000 | How the judge subagent runs. |
+| `judge.extensions` | the pi-claude-bridge path if that file exists, else `[]` | Extensions the judge loads (needed for `claude-bridge/` models). |
+
+Without `orchestrate.json` no model is switched. The repo ships one (`pi/agent/orchestrate.json`) that is installed with the rest.
+
+**Role switch rules.** The model changes only when the mode goes off to on (`/orch start`) or on to off (`/orch off`), never in a sub-session. `/orch start` saves the current model and thinking level as `prevModel` in the mode entry, so it survives a restart (a restart itself switches nothing: pi restores the model). While a workflow phase is running (not `off`) the model is not switched; the warning names the model to set back with `/model`. When the model is unknown or has no credentials, it warns and keeps the current one.
+
+The `confirmPlans` prompt shows the sub's `judge:` line from its `plan-review` message; without one it is unchanged.
+
 ## Contracts used
 
 Only public events, never imports of `../workflow` or `../worktree` (`boundary.test.ts`): workflow K4 `workflow:status`, K9 `workflow:start-plan`, K10 `workflow:plan-ready`, K11 `workflow:merge-gate`, K12 `workflow:ask` and `workflow:ask-done`, K13 `workflow:idle` (see `workflow/README.md`); worktree W1 `worktree:create` (see `worktree/README.md`); claims through `../shared/claims.ts`.

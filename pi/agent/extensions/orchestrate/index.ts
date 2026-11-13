@@ -9,7 +9,8 @@
  */
 
 import { createHash, randomUUID } from "node:crypto";
-import { judgeSection, parsePlanJudge, phaseLabel, planReviewJudgeLine } from "./plan-judge.ts";
+import { roleOnRestore, roleSwitch, roleWarnText, type SavedModel } from "./proposal-gate.ts";
+import { confirmPlanTitle, judgeSection, parsePlanJudge, phaseLabel, planReviewJudgeLine } from "./plan-judge.ts";
 import * as fs from "node:fs";
 import { execFile } from "node:child_process";
 import * as os from "node:os";
@@ -534,16 +535,57 @@ export default function (pi: ExtensionAPI): void {
 			return new RegExp(DEFAULTS.approvePattern, "i");
 		}
 	};
-	function setMode(m: Mode, announce = true): void {
+	let orchPrevModel: SavedModel | undefined;
+	/** Puts the session on the orchestrator role's model; warns and keeps the current one when it is missing. Never throws. */
+	async function applyOrchestratorRole(ctx: ExtensionContext): Promise<void> {
+		try {
+			const spec = cfg.roles.orchestrator;
+			if (!spec) return;
+			const slash = spec.model.indexOf("/");
+			const model = slash > 0 ? ctx.modelRegistry.find(spec.model.slice(0, slash), spec.model.slice(slash + 1)) : undefined;
+			if (!model) return say(`model ${spec.model} (orchestrator) not found; keeping the current one`, "warning");
+			if (!(await pi.setModel(model))) return say(`no credentials for ${spec.model} (orchestrator); keeping the current model`, "warning");
+			if (spec.thinking) pi.setThinkingLevel(spec.thinking);
+		} catch (e) {
+			say(`could not switch the model: ${(e as Error).message}`, "warning");
+		}
+	}
+	/** Puts back the model and thinking level from before orchestrator mode; keeps the current ones when the model is gone. */
+	async function restoreModel(ctx: ExtensionContext, saved: SavedModel): Promise<void> {
+		try {
+			const slash = saved.model.indexOf("/");
+			const model = slash > 0 ? ctx.modelRegistry.find(saved.model.slice(0, slash), saved.model.slice(slash + 1)) : undefined;
+			if (!model || !(await pi.setModel(model))) return say(`the model from before orchestrator mode (${saved.model}) is not available; keeping the current one`, "warning");
+			if (saved.thinking) pi.setThinkingLevel(saved.thinking as ReturnType<typeof pi.getThinkingLevel>);
+		} catch (e) {
+			say(`could not restore the model: ${(e as Error).message}`, "warning");
+		}
+	}
+	function setMode(m: Mode, announce = true, ctx?: ExtensionContext): void {
+		const phase = typeof lastK4?.phase === "string" ? lastK4.phase : undefined;
+		let action = roleSwitch({ from: mode, to: m, isSub: !!me, workflowPhase: phase, hasRole: !!cfg.roles.orchestrator, hasPrev: !!orchPrevModel });
+		const warning = action === "warn" ? roleWarnText(m === "off" ? "off" : "on", phase ?? "?", orchPrevModel) : undefined;
+		const saved = orchPrevModel;
+		if (action === "apply") {
+			if (!ctx) action = "none";
+			else if (!ctx.model) {
+				warning === undefined && say("orchestrate: no current model; the model was not switched", "warning");
+				action = "none";
+			} else orchPrevModel = { model: `${ctx.model.provider}/${ctx.model.id}`, thinking: pi.getThinkingLevel() };
+		}
 		mode = m;
 		proposalReady = false;
 		k4Warned = false;
 		try {
-			pi.appendEntry(MODE_ENTRY, { v: 1, mode: m });
+			pi.appendEntry(MODE_ENTRY, { v: 1, mode: m, prevModel: m === "off" ? undefined : orchPrevModel });
 		} catch (e) {
 			say(`could not save the mode: ${(e as Error).message}`, "warning");
 		}
 		if (announce) say(m === "off" ? "orchestrator mode off: the guard is lifted" : `orchestrator mode: ${m}`);
+		if (warning) say(warning, "warning");
+		if (action === "apply" && ctx) void applyOrchestratorRole(ctx);
+		else if (action === "restore" && ctx && saved) void restoreModel(ctx, saved);
+		if (m === "off") orchPrevModel = undefined;
 		updateWidget();
 	}
 	const assistantText = (m: unknown): string => {
@@ -576,7 +618,7 @@ export default function (pi: ExtensionAPI): void {
 		if (why) return { block: true, reason: why };
 	});
 
-	pi.on("input", async (event) => {
+	pi.on("input", async (event, ctx) => {
 		// what the user types is the evidence for a userQuote on an escalated item (best effort)
 		if (!me && owned && event.source !== "extension" && !event.text.trim().startsWith("/")) {
 			recordUserMessage(itemsFile, event.text, Date.now());
@@ -588,7 +630,7 @@ export default function (pi: ExtensionAPI): void {
 		const t = onTyped(mode, typed, proposalReady, goRe());
 		proposalReady = false;
 		if (!t) return { action: "continue" as const };
-		setMode(t.mode);
+		setMode(t.mode, true, ctx);
 		return { action: "transform" as const, text: `${typed}\n\n${t.append}` };
 	});
 
@@ -1624,7 +1666,9 @@ export default function (pi: ExtensionAPI): void {
 			let approve = params.approve;
 			let reasons = params.reasons ?? "";
 			if (approve && cfg.confirmPlans && ctx.hasUI) {
-				const pick = await ctx.ui.select(`Approve plan of ${params.id}? ${params.summary}`, ["Approve", "Reject"]);
+				const review = readNew(sf(o, params.id, "outbox.jsonl"), 0).msgs.filter((m) => m.type === "plan-review" && m.data?.n === params.n).pop();
+				const judgeLine = typeof review?.data?.judgeLine === "string" ? review.data.judgeLine : undefined;
+				const pick = await ctx.ui.select(confirmPlanTitle(params.id, params.summary, judgeLine), ["Approve", "Reject"]);
 				if (pick !== "Approve") {
 					approve = false;
 					reasons = (await ctx.ui.input("Why reject? (sent to the sub-session)", "")) || "the user rejected the plan";
@@ -1751,14 +1795,14 @@ export default function (pi: ExtensionAPI): void {
 					if (!common) throw new Error("not in a git repository");
 					const active = listActiveRuns(common).runs[0];
 					if (active) throw new Error(`run ${active.id} is still active in this repo; resume it with /orch watch or end it with /orch end`);
-					setMode("discuss", false);
+					setMode("discuss", false, ctx);
 					const title = args.trim().slice("start".length).trim();
 					ctx.ui.notify("orchestrate: discuss mode (read-only). Say \"go\" for the package proposal, \"go\" again to run it; /orch off lifts the guard.", "info");
 					if (title) pi.sendUserMessage(title, { deliverAs: "followUp" });
 				} else if (sub === "mode") {
 					ctx.ui.notify(`orchestrate: mode ${mode}${mode === "discuss" ? "; \"go\" asks for the package proposal" : mode === "propose" ? "; \"go\" on a finished proposal starts the run" : ""}; /orch off lifts the guard`, "info");
 				} else if (sub === "off") {
-					setMode("off");
+					setMode("off", true, ctx);
 					if (owned) ctx.ui.notify(`orchestrate: the watcher keeps running run ${owned.runId}`, "info");
 				} else if (sub === "status") {
 					ctx.ui.notify(await table(), "info");
@@ -1771,7 +1815,7 @@ export default function (pi: ExtensionAPI): void {
 					ctx.ui.notify(`orchestrate: ${(await checkEnded(true, [pm.id], pm.force)).join("\n") || "nothing to check"}`, "info");
 				} else if (sub === "end" && !owned) {
 					if (mode === "off") throw new Error("no active run in this session");
-					setMode("off");
+					setMode("off", true, ctx);
 				} else if (sub === "end") {
 					await mutate((r) => {
 						r.state = "ended";
@@ -1779,7 +1823,7 @@ export default function (pi: ExtensionAPI): void {
 					const id = owned?.runId;
 					if (id) unregister(id);
 					stopWatcher();
-					if (mode !== "off") setMode("off", false);
+					if (mode !== "off") setMode("off", false, ctx);
 					ctx.ui.notify(`orchestrate: run ${id} ended; the worktrees stay (remove them with /wt)`, "info");
 				} else if (sub === "watch") {
 					const common = await commonDir(exec, ctx.cwd);
@@ -1790,7 +1834,7 @@ export default function (pi: ExtensionAPI): void {
 					const alive = run.owner.host === os.hostname() && pidAlive(run.owner.pid) && run.owner.pid !== process.pid;
 					if (!mine && alive) throw new Error(`run ${run.id} is watched by another live session (pid ${run.owner.pid})`);
 					startWatcher({ common, runId: run.id, repoCwd: ctx.cwd });
-					setMode("run", false);
+					setMode("run", false, ctx);
 					await resetStaleSpawning(run); // before the owner changes: a dead owner is part of the test
 					await mutate((r) => {
 						r.owner = { pid: process.pid, host: os.hostname(), session: ctx.sessionManager.getSessionFile() ?? "" };
@@ -1894,6 +1938,7 @@ export default function (pi: ExtensionAPI): void {
 		itemsFile = emptyItems();
 		identity = "unknown";
 		mode = modeFromEntries(ctx.sessionManager.getBranch());
+		orchPrevModel = roleOnRestore(ctx.sessionManager.getBranch());
 		proposalReady = false;
 		k4Warned = false;
 		widgetMounted = false;
@@ -1921,6 +1966,7 @@ export default function (pi: ExtensionAPI): void {
 			me = m;
 			post("session-started", `sub-session of ${m.sub.id} started`, { instance: INSTANCE });
 			mode = "off";
+			orchPrevModel = undefined;
 			const fresh = !fs.existsSync(`${m.dir}/status.json`);
 			started = !fresh;
 			every(3_000, deliverInbox);

@@ -50,6 +50,12 @@ ${planReviewJudgeLine(j)}
 	return `\n\n## Open judge findings\n\n${parts.length ? `${parts.join("\n\n")}\n\n` : ""}${planReviewJudgeLine(j)}\n`;
 }
 
+/** The title of the confirmPlans select: the plan summary, plus the sub's judge line when there is one. */
+export function confirmPlanTitle(id: string, summary: string, judgeLine?: string): string {
+	return judgeLine ? `Approve plan of ${id}? ${summary}
+${judgeLine}` : `Approve plan of ${id}? ${summary}`;
+}
+
 /** The phase as the board and table show it. */
 export function phaseLabel(phase: string, judging?: string): string {
 	return judging === "plan" || judging === "discussion" ? `${phase} (judging ${judging})` : phase;
