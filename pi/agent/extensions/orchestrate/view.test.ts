@@ -76,3 +76,11 @@ test("a parked wait is pending with its own mark and does not wait for the user"
 	assert.equal(pendingMark(p), "wait (resumes itself)");
 	assert.equal(p.escalated, undefined);
 });
+
+test("board and detail show the judging label", () => {
+	const st = (judging?: "plan") => ({ v: 1 as const, phase: "plan", judging, heartbeat: Date.now(), pid: 1 });
+	const mk = (judging?: "plan") => buildView(run([sub("a")]), Date.now(), 4, new Map([["a", { status: st(judging), outbox: [], inbox: [], accepted: [] }]]), 180);
+	assert.ok(boardLines(mk("plan"), 0, false, 120, 1000).join("\n").includes("plan (judging plan)"));
+	assert.ok(boardLines(mk("plan"), 0, true, 120, 1000).join("\n").includes("phase plan (judging plan)"));
+	assert.ok(!boardLines(mk(), 0, false, 120, 1000).join("\n").includes("judging"));
+});

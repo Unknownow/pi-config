@@ -3,6 +3,7 @@
 import type { Run, Sub } from "./brief.ts";
 import { isLive, type Item } from "./items.ts";
 import { split } from "./repos.ts";
+import { phaseLabel } from "./plan-judge.ts";
 import type { Message, Status } from "./store.ts";
 
 export type Paint = (kind: "accent" | "dim" | "warn" | "ok" | "err" | "plain", text: string) => string;
@@ -32,6 +33,7 @@ export interface ViewSub {
 	id: string;
 	state: string;
 	phase: string;
+	judging?: "discussion" | "plan";
 	done?: number;
 	total?: number;
 	waiting: boolean;
@@ -142,6 +144,7 @@ export function buildView(run: Run, now: number, maxSubs: number, inputs: Map<st
 			id: s.id,
 			state: s.state,
 			phase: i.status?.phase ?? "-",
+			judging: i.status?.judging,
 			done: i.status?.done,
 			total: i.status?.total,
 			waiting: i.status?.waiting === true,
@@ -207,7 +210,7 @@ export function widgetLines(view: View | null, mode: string, _now: number, paint
 		const keys = s.repos.map((r) => r.key).filter(Boolean);
 		if (keys.length) segs.push(["dim", ` [${keys.join(",")}]`]);
 		segs.push([s.state === "merged" ? "ok" : "plain", ` ${s.state}`]);
-		segs.push(["dim", ` ${s.phase}${s.total ? ` ${s.done ?? 0}/${s.total}` : ""}`]);
+		segs.push(["dim", ` ${phaseLabel(s.phase, s.judging)}${s.total ? ` ${s.done ?? 0}/${s.total}` : ""}`]);
 		for (const p of s.pending) segs.push(["warn", ` ${pendingMark(p)}`]);
 		const files = s.repos.filter((r) => r.files).map((r) => `${r.key ? `${r.key}:` : ""}${r.files}`);
 		if (files.length) segs.push(["dim", ` files ${files.join(" ")}`]);
@@ -224,7 +227,7 @@ export function widgetLines(view: View | null, mode: string, _now: number, paint
 const ago = (ms: number | undefined, now: number): string => (ms === undefined ? "-" : `${Math.max(0, Math.round((now - ms) / 1000))}s ago`);
 
 export function detailOf(s: ViewSub, now: number): string[] {
-	const out = [`${s.id}: ${s.state}, phase ${s.phase}${s.total ? ` ${s.done ?? 0}/${s.total}` : ""}${s.waiting ? " (waiting)" : ""}, beat ${ago(s.heartbeat, now)}`, `goal: ${s.goal}`];
+	const out = [`${s.id}: ${s.state}, phase ${phaseLabel(s.phase, s.judging)}${s.total ? ` ${s.done ?? 0}/${s.total}` : ""}${s.waiting ? " (waiting)" : ""}, beat ${ago(s.heartbeat, now)}`, `goal: ${s.goal}`];
 	if (s.criteria.length) out.push("criteria:", ...s.criteria.map((c) => `  - ${c}`));
 	out.push(`owns: ${s.owns.join(", ") || "-"}`);
 	if (s.forbids.length) out.push(`forbids: ${s.forbids.join(", ")}`);

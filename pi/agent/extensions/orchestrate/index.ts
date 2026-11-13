@@ -9,6 +9,7 @@
  */
 
 import { createHash, randomUUID } from "node:crypto";
+import { judgeSection, parsePlanJudge, phaseLabel, planReviewJudgeLine } from "./plan-judge.ts";
 import * as fs from "node:fs";
 import { execFile } from "node:child_process";
 import * as os from "node:os";
@@ -190,6 +191,7 @@ export default function (pi: ExtensionAPI): void {
 			done: num(k.done),
 			total: num(k.total),
 			waiting: k.waiting === true ? true : undefined,
+			judging: k.judging === "plan" || k.judging === "discussion" ? k.judging : undefined,
 			heartbeat: Date.now(),
 			pid: process.pid,
 		};
@@ -237,14 +239,15 @@ export default function (pi: ExtensionAPI): void {
 	pi.events.on("workflow:plan-ready", (data: unknown) => route(heldPlan, handlePlanReady, data));
 	function handlePlanReady(data: unknown, claim: Claim): void {
 		if (!me || !started) return;
-		const d = data as { title?: unknown; plan?: unknown };
+		const d = data as { title?: unknown; plan?: unknown; judge?: unknown };
+		const j = parsePlanJudge(d.judge);
 		if (typeof d.plan !== "string") return;
 		let n = 1;
 		try {
 			while (fs.existsSync(f(me, `plan-${n}.md`))) n++;
 			const file = f(me, `plan-${n}.md`);
-			fs.writeFileSync(file, d.plan);
-			if (!post("plan-review", `Plan ${n} of package ${me.sub.id} is ready for review: ${file}`, { file, n })) return;
+			fs.writeFileSync(file, d.plan + judgeSection(j));
+			if (!post("plan-review", `Plan ${n} of package ${me.sub.id} is ready for review: ${file}`, { file, n, judgeLine: planReviewJudgeLine(j) })) return;
 		} catch {
 			return;
 		}
@@ -950,7 +953,7 @@ export default function (pi: ExtensionAPI): void {
 					continue;
 				}
 				if (m.type === "question") events.push(`${head} question (id ${m.id}): ${m.text}\nAnswer it with orch_send {id:"${sub.id}", type:"answer", replyTo:"${m.id}", text}.`);
-				else if (m.type === "plan-review") events.push(`${head} plan ${String(m.data?.n ?? "?")} ready: ${String(m.data?.file ?? "")}\nRead it against the brief (${sf(o, sub.id, "brief.md")}), then call orch_review_plan with n=${String(m.data?.n ?? "?")}. Refuse a plan that does not cover every stage the brief asks for.`);
+				else if (m.type === "plan-review") events.push(`${head} plan ${String(m.data?.n ?? "?")} ready: ${String(m.data?.file ?? "")}\nRead it against the brief (${sf(o, sub.id, "brief.md")}), then call orch_review_plan with n=${String(m.data?.n ?? "?")}. Refuse a plan that does not cover every stage the brief asks for.${typeof m.data?.judgeLine === "string" && m.data.judgeLine ? `\n${m.data.judgeLine}` : ""}`);
 				else if (m.type === "accept-request") {
 					stateChanges.push([sub.id, "awaiting-acceptance"]);
 					const repoKey = String(m.data?.repo ?? workingKey(run));
@@ -1323,7 +1326,7 @@ export default function (pi: ExtensionAPI): void {
 			const st = readStatus(sf(o, s.id, "status.json")).status;
 			const age = st ? `${Math.round((now - st.heartbeat) / 1000)}s ago` : "-";
 			const steps = st?.total ? ` ${st.done ?? 0}/${st.total}` : "";
-			return `${s.id.padEnd(16)} ${(s.state === "merged" && s.forced ? "merged (forced)" : s.state).padEnd(20)} ${(st?.phase ?? "-") + steps + (st?.waiting ? " (waiting)" : "")}`.padEnd(52) + ` beat ${age}${s.branch ? `  ${s.branch}` : ""}`;
+			return `${s.id.padEnd(16)} ${(s.state === "merged" && s.forced ? "merged (forced)" : s.state).padEnd(20)} ${phaseLabel(st?.phase ?? "-", st?.judging) + steps + (st?.waiting ? " (waiting)" : "")}`.padEnd(52) + ` beat ${age}${s.branch ? `  ${s.branch}` : ""}`;
 		});
 		return `Run ${run.id} (${run.title}), running ${activeCount(run)}/${cfg.maxSubs}\n${rows.join("\n")}`;
 	}
@@ -1601,7 +1604,7 @@ export default function (pi: ExtensionAPI): void {
 	pi.registerTool({
 		name: "orch_review_plan",
 		label: "Orchestrate: review plan",
-		description: "Give the verdict on a sub-session's plan after reading it. Refuse a plan that does not cover every stage the brief asks for. With confirmPlans on, the user confirms an approval from your summary. Give reasons when rejecting.",
+		description: "Give the verdict on a sub-session's plan after reading it. Refuse a plan that does not cover every stage the brief asks for. With confirmPlans on, the user confirms an approval from your summary. Give reasons when rejecting. If the plan file ends in `## Open judge findings`, weigh them: reject with instructions for the ones to fix and settle the \"needs a decision\" ones in the reject text, or approve.",
 		promptSnippet: "orch_review_plan: approve or reject a sub-session's plan",
 		parameters: Type.Object({
 			id: Type.String(),

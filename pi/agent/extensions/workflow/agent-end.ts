@@ -70,6 +70,11 @@ export function hasPlanLine(text: string): boolean {
 
 const ENDS_IN_QUESTION = /\?[\s*_)"'`]*$/;
 
+/** Whether a reply ends on a question to the user. */
+export function endsInQuestion(text: string): boolean {
+	return ENDS_IN_QUESTION.test(text.trim());
+}
+
 /** Approval needs a finished reply that does not end on a question, and a `## Plan:` reply since the plan phase started. */
 export function canApprove(text: string, stoppedNormally: boolean, hasFullPlan: boolean): boolean {
 	return stoppedNormally && !ENDS_IN_QUESTION.test(text.trim()) && hasFullPlan;
@@ -158,6 +163,9 @@ export function gitTaskAllowed(phase: FlowPhase, hasPlan: boolean): { ok: boolea
 /** A saved flow state from before the test phase was removed loads as normal mode; its test token row is dropped. */
 export function migrateSavedState<T extends { phase: string; tokens?: unknown }>(data: T): T {
 	let out: Record<string, unknown> = data;
+	const dr = (data as { discussionReview?: { status?: string } }).discussionReview;
+	// A discussion-gate fix round does not survive a restart.
+	if (dr?.status === "awaiting-fix") out = { ...out, discussionReview: { ...dr, status: "idle" } };
 	if (data.tokens && typeof data.tokens === "object" && "test" in data.tokens) {
 		const { test: _drop, ...rest } = data.tokens as Record<string, unknown>;
 		out = { ...out, tokens: rest };

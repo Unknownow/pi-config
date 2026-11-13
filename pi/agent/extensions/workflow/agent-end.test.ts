@@ -314,3 +314,10 @@ test("parseMergeArbiter: MERGE, NO_MERGE, ASK_USER and no decision", () => {
 	assert.equal(parseMergeArbiter("decision: ask_user\nReason: unknown")?.decision, "ASK_USER");
 	assert.equal(parseMergeArbiter("I think we should merge"), null);
 });
+
+test("migrateSavedState: an open discussion fix round does not survive a restart", () => {
+	const out = migrateSavedState({ phase: "discuss", discussionReview: { status: "awaiting-fix", listHash: "x" } } as { phase: string }) as { discussionReview: { status: string; listHash: string } };
+	assert.deepEqual(out.discussionReview, { status: "idle", listHash: "x" });
+	const paused = migrateSavedState({ phase: "discuss", discussionReview: { status: "paused" } } as { phase: string }) as { discussionReview: { status: string } };
+	assert.equal(paused.discussionReview.status, "paused");
+});

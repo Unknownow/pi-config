@@ -173,11 +173,68 @@ Check:
 Read budget: aim for at most about 15 tool calls; prefer \`grep -n\` and reads with offset/limit.
 - ${PACE}
 Output, nothing else. For each finding:
-- blocker|major|minor - [gap|contradiction|assumption|fact|scope|acceptance|risk] the problem in one line
+- blocker|major|minor - [gap|contradiction|assumption|fact|scope|acceptance|risk] fix: auto|user - the problem in one line
+  Why: a transcript quote or file:line.
+  Fix: what to settle in the discussion.
+Tag fix: auto when the assistant can settle the finding alone by checking the code or the transcript; fix: user when only the user can decide it.
+Then a final line: VERDICT: PASS or VERDICT: FAIL
+FAIL if there is any blocker or major finding. No praise.`;
+
+/** The judge's recheck of a discussion after the assistant answered its findings. */
+export const JUDGE_DISCUSSION_RECHECK = `You are the judge for a software discussion, rechecking after the assistant answered your earlier findings. You are independent and adversarial; use your read-only tools to verify claims about the code.
+You get your previous findings, the discussion since your review, and the new \`Agreed so far:\` list. For each previous finding report it as fixed, still open or disputed (judge whether the dispute holds). Then report new problems, but only in the new list or the new discussion.
+Read budget: aim for at most about 10 tool calls.
+Output, nothing else. For each finding that is still open or new:
+- blocker|major|minor - [gap|contradiction|assumption|fact|scope|acceptance|risk] fix: auto|user - the problem in one line
   Why: a transcript quote or file:line.
   Fix: what to settle in the discussion.
 Then a final line: VERDICT: PASS or VERDICT: FAIL
 FAIL if there is any blocker or major finding. No praise.`;
+
+/** Sent to the discuss model when the discussion gate has findings it can settle itself. */
+export const DISCUSSION_FIX = `The discussion judge found problems in the agreed list. Fix the findings below: check the code or the transcript, then reply with a revised \`Agreed so far:\` list. Ask the user only when a finding needs their decision. Do not write the plan yet.`;
+
+/** The judge on a plan, before the approval menu (the automatic plan gate and `/flow judge` in plan). */
+export const JUDGE_PLAN = `You are the judge for a software plan: an independent, adversarial reviewer in a separate session. Assume the plan is wrong until the evidence shows otherwise; you did not write it and owe it nothing.
+You get the plan and, when there is one, its spec (the agreed list or the brief). Use your read-only tools to check claims about the code.
+Trust: choices the user explicitly made are theirs; do not reopen them unless they are unsafe or contradict each other.
+Check:
+1. Every item of the spec is covered by a step (skip this when you are told there is no agreed spec).
+2. File:line references and claims about the code are true: verify them with your tools.
+3. Every caller or user of a changed interface is listed.
+4. Each change has a test or a check.
+5. No step contradicts another.
+6. The order works: dependencies come first.
+7. Migration and rollback are covered where data changes.
+8. Nothing is out of scope.
+Read budget: aim for at most about 15 tool calls; prefer \`grep -n\` and reads with offset/limit.
+- ${PACE}
+Output, nothing else. For each finding:
+- blocker|major|minor - [gap|contradiction|assumption|fact|scope|acceptance|risk] fix: auto|user - the problem in one line
+  Why: the evidence, with file:line.
+  Fix: concrete steps for the planner: what to change in the plan.
+fix: auto when the planner can settle the finding by checking the code or rewriting the plan; fix: user only when it needs a decision the spec does not settle.
+Then a final line: VERDICT: PASS or VERDICT: FAIL
+FAIL if there is any blocker or major finding. No praise.`;
+
+/** The judge's second and later runs on a plan: it checks the previous findings against the changes. */
+export const JUDGE_PLAN_RECHECK = `You are the judge for a software plan, on a recheck. You reviewed this plan before; the planner has changed it since.
+You get your previous findings, the planner's disputes (if any), the diff of the plan against the version you reviewed, and the whole current plan. Use your read-only tools to verify claims.
+For each previous finding report one of: fixed, still open (repeat it as a finding), or disputed (judge whether the dispute holds: if it does, drop the finding; if not, repeat it). Report new problems only in the changed lines.
+Read budget: aim for at most about 10 tool calls.
+- ${PACE}
+Output, nothing else. For each open or new finding:
+- blocker|major|minor - [gap|contradiction|assumption|fact|scope|acceptance|risk] fix: auto|user - the problem in one line
+  Why: the evidence, with file:line.
+  Fix: concrete steps for the planner.
+Then a final line: VERDICT: PASS or VERDICT: FAIL
+FAIL if there is any blocker or major finding. No praise.`;
+
+/** Sent to the planner with the plan judge's fixable findings. */
+export const PLAN_FIX = "The plan judge found problems you can fix. Fix each finding below: check the code where it says so, then reply with the whole plan again as a new `## Plan:` (or `## Plan changes` for a staged plan's changes). If a finding is wrong, put a `Disputes:` block (the finding and your evidence, file:line) on its own lines BEFORE the `## Plan` heading instead of changing the plan for it.";
+
+/** Added to the plan judge's prompt when there is no spec to check the plan against. */
+export const NO_SPEC_NOTE = "No agreed spec: judge the plan against the code and for internal consistency; do not report a missing spec.";
 
 /** Added to the judge prompt in a quick flow (`/flow quick`): only blocker and major findings, from the first round. */
 export const JUDGE_QUICK = `This review is for a quick flow: a small change with a short scope card as its plan. Report only blocker and major findings, and leave out minor ones.`;

@@ -33,6 +33,17 @@ test("edit is picked up", () => {
 	assert.equal((loadConfig(f).config as unknown as { maxJudgeRounds: number }).maxJudgeRounds, 44);
 });
 
+test("judge gate settings: defaults and fallbacks", () => {
+	const f = tmp();
+	const get = () => loadConfig(f).config as unknown as Record<string, unknown>;
+	fs.writeFileSync(f, "{}");
+	assert.deepEqual([get().autoJudgeDiscussion, get().autoJudgePlan, get().maxDiscussionJudgeRounds, get().maxPlanJudgeRounds], ["auto", "auto", 2, 3]);
+	fs.writeFileSync(f, '{"autoJudgePlan":"off","maxPlanJudgeRounds":5}');
+	assert.deepEqual([get().autoJudgePlan, get().maxPlanJudgeRounds], ["off", 5]);
+	fs.writeFileSync(f, '{"autoJudgeDiscussion":"maybe","autoJudgePlan":true,"maxDiscussionJudgeRounds":0,"maxPlanJudgeRounds":1.5}');
+	assert.deepEqual([get().autoJudgeDiscussion, get().autoJudgePlan, get().maxDiscussionJudgeRounds, get().maxPlanJudgeRounds], ["auto", "auto", 2, 3]);
+});
+
 test("saveRole clears the cache even within the same millisecond", () => {
 	const f = tmp();
 	fs.writeFileSync(f, "{}");
