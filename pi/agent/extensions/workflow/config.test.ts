@@ -78,12 +78,13 @@ test("the shipped workflow.json roles match the defaults", () => {
 });
 
 test("wait defaults and validation", () => {
-	assert.deepEqual(DEFAULTS.wait, { pollMs: 120_000, maxMs: 3_600_000, checkTimeoutMs: 30_000, autoResume: true });
+	assert.deepEqual(DEFAULTS.wait, { pollMs: 120_000, maxMs: 3_600_000, claimedMaxMs: 14_400_000, checkTimeoutMs: 30_000, autoResume: true });
 	const g = tmp();
-	fs.writeFileSync(g, JSON.stringify({ wait: { pollMs: -1, maxMs: "x", autoResume: "x", checkTimeoutMs: 5000 } }));
+	fs.writeFileSync(g, JSON.stringify({ wait: { pollMs: -1, maxMs: "x", claimedMaxMs: -5, autoResume: "x", checkTimeoutMs: 5000 } }));
 	const w = loadConfig(g).config.wait;
 	assert.equal(w.pollMs, DEFAULTS.wait.pollMs);
 	assert.equal(w.maxMs, DEFAULTS.wait.maxMs);
+	assert.equal(w.claimedMaxMs, 14_400_000);
 	assert.equal(w.autoResume, true);
 	assert.equal(w.checkTimeoutMs, 5000);
 });

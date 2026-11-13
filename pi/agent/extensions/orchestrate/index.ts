@@ -21,7 +21,7 @@ import { notifyCommand } from "../shared/notify.ts";
 import { activeCount, canonicalPackages, kickoffText, makeRunId, readyToSpawn, renderBrief, revertSpawning, setName, staleSpawning, validatePackages, type PackageInput, type Run, type Sub } from "./brief.ts";
 import { foldersFromEntries } from "./folders.ts";
 import { checkDecision, checkItemAnswer } from "./decide.ts";
-import { acceptRef, close, closeIdle, countersOf, emptyItems, escalate, findItem, fingerprintOf, idleAllowed, liveItems, markStale, openItem, orphanDue, planRef, quoteOk, recordUserMessage, setFingerprint, tick, type Action, type Caps, type Item, type ItemsFile, type Outcome } from "./items.ts";
+import { acceptRef, close, closeIdle, countersOf, emptyItems, escalate, findItem, fingerprintOf, idleAllowed, isParkedWait, liveItems, markStale, openItem, orphanDue, planRef, quoteOk, recordUserMessage, setFingerprint, tick, type Action, type Caps, type Item, type ItemsFile, type Outcome } from "./items.ts";
 import { HeldQueue, resolveAllPending, RUN_ENDED_ANSWER, type Identity } from "./identity.ts";
 import { decideTrust } from "./trust.ts";
 import { parsePorcelainZ } from "./paths.ts";
@@ -779,7 +779,8 @@ export default function (pi: ExtensionAPI): void {
 		const id = String(d.id ?? "");
 		const detail = d.detail ? `\nDetail:\n${String(d.detail).slice(0, 3000)}` : "";
 		if (d.kind === "wait") {
-			const w = (d.wait ?? {}) as { reason?: unknown; check?: unknown };
+			const w = (d.wait ?? {}) as { reason?: unknown; check?: unknown; waitKind?: unknown; checkStatus?: unknown };
+			if (isParkedWait(w)) return `[${sub}] waits (resumes by itself when its check passes: ${String(w.check)}): ${String(w.reason ?? m.text)}. Nothing to answer; to end it early, send it a message with orch_send.`;
 			return `[${sub}] asks for the user (wait, askId ${id}): ${String(w.reason ?? m.text)}${w.check ? ` (it also resumes by itself when its check passes: ${String(w.check)})` : ""}${detail}\nWaits always go to the user; it is escalated.`;
 		}
 		const roles = (d.roles ?? {}) as Record<string, string>;

@@ -227,6 +227,7 @@ export function kickoffText(sub: Sub, run: Run, briefPath: string): string {
 		`- Never touch: ${sub.forbids.length ? sub.forbids.join(", ") : "paths owned by other packages"}.`,
 		"- Ask the orchestrator with the ask_orchestrator tool instead of guessing; it always answers. While you wait for an answer that was cancelled, continue with what is not blocked.",
 		"- Deliver with one pull request, merged at the end of your flow. The merge also needs the orchestrator's acceptance: when it is refused for that, end your turn and retry after the message arrives.",
+		"- To wait on another package's PR, CI or a release, call wait_for_user with kind \"external\" and a read-only check (for a PR: gh pr list --base <target> --head <branch> --state merged ...). It does not go to the user. If the orchestrator sends you a message while you wait, act on it, then wait again or move on.",
 		"",
 		`Goal: ${sub.goal}`,
 	].join("\n");

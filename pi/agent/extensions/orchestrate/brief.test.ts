@@ -41,7 +41,7 @@ test("renderBrief and kickoffText", () => {
 	for (const s of ["goal b", "crit b", "src/b/**", "secret/**", "use X", "src/a/**", "depends on a"]) assert.ok(b.includes(s), s);
 	const k = kickoffText(r.subs[1], r, "C:/x/brief.md");
 	assert.ok(k.includes("C:/x/brief.md") && k.includes("ask_orchestrator") && k.includes("secret/**"));
-	assert.ok(k.includes("it always answers") && !k.includes("wait_for_user"));
+	assert.ok(k.includes("it always answers"));
 });
 
 test("makeRunId moves on to the next minute when the stamp is taken", () => {
@@ -92,4 +92,9 @@ test("revertSpawning puts a failed spawn back to planned and drops the mark", ()
 test("a spawning sub counts toward the active subs", async () => {
 	const { activeCount } = await import("./brief.ts");
 	assert.equal(activeCount(run([sub("a", "spawning"), sub("b", "planned")])), 1);
+});
+
+test("kickoffText tells a sub to use kind external for waits on other packages", () => {
+	const r = run([sub("a", "pending")]);
+	assert.ok(kickoffText(r.subs[0], r, "C:/x/brief.md").includes('kind "external"'));
 });

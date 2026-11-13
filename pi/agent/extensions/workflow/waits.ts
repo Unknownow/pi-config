@@ -120,6 +120,29 @@ export function resumePrefix(reason: string, how: "passed" | "forced" | "plain")
 	return `The wait for "${reason}" is over.`;
 }
 
+/** `wait_for_user` kind "external" needs a check: nothing else would resume it. */
+export function waitKindProblem(kind: string | undefined, check: string | undefined): string | undefined {
+	return kind === "external" && !check ? 'kind "external" needs a check' : undefined;
+}
+
+/** Autopilot turns a wait into an amendment, except `manual` waits and external ones (those pause and resume by their check). */
+export function autopilotSkipsWait(autopilot: boolean, manual: boolean | undefined, kind: string | undefined): boolean {
+	return autopilot && !manual && kind !== "external";
+}
+
+/** Sets a new wait over the old one: the old wait's ask ends first (a listener must not keep a dead ask), then the new wait is assigned by the caller. */
+export function replaceWait(old: { askId?: string } | undefined, deps: { endAsk(w: { askId?: string }): void; unclaim(askId: string): void; stopTimer(): void }): void {
+	if (!old?.askId) return;
+	deps.endAsk(old);
+	deps.unclaim(old.askId);
+	deps.stopTimer();
+}
+
+/** How long a wait polls: a wait whose ask a listener claimed (an orchestrator watches it) may poll longer. */
+export function waitLimitMs(claimed: boolean, w: { maxMs: number; claimedMaxMs: number }): number {
+	return claimed ? w.claimedMaxMs : w.maxMs;
+}
+
 /** What a poll tick does: stop polling, hold (the session is busy) or run the check. */
 export function pollDecision(o: { waiting: boolean; hasCheck: boolean; idle: boolean; elapsedMs: number; maxMs: number }): "run" | "hold" | "stop" {
 	if (!o.waiting || !o.hasCheck || o.elapsedMs >= o.maxMs) return "stop";

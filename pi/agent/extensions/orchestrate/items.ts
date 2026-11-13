@@ -38,6 +38,14 @@ export interface Item {
 	repo?: string;
 	tree?: string;
 	n?: number;
+	/** wait: "external" = nothing for a person (another package's PR, CI, a release); its check resumes it. */
+	waitKind?: "external";
+	/** wait: what the sub's check is doing: pending, stopped, broken or passed. */
+	checkStatus?: string;
+	/** wait: the sub's check command. */
+	check?: string;
+	/** wait: an external wait whose check is still polling; it is not escalated and has no timers. */
+	parked?: true;
 }
 
 export interface SubCounters {
@@ -88,6 +96,11 @@ export const waitingForUser = (file: ItemsFile): Item[] => file.items.filter((i)
 export const planRef = (n: unknown): string => `plan-${String(n ?? "?")}`;
 export const acceptRef = (repo: string, tree: string): string => `accept-${repo || "-"}-${tree.slice(0, 12)}`;
 
+/** A wait is parked (not escalated) when it is external, has a check and that check is still polling. `manual` does not matter. */
+export function isParkedWait(w: { waitKind?: unknown; check?: unknown; checkStatus?: unknown } | undefined): boolean {
+	return !!w && w.waitKind === "external" && typeof w.check === "string" && w.check.trim() !== "" && w.checkStatus === "pending";
+}
+
 /** The data of one sub outbox message that may open an item. */
 export interface OpenMsg {
 	sub: string;
@@ -127,6 +140,7 @@ export function openItem(file: ItemsFile, m: OpenMsg, caps: Caps, now: number): 
 	if (m.type === "question") item = { ...base, ref: m.id, kind: "question", summary: m.text };
 	else if (m.type === "ask") {
 		const wait = m.data?.kind === "wait";
+		const w = wait ? (m.data?.wait as { waitKind?: unknown; check?: unknown; checkStatus?: unknown } | undefined) : undefined;
 		item = {
 			...base,
 			ref: str(m.data?.id),
@@ -135,6 +149,10 @@ export function openItem(file: ItemsFile, m: OpenMsg, caps: Caps, now: number): 
 			summary: wait ? str((m.data?.wait as { reason?: unknown } | undefined)?.reason) || str(m.data?.title) : str(m.data?.title),
 			options: Array.isArray(m.data?.options) ? (m.data.options as unknown[]).filter((o): o is string => typeof o === "string") : undefined,
 			roles: m.data?.roles && typeof m.data.roles === "object" ? (m.data.roles as Record<string, string>) : undefined,
+			...(w?.waitKind === "external" ? { waitKind: "external" as const } : {}),
+			...(typeof w?.checkStatus === "string" ? { checkStatus: w.checkStatus } : {}),
+			...(typeof w?.check === "string" && w.check ? { check: w.check } : {}),
+			...(isParkedWait(w) ? { parked: true as const } : {}),
 		};
 		if (!item.ref) return [];
 	} else if (m.type === "idle") item = { ...base, ref: m.id, kind: "idle", summary: m.text };
@@ -154,10 +172,12 @@ export function openItem(file: ItemsFile, m: OpenMsg, caps: Caps, now: number): 
 		for (const o of file.items) if (o.sub === m.sub && o.kind === "plan-review" && isLive(o)) o.state = "stale";
 		if (c.autoAnswers["plan-menu"]) c.autoAnswers["plan-menu"].count = 0;
 	}
+	// safety net: the workflow ends the old ask itself (setWaiting)
+	if (item.kind === "wait") for (const o of file.items) if (o.sub === m.sub && o.kind === "wait" && isLive(o)) o.state = "stale";
 	file.items.push(item);
 
 	let why = "";
-	if (item.kind === "wait") why = "a wait always needs a person";
+	if (item.kind === "wait") why = item.parked ? "" : waitWhy(item);
 	else if (item.kind === "plan-review") {
 		if (c.planRejections >= caps.maxPlanRejections) why = `${c.planRejections} plans were rejected in a row`;
 	} else if (item.kind === "menu" || item.kind === "accept-request") {
@@ -175,11 +195,21 @@ export function openItem(file: ItemsFile, m: OpenMsg, caps: Caps, now: number): 
 	return why ? [escalate(item, now, why)] : [];
 }
 
+/** Why a wait that is not parked goes to the user. */
+function waitWhy(item: Item): string {
+	const check = waitCheckOf(item);
+	if (item.waitKind === "external" && item.checkStatus === "stopped") return `the sub stopped checking "${check}"`;
+	if (item.waitKind === "external" && item.checkStatus === "broken") return "its check can't run";
+	if (item.waitKind === "external" && item.checkStatus === "passed") return "the check passed; the sub waits for a person to resume it (autoResume is off)";
+	return "a wait always needs a person";
+}
+const waitCheckOf = (item: Item): string => item.check ?? "";
+
 /** Time passes: `elapsedMs` counts as idle time only while the orchestrator is idle. Returns the reminders and escalations due. */
 export function tick(file: ItemsFile, now: number, orchestratorIdle: boolean, elapsedMs: number): Action[] {
 	const out: Action[] = [];
 	for (const item of file.items) {
-		if (item.state !== "open") continue;
+		if (item.state !== "open" || item.parked) continue;
 		if (orchestratorIdle) item.idleMs += Math.max(0, elapsedMs);
 		if (item.idleMs >= ESCALATE_IDLE_MS) out.push(escalate(item, now, "the orchestrator did not answer for 15 minutes"));
 		else if (now - item.postedAt >= ESCALATE_CEILING_MS) out.push(escalate(item, now, "30 minutes without an answer"));
