@@ -1,17 +1,28 @@
 {
   "v": 1,
   "flowId": "20261114-0108-proposal-judge-orchestrator-role-and-for-29c5",
-  "rev": 1,
-  "updated": "2026-11-13T18:08:34.544Z",
+  "rev": 2,
+  "updated": "2026-11-13T18:11:14.832Z",
   "title": "Proposal judge, orchestrator role and forced moves for orchestrate",
-  "stage": 1,
-  "done": [],
+  "stage": 2,
+  "done": [
+    "S1",
+    "S2",
+    "S3",
+    "S4",
+    "S5"
+  ],
   "reviewBase": {
-    "d:/works/pi-config": "b6538c630d84056076990ab600c9a85962d4b7a5"
+    "d:/works/pi-config": "d7b8c566b44e0cee77019ace24ae8c7c7a227b6b"
+  },
+  "passedTrees": {
+    "d:/works/pi-config": [
+      "bd018ed4583e5db8ec5e8c977bb71e99c262016e"
+    ]
   },
   "repos": [
     {
-      "branch": "master",
+      "branch": "flow/orch-proposal-judge",
       "remote": "github.com/Unknownow/pi-config",
       "primary": true
     }

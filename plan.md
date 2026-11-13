@@ -486,11 +486,11 @@ Also:
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 Create `shared/findings.ts` as in the Design, moving the code out of `workflow/gates.ts` and `workflow/discussion-review
-- [ ] S2 In `workflow/gates.ts`, add `forcedOpenFindings(review: DiscussionReview | undefined, listHash: string): Finding[]`. It 
-- [ ] S3 In the `/flow` handler (`workflow/index.ts:4746`), add `/flow plan force` (`sub` is `plan` and `rest[0] === "force"`), h
-- [ ] S4 In `workflow/README.md`:
-- [ ] S5 In `docs/workflow-improvements.md`, add these rows:
+- [x] S1 Create `shared/findings.ts` as in the Design, moving the code out of `workflow/gates.ts` and `workflow/discussion-review
+- [x] S2 In `workflow/gates.ts`, add `forcedOpenFindings(review: DiscussionReview | undefined, listHash: string): Finding[]`. It 
+- [x] S3 In the `/flow` handler (`workflow/index.ts:4746`), add `/flow plan force` (`sub` is `plan` and `rest[0] === "force"`), h
+- [x] S4 In `workflow/README.md`:
+- [x] S5 In `docs/workflow-improvements.md`, add these rows:
 - [ ] S6 Extend `OrchestrateConfig` in `orchestrate/config.ts`:
 - [ ] S7 Create `pi/agent/orchestrate.json` with exactly the D1 values, plus a `_comment` string modeled on `pi/agent/agents.json
 - [ ] S8 Create `orchestrate/proposal-gate.ts` with `SavedModel`, `roleSwitch`, `roleWarnText` and `roleOnRestore` from the Desig
