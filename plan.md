@@ -312,13 +312,13 @@ Expected:
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 `workflow/hooks.ts`: add `K11Site`, `K11_SITES`, `k11Payload`, `flowEndKind`, `flowEndPayload` and `withEndFlow` as in t
-- [ ] S2 `workflow/index.ts`, `acceptanceProblem` (`:3013`):
-- [ ] S3 `workflow/index.ts`, K14:
-- [ ] S4 `workflow/README.md`:
-- [ ] S5 Tests:
-- [ ] S6 `docs/workflow-improvements.md`, following its section "Keeping this file current":
-- [ ] S7 Run the workflow tests (see Tests), then commit and push. The stage ends here.
+- [x] S1 `workflow/hooks.ts`: add `K11Site`, `K11_SITES`, `k11Payload`, `flowEndKind`, `flowEndPayload` and `withEndFlow` as in t
+- [x] S2 `workflow/index.ts`, `acceptanceProblem` (`:3013`):
+- [x] S3 `workflow/index.ts`, K14:
+- [x] S4 `workflow/README.md`:
+- [x] S5 Tests:
+- [x] S6 `docs/workflow-improvements.md`, following its section "Keeping this file current":
+- [x] S7 Run the workflow tests (see Tests), then commit and push. The stage ends here.
 - [ ] S8 New `orchestrate/delivery.ts` with every function from the Design. Model the pure style on `repos.ts` and `monitor.ts`.
 - [ ] S9 `orchestrate/store.ts`: add `readMerges(file)` and `appendMerges(file, records)`, modelled on `readAccepted` and `addAcc
 - [ ] S10 `orchestrate/index.ts`, sub side:

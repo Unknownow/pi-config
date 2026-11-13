@@ -1,17 +1,31 @@
 {
   "v": 1,
   "flowId": "20261113-2145-orchestrate-merge-confirmation-by-delive-50b4",
-  "rev": 1,
-  "updated": "2026-11-13T14:45:10.110Z",
+  "rev": 2,
+  "updated": "2026-11-13T14:48:52.605Z",
   "title": "Orchestrate merge confirmation by delivered trees (bug 3) plus watcher fixes",
-  "stage": 1,
-  "done": [],
+  "stage": 2,
+  "done": [
+    "S1",
+    "S2",
+    "S3",
+    "S4",
+    "S5",
+    "S6",
+    "S7"
+  ],
   "reviewBase": {
-    "d:/works/pi-config": "b2a65f1973ca319d153c8048910cb400b75f2c9a"
+    "d:/works/pi-config": "66ba9e93e7ab38c8c1e72897b46a890050690ad4"
+  },
+  "passedTrees": {
+    "d:/works/pi-config": [
+      "d11a1638f2c905bdeadf79d1f70783790d9272bb",
+      "552f7d53cf70ef11a330a49c0555eff9788a0e7b"
+    ]
   },
   "repos": [
     {
-      "branch": "master",
+      "branch": "flow/orchestrate-delivery",
       "remote": "github.com/Unknownow/pi-config",
       "primary": true
     }
