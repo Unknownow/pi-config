@@ -603,6 +603,9 @@ Commands run from `pi/agent/extensions/workflow` and `pi/agent/extensions/orches
 **S9 (amended): add to `workflow/gate-wiring.test.ts`.**
 - The plan branch's `planGateDecide` call passes `hasDisputes`, and that value is built from `planDisputes(`.
 
+## Plan choices upheld at a pass
+`pi/agent/extensions/workflow/gates.ts:229` - minor - [plan-flaw] Unchanged from last round: if the judge keeps raising a `fix: user` finding, the user is stuck in discuss. "go", `/flow plan` and `/flow approve` all run the gate again and it pauses again. Esc and `/flow judge cancel` keep the flow in discuss.
+
 <!-- pi-workflow:status -->
 ## Checklist
 - [x] S1 Create the pure helpers in `workflow/gates.ts` (new file). Export:
@@ -616,11 +619,11 @@ Commands run from `pi/agent/extensions/workflow` and `pi/agent/extensions/orches
 - [x] S9 Tests for Stage 1.
 - [x] S10 Docs for Stage 1.
 - [x] S11 Run the Stage 1 tests (see Tests). The full suite may only fail in the known `publish.test.ts`.
-- [ ] S12 Add to `gates.ts`:
-- [ ] S13 Prompts (`workflow/prompts.ts`).
-- [ ] S14 Wire the discussion gate (`index.ts`).
-- [ ] S15 Tests for Stage 2.
-- [ ] S16 Docs for Stage 2.
+- [x] S12 Add to `gates.ts`:
+- [x] S13 Prompts (`workflow/prompts.ts`).
+- [x] S14 Wire the discussion gate (`index.ts`).
+- [x] S15 Tests for Stage 2.
+- [x] S16 Docs for Stage 2.
 - [ ] S17 Create the pure helpers in `orchestrate/plan-judge.ts` (new file; no imports from `workflow/`).
 - [ ] S18 Wire `orchestrate/index.ts`.
 - [ ] S19 Board.

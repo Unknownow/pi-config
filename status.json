@@ -1,8 +1,8 @@
 {
   "v": 1,
   "flowId": "20261113-2312-automatic-judge-gates-for-the-discussion-ba4c",
-  "rev": 3,
-  "updated": "2026-11-13T16:22:28.148Z",
+  "rev": 4,
+  "updated": "2026-11-13T16:28:30.190Z",
   "title": "Automatic judge gates for the discussion and the plan",
   "stage": 2,
   "done": [
@@ -16,7 +16,12 @@
     "S8",
     "S9",
     "S10",
-    "S11"
+    "S11",
+    "S12",
+    "S13",
+    "S14",
+    "S15",
+    "S16"
   ],
   "reviewBase": {
     "d:/works/pi-config": "199df0520c1ba8e1608a58dd0331e662af9fadf5"
