@@ -150,3 +150,53 @@ test("menuJudgeLines", () => {
 	assert.deepEqual(menuJudgeLines(undefined, "plan judge cancelled"), ["plan judge cancelled"]);
 	assert.equal(menuJudgeLines(gate({ verdict: "cancelled" }), "plan judge did not run: boom")[0], "plan judge did not run: boom");
 });
+
+// ---- discussion gate ----
+import { type DiscussionReview, discussionGateAfterFixReply, discussionGateAfterVerdict, discussionGateOnInput, discussionGateStart, discussionRecheckPrompts } from "./gates.ts";
+import { JUDGE_DISCUSSION, JUDGE_DISCUSSION_RECHECK } from "./prompts.ts";
+
+const rev = (o: Partial<DiscussionReview> = {}): DiscussionReview => ({ listHash: "L1", verdict: "FAIL", findings: [f("auto")], afterEntryId: "e1", rounds: 1, status: "idle", ...o });
+const startBase = { mode: "auto" as const, quick: false, listHash: "L2", sinceChars: 100, cap: 30000 };
+
+test("discussionGateStart", () => {
+	assert.equal(discussionGateStart({ ...startBase, mode: "off" }), "move");
+	assert.equal(discussionGateStart({ ...startBase, quick: true }), "move");
+	assert.equal(discussionGateStart({ ...startBase, listHash: undefined }), "warn-move");
+	assert.equal(discussionGateStart({ ...startBase, listHash: "L1", last: rev({ verdict: "PASS", findings: [] }) }), "move");
+	// a PASS with a minor auto finding on the same hash does not skip
+	assert.equal(discussionGateStart({ ...startBase, listHash: "L1", last: rev({ verdict: "PASS", findings: [f("auto", "minor")] }) }), "recheck");
+	assert.equal(discussionGateStart({ ...startBase, last: rev() }), "recheck");
+	assert.equal(discussionGateStart({ ...startBase, last: rev(), sinceChars: 40000 }), "full");
+	assert.equal(discussionGateStart({ ...startBase, last: rev(), sinceChars: Infinity }), "full");
+	assert.equal(discussionGateStart({ ...startBase, last: rev({ afterEntryId: undefined }) }), "full");
+	assert.equal(discussionGateStart({ ...startBase }), "full");
+});
+
+test("discussionGateAfterVerdict", () => {
+	const o = { rounds: 1, max: 2 };
+	assert.equal(discussionGateAfterVerdict({ ...o, verdict: "PASS", findings: [] }), "move");
+	assert.equal(discussionGateAfterVerdict({ ...o, verdict: "FAIL", findings: [f("auto")] }), "fix");
+	assert.equal(discussionGateAfterVerdict({ ...o, verdict: "PASS", findings: [f("auto", "minor")] }), "fix");
+	assert.equal(discussionGateAfterVerdict({ ...o, verdict: "FAIL", findings: [f("auto"), f("user")] }), "pause");
+	assert.equal(discussionGateAfterVerdict({ rounds: 2, max: 2, verdict: "FAIL", findings: [f("user")] }), "pause");
+	assert.equal(discussionGateAfterVerdict({ rounds: 2, max: 2, verdict: "FAIL", findings: [f("auto")] }), "move-open");
+});
+
+test("discussionGateAfterFixReply", () => {
+	assert.equal(discussionGateAfterFixReply({ prevListHash: "a", replyListHash: "b", reply: "Agreed so far: x" }), "recheck");
+	assert.equal(discussionGateAfterFixReply({ prevListHash: "a", reply: "no list" }), "pause");
+	assert.equal(discussionGateAfterFixReply({ prevListHash: "a", replyListHash: "a", reply: "same" }), "pause");
+	assert.equal(discussionGateAfterFixReply({ prevListHash: "a", replyListHash: "b", reply: "Which one do you want?" }), "pause");
+});
+
+test("discussionGateOnInput", () => {
+	assert.equal(discussionGateOnInput({ running: true, isGo: true }), "notice");
+	assert.equal(discussionGateOnInput({ running: true, isGo: false }), "cancel");
+	assert.equal(discussionGateOnInput({ running: false, isGo: false }), "pass");
+});
+
+test("discussionRecheckPrompts carries findings, since-text and list; the format has fix tags", () => {
+	const p = discussionRecheckPrompts([f("auto", "major", "needle")], "SINCE-TEXT", "Agreed so far: NEWLIST", ["D:/x"]).join("\n");
+	assert.ok(p.includes(JUDGE_DISCUSSION_RECHECK) && p.includes("needle") && p.includes("SINCE-TEXT") && p.includes("NEWLIST") && p.includes("D:/x"));
+	assert.ok(JUDGE_DISCUSSION.includes("fix: auto|user"));
+});

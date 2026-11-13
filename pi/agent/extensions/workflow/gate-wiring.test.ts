@@ -42,7 +42,7 @@ test("K4 carries judging", () => {
 test("the judge command handles cancel before the phase dispatch and judges the plan in plan", () => {
 	const a = source.indexOf('case "judge":');
 	const cancel = source.indexOf('rest[0]?.toLowerCase() === "cancel"', a);
-	const dispatch = source.indexOf('state.phase === "discuss") await reviewDiscussion', a);
+	const dispatch = source.indexOf('state.phase === "discuss") await runDiscussionGate', a);
 	assert.ok(a > 0 && cancel > a && cancel < dispatch);
 	assert.match(source.slice(dispatch, dispatch + 300), /state\.phase === "plan"\) judgePlanNow\(ctx\)/);
 });
@@ -81,4 +81,19 @@ test("the input handler queues a go and cancels on other text while the plan jud
 	const seg = source.slice(a, a + 900);
 	assert.match(seg, /planApproveQueued = true/);
 	assert.match(seg, /abortGate\("message"\)/);
+});
+
+test("the three discuss-to-plan paths call startDiscussionGate", () => {
+	assert.equal(source.split("startDiscussionGate(ctx)").length - 1, 3);
+});
+
+test("runDiscussionGate passes the abort signal and clears Esc in a finally", () => {
+	const b = body("async function runDiscussionGate(");
+	assert.ok(b.includes("signal: run.controller.signal"));
+	assert.match(b, /finally \{[\s\S]*run\.offEsc\?\.\(\)/);
+});
+
+test("the discuss agent_end branch uses discussionGateAfterFixReply", () => {
+	const i = source.indexOf("discussionGateAfterFixReply({");
+	assert.ok(i > 0 && source.indexOf('state.phase === "discuss" && state.discussionReview?.status === "awaiting-fix"') > 0);
 });

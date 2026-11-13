@@ -1,7 +1,8 @@
 /** Pure decisions of the automatic judge gates (the plan judge now, the discussion gate later). `index.ts` only runs judges, sends messages and keeps the runtime handle. */
 
 import { createHash } from "node:crypto";
-import { JUDGE_PLAN, JUDGE_PLAN_RECHECK, NO_SPEC_NOTE } from "./prompts.ts";
+import { endsInQuestion } from "./agent-end.ts";
+import { JUDGE_DISCUSSION_RECHECK, JUDGE_PLAN, JUDGE_PLAN_RECHECK, NO_SPEC_NOTE } from "./prompts.ts";
 
 export type Severity = "blocker" | "major" | "minor";
 
@@ -193,7 +194,7 @@ export function menuJudgeLines(gate: PlanGate | undefined, note?: string): strin
 	return out;
 }
 
-function findingsBlock(fs: Finding[]): string {
+export function findingsBlock(fs: Finding[]): string {
 	return fs.length ? fs.map((f) => `- ${findingText(f).replace(/\n/g, "\n  ")}`).join("\n") : "(none)";
 }
 
@@ -211,5 +212,56 @@ export function planReviewPrompts(o: { plan: string; spec?: { kind: "agreed" | "
 		`## Plan changes since your review\n\n${o.recheck.diff}`,
 		"## Current plan",
 		o.plan,
+	];
+}
+
+/** What the discussion gate remembers about its last review; persisted in the state entry. */
+export interface DiscussionReview {
+	listHash: string;
+	verdict: "PASS" | "FAIL";
+	findings: Finding[];
+	/** Id of the last branch entry after the review was posted: the next recheck reads the transcript after it. */
+	afterEntryId?: string;
+	rounds: number;
+	status: "idle" | "awaiting-fix" | "paused";
+}
+
+/** What to do when the user moves from discuss to plan. `sinceChars` is the length of the transcript since the last review (Infinity when its entry is gone). */
+export function discussionGateStart(o: { mode: "off" | "auto"; quick: boolean; listHash?: string; last?: DiscussionReview; sinceChars: number; cap: number }): "move" | "warn-move" | "full" | "recheck" {
+	if (o.mode === "off" || o.quick) return "move";
+	if (!o.listHash) return "warn-move";
+	const l = o.last;
+	if (l && l.listHash === o.listHash && isClean(l.verdict, l.findings)) return "move";
+	if (l && l.afterEntryId && l.findings.length > 0 && o.sinceChars <= o.cap) return "recheck";
+	return "full";
+}
+
+/** After a discussion judge run: move on, send the findings to the discuss model, or pause for the user. */
+export function discussionGateAfterVerdict(o: { verdict: string; findings: Finding[]; rounds: number; max: number }): "move" | "fix" | "pause" | "move-open" {
+	if (isClean(o.verdict, o.findings)) return "move";
+	if (o.findings.some((f) => f.route === "user")) return "pause";
+	return o.rounds < o.max ? "fix" : "move-open";
+}
+
+/** After the discuss model answered a fix request: recheck when it wrote a new list, else pause. */
+export function discussionGateAfterFixReply(o: { prevListHash: string; replyListHash?: string; reply: string }): "recheck" | "pause" {
+	if (!o.replyListHash || o.replyListHash === o.prevListHash || endsInQuestion(o.reply)) return "pause";
+	return "recheck";
+}
+
+/** Typed input while a discussion judge runs: a second "go" only shows a notice, other text cancels. */
+export function discussionGateOnInput(o: { running: boolean; isGo: boolean }): "notice" | "cancel" | "pass" {
+	if (!o.running) return "pass";
+	return o.isGo ? "notice" : "cancel";
+}
+
+/** The judge's system prompts for a discussion recheck. */
+export function discussionRecheckPrompts(findings: Finding[], since: string, list: string, folders: string[]): string[] {
+	return [
+		JUDGE_DISCUSSION_RECHECK,
+		...(folders.length ? [`## Other folders of this session\n\n${folders.map((f) => `- ${f}`).join("\n")}`] : []),
+		`## Your previous findings\n\n${findingsBlock(findings)}`,
+		`## Discussion since your review\n\n${since}`,
+		`## New \`Agreed so far:\` list\n\n${list}`,
 	];
 }

@@ -141,6 +141,16 @@ Config: `"quick": { "maxJudgeRounds": 2, "maxMinorRounds": 0, "knowledgeCheck": 
   the flaws are noted, the commit goes ahead and the flow summary says "N plan flaw(s) not settled". A
   blocker plan flaw, or one in a FAIL, blocks the commit until resolved.
 
+### Discussion gate
+
+When you move from discuss to plan ("go", `/flow plan`, `/flow approve`) and `autoJudgeDiscussion` is `"auto"`, the judge first checks the last `Agreed so far:` list. Without a list the gate warns and moves on.
+
+- Findings use the same `fix: auto|user` tags as the plan judge. A clean PASS on an unchanged list skips the gate; with an earlier review the judge rechecks (previous findings plus the discussion since, up to 30k characters) instead of a full pass.
+- When every finding is `fix: auto` the discuss model gets them as a `workflow-discussion-fix` message and answers with a new list, which is rechecked (at most `maxDiscussionJudgeRounds`, default 2). At the cap with only auto findings the flow moves to plan and the open findings go into the plan kickoff.
+- Any `fix: user` finding pauses the gate (also at the cap): answer it, then say go again. A reply with no new list, or one that ends in a question, also pauses.
+- A second "go" while it runs only shows a notice; other typed text, Esc or `/flow judge cancel` stops it and you stay in discuss. A judge error moves on with a note.
+- `/flow judge` in discuss still only reports, but it stores its review so a later "go" can skip or recheck.
+
 ### Plan judge
 
 Before the approval menu (or the `workflow:plan-ready` event) every complete plan goes to the judge, unless `autoJudgePlan` is `"off"` or the flow is quick.
@@ -151,7 +161,7 @@ Before the approval menu (or the `workflow:plan-ready` event) every complete pla
 - A verdict counts only for the plan text it judged. A judge error never blocks: the plan is offered with "plan judge did not run".
 - Typing "go" while the judge runs queues the approval: a clean PASS (no findings) approves, anything else opens the menu. Other typed text, Esc, or `/flow judge cancel` stops the judge without counting a run; the menu then opens with "plan judge cancelled".
 - `/flow judge` in plan judges the plan on screen now. No idle notice or `workflow:idle` event while a judge runs.
-- Settings: `autoJudgePlan` and `autoJudgeDiscussion` (`"off"` | `"auto"`, default `"auto"`), `maxPlanJudgeRounds` (3), `maxDiscussionJudgeRounds` (2). `autoJudgeDiscussion` is read by the discussion gate, which a later change adds.
+- Settings: `autoJudgePlan` and `autoJudgeDiscussion` (`"off"` | `"auto"`, default `"auto"`), `maxPlanJudgeRounds` (3), `maxDiscussionJudgeRounds` (2). `autoJudgeDiscussion` switches the discussion gate.
 
 ## Wait points, checkpoints and tags
 
@@ -366,7 +376,7 @@ next run starts.
 | `/flow approve` | approve the plan: switch to execute and start (also offered when a plan ends) |
 | `/flow escalate` (`fable`) / `/flow back` (`opusplan`) | manual escalation and return |
 | `/flow judge cancel` | stop a running judge gate (no run is counted) |
-| `/flow judge` | review the current diff now (in plan: the plan on screen, with the plan-judge loop; in discuss: reviews the discussion's conclusion, the last `Agreed so far:` list and the transcript; findings and PASS/FAIL, blocks nothing) |
+| `/flow judge` | review the current diff now (in plan: the plan on screen, with the plan-judge loop; in discuss: reviews the discussion's conclusion, the last `Agreed so far:` list and the transcript; findings and PASS/FAIL, starts no fix loop) |
 | `/flow tokens` | token breakdown of the current flow so far |
 | `/flow model [role] [provider/id[:thinking]]` | set a workflow role's model (discuss, plan, execute, judge, commit, arbiter, escalate, quick, quick-judge) and save it to workflow.json; left out, it lists the roles, the models with auth and the thinking levels (Tab completes model IDs). explore, advisor and runner are set with `/agents model` |
 | `/flow reload` | re-read workflow.json |
