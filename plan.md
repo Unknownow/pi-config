@@ -614,17 +614,17 @@ Expected result: every suite passes with 0 failures. All are fast (under 1 min).
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 Move `notifyCommand` to `pi/agent/extensions/shared/notify.ts`, with its tests in `shared/notify.test.ts` (taken from `w
-- [ ] S2 New `workflow/asks.ts`, pure, with:
-- [ ] S3 `askUser` becomes `askUser(ctx, key, title, options, opts?: { detail?, roles? })` (`index.ts:310`). It still returns the
-- [ ] S4 `:3450` "Run the judge?" becomes `askUser(ctx, "run-judge", "Diff ready: run the judge …?", ["Run the judge", "Skip"])`.
-- [ ] S5 Plan path (`:3155-3199`).
-- [ ] S6 Waits. A helper `askWait(ctx, w)` is called right after `state.waiting` is set at `:2122`, `:2213`, `:2694` and `:3266`.
-- [ ] S7 Restart (`session_start`, `:3898`):
-- [ ] S8 K13. New idle timer (`idle13Timer`), scheduled at the same place as `scheduleIdleNotice` (`:3119`) and cleared at the sa
-- [ ] S9 Guard test `workflow/ui-guard.test.ts`. It scans `workflow/*.ts` except tests for `ctx.ui.(select|confirm|input|custom)`
-- [ ] S10 Tests in `workflow/asks.test.ts`, covering the pure parts and a small harness that drives `askUser`/`askWait` through fa
-- [ ] S11 Docs.
+- [x] S1 Move `notifyCommand` to `pi/agent/extensions/shared/notify.ts`, with its tests in `shared/notify.test.ts` (taken from `w
+- [x] S2 New `workflow/asks.ts`, pure, with:
+- [x] S3 `askUser` becomes `askUser(ctx, key, title, options, opts?: { detail?, roles? })` (`index.ts:310`). It still returns the
+- [x] S4 `:3450` "Run the judge?" becomes `askUser(ctx, "run-judge", "Diff ready: run the judge …?", ["Run the judge", "Skip"])`.
+- [x] S5 Plan path (`:3155-3199`).
+- [x] S6 Waits. A helper `askWait(ctx, w)` is called right after `state.waiting` is set at `:2122`, `:2213`, `:2694` and `:3266`.
+- [x] S7 Restart (`session_start`, `:3898`):
+- [x] S8 K13. New idle timer (`idle13Timer`), scheduled at the same place as `scheduleIdleNotice` (`:3119`) and cleared at the sa
+- [x] S9 Guard test `workflow/ui-guard.test.ts`. It scans `workflow/*.ts` except tests for `ctx.ui.(select|confirm|input|custom)`
+- [x] S10 Tests in `workflow/asks.test.ts`, covering the pure parts and a small harness that drives `askUser`/`askWait` through fa
+- [x] S11 Docs.
 - [ ] S12 Move `sameDir` from `index.ts:34` to `store.ts` (exported, next to `norm`). Update its uses, and add cases to `store.tes
 - [ ] S13 `spawning` state.
 - [ ] S14 `originTrusted`. `orch_run` (`:879`) stores `run.originTrusted = ctx.isProjectTrusted()`. Wrap the call in try/catch; if
@@ -641,5 +641,5 @@ Expected result: every suite passes with 0 failures. All are fast (under 1 min).
 - [ ] S25 View (`view.ts`, built from `items.json`).
 - [ ] S26 Prompts. `prompts.ts` RUN:
 - [ ] S27 Docs.
-- [ ] S28 Run all three suites at each stage end, and fix any failures before the stage commit.
+- [x] S28 Run all three suites at each stage end, and fix any failures before the stage commit.
 - [ ] S29 Verify (A6, manual), on a scratch GitHub repo with packages `a` and `b` (`b` depends on `a`):
