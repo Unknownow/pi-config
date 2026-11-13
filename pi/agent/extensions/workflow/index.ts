@@ -3397,7 +3397,11 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 			const reply = assistantText(last).trim();
 			const list = stoppedNormally ? lastAgreedList([reply]) : undefined;
 			const act = stoppedNormally ? discussionGateAfterFixReply({ prevListHash: dr.listHash, replyListHash: list ? textHash(list) : undefined, reply }) : "pause";
-			if (act === "recheck") void runDiscussionGate(ctx, "recheck", true, false);
+			if (act === "recheck") {
+				state.discussionReview = { ...dr, status: "idle" };
+				persist();
+				void runDiscussionGate(ctx, "recheck", true, false);
+			}
 			else {
 				state.discussionReview = { ...dr, status: "paused" };
 				persist();
@@ -3837,6 +3841,10 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 	/** The move from discuss to plan. Returns true when the discussion judge started (the move happens after it); false when the caller moves now. */
 	async function startDiscussionGate(ctx: ExtensionContext): Promise<boolean> {
 		if (!ctx.hasUI) return false;
+		if (gateRun?.kind === "discussion") {
+			ctx.ui.notify("workflow: discussion judge running (Esc or any other message cancels it)", "info");
+			return true;
+		}
 		const branch = ctx.sessionManager.getBranch();
 		const list = lastAgreedList(branchAssistantTexts(branch));
 		const last = state.discussionReview;
@@ -3859,7 +3867,9 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 		const branch = ctx.sessionManager.getBranch();
 		const list = lastAgreedList(branchAssistantTexts(branch));
 		const listHash = list ? textHash(list) : "";
-		const since = decision === "recheck" && prev?.afterEntryId && list ? transcriptAfter(branch, prev.afterEntryId, 30_000) : undefined;
+		const sinceAll = decision === "recheck" && prev?.afterEntryId && list ? transcriptAfter(branch, prev.afterEntryId, 10_000_000) : undefined;
+		// Over the cap the recheck becomes a full pass.
+		const since = sinceAll !== undefined && sinceAll.length <= 30_000 ? sinceAll : undefined;
 		const transcript = since === undefined ? branchTranscript(branch, cfg.judge.maxDiscussionChars) : "";
 		if (since === undefined && !transcript.trim()) {
 			ctx.ui.notify("workflow: nothing to review yet", "info");
