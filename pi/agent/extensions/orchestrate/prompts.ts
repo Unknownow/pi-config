@@ -42,3 +42,24 @@ export function section(mode: Mode, repoTable?: string): string {
 	const text = mode === "discuss" ? DISCUSS : mode === "propose" ? PROPOSE : RUN;
 	return repoTable && mode !== "discuss" ? `${text}\n${repoTable}` : text;
 }
+
+export const JUDGE_PROPOSAL = `You review a "## Packages:" proposal for an orchestrated job, against the agreed list and the code. You have read-only tools; the repo table gives the absolute paths of the repos. Change nothing.
+Check:
+- every agreed item is covered by exactly one package;
+- the owns globs match real files in the named repos and do not overlap between packages;
+- forbids is consistent with owns and dependsOn;
+- dependsOn has no cycles and the order works;
+- each package can be tested on its own;
+- the acceptance criteria can be checked;
+- interfaces shared between packages are settled in decisions.
+Report each problem as a finding, one block per finding:
+- <blocker|major|minor> - [<category>] fix: <auto|user> - <short head>
+  Why: <what is wrong and the evidence, with file paths>
+  Fix: <what to change in the proposal>
+Use "fix: user" only for a decision the discussion did not make; everything the orchestrator can settle alone is "fix: auto". Report no findings when the proposal is sound. End with VERDICT: PASS or VERDICT: FAIL.`;
+
+export const JUDGE_PROPOSAL_RECHECK = `You recheck a revised "## Packages:" proposal. Earlier findings are listed below. Report each earlier finding as fixed, open or disputed (one line each, with the evidence), then any new problems, in the same finding format: "- <blocker|major|minor> - [<category>] fix: <auto|user> - <head>" followed by Why: and Fix: lines. Only open or new problems are findings. Use "fix: user" only for a decision the discussion did not make. You have read-only tools; the repo table gives the absolute paths. End with VERDICT: PASS or VERDICT: FAIL.`;
+
+export const PROPOSAL_FIX = "The proposal judge found problems. Revise the ## Packages: proposal to fix the findings below and reply with the full revised proposal; ask only when a finding needs the user's decision.";
+
+export const NO_AGREED_NOTE = "No Agreed so far: list was found; judge the proposal against itself and the code.";

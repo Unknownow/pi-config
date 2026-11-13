@@ -1,21 +1,11 @@
 /** Pure decisions of the automatic judge gates (the plan judge now, the discussion gate later). `index.ts` only runs judges, sends messages and keeps the runtime handle. */
 
-import { createHash } from "node:crypto";
+import type { Finding } from "../shared/findings.ts";
+import { findingText, findingsBlock, isClean, parseFindings, textHash } from "../shared/findings.ts";
+export type { Finding, Severity } from "../shared/findings.ts";
+export { findingText, findingsBlock, isClean, isEscKey, parseFindings, textHash } from "../shared/findings.ts";
 import { endsInQuestion } from "./agent-end.ts";
 import { JUDGE_DISCUSSION_RECHECK, JUDGE_PLAN, JUDGE_PLAN_RECHECK, NO_SPEC_NOTE } from "./prompts.ts";
-
-export type Severity = "blocker" | "major" | "minor";
-
-/** One finding of a judge reply. `route`: "auto" can be fixed by the model alone, "user" needs a person's decision. */
-export interface Finding {
-	severity: Severity;
-	category: string;
-	route: "auto" | "user";
-	/** The head line as written, without its leading "- ". */
-	head: string;
-	/** The `Why:` and `Fix:` lines that follow it. */
-	body: string;
-}
 
 export type GateVerdict = "PASS" | "FAIL" | "cancelled" | "error";
 export type SpecKind = "agreed" | "brief" | "none";
@@ -43,52 +33,6 @@ export interface K10Judge {
 	spec: SpecKind;
 	findings: string[];
 	userFindings: string[];
-}
-
-const HEAD = /^-\s+(blocker|major|minor)\s+-\s+\[([^\]]+)\]/i;
-const ROUTE = /\bfix:\s*(auto|user)\b/i;
-
-/** The findings of a judge reply. A missing `fix:` tag means "user"; text outside finding blocks is ignored. */
-export function parseFindings(text: string): Finding[] {
-	const out: Finding[] = [];
-	let cur: { f: Finding; body: string[] } | undefined;
-	const flush = (): void => {
-		if (cur) out.push({ ...cur.f, body: cur.body.join("\n") });
-		cur = undefined;
-	};
-	for (const raw of text.replace(/\r\n/g, "\n").split("\n")) {
-		const line = raw.trimEnd();
-		const m = HEAD.exec(line.trimStart());
-		if (m && !/^\s/.test(line)) {
-			flush();
-			const route = ROUTE.exec(line)?.[1].toLowerCase() === "auto" ? "auto" : "user";
-			cur = { f: { severity: m[1].toLowerCase() as Severity, category: m[2].trim(), route, head: line.replace(/^-\s+/, ""), body: "" }, body: [] };
-			continue;
-		}
-		if (/^\s*VERDICT:/i.test(line)) {
-			flush();
-			continue;
-		}
-		if (cur && (/^\s+\S/.test(line) || /^(Why|Fix):/i.test(line))) cur.body.push(line.trim());
-		else flush();
-	}
-	flush();
-	return out;
-}
-
-/** A clean result: PASS and nothing left to report. */
-export function isClean(verdict: string | undefined, findings: Finding[]): boolean {
-	return verdict === "PASS" && findings.length === 0;
-}
-
-/** A finding as one string: its head line plus its body. */
-export function findingText(f: Finding): string {
-	return f.body ? `${f.head}\n${f.body}` : f.head;
-}
-
-/** Hash of a text, ignoring CRLF and outer whitespace. */
-export function textHash(s: string): string {
-	return createHash("sha1").update(s.replace(/\r\n/g, "\n").trim()).digest("hex");
 }
 
 /** A line diff of `prev` against `next` with 2 lines of context (`+`, `-`, ` ` prefixes, `@@` between hunks). "" when equal; null when too big (cells over 4M or output over `cap` lines). */
@@ -135,11 +79,6 @@ export function planDisputes(reply: string): string | undefined {
 	const end = rest.search(/^##\s*Plan/m);
 	const text = (end >= 0 ? rest.slice(0, end) : rest).trim();
 	return text || undefined;
-}
-
-/** A bare Escape key press, in the legacy and the kitty encodings. */
-export function isEscKey(data: string): boolean {
-	return data === "\x1b" || data === "\x1b[27u";
 }
 
 /** What to do with a complete plan: skip the gate, reuse a verdict, or run the judge (confirm: one run, no fix loop). */
@@ -194,10 +133,6 @@ export function menuJudgeLines(gate: PlanGate | undefined, note?: string): strin
 	return out;
 }
 
-export function findingsBlock(fs: Finding[]): string {
-	return fs.length ? fs.map((f) => `- ${findingText(f).replace(/\n/g, "\n  ")}`).join("\n") : "(none)";
-}
-
 /** The judge's system prompts for a plan: a full pass, or (with `recheck`) the previous findings, the disputes and the diff. */
 export function planReviewPrompts(o: { plan: string; spec?: { kind: "agreed" | "brief"; text: string }; folders: string[]; recheck?: { findings: Finding[]; disputes?: string; diff: string } }): string[] {
 	const spec = o.spec ? `## Spec (${o.spec.kind === "brief" ? "the brief" : "the agreed list"})\n\n${o.spec.text}` : NO_SPEC_NOTE;
@@ -224,6 +159,11 @@ export interface DiscussionReview {
 	afterEntryId?: string;
 	rounds: number;
 	status: "idle" | "awaiting-fix" | "paused";
+}
+
+/** The findings `/flow plan force` carries into planning: the last review's, only when it belongs to the current agreed list. */
+export function forcedOpenFindings(review: DiscussionReview | undefined, listHash: string): Finding[] {
+	return review && listHash !== "" && review.listHash === listHash ? review.findings : [];
 }
 
 /** What to do when the user moves from discuss to plan. `sinceChars` is the length of the transcript since the last review (Infinity when its entry is gone). */

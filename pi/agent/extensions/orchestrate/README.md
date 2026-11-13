@@ -70,6 +70,16 @@ A package is confirmed merged by its **last delivered tree per repo**, not by it
 - Limits: one flow per package (the brief and the plan review say so; a stopped flow may be resumed); a `git_task` merge of an earlier tree is not recorded; a verdict without `ask` (an old run) counts as a merge; a head pushed after the gate needs `--force`; undelivered later commits are only a note; runs without `targets` use the checkout's `@{u}` at check time; a manual `/flow plan` that never returns is only noticed by the K13 idle message (the stall monitor fires only in `execute`), and `/orch merged` or `--force` closes it; more than 1000 PRs merged since the run was created cannot be checked (use `--force`).
 - After an install restart every pi session, the orchestrator and the subs: install `workflow`, `orchestrate` and `shared` together (the gate needs K11 `ask`, the end needs K14).
 
+### Proposal gate
+
+With `autoJudgeProposal: "auto"` (the default), a typed "go" on a finished `## Packages:` proposal first runs a judge (read-only subagent, `roles.judge`, in the orchestrator's working folder) instead of starting the run. It checks that every agreed item is in exactly one package, that `owns` globs match real files and do not overlap, `forbids`, `dependsOn` (cycles, order), that each package is testable alone, that criteria are checkable and that shared interfaces are settled in `decisions`. The widget shows `propose (judging proposal)` meanwhile. A full pass takes about 1-3 min, a recheck under 90 s.
+
+- A clean PASS starts the run. `fix: auto` findings go back to the orchestrator for a revised proposal, which is rechecked (up to `maxProposalJudgeRounds` runs per "go"; then the run starts with the open findings in its kickoff). A `fix: user` finding pauses: answer it, then say "go" again.
+- Esc, any other typed message or `/orch judge cancel` cancels the judge without counting a round; a second "go" only shows a notice. A judge error never blocks: the run starts with a note.
+- `/orch go force` (propose, finished proposal only) starts the run without the judge and carries the matching open findings.
+- Rollback: `autoJudgeProposal: "off"`.
+- With `confirmPlans` on, the approval prompt shows the sub's `judge:` line.
+
 ## Files
 
 Under `<git common dir>/pi/orchestra/<runId>/` (single writer per file; messages are append-only JSON lines, a last line without newline is ignored until complete):
@@ -93,6 +103,23 @@ Ids: `runId` = `o<MMDDHHmm>-<title slug>` (30 characters at most); set name `o<M
 ## Config
 
 `~/.pi/agent/orchestrate.json` (optional): `{ "maxSubs": 4, "pollSeconds": 60, "stallMinutes": 20, "confirmPlans": false, "maxPlanRejections": 3, "maxReplans": 2, "maxAutoAnswers": 2, "maxIdleAnswers": 3, "approvePattern": "..." }`. `approvePattern` is the regex (case-insensitive) for the typed "go"; its default is a copy of the workflow's. A bad value falls back to the default with a warning.
+
+New keys (all optional; a bad value falls back with a warning naming its key path):
+
+| Key | Default | Meaning |
+|---|---|---|
+| `roles.orchestrator` | none | `{ "model": "provider/id", "thinking": "high" }`. The orchestrator session switches to it when orchestrator mode turns on and back when it turns off. `false` means none. |
+| `roles.judge` | session model, thinking `high` | Model of the proposal judge. |
+| `autoJudgeProposal` | `"auto"` | `"off"` or `"auto"`. |
+| `maxProposalJudgeRounds` | 2 | Judge runs per "go" before open auto findings go to the run. |
+| `judge.tools` / `timeoutMs` / `idleTimeoutMs` | `["read","grep","find","ls"]` / 900000 / 300000 | How the judge subagent runs. |
+| `judge.extensions` | the pi-claude-bridge path if that file exists, else `[]` | Extensions the judge loads (needed for `claude-bridge/` models). |
+
+Without `orchestrate.json` no model is switched. The repo ships one (`pi/agent/orchestrate.json`) that is installed with the rest.
+
+**Role switch rules.** The model changes only when the mode goes off to on (`/orch start`) or on to off (`/orch off`), never in a sub-session. `/orch start` saves the current model and thinking level as `prevModel` in the mode entry, so it survives a restart (a restart itself switches nothing: pi restores the model). While a workflow phase is running (not `off`) the model is not switched; the warning names the model to set back with `/model`. When the model is unknown or has no credentials, it warns and keeps the current one.
+
+The `confirmPlans` prompt shows the sub's `judge:` line from its `plan-review` message; without one it is unchanged.
 
 ## Contracts used
 

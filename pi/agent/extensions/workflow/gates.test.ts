@@ -1,7 +1,7 @@
 // node --experimental-strip-types --test gates.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { type Finding, type PlanGate, findingText, isClean, isEscKey, menuJudgeLines, parseFindings, planDisputes, planGateAfterVerdict, planGateDecide, planGateReset, planOfferAction, planReadyJudge, planReviewPrompts, planTextDiff, textHash } from "./gates.ts";
+import { type Finding, type PlanGate, findingText, forcedOpenFindings, isClean, isEscKey, menuJudgeLines, parseFindings, planDisputes, planGateAfterVerdict, planGateDecide, planGateReset, planOfferAction, planReadyJudge, planReviewPrompts, planTextDiff, textHash } from "./gates.ts";
 import { JUDGE_PLAN, JUDGE_PLAN_RECHECK, NO_SPEC_NOTE } from "./prompts.ts";
 
 const f = (route: "auto" | "user", severity: Finding["severity"] = "major", head = "x"): Finding => ({ severity, category: "gap", route, head: `${severity} - [gap] fix: ${route} - ${head}`, body: "Why: w\nFix: f" });
@@ -199,4 +199,12 @@ test("discussionRecheckPrompts carries findings, since-text and list; the format
 	const p = discussionRecheckPrompts([f("auto", "major", "needle")], "SINCE-TEXT", "Agreed so far: NEWLIST", ["D:/x"]).join("\n");
 	assert.ok(p.includes(JUDGE_DISCUSSION_RECHECK) && p.includes("needle") && p.includes("SINCE-TEXT") && p.includes("NEWLIST") && p.includes("D:/x"));
 	assert.ok(JUDGE_DISCUSSION.includes("fix: auto|user"));
+});
+
+test("forcedOpenFindings: only the findings of the current list", () => {
+	const rev = { listHash: "abc", verdict: "FAIL" as const, findings: [f("auto")], rounds: 1, status: "paused" as const };
+	assert.deepEqual(forcedOpenFindings(rev, "abc"), rev.findings);
+	assert.deepEqual(forcedOpenFindings(rev, "old"), []);
+	assert.deepEqual(forcedOpenFindings(undefined, "abc"), []);
+	assert.deepEqual(forcedOpenFindings(rev, ""), []);
 });

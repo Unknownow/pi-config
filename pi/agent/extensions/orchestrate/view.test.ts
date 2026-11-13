@@ -84,3 +84,9 @@ test("board and detail show the judging label", () => {
 	assert.ok(boardLines(mk("plan"), 0, true, 120, 1000).join("\n").includes("phase plan (judging plan)"));
 	assert.ok(!boardLines(mk(), 0, false, 120, 1000).join("\n").includes("judging"));
 });
+
+test("widgetLines shows the proposal judge label without changing the mode checks", () => {
+	assert.ok(widgetLines(null, "propose", 0, undefined, 120, "proposal")[0].includes("orch ▸ propose (judging proposal)"));
+	const plain = widgetLines(null, "propose", 0)[0];
+	assert.ok(plain.includes("orch ▸ propose") && !plain.includes("judging"));
+});

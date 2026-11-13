@@ -9,7 +9,11 @@
  */
 
 import { createHash, randomUUID } from "node:crypto";
-import { judgeSection, parsePlanJudge, phaseLabel, planReviewJudgeLine } from "./plan-judge.ts";
+import { GATE_ENTRY, nextLastProposal, proposalGateAfterFixReply, proposalGateAfterVerdict, proposalGateFromEntries, proposalGateOnInput, proposalGateRounds, proposalGateStart, proposalReviewPrompts, roleOnRestore, roleSwitch, roleWarnText, type ProposalReview, type SavedModel } from "./proposal-gate.ts";
+import { runSubagent } from "../agents/subagent.ts";
+import { branchAssistantTexts, findingsBlock, isEscKey, judgeVerdict, lastAgreedList, parseFindings } from "../shared/findings.ts";
+import type { Finding } from "../shared/findings.ts";
+import { confirmPlanTitle, judgeSection, parsePlanJudge, phaseLabel, planReviewJudgeLine } from "./plan-judge.ts";
 import * as fs from "node:fs";
 import { execFile } from "node:child_process";
 import * as os from "node:os";
@@ -30,8 +34,8 @@ import { buildRepos, crossRunOverlaps, foldersFor, hasKeyPrefix, subRepos, pickD
 import { verdictMatches } from "./inbox.ts";
 import { applyOutbox, combineRepos, deliveryMerged, endDecision, lastDelivery, mergeGateDecision, needsBiggerPage, parseMergedArgs, pickBase, pickGhRepo, prTreeIndex, shouldPoll, stateAfterVerdict, verdictPayload, type EndHow } from "./delivery.ts";
 import { loadConfig, DEFAULTS, type OrchestrateConfig } from "./config.ts";
-import { isProposalReady, MODE_ENTRY, modeFromEntries, onTyped, toolRefusal, type Mode } from "./mode.ts";
-import { repoTableText, section } from "./prompts.ts";
+import { MODE_ENTRY, modeFromEntries, onTyped, toolRefusal, type Mode } from "./mode.ts";
+import { PROPOSAL_FIX, repoTableText, RUN_KICKOFF, section } from "./prompts.ts";
 import { check, OFFLINE_SECONDS, type Snapshot } from "./monitor.ts";
 import { boardLines, buildView, pendingOf, viewSig, widgetLines, type Paint, type SubInput, type View } from "./view.ts";
 import {
@@ -525,7 +529,16 @@ export default function (pi: ExtensionAPI): void {
 	// ---------------------------------------------------------------- orchestrator mode
 
 	let mode: Mode = "off";
-	let proposalReady = false;
+	/** The newest finished proposal (propose mode): what "go" would run. Cleared by any other reply, typed text or mode change. */
+	let lastProposal: { text: string; hash: string } | undefined;
+	let proposalReview: ProposalReview | undefined;
+	let proposalRun: { controller: AbortController; offEsc?: () => void; hash: string; reason?: "esc" | "command" | "force" | "message" | "mode" | "restart" } | undefined;
+	function abortProposal(reason: "esc" | "command" | "force" | "message" | "mode" | "restart"): void {
+		const r = proposalRun;
+		if (!r || r.reason) return;
+		r.reason = reason;
+		r.controller.abort();
+	}
 	let k4Warned = false;
 	const goRe = (): RegExp => {
 		try {
@@ -534,16 +547,61 @@ export default function (pi: ExtensionAPI): void {
 			return new RegExp(DEFAULTS.approvePattern, "i");
 		}
 	};
-	function setMode(m: Mode, announce = true): void {
+	let orchPrevModel: SavedModel | undefined;
+	/** Model switches run one after another, so a quick /orch off cannot be overtaken by the earlier switch. */
+	let roleSwitchChain: Promise<void> = Promise.resolve();
+	/** Puts the session on the orchestrator role's model; warns and keeps the current one when it is missing. Never throws. */
+	async function applyOrchestratorRole(ctx: ExtensionContext): Promise<void> {
+		try {
+			const spec = cfg.roles.orchestrator;
+			if (!spec) return;
+			const slash = spec.model.indexOf("/");
+			const model = slash > 0 ? ctx.modelRegistry.find(spec.model.slice(0, slash), spec.model.slice(slash + 1)) : undefined;
+			if (!model) return say(`model ${spec.model} (orchestrator) not found; keeping the current one`, "warning");
+			if (!(await pi.setModel(model))) return say(`no credentials for ${spec.model} (orchestrator); keeping the current model`, "warning");
+			if (spec.thinking) pi.setThinkingLevel(spec.thinking);
+		} catch (e) {
+			say(`could not switch the model: ${(e as Error).message}`, "warning");
+		}
+	}
+	/** Puts back the model and thinking level from before orchestrator mode; keeps the current ones when the model is gone. */
+	async function restoreModel(ctx: ExtensionContext, saved: SavedModel): Promise<void> {
+		try {
+			const slash = saved.model.indexOf("/");
+			const model = slash > 0 ? ctx.modelRegistry.find(saved.model.slice(0, slash), saved.model.slice(slash + 1)) : undefined;
+			if (!model || !(await pi.setModel(model))) return say(`the model from before orchestrator mode (${saved.model}) is not available; keeping the current one`, "warning");
+			if (saved.thinking) pi.setThinkingLevel(saved.thinking as ReturnType<typeof pi.getThinkingLevel>);
+		} catch (e) {
+			say(`could not restore the model: ${(e as Error).message}`, "warning");
+		}
+	}
+	function setMode(m: Mode, announce = true, ctx?: ExtensionContext): void {
+		const phase = typeof lastK4?.phase === "string" ? lastK4.phase : undefined;
+		let action = roleSwitch({ from: mode, to: m, isSub: !!me, workflowPhase: phase, hasRole: !!cfg.roles.orchestrator, hasPrev: !!orchPrevModel });
+		const warning = action === "warn" ? roleWarnText(m === "off" ? "off" : "on", phase ?? "?", orchPrevModel) : undefined;
+		const saved = orchPrevModel;
+		if (action === "apply") {
+			if (!ctx) action = "none";
+			else if (!ctx.model) {
+				warning === undefined && say("orchestrate: no current model; the model was not switched", "warning");
+				action = "none";
+			} else orchPrevModel = { model: `${ctx.model.provider}/${ctx.model.id}`, thinking: pi.getThinkingLevel() };
+		}
+		abortProposal("mode");
+		if (mode === "off" && m === "discuss") proposalReview = undefined;
 		mode = m;
-		proposalReady = false;
+		lastProposal = undefined;
 		k4Warned = false;
 		try {
-			pi.appendEntry(MODE_ENTRY, { v: 1, mode: m });
+			pi.appendEntry(MODE_ENTRY, { v: 1, mode: m, prevModel: m === "off" ? undefined : orchPrevModel });
 		} catch (e) {
 			say(`could not save the mode: ${(e as Error).message}`, "warning");
 		}
 		if (announce) say(m === "off" ? "orchestrator mode off: the guard is lifted" : `orchestrator mode: ${m}`);
+		if (warning) say(warning, "warning");
+		if (action === "apply" && ctx) roleSwitchChain = roleSwitchChain.then(() => applyOrchestratorRole(ctx));
+		else if (action === "restore" && ctx && saved) roleSwitchChain = roleSwitchChain.then(() => restoreModel(ctx, saved));
+		if (m === "off") orchPrevModel = undefined;
 		updateWidget();
 	}
 	const assistantText = (m: unknown): string => {
@@ -576,7 +634,7 @@ export default function (pi: ExtensionAPI): void {
 		if (why) return { block: true, reason: why };
 	});
 
-	pi.on("input", async (event) => {
+	pi.on("input", async (event, ctx) => {
 		// what the user types is the evidence for a userQuote on an escalated item (best effort)
 		if (!me && owned && event.source !== "extension" && !event.text.trim().startsWith("/")) {
 			recordUserMessage(itemsFile, event.text, Date.now());
@@ -585,20 +643,134 @@ export default function (pi: ExtensionAPI): void {
 		if (me || mode === "off" || event.source === "extension" || event.streamingBehavior) return { action: "continue" as const };
 		const typed = event.text.trim();
 		if (typed.startsWith("/")) return { action: "continue" as const };
-		const t = onTyped(mode, typed, proposalReady, goRe());
-		proposalReady = false;
+		const isGo = goRe().test(typed);
+		const gi = proposalGateOnInput({ running: !!proposalRun, isGo });
+		if (gi === "notice") {
+			say("proposal judge running (Esc or any other message cancels it)");
+			return { action: "handled" as const };
+		}
+		if (gi === "cancel") abortProposal("message");
+		if (mode === "propose" && isGo && lastProposal) {
+			const d = proposalGateStart({ mode: cfg.autoJudgeProposal, hash: lastProposal.hash, last: proposalReview });
+			if (d !== "move") {
+				void runProposalGate(ctx, d, true);
+				return { action: "handled" as const };
+			}
+		}
+		const t = onTyped(mode, typed, !!lastProposal, goRe());
+		lastProposal = undefined;
 		if (!t) return { action: "continue" as const };
-		setMode(t.mode);
+		setMode(t.mode, true, ctx);
 		return { action: "transform" as const, text: `${typed}\n\n${t.append}` };
 	});
 
-	pi.on("agent_end", async (event) => {
+	pi.on("agent_end", async (event, ctx) => {
 		if (me || (mode !== "propose" && mode !== "discuss")) return;
 		const msgs = (event as { messages?: Array<{ role?: string; stopReason?: string }> }).messages ?? [];
 		const last = [...msgs].reverse().find((m) => m.role === "assistant");
 		const body = assistantText(last).trim();
-		proposalReady = mode === "propose" && isProposalReady(body, last?.stopReason === "stop" && body.length > 0);
+		lastProposal = nextLastProposal(mode, body, last?.stopReason === "stop" && body.length > 0);
+		if (mode === "propose" && proposalReview?.status === "awaiting-fix" && !proposalRun) {
+			const a = proposalGateAfterFixReply({ prevHash: proposalReview.hash, ready: !!lastProposal, replyHash: lastProposal?.hash });
+			if (a === "recheck") void runProposalGate(ctx, "recheck", false);
+			else pauseProposal();
+		}
 	});
+
+	function saveReview(): void {
+		if (!proposalReview) return;
+		try {
+			pi.appendEntry(GATE_ENTRY, { v: 1, ...proposalReview });
+		} catch (e) {
+			say(`could not save the proposal gate state: ${(e as Error).message}`, "warning");
+		}
+	}
+	function pauseProposal(): void {
+		if (proposalReview) proposalReview = { ...proposalReview, status: "paused" };
+		saveReview();
+		say(`the proposal judge needs your decision; answer, then say "go" (or /orch go force)`, "warning");
+	}
+	/** Leaves propose for run and sends the kickoff, with the open judge findings when there are any. */
+	function moveToRun(ctx: ExtensionContext, open: Finding[]): void {
+		if (proposalReview) proposalReview = { ...proposalReview, status: "idle" };
+		setMode("run", true, ctx);
+		sendToModel("orchestrate-run-kickoff", open.length ? `${RUN_KICKOFF}\n\nOpen proposal-judge findings; settle them in the briefs' decisions:\n${findingsBlock(open)}` : RUN_KICKOFF);
+	}
+	async function runJudge(ctx: ExtensionContext, systemPrompts: string[], signal: AbortSignal): Promise<{ ok: boolean; text: string; error?: string }> {
+		const role = cfg.roles.judge ?? (ctx.model ? { model: `${ctx.model.provider}/${ctx.model.id}`, thinking: "high" as const } : undefined);
+		if (!role) return { ok: false, text: "", error: "no model for the judge" };
+		return runSubagent({ role, systemPrompts, tools: cfg.judge.tools, task: "Review the package proposal as described in your system prompt.", cwd: ctx.cwd, extensions: cfg.judge.extensions, timeoutMs: cfg.judge.timeoutMs, idleTimeoutMs: cfg.judge.idleTimeoutMs, signal });
+	}
+	async function runProposalGate(ctx: ExtensionContext, decision: "full" | "recheck", resetRounds: boolean): Promise<void> {
+		uiCtx = ctx;
+		abortProposal("restart");
+		const lp = lastProposal;
+		if (!lp) return say("nothing to judge");
+		let rounds = proposalGateRounds({ resetRounds, last: proposalReview });
+		const run: NonNullable<typeof proposalRun> = { controller: new AbortController(), hash: lp.hash };
+		proposalRun = run;
+		if (ctx.hasUI) run.offEsc = ctx.ui.onTerminalInput((d) => (isEscKey(d) ? (abortProposal("esc"), { consume: true }) : undefined));
+		updateWidget();
+		let repoTable: string | undefined;
+		try {
+			const repos = await sessionRepos(ctx);
+			repoTable = repos ? repoTableText(repos) : undefined;
+		} catch {
+			// the judge then gets the single-repo note
+		}
+		const prompts = proposalReviewPrompts({ proposal: lp.text, list: lastAgreedList(branchAssistantTexts(ctx.sessionManager.getBranch())), repoTable, recheck: decision === "recheck" ? proposalReview?.findings : undefined });
+		let res: { ok: boolean; text: string; error?: string };
+		try {
+			if (run.reason || proposalRun !== run) throw new Error("cancelled");
+			ctx.ui.setWorkingMessage("judge reviewing the proposal…");
+			res = await runJudge(ctx, prompts, run.controller.signal);
+		} catch (e) {
+			res = { ok: false, text: "", error: (e as Error).message };
+		} finally {
+			run.offEsc?.();
+			if (proposalRun === run) proposalRun = undefined;
+			try {
+				ctx.ui.setWorkingMessage();
+			} catch {
+				// the context may be gone
+			}
+			updateWidget();
+		}
+		if (run.reason) {
+			if (run.reason === "esc" || run.reason === "command") {
+				say("proposal judge cancelled; still in propose");
+				if (proposalReview) {
+					proposalReview = { ...proposalReview, status: "idle" };
+					saveReview();
+				}
+			}
+			return;
+		}
+		if (mode !== "propose" || lastProposal?.hash !== run.hash) return;
+		if (!res.ok || !res.text.trim()) {
+			say(`proposal judge did not run: ${res.error ?? "empty result"}`, "warning");
+			return moveToRun(ctx, []);
+		}
+		const findings = parseFindings(res.text);
+		const verdict = judgeVerdict(res.text);
+		rounds += 1;
+		proposalReview = { hash: run.hash, verdict, findings, rounds, status: "idle" };
+		saveReview();
+		try {
+			pi.sendMessage({ customType: "orchestrate-proposal-review", content: `Proposal judge: ${verdict}${findings.length ? `\n${findingsBlock(findings)}` : ""}`, display: true });
+		} catch {
+			// display only
+		}
+		const next = proposalGateAfterVerdict({ verdict, findings, rounds, max: cfg.maxProposalJudgeRounds });
+		if (next === "move") return moveToRun(ctx, []);
+		if (next === "move-open") return moveToRun(ctx, findings);
+		if (next === "fix") {
+			proposalReview = { ...proposalReview, status: "awaiting-fix" };
+			saveReview();
+			return sendToModel("orchestrate-proposal-fix", `${PROPOSAL_FIX}\n\n${findingsBlock(findings.filter((f) => f.route === "auto"))}`);
+		}
+		pauseProposal();
+	}
 
 	// ---------------------------------------------------------------- orchestrator side
 
@@ -837,7 +1009,7 @@ export default function (pi: ExtensionAPI): void {
 			ui.setWidget("orchestrate", (tui: { requestRender(): void }, theme: { fg: (c: string, t: string) => string }) => {
 				widgetTui = tui;
 				return {
-					render: (width: number) => widgetLines(currentView, mode, Date.now(), paintWith(theme), width).map((l) => truncateToWidth(l, width)),
+					render: (width: number) => widgetLines(currentView, mode, Date.now(), paintWith(theme), width, proposalRun ? "proposal" : undefined).map((l) => truncateToWidth(l, width)),
 					invalidate: () => undefined,
 					dispose: () => {
 						widgetTui = undefined;
@@ -1624,7 +1796,9 @@ export default function (pi: ExtensionAPI): void {
 			let approve = params.approve;
 			let reasons = params.reasons ?? "";
 			if (approve && cfg.confirmPlans && ctx.hasUI) {
-				const pick = await ctx.ui.select(`Approve plan of ${params.id}? ${params.summary}`, ["Approve", "Reject"]);
+				const review = readNew(sf(o, params.id, "outbox.jsonl"), 0).msgs.filter((m) => m.type === "plan-review" && m.data?.n === params.n).pop();
+				const judgeLine = typeof review?.data?.judgeLine === "string" ? review.data.judgeLine : undefined;
+				const pick = await ctx.ui.select(confirmPlanTitle(params.id, params.summary, judgeLine), ["Approve", "Reject"]);
 				if (pick !== "Approve") {
 					approve = false;
 					reasons = (await ctx.ui.input("Why reject? (sent to the sub-session)", "")) || "the user rejected the plan";
@@ -1736,9 +1910,9 @@ export default function (pi: ExtensionAPI): void {
 	});
 
 	pi.registerCommand("orch", {
-		description: "Orchestrator mode and run: start (read-only discussion), off, status, watch (resume watching a run), merged <id> (check a PR merge now), end",
+		description: "Orchestrator mode and run: start (read-only discussion; \"go\" on a proposal runs the proposal judge first), off, go force, judge cancel, status, watch (resume watching a run), merged <id> (check a PR merge now), end",
 		getArgumentCompletions: (prefix) =>
-			["start", "off", "status", "board", "watch", "merged", "end"].filter((s) => s.startsWith(prefix.trim())).map((s) => ({ value: s, label: s })),
+			["start", "off", "go", "judge", "status", "board", "watch", "merged", "end"].filter((s) => s.startsWith(prefix.trim())).map((s) => ({ value: s, label: s })),
 		handler: async (args, ctx) => {
 			uiCtx = ctx;
 			let sub = args.trim().split(/\s+/)[0];
@@ -1751,14 +1925,24 @@ export default function (pi: ExtensionAPI): void {
 					if (!common) throw new Error("not in a git repository");
 					const active = listActiveRuns(common).runs[0];
 					if (active) throw new Error(`run ${active.id} is still active in this repo; resume it with /orch watch or end it with /orch end`);
-					setMode("discuss", false);
+					setMode("discuss", false, ctx);
 					const title = args.trim().slice("start".length).trim();
 					ctx.ui.notify("orchestrate: discuss mode (read-only). Say \"go\" for the package proposal, \"go\" again to run it; /orch off lifts the guard.", "info");
 					if (title) pi.sendUserMessage(title, { deliverAs: "followUp" });
 				} else if (sub === "mode") {
-					ctx.ui.notify(`orchestrate: mode ${mode}${mode === "discuss" ? "; \"go\" asks for the package proposal" : mode === "propose" ? "; \"go\" on a finished proposal starts the run" : ""}; /orch off lifts the guard`, "info");
+					ctx.ui.notify(`orchestrate: mode ${mode}${mode === "discuss" ? "; \"go\" asks for the package proposal" : mode === "propose" ? "; \"go\" on a finished proposal runs the proposal judge, then starts the run" : ""}; /orch off lifts the guard`, "info");
+				} else if (sub === "go") {
+					if (args.trim().split(/\s+/)[1]?.toLowerCase() !== "force") throw new Error("usage: /orch go force (runs the proposal without the judge)");
+					if (mode !== "propose") throw new Error("/orch go force works only in propose");
+					if (!lastProposal) throw new Error("no finished proposal to run");
+					abortProposal("force");
+					moveToRun(ctx, proposalReview?.hash === lastProposal.hash ? proposalReview.findings : []);
+				} else if (sub === "judge") {
+					if (args.trim().split(/\s+/)[1]?.toLowerCase() !== "cancel") throw new Error("usage: /orch judge cancel");
+					if (proposalRun) abortProposal("command");
+					else ctx.ui.notify("orchestrate: no judge running", "info");
 				} else if (sub === "off") {
-					setMode("off");
+					setMode("off", true, ctx);
 					if (owned) ctx.ui.notify(`orchestrate: the watcher keeps running run ${owned.runId}`, "info");
 				} else if (sub === "status") {
 					ctx.ui.notify(await table(), "info");
@@ -1771,7 +1955,7 @@ export default function (pi: ExtensionAPI): void {
 					ctx.ui.notify(`orchestrate: ${(await checkEnded(true, [pm.id], pm.force)).join("\n") || "nothing to check"}`, "info");
 				} else if (sub === "end" && !owned) {
 					if (mode === "off") throw new Error("no active run in this session");
-					setMode("off");
+					setMode("off", true, ctx);
 				} else if (sub === "end") {
 					await mutate((r) => {
 						r.state = "ended";
@@ -1779,7 +1963,7 @@ export default function (pi: ExtensionAPI): void {
 					const id = owned?.runId;
 					if (id) unregister(id);
 					stopWatcher();
-					if (mode !== "off") setMode("off", false);
+					if (mode !== "off") setMode("off", false, ctx);
 					ctx.ui.notify(`orchestrate: run ${id} ended; the worktrees stay (remove them with /wt)`, "info");
 				} else if (sub === "watch") {
 					const common = await commonDir(exec, ctx.cwd);
@@ -1790,14 +1974,14 @@ export default function (pi: ExtensionAPI): void {
 					const alive = run.owner.host === os.hostname() && pidAlive(run.owner.pid) && run.owner.pid !== process.pid;
 					if (!mine && alive) throw new Error(`run ${run.id} is watched by another live session (pid ${run.owner.pid})`);
 					startWatcher({ common, runId: run.id, repoCwd: ctx.cwd });
-					setMode("run", false);
+					setMode("run", false, ctx);
 					await resetStaleSpawning(run); // before the owner changes: a dead owner is part of the test
 					await mutate((r) => {
 						r.owner = { pid: process.pid, host: os.hostname(), session: ctx.sessionManager.getSessionFile() ?? "" };
 					});
 					ctx.ui.notify(`orchestrate: watching run ${run.id}`, "info");
 				} else {
-					ctx.ui.notify("usage: /orch start [title] | off | status | board | watch | merged <id> | end", "warning");
+					ctx.ui.notify("usage: /orch start [title] | off | go force | judge cancel | status | board | watch | merged <id> | end", "warning");
 				}
 			} catch (e) {
 				ctx.ui.notify(`orchestrate: ${(e as Error).message}`, "error");
@@ -1894,7 +2078,10 @@ export default function (pi: ExtensionAPI): void {
 		itemsFile = emptyItems();
 		identity = "unknown";
 		mode = modeFromEntries(ctx.sessionManager.getBranch());
-		proposalReady = false;
+		orchPrevModel = roleOnRestore(ctx.sessionManager.getBranch());
+		proposalReview = proposalGateFromEntries(ctx.sessionManager.getBranch());
+		abortProposal("restart");
+		lastProposal = undefined;
 		k4Warned = false;
 		widgetMounted = false;
 		widgetTui = undefined;
@@ -1921,6 +2108,7 @@ export default function (pi: ExtensionAPI): void {
 			me = m;
 			post("session-started", `sub-session of ${m.sub.id} started`, { instance: INSTANCE });
 			mode = "off";
+			orchPrevModel = undefined;
 			const fresh = !fs.existsSync(`${m.dir}/status.json`);
 			started = !fresh;
 			every(3_000, deliverInbox);

@@ -195,14 +195,14 @@ export const pendingMark = (p: Pending): string => {
 	return `⚠ accept ${p.repo ? `${p.repo} ` : ""}${p.ref.slice(0, 7)}`;
 };
 
-export function widgetLines(view: View | null, mode: string, _now: number, paint: Paint = plain, width = 120): string[] {
+export function widgetLines(view: View | null, mode: string, _now: number, paint: Paint = plain, width = 120, judging?: string): string[] {
 	if (!view) {
-		if (mode === "discuss" || mode === "propose") return [fit([["accent", `orch ▸ ${mode}`]], width, paint)];
+		if (mode === "discuss" || mode === "propose") return [fit([["accent", `orch ▸ ${phaseLabel(mode, judging)}`]], width, paint)];
 		if (mode === "run") return [fit([["accent", "orch ▸ run"], ["dim", " (no data yet)"]], width, paint)];
 		return [];
 	}
 	const running = view.subs.filter((s) => ["spawning", "spawned", "planning", "executing", "awaiting-acceptance"].includes(s.state)).length;
-	const head: Seg[] = [["accent", `orch ${view.runId} ▸ ${mode === "off" ? "watching" : mode}`], ["dim", `  ${running}/${view.maxSubs} running`]];
+	const head: Seg[] = [["accent", `orch ${view.runId} ▸ ${mode === "off" ? "watching" : phaseLabel(mode, judging)}`], ["dim", `  ${running}/${view.maxSubs} running`]];
 	if (view.waitingForUser) head.push(["err", `  ${view.waitingForUser} waiting for you`]);
 	const lines = [fit(head, width, paint)];
 	for (const s of view.subs) {
