@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { test } from "node:test";
-import { DEFAULTS, loadConfig, parseConfig } from "./config.ts";
+import { BRIDGE, DEFAULTS, loadConfig, parseConfig } from "./config.ts";
 
 test("defaults", () => {
 	assert.deepEqual(parseConfig(undefined), { config: DEFAULTS });
@@ -51,4 +51,59 @@ test("the caps: defaults, and positive integers only", () => {
 	assert.equal(bad.config.maxReplans, 2);
 	assert.equal(bad.config.maxAutoAnswers, 2);
 	assert.match(bad.warning!, /maxReplans, maxAutoAnswers/);
+});
+
+const D1 = {
+	confirmPlans: true,
+	roles: { orchestrator: { model: "claude-bridge/claude-opus-5-5", thinking: "high" }, judge: { model: "claude-bridge/claude-opus-5-5", thinking: "high" } },
+	autoJudgeProposal: "auto",
+	maxProposalJudgeRounds: 2,
+	judge: { tools: ["read", "grep", "find", "ls"], timeoutMs: 900000, idleTimeoutMs: 300000, extensions: ["~/.pi/agent/npm/node_modules/pi-claude-bridge/src/index.ts"] },
+};
+
+test("proposal-judge defaults: the bridge only when it exists", () => {
+	const yes = parseConfig(undefined, () => true).config;
+	const no = parseConfig(undefined, () => false).config;
+	assert.deepEqual(yes.judge.extensions, [BRIDGE]);
+	assert.deepEqual(no.judge.extensions, []);
+	assert.deepEqual(no.roles, {});
+	assert.equal(no.autoJudgeProposal, "auto");
+	assert.equal(no.maxProposalJudgeRounds, 2);
+	assert.deepEqual(no.judge.tools, ["read", "grep", "find", "ls"]);
+});
+
+test("the full D1 object parses without a warning; nothing leaks into later calls", () => {
+	const r = parseConfig(D1, () => false);
+	assert.equal(r.warning, undefined);
+	assert.deepEqual(r.config.roles.orchestrator, { model: "claude-bridge/claude-opus-5-5", thinking: "high" });
+	assert.deepEqual(r.config.roles.judge, { model: "claude-bridge/claude-opus-5-5", thinking: "high" });
+	assert.deepEqual(r.config.judge.extensions, [D1.judge.extensions[0]]);
+	const again = parseConfig({}, () => false);
+	assert.deepEqual(again.config.roles, {});
+	assert.deepEqual(again.config.judge.extensions, []);
+	assert.deepEqual(DEFAULTS.roles, {});
+});
+
+test("bad new values fall back and are named by key path", () => {
+	const cases: [Record<string, unknown>, RegExp][] = [
+		[{ roles: { judge: { model: "nope" } } }, /roles\.judge/],
+		[{ roles: { orchestrator: { model: "a/b", thinking: "ultra" } } }, /roles\.orchestrator/],
+		[{ autoJudgeProposal: "yes" }, /autoJudgeProposal/],
+		[{ maxProposalJudgeRounds: 0 }, /maxProposalJudgeRounds/],
+		[{ judge: { tools: [] } }, /judge\.tools/],
+		[{ judge: { timeoutMs: 0, idleTimeoutMs: -1 } }, /judge\.timeoutMs, judge\.idleTimeoutMs/],
+	];
+	for (const [raw, re] of cases) {
+		const r = parseConfig(raw, () => false);
+		assert.match(r.warning!, re);
+		assert.deepEqual(r.config.roles, {});
+		assert.equal(r.config.maxProposalJudgeRounds, 2);
+	}
+});
+
+test("roles.orchestrator: false means none; idleTimeoutMs 0 is allowed", () => {
+	const r = parseConfig({ roles: { orchestrator: false }, judge: { idleTimeoutMs: 0 } }, () => false);
+	assert.equal(r.warning, undefined);
+	assert.equal(r.config.roles.orchestrator, undefined);
+	assert.equal(r.config.judge.idleTimeoutMs, 0);
 });
