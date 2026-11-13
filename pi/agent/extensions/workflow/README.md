@@ -145,6 +145,7 @@ Config: `"quick": { "maxJudgeRounds": 2, "maxMinorRounds": 0, "knowledgeCheck": 
 
 When you move from discuss to plan ("go", `/flow plan`, `/flow approve`) and `autoJudgeDiscussion` is `"auto"`, the judge first checks the last `Agreed so far:` list. Without a list the gate warns and moves on.
 
+- `/flow plan force` skips the judge and carries the matching open findings into planning. It is the way out of a repeated `fix: user` pause.
 - Findings use the same `fix: auto|user` tags as the plan judge. A clean PASS on an unchanged list skips the gate; with an earlier review the judge rechecks (previous findings plus the discussion since, up to 30k characters) instead of a full pass.
 - When every finding is `fix: auto` the discuss model gets them as a `workflow-discussion-fix` message and answers with a new list, which is rechecked (at most `maxDiscussionJudgeRounds`, default 2). At the cap with only auto findings the flow moves to plan and the open findings go into the plan kickoff.
 - Any `fix: user` finding pauses the gate (also at the cap): answer it, then say go again. A reply with no new list, or one that ends in a question, also pauses.
@@ -372,6 +373,7 @@ next run starts.
 | `/flow` | status: phase, the model for each role, config path |
 | `/flow board` | live view of every flow on this machine (overlay, read-only) |
 | `/flow quick [request]` | start a quick flow (see "Quick flow") |
+| `/flow plan force` | in discuss only: move to plan without the discussion judge; the open findings of the current `Agreed so far:` list go to the planner |
 | `/flow discuss` / `plan` / `execute` / `off` | switch phase (`off` restores the model and thinking level from before the flow). `/flow plan` from discuss also asks the planner for the `Plan:`; `/flow approve` in discuss does the same |
 | `/flow approve` | approve the plan: switch to execute and start (also offered when a plan ends) |
 | `/flow escalate` (`fable`) / `/flow back` (`opusplan`) | manual escalation and return |

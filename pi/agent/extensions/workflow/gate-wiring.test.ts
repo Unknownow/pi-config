@@ -97,3 +97,13 @@ test("the discuss agent_end branch uses discussionGateAfterFixReply", () => {
 	const i = source.indexOf("discussionGateAfterFixReply({");
 	assert.ok(i > 0 && source.indexOf('state.phase === "discuss" && state.discussionReview?.status === "awaiting-fix"') > 0);
 });
+
+test("/flow plan force moves to plan with the matching findings and never starts the gate", () => {
+	const a = source.indexOf('rest[0]?.toLowerCase() === "force"');
+	assert.ok(a > 0);
+	const m = source.indexOf("moveToPlan(", a);
+	const b = source.slice(a, source.indexOf("return;", m));
+	assert.ok(b.includes("moveToPlan(ctx, forcedOpenFindings("));
+	assert.ok(!b.includes("startDiscussionGate("));
+	assert.ok(source.includes('{ value: "plan force"'));
+});

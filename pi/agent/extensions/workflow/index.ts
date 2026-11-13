@@ -51,7 +51,7 @@ import { idleReason, notifyCommand, notifyDue } from "./notify.ts";
 import * as prompts from "./prompts.ts";
 import { discussionReviewPrompts, discussionVerdict, lastAgreedList } from "./discussion-review.ts";
 import { branchTranscript } from "../shared/transcript.ts";
-import { type DiscussionReview, type Finding, type PlanGate, type SpecKind, discussionGateAfterFixReply, discussionGateAfterVerdict, discussionGateOnInput, discussionGateStart, discussionRecheckPrompts, findingText, isClean, isEscKey, menuJudgeLines, parseFindings, planDisputes, planGateAfterVerdict, planGateDecide, planGateReset, planOfferAction, planReadyJudge, planReviewPrompts, planTextDiff, textHash } from "./gates.ts";
+import { type DiscussionReview, type Finding, type PlanGate, type SpecKind, discussionGateAfterFixReply, discussionGateAfterVerdict, discussionGateOnInput, discussionGateStart, discussionRecheckPrompts, findingText, forcedOpenFindings, isClean, isEscKey, menuJudgeLines, parseFindings, planDisputes, planGateAfterVerdict, planGateDecide, planGateReset, planOfferAction, planReadyJudge, planReviewPrompts, planTextDiff, textHash } from "./gates.ts";
 import { planTitle } from "./delivery.ts";
 import { pathCompletions } from "./pickers.ts";
 import { ghCandidates, withPathDir } from "./gh-path.ts";
@@ -4567,6 +4567,7 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 		{ value: "board", label: "board - live view of every flow on this machine" },
 		{ value: "discuss", label: "discuss - discuss phase (read-only, talk before planning)" },
 		{ value: "plan", label: "plan - plan phase (read-only, planner model); from a quick scope card, a full flow" },
+		{ value: "plan force", label: "plan force - from discuss, move to plan without the discussion judge" },
 		{ value: "quick", label: "quick [request] - quick flow: short scope card, execute, one review, full delivery" },
 		{ value: "approve", label: "approve - approve the plan, switch to execute and start" },
 		{ value: "execute", label: "execute - execute phase without sending anything" },
@@ -4746,6 +4747,16 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 				case "plan":
 				case "execute":
 				case "off": {
+					if (sub.toLowerCase() === "plan" && rest[0]?.toLowerCase() === "force") {
+						if (state.phase !== "discuss") {
+							ctx.ui.notify("workflow: /flow plan force works only in discuss", "warning");
+							return;
+						}
+						const list = lastAgreedList(branchAssistantTexts(ctx.sessionManager.getBranch()));
+						const hash = list ? textHash(list) : "";
+						await moveToPlan(ctx, forcedOpenFindings(state.discussionReview, hash));
+						return;
+					}
 					if (sub.toLowerCase() === "plan" && state.phase === "plan" && state.profile === "quick") {
 						await toFullFlow(ctx);
 						return;
