@@ -574,19 +574,48 @@ Commands run from `pi/agent/extensions/workflow` and `pi/agent/extensions/orches
 - **Stage 2:** `workflow: automatic discussion judge gate` — `workflow/gates.ts`, `gates.test.ts`, `gate-wiring.test.ts`, `prompts.ts`, `agent-end.ts`, `discussion-review.ts` (if touched), `discussion-review.test.ts`, `index.ts`, `README.md`, `docs/workflow-improvements.md`.
 - **Stage 3:** `orchestrate: show sub plan-judge results and judging state` — `orchestrate/plan-judge.ts`, `plan-judge.test.ts`, `index.ts`, `store.ts`, `view.ts`, `view.test.ts`, `wiring.test.ts`, `README.md`, `docs/workflow-improvements.md`.
 
+## Amendment 1 (arbiter)
+**S1 (amended): `planGateDecide` in `workflow/gates.ts`.**
+- Add the input `hasDisputes?: boolean`:
+  ```ts
+  planGateDecide(o: { mode: "off"|"auto"; quick: boolean; planHash: string; gate?: PlanGate; hasDisputes?: boolean }): "off" | "reuse" | "confirm" | "recheck" | "full"
+  ```
+- New row, checked before `reuse`: return `recheck` when all of these hold:
+  - `gate.planHash === planHash`;
+  - `hasDisputes` is true;
+  - `gate.judgedPlan` is set;
+  - `gate.autoFindings.length + gate.userFindings.length > 0`;
+  - `gate.cappedHash` is unset.
+- Otherwise the existing table applies, so a capped gate still reuses. This way disputes alone never push the gate past `maxPlanJudgeRounds`.
+
+**S7 (amended): the plan branch in `workflow/index.ts` (`agent_end`, the `planGateDecide` call).**
+- Pass `hasDisputes: planFixing && planDisputes(text) !== undefined`. `planFixing` is cleared at the top of the branch, so read its value before that line.
+- The point: only a reply to a `workflow-plan-fix` message gets a dispute-driven recheck.
+- `runPlanGate` keeps taking the empty diff `""` as a valid recheck input. The recheck carries the previous findings, the `Disputes:` block from `lastAssistantText` and the empty diff. It counts as a normal run (rounds + 1).
+- `judgePlanNow` is unchanged: it passes no `hasDisputes`.
+
+**S9 (amended): add these `planGateDecide` cases to `workflow/gates.test.ts`.**
+- Same hash with `hasDisputes` and open findings gives `recheck`.
+- Same hash with `hasDisputes` and a `cappedHash` set gives `reuse`.
+- Same hash with `hasDisputes` but no findings (a clean PASS) gives `reuse`.
+- Same hash without `hasDisputes` gives `reuse`, as today.
+
+**S9 (amended): add to `workflow/gate-wiring.test.ts`.**
+- The plan branch's `planGateDecide` call passes `hasDisputes`, and that value is built from `planDisputes(`.
+
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 Create the pure helpers in `workflow/gates.ts` (new file). Export:
-- [ ] S2 Add the plan prompts and the `fix:` tag in `workflow/prompts.ts`.
-- [ ] S3 Add the config keys in `workflow/config.ts`.
-- [ ] S4 Hold back idle while a judge runs (`workflow/asks.ts:131`).
-- [ ] S5 Add K4 `judging` (`index.ts` `emitStatus` :546-554).
-- [ ] S6 Add the state fields and resets (`index.ts`).
-- [ ] S7 Wire the plan gate (`index.ts`).
-- [ ] S8 Input and commands (`index.ts`).
-- [ ] S9 Tests for Stage 1.
-- [ ] S10 Docs for Stage 1.
-- [ ] S11 Run the Stage 1 tests (see Tests). The full suite may only fail in the known `publish.test.ts`.
+- [x] S1 Create the pure helpers in `workflow/gates.ts` (new file). Export:
+- [x] S2 Add the plan prompts and the `fix:` tag in `workflow/prompts.ts`.
+- [x] S3 Add the config keys in `workflow/config.ts`.
+- [x] S4 Hold back idle while a judge runs (`workflow/asks.ts:131`).
+- [x] S5 Add K4 `judging` (`index.ts` `emitStatus` :546-554).
+- [x] S6 Add the state fields and resets (`index.ts`).
+- [x] S7 Wire the plan gate (`index.ts`).
+- [x] S8 Input and commands (`index.ts`).
+- [x] S9 Tests for Stage 1.
+- [x] S10 Docs for Stage 1.
+- [x] S11 Run the Stage 1 tests (see Tests). The full suite may only fail in the known `publish.test.ts`.
 - [ ] S12 Add to `gates.ts`:
 - [ ] S13 Prompts (`workflow/prompts.ts`).
 - [ ] S14 Wire the discussion gate (`index.ts`).

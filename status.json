@@ -1,17 +1,29 @@
 {
   "v": 1,
   "flowId": "20261113-2312-automatic-judge-gates-for-the-discussion-ba4c",
-  "rev": 1,
-  "updated": "2026-11-13T16:12:51.438Z",
+  "rev": 2,
+  "updated": "2026-11-13T16:21:32.545Z",
   "title": "Automatic judge gates for the discussion and the plan",
   "stage": 1,
-  "done": [],
+  "done": [
+    "S1",
+    "S2",
+    "S3",
+    "S4",
+    "S5",
+    "S6",
+    "S7",
+    "S8",
+    "S9",
+    "S10",
+    "S11"
+  ],
   "reviewBase": {
     "d:/works/pi-config": "a90368c6727c735001b3e1c4c668550a4de2ce17"
   },
   "repos": [
     {
-      "branch": "master",
+      "branch": "flow/judge-gates",
       "remote": "github.com/Unknownow/pi-config",
       "primary": true
     }
