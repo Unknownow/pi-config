@@ -128,8 +128,8 @@ export function restoreAsks(saved: { openAsk?: OpenAsk; waiting?: { askId?: stri
 }
 
 /** Whether the K13 idle timer may fire now. */
-export function idleDue(o: { phase: string; idle: boolean; compacting: boolean; compactPending: boolean; pendingHandover: boolean }): boolean {
-	return (o.phase === "plan" || o.phase === "execute") && o.idle && !o.compacting && !o.compactPending && !o.pendingHandover;
+export function idleDue(o: { phase: string; idle: boolean; compacting: boolean; compactPending: boolean; pendingHandover: boolean; judging?: boolean }): boolean {
+	return !o.judging && (o.phase === "plan" || o.phase === "execute") && o.idle && !o.compacting && !o.compactPending && !o.pendingHandover;
 }
 
 export const IDLE_TEXT_MAX = 4000;

@@ -51,6 +51,7 @@ import { idleReason, notifyCommand, notifyDue } from "./notify.ts";
 import * as prompts from "./prompts.ts";
 import { discussionReviewPrompts, discussionVerdict, lastAgreedList } from "./discussion-review.ts";
 import { branchTranscript } from "../shared/transcript.ts";
+import { type PlanGate, type SpecKind, findingText, isClean, isEscKey, menuJudgeLines, parseFindings, planDisputes, planGateAfterVerdict, planGateDecide, planGateReset, planOfferAction, planReadyJudge, planReviewPrompts, planTextDiff, textHash } from "./gates.ts";
 import { planTitle } from "./delivery.ts";
 import { pathCompletions } from "./pickers.ts";
 import { ghCandidates, withPathDir } from "./gh-path.ts";
@@ -188,6 +189,10 @@ interface FlowState {
 	judgedMerges?: Record<string, { pr?: string; commit?: string; tree: string; stage?: number }>;
 	/** The pass hash for which the executor was reminded of open steps. */
 	stageNudgedFor?: string;
+	/** What the automatic plan judge knows about the plan on screen: its hash, runs, open findings and the text it judged. */
+	planGate?: PlanGate;
+	/** The brief a start-plan caller (K9) sent: the plan judge's spec in that flow. */
+	planSpec?: { kind: "brief"; text: string };
 }
 
 interface LastJudge {
@@ -337,6 +342,19 @@ export default function workflow(pi: ExtensionAPI) {
 		);
 	}
 	/** K13 handled the idle period: the local notification stays off until the next turn. */
+	/** The automatic judge gate that runs now (not persisted: a restart drops it). Only one at a time. */
+	type GateAbort = "esc" | "command" | "message" | "phase" | "restart";
+	let gateRun: { kind: "discussion" | "plan"; controller: AbortController; offEsc?: () => void; judgedHash: string; reason?: GateAbort } | undefined;
+	/** A "go" typed while the plan judge ran or the planner fixed its findings: it approves only after a clean PASS. */
+	let planApproveQueued = false;
+	/** The planner is fixing the plan judge's findings (between the fix message and the next reply). */
+	let planFixing = false;
+	/** Aborts the running gate; the run settles on its own and decides what to do from `reason`. */
+	function abortGate(reason: GateAbort): void {
+		if (!gateRun || gateRun.reason) return;
+		gateRun.reason = reason;
+		gateRun.controller.abort();
+	}
 	let idleHandled = false;
 	/** The K13 claim is still open: the local notice waits for its answer. */
 	let idlePending = false;
@@ -347,7 +365,7 @@ export default function workflow(pi: ExtensionAPI) {
 		idle13Timer = setTimeout(() => {
 			idle13Timer = undefined;
 			try {
-				if (!idleDue({ phase: state.phase, idle: ctx.isIdle(), compacting, compactPending, pendingHandover: !!pendingHandover })) {
+				if (!idleDue({ phase: state.phase, idle: ctx.isIdle(), compacting, compactPending, pendingHandover: !!pendingHandover, judging: !!gateRun })) {
 					if (state.phase === "plan" || state.phase === "execute") if (compacting || compactPending || pendingHandover) scheduleIdleClaim(ctx);
 					return;
 				}
@@ -384,7 +402,7 @@ export default function workflow(pi: ExtensionAPI) {
 		idleTimer = setTimeout(() => {
 			idleTimer = undefined;
 			try {
-				if (notifiedSinceStart || !idleNoticeAllowed({ handled: idleHandled, pending: idlePending }) || !ctx.isIdle()) return;
+				if (gateRun || notifiedSinceStart || !idleNoticeAllowed({ handled: idleHandled, pending: idlePending }) || !ctx.isIdle()) return;
 				if (compacting || compactPending || pendingHandover) return scheduleIdleNotice(ctx);
 				notifyUser(ctx, idleReason({ phase: state.phase, waiting: state.waiting?.reason }));
 			} catch {}
@@ -519,6 +537,7 @@ export default function workflow(pi: ExtensionAPI) {
 		const cl = state.checklist;
 		if (ctx.hasUI) ctx.ui.setStatus("workflow-plan", cl?.length && state.phase === "execute" ? `plan ${cl.filter((i) => !isHuman(i) && i.done).length}/${cl.filter((i) => !isHuman(i)).length}` : undefined);
 		if (ctx.hasUI) ctx.ui.setStatus("workflow-wait", state.waiting && state.phase === "execute" ? `waiting: ${state.waiting.reason.slice(0, 40)}` : undefined);
+		if (ctx.hasUI) ctx.ui.setStatus("workflow-judge", gateRun ? (gateRun.kind === "plan" ? `judging plan (run ${(state.planGate?.rounds ?? 0) + 1}/${cfg.maxPlanJudgeRounds})` : "judging discussion") : undefined);
 		if (ctx.hasUI) ctx.ui.setStatus("workflow-quick", state.profile === "quick" && state.phase !== "off" ? "quick" : undefined);
 		if (ctx.hasUI) ctx.ui.setStatus("workflow-autopilot", autopilotOn() ? "autopilot" : undefined);
 		if (ctx.hasUI) ctx.ui.setStatus("workflow-folders", n ? `+${n} folder${n === 1 ? "" : "s"}` : undefined);
@@ -551,6 +570,7 @@ export default function workflow(pi: ExtensionAPI) {
 			...(st ? { stage: st.current, stages: st.stages.length } : {}),
 			...(cl?.length ? { done: cl.filter((i) => i.done).length, total: cl.length } : {}),
 			...(cl && state.waiting ? { waiting: true } : {}),
+			...(gateRun ? { judging: gateRun.kind } : {}),
 		};
 		const json = JSON.stringify(payload);
 		if (json === lastStatusEvent) return;
@@ -626,6 +646,15 @@ export default function workflow(pi: ExtensionAPI) {
 	async function setPhase(ctx: ExtensionContext, phase: Phase, profile?: "quick"): Promise<void> {
 		const leavingFlow = state.phase === "execute" && phase !== state.phase;
 		if (flowEndKind({ from: state.phase, to: phase, viaEndFlow: endFlowFlag.on })) emitFlowEnd("abandoned");
+		if (phase !== state.phase) {
+			abortGate("phase");
+			planApproveQueued = false;
+			planFixing = false;
+		}
+		if (phase === "plan" && state.phase !== "plan") {
+			state.planGate = planGateReset(state.planGate, "enter-plan");
+			state.planSpec = undefined;
+		}
 		if (leavingFlow && state.approvedPlan && !state.flowSummarized) {
 			summarizeFlow(stoppedSummary(phase === "plan" ? "back to planning" : phase === "discuss" ? "back to discussion" : "abandoned"), false);
 		}
@@ -3219,6 +3248,18 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 			ctx.ui.notify(`workflow: planning on ${describeRole(cfg.roles.plan)}`, "info");
 			return { action: "transform", text: `${event.text.trim()}\n\n${prompts.PLAN_KICKOFF}` };
 		}
+		// The plan judge is running (or the planner is fixing its findings): "go" waits for a clean PASS, other text cancels the judge.
+		if (state.phase === "plan" && event.source !== "extension" && typed && !typed.startsWith("/") && (gateRun?.kind === "plan" || planFixing)) {
+			if (approveRe().test(typed)) {
+				planApproveQueued = true;
+				ctx.ui.notify(gateRun ? `workflow: approval queued: plan judge running (run ${(state.planGate?.rounds ?? 0) + 1}/${cfg.maxPlanJudgeRounds})` : "workflow: approval queued: the planner is fixing the judge's findings", "info");
+				return { action: "handled" };
+			}
+			abortGate("message");
+			planApproveQueued = false;
+			planFixing = false;
+			return { action: "continue" };
+		}
 		if (state.phase !== "plan" || event.source === "extension" || event.streamingBehavior) return { action: "continue" };
 		// Without a plan on screen, "yes, do that" answers a question; it doesn't approve anything.
 		if (!planReady || !approveRe().test(event.text.trim())) return { action: "continue" };
@@ -3339,6 +3380,7 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 		const stoppedNormally = last?.role === "assistant" && last.stopReason === "stop" && assistantText(last).trim().length > 0;
 
 		if (state.phase === "plan") {
+			planFixing = false;
 			// Every finished reply offers the choice; aborted or errored ones do not.
 			// A typed "go" approves only a finished plan that is not waiting on an answer.
 			const text = assistantText(last).trim();
@@ -3361,55 +3403,26 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 			}
 			const blocked = approvalBlock(planDraft, planWaitNow);
 			if (blocked) planReady = false;
+			if (!planReady || blocked) planApproveQueued = false;
 			if (planReady && !blocked) {
 				const emitted = composePlan(planDraft);
-				const review = emitClaims((d) => pi.events.emit("workflow:plan-ready", d), { v: 1, title: planTitle(emitted), plan: emitted }, 0);
-				if (planReviewRoute(planReady, !!blocked, review.claimed) === "review") {
-					ctx.ui.notify("workflow: plan sent for review.", "info");
-					void review.answer.then(async (answer) => {
-						const current = state.phase === "plan" && planReady && composePlan(planDraft) === emitted;
-						const action = planReviewAction(answer, current);
-						if (action === "approve") {
-							ctx.ui.notify(`workflow: plan approved, executing on ${describeRole(cfg.roles.execute)}`, "info");
-							await approve(lastCtx ?? ctx);
-						} else if (action === "reject") {
-							pi.sendMessage({ customType: "workflow-plan-review", content: `${(answer as { reject: string }).reject}\n\nRevise the plan: reply with the whole plan again as a new \`## Plan:\`.`, display: true }, { triggerTurn: true, deliverAs: "followUp" });
-						} else if (current) {
-							ctx.ui.notify(`workflow: no verdict on the plan (${answer && typeof answer === "object" && "error" in answer ? String((answer as { error: unknown }).error) : "none"}).`, "warning");
-						}
-					}, () => {});
+				const decision = planGateDecide({ mode: cfg.autoJudgePlan, quick: state.profile === "quick", planHash: textHash(emitted), gate: state.planGate });
+				if (decision !== "off" && decision !== "reuse") {
+					void runPlanGate(ctx, emitted, text, decision);
 					return;
 				}
-			}
-			const approveLabel = PLAN_APPROVE;
-			const arbiterLabel = PLAN_ARBITER;
-			const quick = state.profile === "quick";
-			const fullLabel = PLAN_FULL;
-			// K12 first, whatever planPrompt says; unclaimed, the notices and the menu are what they were before.
-			const menu = planMenuRequest({ blocked: !!blocked, quick, planFlawAsk: cfg.planFlaw === "ask", planPrompt: cfg.planPrompt });
-			const choice = await askUser(ctx, menu.key, `${quick ? "Quick flow" : "Plan phase"} · execute on ${describeRole(cfg.roles.execute)}`, menu.options, {
-				roles: menu.roles,
-				detail: [blocked ? `Can't approve: ${blocked}.` : "", text.slice(0, 4000)].filter(Boolean).join("\n\n"),
-				skipLocal: menu.skipLocal,
-				localNotice: () => {
-					if (!cfg.planPrompt) ctx.ui.notify(`workflow: say "go" to execute on ${describeRole(cfg.roles.execute)}, or keep discussing.`, "info");
-					else if (blocked) ctx.ui.notify(`workflow: can't approve: ${blocked}.`, "warning");
-				},
-			});
-			if (choice === fullLabel) {
-				await toFullFlow(ctx);
+				const reused = decision === "reuse" ? state.planGate : undefined;
+				const queued = planApproveQueued;
+				planApproveQueued = false;
+				if (reused && planOfferAction({ clean: isClean(reused.verdict, [...reused.autoFindings, ...reused.userFindings]), queuedGo: queued }) === "approve") {
+					ctx.ui.notify(`workflow: plan approved, executing on ${describeRole(cfg.roles.execute)}`, "info");
+					await approve(lastCtx ?? ctx);
+					return;
+				}
+				await offerPlan(ctx, text, blocked, reused ? { gate: reused, ran: true } : undefined);
 				return;
 			}
-			if (choice === PLAN_BACK) {
-				await setPhase(ctx, "discuss");
-				ctx.ui.notify(`workflow: back to discussion on ${describeRole(cfg.roles.discuss)}`, "info");
-				return;
-			}
-			if (choice === arbiterLabel && cfg.planFlaw === "ask") {
-				await approve(ctx, true);
-				return;
-			}
-			if (choice === approveLabel) await approve(ctx);
+			await offerPlan(ctx, text, blocked);
 			return;
 		}
 
@@ -3579,6 +3592,191 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 			ctx.ui.notify(`workflow: gh was not on PATH; added ${dir}`, "info");
 		}
 		return true;
+	}
+
+	/** The plan is complete and judged (or the judge is off): K10 for the orchestrator, else the approval menu. */
+	async function offerPlan(ctx: ExtensionContext, text: string, blocked: string | undefined, judge?: { gate: PlanGate; note?: string; ran: boolean }): Promise<void> {
+		if (planReady && !blocked) {
+			const emitted = composePlan(planDraft);
+			const review = emitClaims((d) => pi.events.emit("workflow:plan-ready", d), { v: 1, title: planTitle(emitted), plan: emitted, ...(judge ? { judge: planReadyJudge(judge.gate, judge.ran) } : {}) }, 0);
+			if (planReviewRoute(planReady, !!blocked, review.claimed) === "review") {
+				ctx.ui.notify("workflow: plan sent for review.", "info");
+				void review.answer.then(async (answer) => {
+					const current = state.phase === "plan" && planReady && composePlan(planDraft) === emitted;
+					const action = planReviewAction(answer, current);
+					if (action === "approve") {
+						ctx.ui.notify(`workflow: plan approved, executing on ${describeRole(cfg.roles.execute)}`, "info");
+						await approve(lastCtx ?? ctx);
+					} else if (action === "reject") {
+						// The orchestrator's rejection starts a new judge budget; the findings stay for the recheck.
+						state.planGate = planGateReset(state.planGate, "rejected");
+						persist();
+						pi.sendMessage({ customType: "workflow-plan-review", content: `${(answer as { reject: string }).reject}\n\nRevise the plan: reply with the whole plan again as a new \`## Plan:\`.`, display: true }, { triggerTurn: true, deliverAs: "followUp" });
+					} else if (current) {
+						ctx.ui.notify(`workflow: no verdict on the plan (${answer && typeof answer === "object" && "error" in answer ? String((answer as { error: unknown }).error) : "none"}).`, "warning");
+					}
+				}, () => {});
+				return;
+			}
+		}
+		const approveLabel = PLAN_APPROVE;
+		const arbiterLabel = PLAN_ARBITER;
+		const quick = state.profile === "quick";
+		const fullLabel = PLAN_FULL;
+		// K12 first, whatever planPrompt says; unclaimed, the notices and the menu are what they were before.
+		const menu = planMenuRequest({ blocked: !!blocked, quick, planFlawAsk: cfg.planFlaw === "ask", planPrompt: cfg.planPrompt });
+		const judgeLines = judge ? menuJudgeLines(judge.gate, judge.note).join("\n") : "";
+		const choice = await askUser(ctx, menu.key, `${quick ? "Quick flow" : "Plan phase"} · execute on ${describeRole(cfg.roles.execute)}`, menu.options, {
+			roles: menu.roles,
+			detail: [blocked ? `Can't approve: ${blocked}.` : "", judgeLines, text.slice(0, 4000)].filter(Boolean).join("\n\n"),
+			skipLocal: menu.skipLocal,
+			localNotice: () => {
+				if (!cfg.planPrompt) ctx.ui.notify(`workflow: say "go" to execute on ${describeRole(cfg.roles.execute)}, or keep discussing.`, "info");
+				else if (blocked) ctx.ui.notify(`workflow: can't approve: ${blocked}.`, "warning");
+			},
+		});
+		if (choice === fullLabel) {
+			await toFullFlow(ctx);
+			return;
+		}
+		if (choice === PLAN_BACK) {
+			await setPhase(ctx, "discuss");
+			ctx.ui.notify(`workflow: back to discussion on ${describeRole(cfg.roles.discuss)}`, "info");
+			return;
+		}
+		if (choice === arbiterLabel && cfg.planFlaw === "ask") {
+			await approve(ctx, true);
+			return;
+		}
+		if (choice === approveLabel) await approve(ctx);
+	}
+
+	/** The plan judge: one run on a complete plan, then fix (auto findings go to the planner), offer, or approve a queued "go". Runs detached from agent_end and the input hook. */
+	async function runPlanGate(ctx: ExtensionContext, plan: string, text: string, decision: "confirm" | "recheck" | "full"): Promise<void> {
+		abortGate("restart");
+		const gate0 = state.planGate;
+		const run = { kind: "plan" as const, controller: new AbortController(), judgedHash: textHash(plan) } as NonNullable<typeof gateRun>;
+		gateRun = run;
+		if (ctx.hasUI) {
+			try {
+				run.offEsc = ctx.ui.onTerminalInput((d) => (isEscKey(d) ? (abortGate("esc"), { consume: true }) : undefined));
+			} catch {}
+		}
+		updateStatus(ctx);
+		let specKind: SpecKind = "none";
+		let outcome: { text: string; run: FlowRun } | { error: string } | undefined;
+		try {
+			const branch = ctx.sessionManager.getBranch();
+			const assistantTexts: string[] = [];
+			for (const entry of branch) {
+				const m = entry.type === "message" ? (entry as { message?: { role?: string; content?: unknown } }).message : undefined;
+				if (m?.role !== "assistant") continue;
+				const t = Array.isArray(m.content)
+					? m.content.filter((p: { type?: string }) => p?.type === "text").map((p: { text?: string }) => p.text ?? "").join("\n")
+					: typeof m.content === "string" ? m.content : "";
+				if (t.trim()) assistantTexts.push(t);
+			}
+			const agreed = state.planSpec ? undefined : lastAgreedList(assistantTexts);
+			const spec = state.planSpec ? { kind: "brief" as const, text: state.planSpec.text } : agreed ? { kind: "agreed" as const, text: agreed } : undefined;
+			specKind = spec ? spec.kind : "none";
+			const diff = decision !== "full" && gate0?.judgedPlan !== undefined ? planTextDiff(gate0.judgedPlan, plan) : null;
+			const recheck = diff !== null && gate0 ? { findings: [...gate0.autoFindings, ...gate0.userFindings], disputes: planDisputes(lastAssistantText(ctx)), diff } : undefined;
+			if (ctx.hasUI) ctx.ui.setWorkingMessage("judge reviewing the plan…");
+			const { result, run: fr } = await runRole("judge", "plan review", {
+				systemPrompts: planReviewPrompts({ plan, spec, folders: state.folders ?? [], recheck }),
+				tools: cfg.judge.tools,
+				task: "Review the plan as described in your system prompt.",
+				cwd: ctx.cwd,
+				signal: run.controller.signal,
+				thinking: recheck ? cfg.judge.recheckThinking : undefined,
+			});
+			outcome = result.ok ? { text: result.text, run: fr } : { error: result.error ?? "failed" };
+		} catch (e) {
+			outcome = { error: (e as Error).message };
+		} finally {
+			try {
+				run.offEsc?.();
+			} catch {}
+			if (gateRun === run) gateRun = undefined;
+			if (ctx.hasUI) ctx.ui.setWorkingMessage();
+			updateStatus(ctx);
+			try {
+				if (ctx.isIdle()) scheduleIdleNotice(ctx);
+			} catch {}
+		}
+		const blank: PlanGate = gate0 ?? { planHash: run.judgedHash, rounds: 0, autoFindings: [], userFindings: [], spec: specKind };
+		const stale = state.phase !== "plan" || !planReady || textHash(composePlan(planDraft)) !== run.judgedHash;
+		if ((run.reason || stale) && outcome && "run" in outcome) view.finish(outcome.run, false, run.reason ? "cancelled · plan" : "discarded · plan changed");
+		if (run.reason) {
+			if (run.reason === "restart") return;
+			planApproveQueued = false;
+			if ((run.reason === "esc" || run.reason === "command") && !stale) {
+				const g: PlanGate = { ...blank, planHash: run.judgedHash, verdict: "cancelled", spec: specKind };
+				state.planGate = g;
+				persist();
+				ctx.ui.notify("workflow: plan judge cancelled", "info");
+				await offerPlan(ctx, text, undefined, { gate: g, note: "plan judge cancelled", ran: false });
+			}
+			return;
+		}
+		if (stale) return;
+		if (!outcome || "error" in outcome) {
+			const error = outcome && "error" in outcome ? outcome.error : "no result";
+			const g: PlanGate = { ...blank, planHash: run.judgedHash, verdict: "error", spec: specKind };
+			state.planGate = g;
+			persist();
+			planApproveQueued = false;
+			ctx.ui.notify(`workflow: plan judge did not run: ${error}`, "warning");
+			await offerPlan(ctx, text, undefined, { gate: g, note: `plan judge did not run: ${error}`, ran: false });
+			return;
+		}
+		const findings = parseFindings(outcome.text);
+		const verdict = discussionVerdict(outcome.text);
+		const confirm = decision === "confirm";
+		const rounds = (gate0?.rounds ?? 0) + (confirm ? 0 : 1);
+		const after = planGateAfterVerdict({ verdict, findings, rounds, max: cfg.maxPlanJudgeRounds, confirm });
+		const clean = isClean(verdict, findings);
+		view.finish(outcome.run, verdict === "PASS", `${verdict} · plan`);
+		const g: PlanGate = {
+			planHash: run.judgedHash,
+			rounds,
+			verdict,
+			autoFindings: after.auto,
+			userFindings: after.user,
+			judgedPlan: plan,
+			cappedHash: after.action === "offer" && !clean && (after.capped || confirm) ? run.judgedHash : undefined,
+			spec: specKind,
+		};
+		state.planGate = g;
+		persist();
+		pi.sendMessage({ customType: "workflow-plan-judge", content: `**Plan judge: ${verdict}** (run ${rounds}/${cfg.maxPlanJudgeRounds})\n\n${outcome.text}`, display: true }, { triggerTurn: false });
+		if (after.action === "fix") {
+			planFixing = true;
+			const listed = after.auto.map((f) => `- ${findingText(f).replace(/\n/g, "\n  ")}`).join("\n");
+			pi.sendMessage({ customType: "workflow-plan-fix", content: `${prompts.PLAN_FIX}\n\n${listed}`, display: true }, { triggerTurn: true, deliverAs: "followUp" });
+			return;
+		}
+		const queued = planApproveQueued;
+		planApproveQueued = false;
+		if (planOfferAction({ clean, queuedGo: queued }) === "approve") {
+			ctx.ui.notify(`workflow: plan approved, executing on ${describeRole(cfg.roles.execute)}`, "info");
+			await approve(lastCtx ?? ctx);
+			return;
+		}
+		await offerPlan(ctx, text, undefined, { gate: g, ran: true });
+	}
+
+	/** `/flow judge` in plan: judge the plan on screen now, whatever the gate remembers. */
+	function judgePlanNow(ctx: ExtensionContext): void {
+		if (!planReady || !planDraft.full) {
+			ctx.ui.notify("workflow: no complete plan to judge yet", "info");
+			return;
+		}
+		const plan = composePlan(planDraft);
+		const hash = textHash(plan);
+		const decision = planGateDecide({ mode: "auto", quick: false, planHash: hash, gate: state.planGate });
+		// The same plan again gets a full pass, not a recheck with an empty diff.
+		void runPlanGate(ctx, plan, lastAssistantText(ctx), state.planGate?.planHash === hash || decision === "reuse" || decision === "off" ? "full" : decision);
 	}
 
 	/** `/flow judge` in discuss: the judge reviews the discussion's conclusion. Advisory; changes no flow or judge state. */
@@ -4179,6 +4377,7 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 				state.extraPlanTools = req.allowTools.length ? req.allowTools : undefined;
 				await setPhase(ctx, "plan");
 				refilterTools(); // discuss to plan keeps the tool snapshot, so the allowed tools must be put back
+				state.planSpec = { kind: "brief", text: req.brief };
 				persist();
 				try {
 					pi.sendUserMessage(`${START_PLAN_PREFACE}${req.brief}`, { deliverAs: "followUp" });
@@ -4229,7 +4428,7 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 		{ value: "off", label: "off - leave the workflow; restore the model from before the flow" },
 		{ value: "escalate", label: "escalate - switch to the escalate model (Fable)" },
 		{ value: "back", label: "back - return to the phase's own model" },
-		{ value: "judge", label: "judge - review the current diff now (in discuss: the discussion's conclusion)" },
+		{ value: "judge", label: "judge - review the current diff now (in discuss: the conclusion; in plan: the plan; \"judge cancel\" stops a running judge)" },
 		{ value: "tokens", label: "tokens - token breakdown of the current flow so far" },
 		{ value: "model", label: "model [role] [provider/id[:thinking]] - set a role's model (lists when left out)" },
 		{ value: "autopilot", label: "autopilot [on|off] - resolve waits and routine menus without asking (no argument toggles)" },
@@ -4509,7 +4708,13 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 					await deescalate(ctx);
 					return;
 				case "judge":
+					if (rest[0]?.toLowerCase() === "cancel") {
+						if (gateRun) abortGate("command");
+						else ctx.ui.notify("workflow: no judge running", "info");
+						return;
+					}
 					if (state.phase === "discuss") await reviewDiscussion(ctx);
+					else if (state.phase === "plan") judgePlanNow(ctx);
 					else await reviewDiff(ctx, true);
 					return;
 				case "tokens":

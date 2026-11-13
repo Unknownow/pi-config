@@ -139,6 +139,10 @@ test("K13 is due only in plan or execute, idle and not busy", () => {
 	assert.equal(idleDue({ ...ok, compacting: true }), false);
 	assert.equal(idleDue({ ...ok, compactPending: true }), false);
 	assert.equal(idleDue({ ...ok, pendingHandover: true }), false);
+	assert.equal(idleDue({ ...ok, judging: true }), false);
+	assert.equal(idleDue({ ...ok, phase: "plan", judging: true }), false);
+	assert.equal(idleDue({ ...ok, phase: "execute", judging: true }), false);
+	assert.equal(idleDue({ ...ok, judging: false }), true);
 });
 
 test("the idle payload truncates the last text", () => {

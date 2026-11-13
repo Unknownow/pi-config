@@ -90,6 +90,14 @@ export interface WorkflowConfig {
 	autoJudge: "ask" | "auto" | "off";
 	/** Judge -> fix rounds in a row before the flow asks you what to do. 0 means no limit. */
 	maxJudgeRounds: number;
+	/** The judge reviews the discussion's `Agreed so far:` list before the move to plan ("auto") or not ("off"). Off in a quick flow. */
+	autoJudgeDiscussion: "off" | "auto";
+	/** The judge reviews every complete plan before the approval menu or K10 ("auto") or not ("off"). Off in a quick flow. */
+	autoJudgePlan: "off" | "auto";
+	/** Discussion judge runs per gate (fix rounds included). */
+	maxDiscussionJudgeRounds: number;
+	/** Plan judge runs per plan (fix rounds included). */
+	maxPlanJudgeRounds: number;
 	/** When a flow ends (delivered, passed without a commit, or stopped), switch to this phase ("off" stays in execute). */
 	returnTo: "discuss" | "plan" | "off";
 	/** The judge says the approved plan itself is flawed: "ask" you, or let the "auto" arbiter decide. */
@@ -182,6 +190,10 @@ export const DEFAULTS: WorkflowConfig = {
 	autoJudge: "auto",
 	maxJudgeRounds: 5,
 	maxMinorRounds: 1,
+	autoJudgeDiscussion: "auto",
+	autoJudgePlan: "auto",
+	maxDiscussionJudgeRounds: 2,
+	maxPlanJudgeRounds: 3,
 	returnTo: "discuss",
 	planFlaw: "ask",
 	autopilot: false,
@@ -291,6 +303,8 @@ function parseConfig(file: string): Loaded {
 		for (const old of ["explore", "advisor"]) delete (config as unknown as Record<string, unknown>)[old];
 		for (const old of ["explore", "advisor", "runner"]) delete (config.roles as unknown as Record<string, unknown>)[old];
 		if (config.addedFolderRules !== "paths" && config.addedFolderRules !== "full") config.addedFolderRules = DEFAULTS.addedFolderRules;
+		for (const k of ["autoJudgeDiscussion", "autoJudgePlan"] as const) if (config[k] !== "off" && config[k] !== "auto") config[k] = DEFAULTS[k];
+		for (const k of ["maxDiscussionJudgeRounds", "maxPlanJudgeRounds"] as const) if (typeof config[k] !== "number" || !Number.isInteger(config[k]) || config[k] < 1) config[k] = DEFAULTS[k];
 		if (typeof config.autopilot !== "boolean") config.autopilot = DEFAULTS.autopilot;
 		if (!isObject(config.wait)) config.wait = DEFAULTS.wait;
 		for (const k of ["pollMs", "maxMs", "claimedMaxMs", "checkTimeoutMs"] as const) if (typeof config.wait[k] !== "number" || !Number.isFinite(config.wait[k]) || config.wait[k] <= 0) config.wait[k] = DEFAULTS.wait[k];
