@@ -612,6 +612,30 @@ Expected result: every suite passes with 0 failures. All are fast (under 1 min).
 - **Stage 3:**
   - "orchestrate: items.json, orch_decide, orch_escalate, caps and escalation to the user": `items.ts`, `decide.ts`, `store.ts`, `index.ts`, `mode.ts`, `view.ts`, `config.ts`, `prompts.ts`, the tests, `README.md`, `docs/workflow-improvements.md`.
 
+## Amendment 1 (arbiter)
+**S13 (addition): spawn registry outside the repo.**
+- **New store functions** in `orchestrate/store.ts`: `readSpawnRegistry(agentDir)` and `writeSpawnRegistry(agentDir, entries)`.
+  - The file is `<getAgentDir()>/orchestrate-spawned.json`, written with tmp + rename. A missing or unreadable file means empty.
+  - Entry: `{ runId: string; common: string; sub: string; state: "spawning" | "spawned"; at: string; tops: string[] }`.
+- **`orch_spawn`:**
+  - Before W1, next to the `spawning` mutate, it adds a `spawning` entry with an empty `tops`. Only a session whose run has `originTrusted === true` adds entries.
+  - After W1 succeeds, it sets the entry to `spawned` with `tops` = the sub's `cwd` plus every repo worktree `cwd`.
+  - In the `catch`, it removes the entry.
+- **Removal:** the entry is also removed when the sub reaches `merged` or `stopped`, when the run ends (`/orch end`), and when `staleSpawning` resets the sub. Without this cleanup, an old record could keep vouching for that path.
+
+**S15 (changed): `trustStep` / `decideTrust` evidence.**
+- `decideTrust` gets a new dependency, `listSpawned()`, which reads the user registry.
+- **`yes`** only when both hold:
+  - a registry entry in state `spawned` has a `tops` entry that matches the git `top` by `sameDir`, and `sameDir(top, cwd)` holds or `cwd` lies inside `top`;
+  - `run.json` in `common` agrees: the run with that `runId` is active and `originTrusted`, and that sub is in a trusted state. This is a second check only and never the only evidence.
+
+  The entry's `common` must also match the located `common`.
+- **`poll`** only while the registry holds a `spawning` entry younger than 3 min.
+- **`undecided`** in every other case. Nothing in the asking repo can create a registry entry.
+- **Tests (A3, `trust.test.ts`):** the approved yes/undecided/path cases now inject the registry. The approved "no match" undecided case covers a matching `run.json` with no registry entry. No other new tests.
+
+**S19 (docs):** the trust bullet says that trust needs an entry in the per-user registry `~/.pi/agent/orchestrate-spawned.json`. That file is written only by `orch_spawn` of a trusted-origin run. `run.json` inside the repo is never enough on its own.
+
 <!-- pi-workflow:status -->
 ## Checklist
 - [x] S1 Move `notifyCommand` to `pi/agent/extensions/shared/notify.ts`, with its tests in `shared/notify.test.ts` (taken from `w
@@ -625,14 +649,14 @@ Expected result: every suite passes with 0 failures. All are fast (under 1 min).
 - [x] S9 Guard test `workflow/ui-guard.test.ts`. It scans `workflow/*.ts` except tests for `ctx.ui.(select|confirm|input|custom)`
 - [x] S10 Tests in `workflow/asks.test.ts`, covering the pure parts and a small harness that drives `askUser`/`askWait` through fa
 - [x] S11 Docs.
-- [ ] S12 Move `sameDir` from `index.ts:34` to `store.ts` (exported, next to `norm`). Update its uses, and add cases to `store.tes
-- [ ] S13 `spawning` state.
-- [ ] S14 `originTrusted`. `orch_run` (`:879`) stores `run.originTrusted = ctx.isProjectTrusted()`. Wrap the call in try/catch; if
-- [ ] S15 Trust handler.
-- [ ] S16 Identity and held claims.
-- [ ] S17 `confirmPlans` default `false` (`config.ts:25`). The menu code at `:1010` stays for anyone who sets it to `true`. Update
-- [ ] S18 `ask_orchestrator` without a timeout (`:272-300`).
-- [ ] S19 Docs (`orchestrate/README.md`):
+- [x] S12 Move `sameDir` from `index.ts:34` to `store.ts` (exported, next to `norm`). Update its uses, and add cases to `store.tes
+- [x] S13 `spawning` state.
+- [x] S14 `originTrusted`. `orch_run` (`:879`) stores `run.originTrusted = ctx.isProjectTrusted()`. Wrap the call in try/catch; if
+- [x] S15 Trust handler.
+- [x] S16 Identity and held claims.
+- [x] S17 `confirmPlans` default `false` (`config.ts:25`). The menu code at `:1010` stays for anyone who sets it to `true`. Update
+- [x] S18 `ask_orchestrator` without a timeout (`:272-300`).
+- [x] S19 Docs (`orchestrate/README.md`):
 - [ ] S20 `orchestrate/items.ts` (pure) and the store functions `readItems`/`writeItems` in `store.ts`. Model on `readView`/`write
 - [ ] S21 `orchestrate/decide.ts` (pure). `checkDecision(item, answer, sub counters, cfg) → ok | refuse(reason, escalate: boolean)
 - [ ] S22 Sub side (`index.ts`, in `sub` identity):
