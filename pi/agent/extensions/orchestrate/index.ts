@@ -1255,23 +1255,6 @@ export default function (pi: ExtensionAPI): void {
 			const errors = validatePackages(params.packages as PackageInput[], repos);
 			if (errors.length) throw new Error(`invalid packages:\n- ${errors.join("\n- ")}`);
 			const packages = repos ? canonicalPackages(params.packages as PackageInput[], repos).packages : (params.packages as PackageInput[]);
-			const overlapNote = repos ? await confirmOverlaps(ctx, repos, packages) : undefined;
-			let existing: string[] = [];
-			try {
-				existing = fs.readdirSync(orchestraDir(common));
-			} catch {
-				// first run in this repo
-			}
-			const id = makeRunId(params.title, new Date(), existing);
-			const subs: Sub[] = [];
-			for (const p of packages) {
-				const name = setName(id, p.id);
-				if (!name) throw new Error(`package id "${p.id}" gives an invalid worktree name`);
-				subs.push({
-					id: p.id, goal: p.goal, criteria: p.criteria ?? [], owns: p.owns ?? [], forbids: p.forbids ?? [], dependsOn: p.dependsOn ?? [], decisions: p.decisions ?? [], notes: p.notes, name, state: "planned",
-					...(repos ? { repos: subRepos(p, repos[0].key) } : {}),
-				});
-			}
 			// where the PRs go: the upstream of each repo's own checkout, or the given targets (checked before anything is written)
 			const keys = repos ? repos.map((r) => r.key) : [""];
 			const tops = new Map<string, string>(repos ? repos.map((r) => [r.key, r.top] as [string, string]) : [["", (await git(ctx.cwd, "rev-parse", "--show-toplevel")) ?? ctx.cwd]]);
@@ -1301,6 +1284,23 @@ export default function (pi: ExtensionAPI): void {
 					if (ref) targets[k] = ref;
 				}
 				targetLines.push(targets[k] ? `Diff target (${label(k)}): ${targets[k]}` : `No diff target for ${label(k)}: drift is measured against the default branch`);
+			}
+			const overlapNote = repos ? await confirmOverlaps(ctx, repos, packages) : undefined;
+			let existing: string[] = [];
+			try {
+				existing = fs.readdirSync(orchestraDir(common));
+			} catch {
+				// first run in this repo
+			}
+			const id = makeRunId(params.title, new Date(), existing);
+			const subs: Sub[] = [];
+			for (const p of packages) {
+				const name = setName(id, p.id);
+				if (!name) throw new Error(`package id "${p.id}" gives an invalid worktree name`);
+				subs.push({
+					id: p.id, goal: p.goal, criteria: p.criteria ?? [], owns: p.owns ?? [], forbids: p.forbids ?? [], dependsOn: p.dependsOn ?? [], decisions: p.decisions ?? [], notes: p.notes, name, state: "planned",
+					...(repos ? { repos: subRepos(p, repos[0].key) } : {}),
+				});
 			}
 			const run: Run = { v: 1, id, title: params.title, created: new Date().toISOString(), owner: { pid: process.pid, host: os.hostname(), session: ctx.sessionManager.getSessionFile() ?? "" }, state: "active", originTrusted: projectTrusted(ctx), ...(repos ? { repos } : {}), targets, subs };
 			fs.mkdirSync(runDir(common, id), { recursive: true });
