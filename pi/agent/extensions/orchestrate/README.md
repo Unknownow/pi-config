@@ -25,8 +25,8 @@ When the session has added repos with `/folders add`, one run can span them. `or
 - `owns` and `forbids` are `key:glob` (`web:src/**`); a glob with no key means the working repo. Duplicate owners are checked on the canonical form (`src/**` and `api:src/**` clash when api is the working repo). The optional `repos` field of a package lists extra repo keys it only reads. A run with no added git repos is a single-repo run: plain globs, no keys (a keyed glob is refused).
 - `orch_spawn` sends W1 `folders`: only the added folders of the repos the package uses (and plain folders) go into its set, and the answer's `repos` (`{ top, cwd }`) become `Sub.worktrees`. An old worktree extension that answers without `repos` leaves only the working repo watched; the spawn line says so. A needed repo missing from the answer is a warning line.
 - Drift and overlap use `key:path` files, so a file in another repo counts as drift. The diff base, the default-branch fallback and the gh call are per repo. Drift and overlap are measured from the merge base with the run's target (`run.targets`, set by `orch_run` from the upstream of each checkout or its `targets` parameter), then `origin/HEAD`, the gh default branch and the spawn commit.
-- **Acceptance is per repo**: the accept-request carries `{ tree, repo }`, `orch_accept` takes an optional `repo` (default: the repo of the latest request) and checks the tree of that repo's worktree; `accepted.json` stores `<key>:<tree>`; the verdict carries `repo`. A merge from a worktree that is not one of the package's is refused.
-- **Merged** per repo: a repo is touched when its worktree has commits since its spawn base or is dirty; a package is merged when every touched repo has a merged PR for the branch. The report names the repos that miss one.
+- **Acceptance is per repo**: the accept-request carries `{ tree, repo }`, `orch_accept` takes an optional `repo` (default: the repo of the latest request) and checks the tree of that repo's worktree; `accepted.json` stores `<key>:<tree>`; the verdict carries `repo`. Requests and verdicts also carry `kind` (`merge`, `protected-push` or `publish`) and `ask` (`gate`; a `git_task` check is `pre` and sends no request). The orchestrator accepts, so `orch_accept` moves the package back to `executing` on both accept and refuse. A merge from a worktree that is not one of the package's is refused.
+- **Merged** per repo: by the last delivered tree of each repo, dirty files being notes only (see "Merge confirmation"). The report names the repos that miss one.
 - **Other runs**: runs are not locked against each other. `orch_run` reads the active runs of the session's other repos and, when owned paths may overlap (same repo, nested literal folders), asks "Create anyway / Cancel" (a headless session creates the run and puts the overlaps into the result as a warning). A run found from one repo is checked against the new packages' paths in every repo of this session. Detection is one-sided: a run started from another repo that includes this one is not found from here.
 - Limit: a repo added inside a sub-session with `/folders add` is not watched.
 - Old runs (no `repos` in `run.json`) behave as before.
@@ -59,6 +59,16 @@ A sub-session never shows a menu, a wait or an input-asking notice in its window
 - **Stale items and restarts.** A sub-session posts `session-started {instance}` when it starts. A new instance makes the open menu and plan-review items of earlier instances stale (the workflow withdraws a saved menu ask at restart; a wait is re-sent with the same id); the orchestrator is told to send the package a directive to continue.
 - **Orchestrator not running.** When an item of a sub-session (question, plan review, ask, accept request) has waited over 30 min, the run owner is on the same host and its pid is dead, the sub-session shows one desktop notification per item: "orchestrator not running: open it and run /orch watch". A sub-session shows nothing else.
 
+### Merge confirmation
+
+A package is confirmed merged by its **last delivered tree per repo**, not by its branch (`wt/<run>-<pkg>` is never pushed). A delivery is a gate pass of a merge or protected push (the sub-session posts `merge-pass` when its merge attempt passes K11 with `ask: "gate"`), else an accepted verdict, else the last `accepted.json` entry. The check compares that tree with the head trees of the PRs merged since the run was created into the run's target (`gh pr list -R <owner/name> --state merged --base <branch>`); a protected push is looked for in the target's history.
+
+- Every gh call is told the repo with `-R owner/name` (the target's remote, else the `@{u}` remote, else `origin`); gh's own repo resolution is never used.
+- Only a `finished` flow end (K14) merges on its own: checked on arrival and then on every 60 s poll (one wait before the first report). A `stopped` or `abandoned` end, and subs that ended before an upgrade (`endHow` unknown), get one check and a report; `/orch merged <id>` merges when the check is positive, `/orch merged <id> --force` always (`table` shows "merged (forced)").
+- Uncommitted files, and a `HEAD` that differs from the last delivery, are notes only.
+- Limits: one flow per package (the brief and the plan review say so; a stopped flow may be resumed); a `git_task` merge of an earlier tree is not recorded; a verdict without `ask` (an old run) counts as a merge; a head pushed after the gate needs `--force`; undelivered later commits are only a note; runs without `targets` use the checkout's `@{u}` at check time; a manual `/flow plan` that never returns is only noticed by the K13 idle message (the stall monitor fires only in `execute`), and `/orch merged` or `--force` closes it; more than 1000 PRs merged since the run was created cannot be checked (use `--force`).
+- After an install restart every pi session, the orchestrator and the subs: install `workflow`, `orchestrate` and `shared` together (the gate needs K11 `ask`, the end needs K14).
+
 ## Files
 
 Under `<git common dir>/pi/orchestra/<runId>/` (single writer per file; messages are append-only JSON lines, a last line without newline is ignored until complete):
@@ -69,9 +79,10 @@ view.json                 orchestrator's watcher (tmp + rename; the run as data 
 <sub>/brief.md            orchestrator
 <sub>/status.json         sub-session (K4 events and a 60 s heartbeat)
 items.json               orchestrator (tmp + rename; what the sub-sessions wait on, and the caps' counters; a missing file is empty)
-<sub>/outbox.jsonl        sub-session -> orchestrator: question, ask, ask-done, idle, idle-end, session-started, plan-review, accept-request, flow-ended, note
+<sub>/outbox.jsonl        sub-session -> orchestrator: question, ask, ask-done, idle, idle-end, session-started, plan-review, accept-request, merge-pass, flow-ended (with `how`: finished, stopped or abandoned; K14), note
 <sub>/inbox.jsonl         orchestrator -> sub-session: answer, decision, plan-verdict, accept-verdict, directive, info
 <sub>/accepted.json       orchestrator: accepted trees
+<sub>/merges.json         orchestrator: the sub's merge-pass records `{ key, tree, kind, at }`, one per gate pass, in order
 <sub>/plan-<n>.md         sub-session: plan text for review
 <sub>/inbox.read, outbox.read   cursors (line counts), owned by the reader
 ```

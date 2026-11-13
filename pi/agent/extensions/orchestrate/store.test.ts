@@ -135,3 +135,16 @@ test("sameDir: case (win32 style), backslashes, trailing slash", () => {
 	assert.equal(sameDir("C:/Work/Repo", "c:/work/repo", false), false);
 	assert.equal(sameDir("C:/Work/Repo", "C:/Work/Other", true), false);
 });
+
+import { appendMerges, readMerges } from "./store.ts";
+
+test("readMerges and appendMerges round-trip, in order", () => {
+	const d = tmp();
+	const file = `${d}/merges.json`;
+	assert.deepEqual(readMerges(file), []);
+	appendMerges(file, [{ key: "", tree: "a", kind: "merge", at: "1" }]);
+	appendMerges(file, []);
+	appendMerges(file, [{ key: "core", tree: "b", kind: "protected-push", at: "2" }]);
+	assert.deepEqual(readMerges(file).map((m) => m.tree), ["a", "b"]);
+	assert.equal(readMerges(file)[1].kind, "protected-push");
+});

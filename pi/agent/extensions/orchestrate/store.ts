@@ -179,6 +179,26 @@ export function addAccepted(file: string, tree: string): boolean {
 	return true;
 }
 
+export interface MergeRecordFile {
+	key: string;
+	tree: string;
+	kind: "merge" | "protected-push";
+	at: string;
+}
+
+/** The merge-pass records the orchestrator saved for a sub (`merges.json`). */
+export function readMerges(file: string): MergeRecordFile[] {
+	const v = readJson<{ merges?: unknown }>(file).value;
+	if (!Array.isArray(v?.merges)) return [];
+	return v.merges.filter((m): m is MergeRecordFile => !!m && typeof m === "object" && typeof (m as MergeRecordFile).tree === "string" && typeof (m as MergeRecordFile).key === "string");
+}
+
+/** Appends records in order (atomic write). */
+export function appendMerges(file: string, records: MergeRecordFile[]): void {
+	if (!records.length) return;
+	writeAtomic(file, { merges: [...readMerges(file), ...records] });
+}
+
 /** The (run, sub) whose worktree is `toplevel`; compared with forward slashes, lowercase when `ci` (default: Windows). */
 export function findSubByToplevel(runs: Run[], toplevel: string, ci: boolean = process.platform === "win32"): { run: Run; sub: Sub } | null {
 	const key = (p: string) => (ci ? norm(p).toLowerCase() : norm(p));
