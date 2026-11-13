@@ -37,6 +37,12 @@ export function planReviewJudgeLine(j?: PlanJudge): string {
 /** The section appended to the plan file; "" when there is no result or it is clean. */
 export function judgeSection(j?: PlanJudge): string {
 	if (!j || isClean(j)) return "";
+	if (!j.ran) return `
+
+## Open judge findings
+
+${planReviewJudgeLine(j)}
+`;
 	const list = (xs: string[]) => xs.map((x) => `- ${x.replace(/\n/g, "\n  ")}`).join("\n");
 	const parts: string[] = [];
 	if (j.userFindings.length) parts.push(`Needs a decision:\n${list(j.userFindings)}`);

@@ -35,3 +35,8 @@ test("phaseLabel", () => {
 	assert.equal(phaseLabel("plan"), "plan");
 	assert.equal(phaseLabel("plan", "x"), "plan");
 });
+
+test("judgeSection: a run that did not run lists no stale findings", () => {
+	const s = judgeSection(parsePlanJudge({ ...ok, ran: false, verdict: "cancelled", findings: ["old"] }));
+	assert.ok(s.includes("did not run (cancelled)") && !s.includes("old") && !s.includes("Open after the cap"));
+});
