@@ -1,0 +1,19 @@
+{
+  "v": 1,
+  "flowId": "20261113-1842-remove-the-orchestrator-s-false-alarms-d-8685",
+  "rev": 1,
+  "updated": "2026-11-13T11:42:58.097Z",
+  "title": "Remove the orchestrator's false alarms (drift/overlap and wait escalations)",
+  "stage": 1,
+  "done": [],
+  "reviewBase": {
+    "d:/works/pi-config": "2e58e72c59445ab330cb83ccbcca558ac7321001"
+  },
+  "repos": [
+    {
+      "branch": "master",
+      "remote": "github.com/Unknownow/pi-config",
+      "primary": true
+    }
+  ]
+}
