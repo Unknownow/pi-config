@@ -36,7 +36,7 @@ export function isProposalReady(text: string, stoppedNormally: boolean): boolean
 	return /^#+\s*Packages\b/m.test(t) && !ENDS_IN_QUESTION.test(t);
 }
 
-const ALWAYS = /^(orch_status|orch_send|orch_review_plan|orch_accept|ask_orchestrator)$/;
+const ALWAYS = /^(orch_status|orch_send|orch_review_plan|orch_accept|orch_decide|orch_escalate|ask_orchestrator)$/;
 const ALLOWED = PLAN_TOOLS.map((p) => new RegExp(p));
 
 /** Why the tool may not run in this mode, or null. */

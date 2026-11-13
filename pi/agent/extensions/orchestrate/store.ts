@@ -3,6 +3,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Run, Sub } from "./brief.ts";
+import { emptyItems, type ItemsFile } from "./items.ts";
 import type { View } from "./view.ts";
 
 export type Exec = (command: string, args: string[], opts?: { cwd?: string }) => Promise<{ stdout: string; stderr?: string; code: number }>;
@@ -33,6 +34,11 @@ export interface Status {
 
 export function norm(p: string): string {
 	return p.replace(/[\\]/g, "/").replace(/\/+$/, "");
+}
+
+/** Whether two paths are the same directory: forward slashes, no trailing slash, lowercase when `ci` (default: Windows). */
+export function sameDir(a: string, b: string, ci: boolean = process.platform === "win32"): boolean {
+	return ci ? norm(a).toLowerCase() === norm(b).toLowerCase() : norm(a) === norm(b);
 }
 
 /** Absolute git common dir of the repo at cwd, forward slashes; null outside a repo. */
@@ -192,4 +198,54 @@ export function readView(common: string, runId: string): { view?: View; corrupt?
 	const r = readJson<View>(viewPath(common, runId));
 	if (r.value && (r.value.v !== 1 || !Array.isArray(r.value.subs))) return { corrupt: `${viewPath(common, runId)}: not a view file (v, subs)` };
 	return { view: r.value, corrupt: r.corrupt };
+}
+
+export const itemsPath = (common: string, runId: string): string => `${runDir(common, runId)}/items.json`;
+
+/** items.json: written by the orchestrator session only (tmp + rename). A missing file is empty; an unreadable one is empty with a `corrupt` text to report once. */
+export function readItems(common: string, runId: string): { file: ItemsFile; corrupt?: string } {
+	const r = readJson<ItemsFile>(itemsPath(common, runId));
+	if (r.value && (r.value.v !== 1 || !Array.isArray(r.value.items) || typeof r.value.subs !== "object" || !r.value.subs)) return { file: emptyItems(), corrupt: `${itemsPath(common, runId)}: not an items file (v, items, subs)` };
+	return { file: r.value ?? emptyItems(), corrupt: r.corrupt };
+}
+
+export function writeItems(common: string, runId: string, file: ItemsFile): void {
+	writeAtomic(itemsPath(common, runId), file);
+}
+
+/** One worktree set that an orchestrated run created (or is creating): the evidence the trust handler relies on. */
+export interface SpawnEntry {
+	runId: string;
+	common: string;
+	sub: string;
+	state: "spawning" | "spawned";
+	at: string;
+	/** The worktree roots of the sub (the working repo and every repo worktree); empty while spawning. */
+	tops: string[];
+}
+
+export const spawnRegistryPath = (agentDir: string): string => `${norm(agentDir)}/orchestrate-spawned.json`;
+
+/**
+ * The per-user registry of spawned worktrees, outside every repository: only `orch_spawn` of a trusted-origin run writes it, so a
+ * project cannot vouch for itself. A missing or unreadable file means empty.
+ */
+export function readSpawnRegistry(agentDir: string): SpawnEntry[] {
+	const v = readJson<{ entries?: unknown }>(spawnRegistryPath(agentDir)).value;
+	if (!Array.isArray(v?.entries)) return [];
+	return v.entries.filter((e): e is SpawnEntry => !!e && typeof e === "object" && typeof (e as SpawnEntry).runId === "string" && typeof (e as SpawnEntry).common === "string" && typeof (e as SpawnEntry).sub === "string" && ((e as SpawnEntry).state === "spawning" || (e as SpawnEntry).state === "spawned") && typeof (e as SpawnEntry).at === "string" && Array.isArray((e as SpawnEntry).tops));
+}
+
+export function writeSpawnRegistry(agentDir: string, entries: SpawnEntry[]): void {
+	writeAtomic(spawnRegistryPath(agentDir), { v: 1, entries });
+}
+
+/** Adds or replaces the entry of (runId, sub). Pure. */
+export function withSpawnEntry(entries: SpawnEntry[], e: SpawnEntry): SpawnEntry[] {
+	return [...entries.filter((x) => !(x.runId === e.runId && x.sub === e.sub)), e];
+}
+
+/** Drops the entries of a run, or of one sub of it. Pure. */
+export function withoutSpawnEntries(entries: SpawnEntry[], runId: string, sub?: string): SpawnEntry[] {
+	return entries.filter((x) => !(x.runId === runId && (sub === undefined || x.sub === sub)));
 }

@@ -5,7 +5,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { test } from "node:test";
 import type { Run } from "./brief.ts";
-import { addAccepted, appendMessage, commonDir, findSubByToplevel, listActiveRuns, readAccepted, readCursor, readNew, readRun, readStatus, readView, runDir, viewPath, writeCursor, writeRun, writeStatus, writeView } from "./store.ts";
+import { addAccepted, appendMessage, commonDir, findSubByToplevel, listActiveRuns, readAccepted, readCursor, readNew, readRun, readStatus, readView, runDir, sameDir, viewPath, writeCursor, writeRun, writeStatus, writeView } from "./store.ts";
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "orch-store-")).replace(/\\/g, "/");
 const mkRun = (id: string, state: Run["state"] = "active", cwd = "C:/Work/Repo-wt/o1-a"): Run => ({
@@ -127,4 +127,11 @@ test("view.json round trip and a corrupt file", () => {
 	assert.ok(readView(common, "r1").corrupt);
 	fs.writeFileSync(viewPath(common, "r1"), JSON.stringify({ v: 2 }));
 	assert.match(readView(common, "r1").corrupt ?? "", /not a view file/);
+});
+
+test("sameDir: case (win32 style), backslashes, trailing slash", () => {
+	assert.equal(sameDir("C:" + String.fromCharCode(92) + "Work" + String.fromCharCode(92) + "Repo" + String.fromCharCode(92), "c:/work/repo", true), true);
+	assert.equal(sameDir("C:/Work/Repo", "C:/Work/Repo/", false), true);
+	assert.equal(sameDir("C:/Work/Repo", "c:/work/repo", false), false);
+	assert.equal(sameDir("C:/Work/Repo", "C:/Work/Other", true), false);
 });

@@ -2,7 +2,7 @@
 
 import { canonical, split, type Repo, type Worktree } from "./repos.ts";
 
-export type SubState = "planned" | "spawned" | "planning" | "executing" | "awaiting-acceptance" | "merged" | "stopped";
+export type SubState = "planned" | "spawning" | "spawned" | "planning" | "executing" | "awaiting-acceptance" | "merged" | "stopped";
 
 export interface Sub {
 	id: string;
@@ -23,6 +23,8 @@ export interface Sub {
 	worktrees?: Worktree[];
 	/** Set when its flow ended; the merge is then confirmed with gh on every poll. */
 	endedAt?: string;
+	/** Set while orch_spawn creates the worktree (state "spawning"); the trust handler waits for it. */
+	spawningAt?: string;
 	state: SubState;
 }
 
@@ -33,6 +35,8 @@ export interface Run {
 	created: string;
 	owner: { pid: number; host: string; session: string };
 	state: "active" | "ended";
+	/** Whether the project was trusted when the run started; only then are spawned worktrees trusted automatically. */
+	originTrusted?: boolean;
 	/** Multi-repo runs: the working repo first. Absent in a single-repo run (working key ""). */
 	repos?: Repo[];
 	subs: Sub[];
@@ -44,7 +48,7 @@ export type PackageInput = Pick<Sub, "id" | "goal"> & Partial<Pick<Sub, "criteri
 export const SUB_ID_RE = /^[a-z0-9][a-z0-9-]{0,15}$/;
 /** Copy of BRANCH_RE in worktree/layout.ts:7 (orchestrate never imports worktree). */
 export const SET_NAME_RE = /^[a-z0-9][a-z0-9._-]{0,39}$/;
-const ACTIVE: SubState[] = ["spawned", "planning", "executing", "awaiting-acceptance"];
+const ACTIVE: SubState[] = ["spawning", "spawned", "planning", "executing", "awaiting-acceptance"];
 
 /** Canonicalises owns and forbids against the run's repos (`key:glob`; a bare glob is the working repo) and checks the extra repos. Returns the canonical packages and the key errors. */
 export function canonicalPackages(pkgs: PackageInput[], repos: Repo[]): { packages: PackageInput[]; errors: string[] } {
@@ -116,6 +120,26 @@ function hasCycle(pkgs: PackageInput[]): boolean {
 export function readyToSpawn(run: Run): string[] {
 	const merged = new Set(run.subs.filter((s) => s.state === "merged").map((s) => s.id));
 	return run.subs.filter((s) => s.state === "planned" && s.dependsOn.every((d) => merged.has(d))).map((s) => s.id);
+}
+
+/** How long a sub may stay `spawning` before it counts as stale (ms). */
+export const SPAWNING_MAX_MS = 3 * 60_000;
+
+/** Subs stuck in `spawning`: no `spawningAt`, older than 3 min, or an owner that is dead. Pure. */
+export function staleSpawning(run: Run, now: number, ownerAlive: boolean): string[] {
+	return run.subs
+		.filter((s) => {
+			if (s.state !== "spawning") return false;
+			const at = s.spawningAt ? Date.parse(s.spawningAt) : NaN;
+			return !Number.isFinite(at) || now - at > SPAWNING_MAX_MS || !ownerAlive;
+		})
+		.map((s) => s.id);
+}
+
+/** Puts a sub that did not get its worktree back to `planned`. */
+export function revertSpawning(sub: Sub): void {
+	if (sub.state === "spawning") sub.state = "planned";
+	delete sub.spawningAt;
 }
 
 export function activeCount(run: Run): number {
@@ -199,7 +223,7 @@ export function kickoffText(sub: Sub, run: Run, briefPath: string): string {
 		"Rules:",
 		`- Stay inside your owned paths (${sub.owns.join(", ")}).`,
 		`- Never touch: ${sub.forbids.length ? sub.forbids.join(", ") : "paths owned by other packages"}.`,
-		"- Ask the orchestrator with the ask_orchestrator tool instead of guessing; if it does not answer, use wait_for_user.",
+		"- Ask the orchestrator with the ask_orchestrator tool instead of guessing; it always answers. While you wait for an answer that was cancelled, continue with what is not blocked.",
 		"- Deliver with one pull request, merged at the end of your flow. The merge also needs the orchestrator's acceptance: when it is refused for that, end your turn and retry after the message arrives.",
 		"",
 		`Goal: ${sub.goal}`,
