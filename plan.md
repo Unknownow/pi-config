@@ -484,6 +484,10 @@ Also:
 4. `orchestrate: orchestrator role switch and confirmPlans judge line`: S8–S12. Files: `orchestrate/proposal-gate.ts` (with `roleSwitch`, `roleWarnText`, `roleOnRestore`), `orchestrate/proposal-gate.test.ts`, `orchestrate/index.ts`, `orchestrate/plan-judge.ts`, `orchestrate/plan-judge.test.ts`, `orchestrate/wiring.test.ts`, `orchestrate/README.md`, `docs/workflow-improvements.md`.
 5. `orchestrate: proposal judge gate, /orch go force, /orch judge cancel`: S13–S24. Files: `orchestrate/prompts.ts`, `orchestrate/proposal-gate.ts`, `orchestrate/proposal-gate.test.ts`, `orchestrate/plan-judge.ts`, `orchestrate/plan-judge.test.ts`, `orchestrate/view.ts`, `orchestrate/view.test.ts`, `orchestrate/index.ts`, `orchestrate/wiring.test.ts`, `orchestrate/README.md`, `docs/workflow-improvements.md`.
 
+## Amendment 1 (executor: verify)
+Hand checks (S26): overlapping owns caught by the proposal judge; Esc during the judge; /orch start and /orch off model switch; restart in propose then /orch off; confirmPlans judge line. (step S26)
+
+
 <!-- pi-workflow:status -->
 ## Checklist
 - [x] S1 Create `shared/findings.ts` as in the Design, moving the code out of `workflow/gates.ts` and `workflow/discussion-review
@@ -498,19 +502,19 @@ Also:
 - [x] S10 Add `confirmPlanTitle(id, summary, judgeLine?)` to `orchestrate/plan-judge.ts`. With a non-empty `judgeLine` it returns 
 - [x] S11 Add scans to `orchestrate/wiring.test.ts`:
 - [x] S12 Update the docs:
-- [ ] S13 Add four prompts to `orchestrate/prompts.ts`:
-- [ ] S14 Add the gate helpers from the Design to `orchestrate/proposal-gate.ts`. `proposalReviewPrompts` returns:
-- [ ] S15 Show the judging label in the widget without changing the mode argument:
-- [ ] S16 Add `runJudge(ctx, systemPrompts, signal)` to `orchestrate/index.ts`. It calls `runSubagent` from `../agents/subagent.ts
-- [ ] S17 Add `runProposalGate(ctx, decision: "full" | "recheck", resetRounds: boolean)` to `orchestrate/index.ts`, modeled on `wo
-- [ ] S18 Rework the `input` hook (`index.ts:579`). Keep the user-message recording (:581-584) and the early return (:585). Slash 
-- [ ] S19 Change the `agent_end` hook (`index.ts:595`) to `async (event, ctx)`.
-- [ ] S20 In `session_start`, next to :1896: set `proposalReview = proposalGateFromEntries(branch)` and `lastProposal = undefined`
-- [ ] S21 Add two subcommands to the `/orch` handler (`index.ts:1742-1800`):
-- [ ] S22 Add scans to `orchestrate/wiring.test.ts`:
-- [ ] S23 Add to `orchestrate/README.md`:
-- [ ] S24 In `docs/workflow-improvements.md`, mark D49 Done (naming the files) and update the Status line.
-- [ ] S25 Run all the suites (see Tests) and fix failures until the expected results hold.
-- [ ] S26 Verify these by hand; they are listed for you:
+- [x] S13 Add four prompts to `orchestrate/prompts.ts`:
+- [x] S14 Add the gate helpers from the Design to `orchestrate/proposal-gate.ts`. `proposalReviewPrompts` returns:
+- [x] S15 Show the judging label in the widget without changing the mode argument:
+- [x] S16 Add `runJudge(ctx, systemPrompts, signal)` to `orchestrate/index.ts`. It calls `runSubagent` from `../agents/subagent.ts
+- [x] S17 Add `runProposalGate(ctx, decision: "full" | "recheck", resetRounds: boolean)` to `orchestrate/index.ts`, modeled on `wo
+- [x] S18 Rework the `input` hook (`index.ts:579`). Keep the user-message recording (:581-584) and the early return (:585). Slash 
+- [x] S19 Change the `agent_end` hook (`index.ts:595`) to `async (event, ctx)`.
+- [x] S20 In `session_start`, next to :1896: set `proposalReview = proposalGateFromEntries(branch)` and `lastProposal = undefined`
+- [x] S21 Add two subcommands to the `/orch` handler (`index.ts:1742-1800`):
+- [x] S22 Add scans to `orchestrate/wiring.test.ts`:
+- [x] S23 Add to `orchestrate/README.md`:
+- [x] S24 In `docs/workflow-improvements.md`, mark D49 Done (naming the files) and update the Status line.
+- [x] S25 Run all the suites (see Tests) and fix failures until the expected results hold.
+- [x] S26 Verify these by hand; they are listed for you:
 - [ ] S27 Deliver: merge — the install in S28 copies the merged `master`.
 - [ ] S28 On `master` after the merge:
