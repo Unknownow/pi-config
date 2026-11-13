@@ -198,3 +198,40 @@ export function readView(common: string, runId: string): { view?: View; corrupt?
 	if (r.value && (r.value.v !== 1 || !Array.isArray(r.value.subs))) return { corrupt: `${viewPath(common, runId)}: not a view file (v, subs)` };
 	return { view: r.value, corrupt: r.corrupt };
 }
+
+/** One worktree set that an orchestrated run created (or is creating): the evidence the trust handler relies on. */
+export interface SpawnEntry {
+	runId: string;
+	common: string;
+	sub: string;
+	state: "spawning" | "spawned";
+	at: string;
+	/** The worktree roots of the sub (the working repo and every repo worktree); empty while spawning. */
+	tops: string[];
+}
+
+export const spawnRegistryPath = (agentDir: string): string => `${norm(agentDir)}/orchestrate-spawned.json`;
+
+/**
+ * The per-user registry of spawned worktrees, outside every repository: only `orch_spawn` of a trusted-origin run writes it, so a
+ * project cannot vouch for itself. A missing or unreadable file means empty.
+ */
+export function readSpawnRegistry(agentDir: string): SpawnEntry[] {
+	const v = readJson<{ entries?: unknown }>(spawnRegistryPath(agentDir)).value;
+	if (!Array.isArray(v?.entries)) return [];
+	return v.entries.filter((e): e is SpawnEntry => !!e && typeof e === "object" && typeof (e as SpawnEntry).runId === "string" && typeof (e as SpawnEntry).common === "string" && typeof (e as SpawnEntry).sub === "string" && ((e as SpawnEntry).state === "spawning" || (e as SpawnEntry).state === "spawned") && typeof (e as SpawnEntry).at === "string" && Array.isArray((e as SpawnEntry).tops));
+}
+
+export function writeSpawnRegistry(agentDir: string, entries: SpawnEntry[]): void {
+	writeAtomic(spawnRegistryPath(agentDir), { v: 1, entries });
+}
+
+/** Adds or replaces the entry of (runId, sub). Pure. */
+export function withSpawnEntry(entries: SpawnEntry[], e: SpawnEntry): SpawnEntry[] {
+	return [...entries.filter((x) => !(x.runId === e.runId && x.sub === e.sub)), e];
+}
+
+/** Drops the entries of a run, or of one sub of it. Pure. */
+export function withoutSpawnEntries(entries: SpawnEntry[], runId: string, sub?: string): SpawnEntry[] {
+	return entries.filter((x) => !(x.runId === runId && (sub === undefined || x.sub === sub)));
+}

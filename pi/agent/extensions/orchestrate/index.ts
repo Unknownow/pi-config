@@ -29,8 +29,8 @@ import { repoTableText, section } from "./prompts.ts";
 import { check, OFFLINE_SECONDS, type Snapshot } from "./monitor.ts";
 import { boardLines, buildView, pendingOf, viewSig, widgetLines, type Paint, type SubInput, type View } from "./view.ts";
 import {
-	addAccepted, appendMessage, commonDir, findSubByToplevel, listActiveRuns, norm, orchestraDir, readAccepted, readCursor, readNew, readRun, readStatus, readView, runDir, sameDir, subDir, writeCursor, writeRun, writeStatus, writeView,
-	type Exec, type Message, type Status,
+	addAccepted, appendMessage, commonDir, findSubByToplevel, listActiveRuns, norm, orchestraDir, readAccepted, readCursor, readNew, readRun, readStatus, readSpawnRegistry, readView, runDir, sameDir, spawnRegistryPath, subDir, withoutSpawnEntries, withSpawnEntry, writeSpawnRegistry, writeCursor, writeRun, writeStatus, writeView,
+	type Exec, type Message, type SpawnEntry, type Status,
 } from "./store.ts";
 
 const ACTIVE: Sub["state"][] = ["spawning", "spawned", "planning", "executing", "awaiting-acceptance"];
@@ -483,6 +483,48 @@ export default function (pi: ExtensionAPI): void {
 			return false;
 		}
 	};
+	/**
+	 * The per-user registry that the trust handler relies on (outside every repo). Only a run whose origin was trusted writes it.
+	 * A failure to write is not fatal: the worktree then just gets the normal trust prompt.
+	 */
+	function registry(change: (list: SpawnEntry[]) => SpawnEntry[]): void {
+		let lock: number | undefined;
+		const dir = getAgentDir();
+		const lockFile = spawnRegistryPath(dir) + ".lock";
+		try {
+			// a lock file keeps two orchestrators from overwriting each other (stale after 5 s)
+			for (let i = 0; i < 20 && lock === undefined; i++) {
+				try {
+					lock = fs.openSync(lockFile, "wx");
+				} catch {
+					try {
+						if (Date.now() - fs.statSync(lockFile).mtimeMs > 5000) fs.unlinkSync(lockFile);
+					} catch {
+						// gone already
+					}
+					const until = Date.now() + 50;
+					while (Date.now() < until) { /* short wait */ }
+				}
+			}
+			writeSpawnRegistry(dir, change(readSpawnRegistry(dir)));
+		} catch (e) {
+			say(`could not update the spawn registry: ${(e as Error).message}`, "warning");
+		} finally {
+			if (lock !== undefined) {
+				fs.closeSync(lock);
+				try {
+					fs.unlinkSync(lockFile);
+				} catch {
+					// ignore
+				}
+			}
+		}
+	}
+	const registerSpawn = (run: Run, common: string, subId: string, state: "spawning" | "spawned", tops: string[]): void => {
+		if (run.originTrusted !== true) return;
+		registry((l) => withSpawnEntry(l, { runId: run.id, common, sub: subId, state, at: new Date().toISOString(), tops }));
+	};
+	const unregister = (runId: string, subId?: string): void => registry((l) => (l.some((e) => e.runId === runId && (subId === undefined || e.sub === subId)) ? withoutSpawnEntries(l, runId, subId) : l));
 	/** Subs stuck in `spawning` go back to `planned` (a crash during orch_spawn): reported, not silent. */
 	async function resetStaleSpawning(run: Run): Promise<void> {
 		const alive = run.owner.host !== os.hostname() || pidAlive(run.owner.pid) || run.owner.pid === process.pid;
@@ -491,6 +533,7 @@ export default function (pi: ExtensionAPI): void {
 		await mutate((r) => {
 			for (const id of stale) revertSpawning(subOf(r, id));
 		});
+		for (const id of stale) unregister(run.id, id);
 		for (const id of stale) say(`reset ${id} to planned; if a worktree exists use /wt open or /wt remove`, "warning");
 	}
 	const current = (): Run | null => (owned ? readRun(owned.common, owned.runId).run ?? null : null);
@@ -686,6 +729,7 @@ export default function (pi: ExtensionAPI): void {
 					const s = r.subs.find((x) => x.id === id);
 					if (s) s.state = "merged";
 				}
+				for (const id of merged) unregister(r.id, id);
 				return { ready: readyToSpawn(r), running: r.subs.filter((s) => ACTIVE.includes(s.state)).map((s) => s.id), all: r.subs.every((s) => s.state === "merged" || s.state === "stopped") };
 			});
 			for (const id of merged) {
@@ -974,6 +1018,7 @@ export default function (pi: ExtensionAPI): void {
 						s.state = "spawning";
 						s.spawningAt = new Date().toISOString();
 					});
+					registerSpawn(run, owned?.common ?? "", id, "spawning", []);
 					// multi-repo: only the added folders this package needs go into its set (plain folders always do)
 					let payload: Record<string, unknown> = { v: 1, name: sub.name };
 					if (run.repos) {
@@ -1014,10 +1059,12 @@ export default function (pi: ExtensionAPI): void {
 						s.state = "spawned";
 						delete s.spawningAt;
 					});
+					registerSpawn(run, owned?.common ?? "", id, "spawned", wts.length ? wts.map((w) => w.cwd) : [top]);
 					lines.push(`${id}: spawned in ${top} (${ans.branch ?? "branch ?"})${ans.launched ? "" : "; the terminal did not open, use /wt open " + sub.name}${wts.length > 1 ? `; worktrees: ${wts.map((w) => w.key).join(", ")}` : ""}${notes.length ? `. WARNING: ${notes.join("; ")}` : ""}`);
 				} catch (e) {
 					running--;
 					await mutate((r) => revertSpawning(subOf(r, id))).catch(() => {});
+					unregister(run.id, id);
 					lines.push(`${id}: failed: ${(e as Error).message} (still planned)`);
 				} finally {
 					spawning.delete(id);
@@ -1165,6 +1212,7 @@ export default function (pi: ExtensionAPI): void {
 						r.state = "ended";
 					});
 					const id = owned?.runId;
+					if (id) unregister(id);
 					stopWatcher();
 					if (mode !== "off") setMode("off", false);
 					ctx.ui.notify(`orchestrate: run ${id} ended; the worktrees stay (remove them with /wt)`, "info");
@@ -1298,6 +1346,7 @@ export default function (pi: ExtensionAPI): void {
 			say(`unreadable run file: ${c}`, "warning");
 		}
 		const top = await git(ctx.cwd, "rev-parse", "--show-toplevel");
+		if (gen !== generation) return;
 		const become = (hit: { run: Run; sub: Sub }) => {
 			const m: Me = { common, run: hit.run, sub: hit.sub, dir: subDir(common, hit.run.id, hit.sub.id) };
 			me = m;
@@ -1371,6 +1420,7 @@ export default function (pi: ExtensionAPI): void {
 							});
 						}),
 					listRuns: (common) => listActiveRuns(common).runs,
+					listSpawned: () => readSpawnRegistry(getAgentDir()),
 					sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
 					now: () => Date.now(),
 				},

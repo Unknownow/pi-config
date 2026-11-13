@@ -1,29 +1,41 @@
 /**
  * Trust for spawned worktrees: pi asks `project_trust` before it loads a project's `.pi`. A worktree that an
- * orchestrated run just created, in a run whose origin was trusted, is trusted without a prompt. Pure logic here;
- * the handler in index.ts adds the git call.
+ * orchestrated run just created, in a run whose origin was trusted, is trusted without a prompt.
+ *
+ * The evidence is the per-user registry (`<agent dir>/orchestrate-spawned.json`), which only `orch_spawn` writes. A repository
+ * can ship any `run.json`, so `run.json` is only a second check and never enough alone.
  */
 
 import type { Run, Sub } from "./brief.ts";
 import { SPAWNING_MAX_MS } from "./brief.ts";
-import { sameDir } from "./store.ts";
+import { norm, sameDir, type SpawnEntry } from "./store.ts";
 
 export type TrustStep = "yes" | "poll" | "undecided";
 
 const TRUSTED_STATES: Sub["state"][] = ["spawned", "planning", "executing", "awaiting-acceptance"];
 
-/** One look at the active runs. `yes`: `top` is a worktree of a sub of a trusted-origin run; `poll`: not yet, but such a run is creating one now. */
-export function trustStep(top: string, runs: Run[], now: number): TrustStep {
+/** Whether `cwd` is `top` or lies inside it. */
+function insideOrSame(cwd: string, top: string): boolean {
+	if (sameDir(cwd, top)) return true;
+	const lower = process.platform === "win32";
+	const c = lower ? `${norm(cwd)}/`.toLowerCase() : `${norm(cwd)}/`;
+	const t = lower ? `${norm(top)}/`.toLowerCase() : `${norm(top)}/`;
+	return c.startsWith(t);
+}
+
+/** One look at the registry and the runs of `common`. `yes`: `top` is a registered worktree of a trusted-origin run (and run.json agrees); `poll`: not yet, but such a spawn is under way. */
+export function trustStep(o: { cwd: string; top: string; common: string }, spawned: SpawnEntry[], runs: Run[], now: number): TrustStep {
 	let polling = false;
-	for (const run of runs) {
-		if (run.originTrusted !== true) continue;
-		for (const sub of run.subs) {
-			const dirs = [sub.cwd, ...(sub.worktrees ?? []).map((w) => w.cwd)].filter((d): d is string => !!d);
-			if (TRUSTED_STATES.includes(sub.state) && dirs.some((d) => sameDir(d, top))) return "yes";
-			if (sub.state === "spawning") {
-				const at = sub.spawningAt ? Date.parse(sub.spawningAt) : NaN;
-				if (Number.isFinite(at) && now - at < SPAWNING_MAX_MS) polling = true;
-			}
+	for (const e of spawned) {
+		if (!sameDir(e.common, o.common)) continue;
+		if (e.state === "spawned") {
+			if (!e.tops.some((t) => sameDir(t, o.top)) || !insideOrSame(o.cwd, o.top)) continue;
+			const run = runs.find((r) => r.id === e.runId);
+			const sub = run?.subs.find((s) => s.id === e.sub);
+			if (run && run.originTrusted === true && sub && TRUSTED_STATES.includes(sub.state)) return "yes";
+		} else {
+			const at = Date.parse(e.at);
+			if (Number.isFinite(at) && now - at < SPAWNING_MAX_MS) polling = true;
 		}
 	}
 	return polling ? "poll" : "undecided";
@@ -36,11 +48,13 @@ export interface TrustDeps {
 	/** `{ common, top }` of the repo at `cwd`, or null (no repo, error, timeout). */
 	locate: (cwd: string) => Promise<{ common: string; top: string } | null>;
 	listRuns: (common: string) => Run[];
+	/** The per-user registry of spawned worktrees. */
+	listSpawned: () => SpawnEntry[];
 	sleep: (ms: number) => Promise<void>;
 	now: () => number;
 }
 
-/** The decision for a worktree: re-reads the runs every 500 ms while a spawn is under way, for at most 15 s. */
+/** The decision for a worktree: re-reads the registry every 500 ms while a spawn is under way, for at most 15 s. */
 export async function decideTrust(deps: TrustDeps, cwd: string): Promise<"yes" | "undecided"> {
 	const where = await deps.locate(cwd);
 	if (!where) return "undecided";
@@ -48,7 +62,7 @@ export async function decideTrust(deps: TrustDeps, cwd: string): Promise<"yes" |
 	for (;;) {
 		let step: TrustStep;
 		try {
-			step = trustStep(where.top, deps.listRuns(where.common), deps.now());
+			step = trustStep({ cwd, ...where }, deps.listSpawned(), deps.listRuns(where.common), deps.now());
 		} catch {
 			return "undecided";
 		}
