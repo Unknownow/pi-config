@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Run, Sub } from "./brief.ts";
+import type { Item } from "./items.ts";
 import type { Message } from "./store.ts";
 import { boardLines, buildView, pendingOf, widgetLines, type SubInput } from "./view.ts";
 
@@ -53,4 +54,17 @@ test("boardLines detail has goal and owns", () => {
 	assert.match(detail, /goal of a/);
 	assert.match(detail, /api:src\/a\/\*\*/);
 	assert.match(boardLines(v, 0, false, 100, 1000)[0], /│.*a: executing/);
+});
+
+test("escalated items: marker, header count and board mark", () => {
+	const item = (o: Partial<Item>): Item => ({ ref: "r", sub: "a", kind: "question", postedAt: 0, state: "open", reminders: 0, idleMs: 0, userMsgs: [], summary: "s", ...o });
+	const items = [item({ ref: "q1" }), item({ ref: "f:3", kind: "menu", key: "judge-cap" }), item({ ref: "f:4", kind: "wait", state: "escalated" }), item({ ref: "i1", kind: "idle" }), item({ ref: "plan-2", kind: "plan-review", n: 2 }), item({ ref: "x", state: "answered" })];
+	const v = buildView(run([sub("a")]), 1000, 4, new Map([["a", { outbox: [], inbox: [], accepted: [], items }]]), 180);
+	assert.deepEqual(v.subs[0].pending.map((p) => p.kind), ["question", "menu", "wait", "idle", "plan"]);
+	assert.equal(v.waitingForUser, 1);
+	const lines = widgetLines(v, "run", 1000, undefined, 200);
+	assert.match(lines[0], /1 waiting for you/);
+	assert.match(lines[1], /\? question menu judge-cap ‼ you: f:4 idle plan 2 review/);
+	assert.match(boardLines(v, 0, false, 100, 1000)[0], /‼/);
+	assert.equal(buildView(run([sub("a")]), 1000, 4, new Map(), 180).waitingForUser, undefined);
 });

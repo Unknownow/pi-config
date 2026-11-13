@@ -12,6 +12,14 @@ export interface OrchestrateConfig {
 	stallMinutes: number;
 	/** Ask the person before a plan is approved. */
 	confirmPlans: boolean;
+	/** Consecutive plan rejections in one planning round before the next review goes to the user. */
+	maxPlanRejections: number;
+	/** "Back to planning" answers per package and run before the next needs the user's quote. */
+	maxReplans: number;
+	/** Answers per package and menu key before the next ask goes to the user. */
+	maxAutoAnswers: number;
+	/** Idle reports without progress per package before the next goes to the user. */
+	maxIdleAnswers: number;
 	/** Regex (case-insensitive) for the typed "go" that moves orchestrator mode on. */
 	approvePattern: string;
 }
@@ -20,9 +28,9 @@ export interface OrchestrateConfig {
 const GO_PATTERN =
 	"^((ok(ay)?|yes|yeah|yep|sure|alright|fine|great|good)[,.! ]+)?(then[, ]+)?(go|go ahead|go for it|do it|do that|do this|do them|do (it )?all( of (it|that|them))?|approved?|lgtm|ship it|execute( it| that| this| the plan)?|proceed|start|let'?s go|let'?s do it|run it|implement( it| that| this| the plan)?|build it|make it so)( for me)?( now)?( please)?[.! ]*$";
 
-export const DEFAULTS: OrchestrateConfig = { maxSubs: 4, pollSeconds: 60, stallMinutes: 20, confirmPlans: false, approvePattern: GO_PATTERN };
+export const DEFAULTS: OrchestrateConfig = { maxSubs: 4, pollSeconds: 60, stallMinutes: 20, confirmPlans: false, maxPlanRejections: 3, maxReplans: 2, maxAutoAnswers: 2, maxIdleAnswers: 3, approvePattern: GO_PATTERN };
 
-const INT_KEYS = ["maxSubs", "pollSeconds", "stallMinutes"] as const;
+const INT_KEYS = ["maxSubs", "pollSeconds", "stallMinutes", "maxPlanRejections", "maxReplans", "maxAutoAnswers", "maxIdleAnswers"] as const;
 
 /** Merge a parsed JSON value into the defaults. Pure. */
 export function parseConfig(raw: unknown): { config: OrchestrateConfig; warning?: string } {

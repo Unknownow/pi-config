@@ -1,6 +1,7 @@
 /** The run as data and as text lines: view.json, the widget rows and the /orch board. Pure; `paint(kind, text)` adds color. */
 
 import type { Run, Sub } from "./brief.ts";
+import { isLive, type Item } from "./items.ts";
 import { split } from "./repos.ts";
 import type { Message, Status } from "./store.ts";
 
@@ -8,10 +9,14 @@ export type Paint = (kind: "accent" | "dim" | "warn" | "ok" | "err" | "plain", t
 export const plain: Paint = (_k, t) => t;
 
 export interface Pending {
-	kind: "question" | "plan" | "accept";
+	kind: "question" | "plan" | "accept" | "menu" | "wait" | "idle";
 	ref: string;
 	text: string;
 	repo?: string;
+	/** menu: the workflow's key. */
+	key?: string;
+	/** The orchestrator escalated it: the user must answer. */
+	escalated?: boolean;
 }
 
 export interface ViewRepo {
@@ -49,6 +54,8 @@ export interface View {
 	title: string;
 	updated: string;
 	maxSubs: number;
+	/** Escalated items that wait for the user. */
+	waitingForUser?: number;
 	subs: ViewSub[];
 }
 
@@ -76,6 +83,18 @@ export function pendingOf(outbox: Message[], inbox: Message[]): Pending[] {
 	return out;
 }
 
+/** The pending list from items.json: one entry per live item. */
+export function pendingFromItems(items: Item[]): Pending[] {
+	return items.filter(isLive).map((i): Pending => {
+		const escalated = i.state === "escalated" ? true : undefined;
+		const base = { text: i.summary, escalated };
+		if (i.kind === "plan-review") return { kind: "plan", ref: String(i.n ?? i.ref), ...base };
+		if (i.kind === "accept-request") return { kind: "accept", ref: i.tree ?? i.ref, repo: i.repo ?? "", ...base };
+		if (i.kind === "menu") return { kind: "menu", ref: i.ref, key: i.key, ...base };
+		return { kind: i.kind, ref: i.ref, ...base };
+	});
+}
+
 export interface SubInput {
 	status?: Status;
 	files?: string[];
@@ -85,6 +104,8 @@ export interface SubInput {
 	outbox: Message[];
 	inbox: Message[];
 	accepted: string[];
+	/** The live items of the package (items.json); when given, they replace the pending list derived from the files. */
+	items?: Item[];
 	/** repo key → last known PR state */
 	prs?: Map<string, "merged" | "not merged" | "unknown">;
 }
@@ -133,11 +154,12 @@ export function buildView(run: Run, now: number, maxSubs: number, inputs: Map<st
 			accepted: i.accepted,
 			repos: all.map((k) => ({ key: k, files: count.get(k) ?? 0, drift: drift.get(k) ?? [], pr: i.prs?.get(k) })),
 			overlap: i.overlap ?? [],
-			pending: s.state === "merged" || s.state === "stopped" ? [] : pendingOf(i.outbox, i.inbox),
+			pending: s.state === "merged" || s.state === "stopped" ? [] : i.items ? pendingFromItems(i.items) : pendingOf(i.outbox, i.inbox),
 			recent: [...last("out"), ...last("in")].sort((a, b) => a.ts.localeCompare(b.ts)),
 		};
 	});
-	return { v: 1, runId: run.id, title: run.title, updated: new Date(now).toISOString(), maxSubs, subs };
+	const waitingForUser = subs.reduce((n, s) => n + s.pending.filter((p) => p.escalated).length, 0);
+	return { v: 1, runId: run.id, title: run.title, updated: new Date(now).toISOString(), maxSubs, ...(waitingForUser ? { waitingForUser } : {}), subs };
 }
 
 /** The part of a view that decides whether view.json is rewritten (everything but `updated`). */
@@ -158,7 +180,14 @@ function fit(segs: Seg[], width: number, paint: Paint): string {
 	return out;
 }
 
-const pendingMark = (p: Pending): string => (p.kind === "question" ? "? question" : p.kind === "plan" ? `plan ${p.ref} review` : `⚠ accept ${p.repo ? `${p.repo} ` : ""}${p.ref.slice(0, 7)}`);
+export const pendingMark = (p: Pending): string => {
+	if (p.escalated) return `‼ you: ${p.kind === "plan" ? `plan ${p.ref}` : p.kind === "accept" ? `accept ${p.ref.slice(0, 7)}` : p.kind === "menu" ? `menu ${p.key ?? p.ref}` : p.ref}`;
+	if (p.kind === "question") return "? question";
+	if (p.kind === "plan") return `plan ${p.ref} review`;
+	if (p.kind === "menu") return `menu ${p.key ?? ""}`.trim();
+	if (p.kind === "wait" || p.kind === "idle") return p.kind;
+	return `⚠ accept ${p.repo ? `${p.repo} ` : ""}${p.ref.slice(0, 7)}`;
+};
 
 export function widgetLines(view: View | null, mode: string, _now: number, paint: Paint = plain, width = 120): string[] {
 	if (!view) {
@@ -167,7 +196,9 @@ export function widgetLines(view: View | null, mode: string, _now: number, paint
 		return [];
 	}
 	const running = view.subs.filter((s) => ["spawning", "spawned", "planning", "executing", "awaiting-acceptance"].includes(s.state)).length;
-	const lines = [fit([["accent", `orch ${view.runId} ▸ ${mode === "off" ? "watching" : mode}`], ["dim", `  ${running}/${view.maxSubs} running`]], width, paint)];
+	const head: Seg[] = [["accent", `orch ${view.runId} ▸ ${mode === "off" ? "watching" : mode}`], ["dim", `  ${running}/${view.maxSubs} running`]];
+	if (view.waitingForUser) head.push(["err", `  ${view.waitingForUser} waiting for you`]);
+	const lines = [fit(head, width, paint)];
 	for (const s of view.subs) {
 		const segs: Seg[] = [["plain", s.id.padEnd(12)]];
 		const keys = s.repos.map((r) => r.key).filter(Boolean);
@@ -209,7 +240,7 @@ export function boardLines(view: View, selected: number, detail: boolean, width:
 	const sel = Math.min(Math.max(0, selected), view.subs.length - 1);
 	if (detail) return detailOf(view.subs[sel], now).map((l) => fit([["plain", l]], width, paint));
 	const leftW = Math.min(32, Math.max(12, Math.floor(width / 3)));
-	const left = view.subs.map((s, i) => ({ text: `${i === sel ? "▸" : " "} ${s.id} ${s.state}${s.pending.length ? " !" : ""}`, on: i === sel }));
+	const left = view.subs.map((s, i) => ({ text: `${i === sel ? "▸" : " "} ${s.id} ${s.state}${s.pending.some((p) => p.escalated) ? " ‼" : s.pending.length ? " !" : ""}`, on: i === sel }));
 	const right = detailOf(view.subs[sel], now);
 	const rows = Math.max(left.length, right.length);
 	const out: string[] = [];

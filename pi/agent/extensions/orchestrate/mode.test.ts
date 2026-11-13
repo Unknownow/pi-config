@@ -53,3 +53,7 @@ test("section is empty only when off", () => {
 	assert.match(section("propose", "repos: x"), /repos: x/);
 	assert.match(section("run"), /orch_run/);
 });
+
+test("orch_decide and orch_escalate are always allowed in an orchestrator mode", () => {
+	for (const m of ["discuss", "propose", "run"] as const) for (const t of ["orch_decide", "orch_escalate"]) assert.equal(toolRefusal(m, t, {}), null);
+});

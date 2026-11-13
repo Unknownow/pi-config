@@ -8,7 +8,7 @@
  * run is a sub-session; any other session can start a run (orch_run) and becomes its orchestrator.
  */
 
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import { execFile } from "node:child_process";
 import * as os from "node:os";
@@ -17,8 +17,11 @@ import { truncateToWidth } from "@earendil-works/pi-tui";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { emitClaims } from "../shared/claims.ts";
+import { notifyCommand } from "../shared/notify.ts";
 import { activeCount, canonicalPackages, kickoffText, makeRunId, readyToSpawn, renderBrief, revertSpawning, setName, staleSpawning, validatePackages, type PackageInput, type Run, type Sub } from "./brief.ts";
 import { foldersFromEntries } from "./folders.ts";
+import { checkDecision, checkItemAnswer } from "./decide.ts";
+import { acceptRef, close, closeIdle, countersOf, emptyItems, escalate, findItem, fingerprintOf, idleAllowed, liveItems, markStale, openItem, orphanDue, planRef, quoteOk, recordUserMessage, setFingerprint, tick, type Action, type Caps, type Item, type ItemsFile, type Outcome } from "./items.ts";
 import { HeldQueue, resolveAllPending, RUN_ENDED_ANSWER, type Identity } from "./identity.ts";
 import { decideTrust } from "./trust.ts";
 import { buildRepos, crossRunOverlaps, foldersFor, hasKeyPrefix, subRepos, worktreesOf, type Repo, type Worktree } from "./repos.ts";
@@ -29,7 +32,7 @@ import { repoTableText, section } from "./prompts.ts";
 import { check, OFFLINE_SECONDS, type Snapshot } from "./monitor.ts";
 import { boardLines, buildView, pendingOf, viewSig, widgetLines, type Paint, type SubInput, type View } from "./view.ts";
 import {
-	addAccepted, appendMessage, commonDir, findSubByToplevel, listActiveRuns, norm, orchestraDir, readAccepted, readCursor, readNew, readRun, readStatus, readSpawnRegistry, readView, runDir, sameDir, spawnRegistryPath, subDir, withoutSpawnEntries, withSpawnEntry, writeSpawnRegistry, writeCursor, writeRun, writeStatus, writeView,
+	addAccepted, appendMessage, commonDir, itemsPath, findSubByToplevel, listActiveRuns, norm, orchestraDir, readAccepted, readCursor, readItems, readNew, readRun, readStatus, readSpawnRegistry, readView, runDir, sameDir, spawnRegistryPath, subDir, withoutSpawnEntries, withSpawnEntry, writeSpawnRegistry, writeCursor, writeItems, writeRun, writeStatus, writeView,
 	type Exec, type Message, type SpawnEntry, type Status,
 } from "./store.ts";
 
@@ -67,6 +70,16 @@ export default function (pi: ExtensionAPI): void {
 		}
 	};
 
+	/** A desktop notification; a failure is ignored. */
+	const notifyDesktop = (title: string, body: string): void => {
+		try {
+			const nc = notifyCommand(process.platform, title, body);
+			if (nc) execFile(nc.command, nc.args, { timeout: 10_000, windowsHide: true }, () => {});
+		} catch {
+			// no notification
+		}
+	};
+
 	// ---------------------------------------------------------------- sub-session side
 
 	interface Me {
@@ -88,6 +101,22 @@ export default function (pi: ExtensionAPI): void {
 	const heldMerge = new HeldQueue<unknown>();
 	const heldAsk = new HeldQueue<unknown>();
 	const heldIdle = new HeldQueue<unknown>();
+	/** K12 asks that went to the orchestrator: askId -> the claim's resolver. */
+	const askClaims = new Map<string, (v: unknown) => void>();
+	const INSTANCE = randomUUID();
+	/** An idle report that was posted and not yet ended (agent_start posts idle-end). */
+	let idleOpen = false;
+	let agentStarts = 0;
+	let idleTimer: ReturnType<typeof setTimeout> | undefined;
+	const IDLE_EXTRA_MS = 20_000;
+	const releaseAsks = (): void => {
+		const list = [...askClaims.values()];
+		askClaims.clear();
+		for (const r of list) r(null);
+		if (idleTimer) clearTimeout(idleTimer);
+		idleTimer = undefined;
+		idleOpen = false;
+	};
 	const releaseHeld = (): void => {
 		for (const q of [heldPlan, heldMerge, heldAsk, heldIdle]) q.release();
 	};
@@ -107,8 +136,8 @@ export default function (pi: ExtensionAPI): void {
 		identity = "sub";
 		heldPlan.replay(handlePlanReady);
 		heldMerge.replay(handleMergeGate);
-		heldAsk.replay(() => {}); // K12 and K13: nothing answers them yet, so they show locally
-		heldIdle.replay(() => {});
+		heldAsk.replay(handleAsk);
+		heldIdle.replay(handleIdle);
 	}
 	function becomeNotSub(): void {
 		identity = "not-sub";
@@ -212,8 +241,108 @@ export default function (pi: ExtensionAPI): void {
 		updateSubStatus();
 	}
 
-	pi.events.on("workflow:ask", (data: unknown) => route(heldAsk, () => {}, data));
-	pi.events.on("workflow:idle", (data: unknown) => route(heldIdle, () => {}, data));
+	/** K12: a workflow menu or wait goes to the orchestrator (orch_decide); nothing shows locally. */
+	pi.events.on("workflow:ask", (data: unknown) => route(heldAsk, handleAsk, data));
+	function handleAsk(data: unknown, claim: Claim): void {
+		if (!me || !started) return;
+		const d = data as Record<string, unknown>;
+		const id = typeof d.id === "string" ? d.id : "";
+		if (!id) return;
+		const { claim: _claim, ...rest } = d;
+		const stage = typeof lastK4?.stage === "number" ? lastK4.stage : undefined;
+		if (!post("ask", typeof d.title === "string" ? d.title : id, { ...rest, ...(stage !== undefined ? { stage } : {}) })) return;
+		claim(new Promise((resolve) => {
+			askClaims.set(id, resolve);
+		}));
+		updateSubStatus();
+	}
+	pi.events.on("workflow:ask-done", (data: unknown) => {
+		const d = data as { id?: unknown; how?: unknown } | null;
+		if (!me || typeof d?.id !== "string") return;
+		askClaims.delete(d.id);
+		post("ask-done", `ask ${d.id} ${String(d.how ?? "answered")}`, { id: d.id, how: d.how === "withdrawn" ? "withdrawn" : "answered" });
+		updateSubStatus();
+	});
+
+	/** What the sub waits on from the orchestrator, for the idle gate. */
+	function openRequests(): { plan: boolean; ask: boolean; question: boolean; accept: boolean } {
+		let accept = false;
+		try {
+			if (me) accept = pendingOf(readNew(f(me, "outbox.jsonl"), 0).msgs, readNew(f(me, "inbox.jsonl"), 0).msgs).some((p) => p.kind === "accept");
+		} catch {
+			// unreadable: treat as none
+		}
+		return { plan: k10 !== null, ask: askClaims.size > 0, question: pendingAsk.size > 0, accept };
+	}
+
+	/** K13: the idle notice is the orchestrator's business; an `idle` report follows after 20 s more, unless the sub woke up or waits on something else. */
+	pi.events.on("workflow:idle", (data: unknown) => route(heldIdle, handleIdle, data));
+	function handleIdle(data: unknown, claim: Claim): void {
+		if (!me || !started) return;
+		claim(Promise.resolve({ handled: true }));
+		const lastText = typeof (data as { lastText?: unknown }).lastText === "string" ? (data as { lastText: string }).lastText : "";
+		const at = agentStarts;
+		if (idleTimer) clearTimeout(idleTimer);
+		idleTimer = setTimeout(() => {
+			idleTimer = undefined;
+			const m = me;
+			if (!m || agentStarts !== at || identity !== "sub") return;
+			const fresh = readRun(m.common, m.run.id).run;
+			if (!fresh || fresh.state === "ended") return;
+			const state = fresh.subs.find((x) => x.id === m.sub.id)?.state ?? m.sub.state;
+			if (!idleAllowed(state, openRequests())) return;
+			if (post("idle", `Package ${m.sub.id} is idle: ${lastText.slice(-1500) || "(no text)"}`, { lastText: lastText.slice(-4000) })) idleOpen = true;
+		}, IDLE_EXTRA_MS);
+		idleTimer.unref?.();
+	}
+	pi.on("agent_start", async () => {
+		if (me) {
+			agentStarts++;
+			if (idleTimer) clearTimeout(idleTimer);
+			idleTimer = undefined;
+			if (idleOpen) {
+				idleOpen = false;
+				post("idle-end", "the sub-session is working again");
+			}
+		} else orchBusy = true;
+	});
+	pi.on("agent_end", async () => {
+		if (!me) orchBusy = false;
+	});
+
+	/** D10: when the orchestrator is not running, say so once per item that has waited over 30 min. */
+	const openSince = new Map<string, number>();
+	const orphanNotified = new Set<string>();
+	function checkOrphans(): void {
+		const m = me;
+		if (!m) return;
+		const live = new Set<string>();
+		for (const id of pendingAsk.keys()) live.add(`q:${id}`);
+		if (k10) live.add(`plan:${k10.n}`);
+		for (const id of askClaims.keys()) live.add(`ask:${id}`);
+		try {
+			for (const p of pendingOf(readNew(f(m, "outbox.jsonl"), 0).msgs, readNew(f(m, "inbox.jsonl"), 0).msgs)) if (p.kind === "accept") live.add(`accept:${p.repo ?? ""}:${p.ref}`);
+		} catch {
+			// unreadable
+		}
+		const now = Date.now();
+		for (const k of live) if (!openSince.has(k)) openSince.set(k, now);
+		for (const k of [...openSince.keys()]) {
+			if (!live.has(k)) {
+				openSince.delete(k);
+				orphanNotified.delete(k);
+			}
+		}
+		const old = [...openSince].filter(([k, at]) => !orphanNotified.has(k) && now - at >= 30 * 60_000);
+		if (!old.length) return;
+		const owner = readRun(m.common, m.run.id).run?.owner;
+		if (!owner) return;
+		for (const [k, at] of old) {
+			if (!orphanDue({ ownerHost: owner.host, host: os.hostname(), ownerAlive: pidAlive(owner.pid), ageMs: now - at, alreadyNotified: orphanNotified.has(k) })) continue;
+			orphanNotified.add(k);
+			notifyDesktop("orchestrator not running", `Package ${m.sub.id} waits for the orchestrator: open it and run /orch watch`);
+		}
+	}
 
 	/** K11: a merge needs the orchestrator's acceptance of the same tree. */
 	pi.events.on("workflow:merge-gate", (data: unknown) => route(heldMerge, handleMergeGate, data));
@@ -260,6 +389,7 @@ export default function (pi: ExtensionAPI): void {
 			k10?.resolve(null);
 			k10 = null;
 			releaseHeld();
+			releaseAsks();
 			if (n) updateSubStatus();
 		}
 		const file = f(me, "inbox.jsonl");
@@ -278,6 +408,15 @@ export default function (pi: ExtensionAPI): void {
 				} else {
 					say(`verdict for plan ${String(m.data?.n ?? "?")} ignored; ${k10 ? `plan ${k10.n} is under review` : "no plan is under review"}`, "warning");
 				}
+			} else if (m.type === "decision") {
+				const id = String(m.data?.askId ?? "");
+				const resolve = askClaims.get(id);
+				if (!resolve) say(`a decision for ask ${id} arrived, but no such ask is open; ignored`, "warning");
+				else {
+					askClaims.delete(id);
+					const t = typeof m.data?.text === "string" && m.data.text ? { text: m.data.text } : {};
+					resolve(m.data?.resume === true ? { resume: true, ...t } : { choice: m.data?.choice, ...t });
+				}
 			} else if (m.type === "directive") {
 				sendToModel("orchestrate-message", `Orchestrator directive: ${m.text}`, m.data?.urgent === true ? "steer" : "followUp");
 			} else if (m.type === "answer") {
@@ -289,6 +428,7 @@ export default function (pi: ExtensionAPI): void {
 		if (r.cursor !== readCursor(cur) || r.bad) writeCursor(cur, r.cursor);
 		if (r.bad) say(`${r.bad} unreadable line(s) in the inbox were skipped`, "warning");
 		updateSubStatus();
+		checkOrphans();
 	}
 
 	/** Sub-session status line: the package, and what it waits for from the orchestrator. */
@@ -298,6 +438,7 @@ export default function (pi: ExtensionAPI): void {
 		let waiting = "";
 		if (k10) waiting = "plan review";
 		else if (pendingAsk.size) waiting = "answer";
+		else if (askClaims.size) waiting = "decision";
 		else {
 			try {
 				const out = readNew(f(me, "outbox.jsonl"), 0).msgs;
@@ -417,6 +558,11 @@ export default function (pi: ExtensionAPI): void {
 	});
 
 	pi.on("input", async (event) => {
+		// what the user types is the evidence for a userQuote on an escalated item (best effort)
+		if (!me && owned && event.source !== "extension" && !event.text.trim().startsWith("/")) {
+			recordUserMessage(itemsFile, event.text, Date.now());
+			if (itemsFile.items.some((i) => i.state === "escalated")) saveItems();
+		}
 		if (me || mode === "off" || event.source === "extension" || event.streamingBehavior) return { action: "continue" as const };
 		const typed = event.text.trim();
 		if (typed.startsWith("/")) return { action: "continue" as const };
@@ -549,6 +695,95 @@ export default function (pi: ExtensionAPI): void {
 	};
 	const sf = (o: Owned, id: string, name: string) => `${subDir(o.common, o.runId, id)}/${name}`;
 
+	// ---- items: what the sub-sessions wait on, with reminders, escalation and caps (items.ts, decide.ts)
+	let itemsFile: ItemsFile = emptyItems();
+	let orchBusy = false;
+	let lastTickAt = 0;
+	const caps = (): Caps => ({ maxPlanRejections: cfg.maxPlanRejections, maxReplans: cfg.maxReplans, maxAutoAnswers: cfg.maxAutoAnswers, maxIdleAnswers: cfg.maxIdleAnswers });
+	const clipText = (s: string, n: number): string => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
+
+	function loadItems(o: Owned): void {
+		const r = readItems(o.common, o.runId);
+		if (r.corrupt) {
+			say(`${r.corrupt}; starting with no items (the old file is kept as items.json.corrupt)`, "warning");
+			try {
+				fs.copyFileSync(itemsPath(o.common, o.runId), `${itemsPath(o.common, o.runId)}.corrupt`);
+			} catch {
+				// nothing to keep
+			}
+		}
+		itemsFile = r.file;
+	}
+	function saveItems(): void {
+		const o = owned;
+		if (!o) return;
+		try {
+			writeItems(o.common, o.runId, itemsFile);
+		} catch (e) {
+			say(`could not write items.json: ${(e as Error).message}`, "warning");
+		}
+	}
+
+	/** One line about an item, for messages to the model. */
+	function describeItem(i: Item): string {
+		const where = `[${i.sub}]`;
+		if (i.kind === "question") return `${where} question ${i.ref}: ${clipText(i.summary, 300)}`;
+		if (i.kind === "menu") return `${where} menu ${i.key} (askId ${i.ref}): ${clipText(i.summary, 200)}`;
+		if (i.kind === "wait") return `${where} wait (askId ${i.ref}): ${clipText(i.summary, 300)}`;
+		if (i.kind === "idle") return `${where} idle report ${i.ref}: ${clipText(i.summary, 300)}`;
+		if (i.kind === "plan-review") return `${where} plan ${i.n ?? "?"} review`;
+		return `${where} accept request for tree ${(i.tree ?? "").slice(0, 12)}${i.repo ? ` of repo ${i.repo}` : ""}`;
+	}
+	const answerTool = (i: Item): string =>
+		i.kind === "question" ? `orch_send {id:"${i.sub}", type:"answer", replyTo:"${i.ref}", text}` : i.kind === "menu" || i.kind === "wait" ? `orch_decide {id:"${i.sub}", askId:"${i.ref}", ...}` : i.kind === "plan-review" ? `orch_review_plan {id:"${i.sub}", n:${i.n ?? "?"}, ...}` : i.kind === "accept-request" ? `orch_accept {id:"${i.sub}"${i.repo ? `, repo:"${i.repo}"` : ""}, ...}` : `orch_send {id:"${i.sub}", type:"directive", replyTo:"${i.ref}", text}`;
+
+	/** Reminders and escalations: a desktop notification and a message for the orchestrator model (unless `quiet`: its tool result says it). */
+	function handleActions(actions: Action[], quiet = false): void {
+		for (const a of actions) {
+			if (a.type === "remind") {
+				events.push(`Still open: ${describeItem(a.item)}. Answer it (${answerTool(a.item)}) or call orch_escalate {id:"${a.item.sub}", ref:"${a.item.ref}", question} when it needs the user.`);
+				continue;
+			}
+			notifyDesktop("orchestrate: needs you", `${a.item.sub}: ${clipText(a.item.escalation ?? a.item.summary, 160)}`);
+			if (!quiet) events.push(`Escalated to the user (${a.why}): ${describeItem(a.item)}. Show it to them with its options and relay their answer with ${answerTool(a.item)} and a userQuote (an exact piece of what they typed after this message).`);
+		}
+	}
+
+	/** The orchestrator's own clock for reminders: idle time counts only while this session is not working. */
+	async function itemTick(): Promise<void> {
+		if (!owned) return;
+		const now = Date.now();
+		const elapsed = lastTickAt ? now - lastTickAt : 0;
+		lastTickAt = now;
+		const actions = tick(itemsFile, now, !orchBusy, elapsed);
+		if (liveItems(itemsFile).length) saveItems();
+		if (!actions.length) return;
+		handleActions(actions);
+		flush();
+		refreshView();
+	}
+
+	const askText = (sub: string, m: Message): string => {
+		const d = m.data ?? {};
+		const id = String(d.id ?? "");
+		const detail = d.detail ? `\nDetail:\n${String(d.detail).slice(0, 3000)}` : "";
+		if (d.kind === "wait") {
+			const w = (d.wait ?? {}) as { reason?: unknown; check?: unknown };
+			return `[${sub}] asks for the user (wait, askId ${id}): ${String(w.reason ?? m.text)}${w.check ? ` (it also resumes by itself when its check passes: ${String(w.check)})` : ""}${detail}\nWaits always go to the user; it is escalated.`;
+		}
+		const roles = (d.roles ?? {}) as Record<string, string>;
+		const options = Array.isArray(d.options) ? (d.options as unknown[]).map(String) : [];
+		return `[${sub}] menu ${String(d.key ?? "?")} (askId ${id}): ${m.text}\nOptions: ${options.map((o) => `${o}${roles[o] ? ` [${roles[o]}]` : ""}`).join(" | ")}${detail}\nAnswer it with orch_decide {id:"${sub}", askId:"${id}", choice, text?}.`;
+	};
+
+	/** Writes an answer to an item: the item is closed and counted. */
+	function closeItem(sub: string, ref: string, how: "answered" | "withdrawn" | "stale", byUser: boolean, outcome?: Outcome): void {
+		if (close(itemsFile, sub, ref, { how, byUser, outcome })) {
+			saveItems();
+			refreshView();
+		}
+	}
+
 	function stopWatcher(): void {
 		stopTimers();
 		owned = null;
@@ -556,6 +791,7 @@ export default function (pi: ExtensionAPI): void {
 		prs.clear();
 		defaultBranches.clear();
 		events = [];
+		itemsFile = emptyItems();
 		currentView = null;
 		lastViewSig = "";
 		updateWidget();
@@ -611,6 +847,7 @@ export default function (pi: ExtensionAPI): void {
 					outbox: readNew(sf(o, s.id, "outbox.jsonl"), 0).msgs,
 					inbox: readNew(sf(o, s.id, "inbox.jsonl"), 0).msgs,
 					accepted: readAccepted(sf(o, s.id, "accepted.json")),
+					items: liveItems(itemsFile, s.id),
 					prs: prs.get(s.id),
 				});
 			}
@@ -657,6 +894,7 @@ export default function (pi: ExtensionAPI): void {
 		const run = current();
 		if (!o || !run) return;
 		const ended: Sub[] = [];
+		let dirty = false;
 		const stateChanges: Array<[string, Sub["state"]]> = [];
 		for (const sub of run.subs) {
 			if (!ACTIVE.includes(sub.state)) continue;
@@ -665,6 +903,36 @@ export default function (pi: ExtensionAPI): void {
 			const r = readNew(file, readCursor(cur));
 			for (const m of r.msgs) {
 				const head = `[${sub.id}]`;
+				const stage = typeof m.data?.stage === "number" ? m.data.stage : readStatus(sf(o, sub.id, "status.json")).status?.stage;
+				const open = (): void => {
+					handleActions(openItem(itemsFile, { sub: sub.id, type: m.type, id: m.id, text: m.text, data: m.data, stage }, caps(), Date.now()));
+					dirty = true;
+				};
+				if (m.type === "ask") {
+					events.push(askText(sub.id, m));
+					open();
+					continue;
+				}
+				if (m.type === "ask-done") {
+					closeItem(sub.id, String(m.data?.id ?? ""), m.data?.how === "withdrawn" ? "withdrawn" : "answered", false);
+					continue;
+				}
+				if (m.type === "idle") {
+					events.push(`${head} is idle (nothing open, no progress). Its last message:\n${String(m.data?.lastText ?? m.text).slice(-1500)}\nAnswer with orch_send (a directive says what to do next) or call orch_escalate.`);
+					open();
+					continue;
+				}
+				if (m.type === "idle-end") {
+					closeIdle(itemsFile, sub.id, true);
+					dirty = true;
+					continue;
+				}
+				if (m.type === "session-started") {
+					const stale = markStale(itemsFile, sub.id, String(m.data?.instance ?? ""));
+					dirty = true;
+					if (stale.length) events.push(`${head} restarted; its open menu and plan reviews are stale (${stale.map((i) => i.ref).join(", ")}). Send it a directive (orch_send) to continue.`);
+					continue;
+				}
 				if (m.type === "question") events.push(`${head} question (id ${m.id}): ${m.text}\nAnswer it with orch_send {id:"${sub.id}", type:"answer", replyTo:"${m.id}", text}.`);
 				else if (m.type === "plan-review") events.push(`${head} plan ${String(m.data?.n ?? "?")} ready: ${String(m.data?.file ?? "")}\nRead it against the brief (${sf(o, sub.id, "brief.md")}), then call orch_review_plan with n=${String(m.data?.n ?? "?")}.`);
 				else if (m.type === "accept-request") {
@@ -674,6 +942,7 @@ export default function (pi: ExtensionAPI): void {
 					events.push(`${head} asks to merge tree ${String(m.data?.tree ?? "?")}${run.repos ? ` of repo ${repoKey}` : ""}. Check its diff against the brief's criteria (git -C ${wt.cwd} diff ${await diffBase(wt, o, run)}...HEAD), then call orch_accept${run.repos ? ` with repo "${repoKey}"` : ""}.`);
 				} else if (m.type === "flow-ended") ended.push(sub);
 				else events.push(`${head} ${m.type}: ${m.text}`);
+				if (m.type === "question" || m.type === "plan-review" || m.type === "accept-request") open();
 			}
 			if (r.bad) events.push(`[${sub.id}] ${r.bad} unreadable line(s) in its outbox were skipped.`);
 			if (r.cursor !== readCursor(cur)) writeCursor(cur, r.cursor);
@@ -697,6 +966,7 @@ export default function (pi: ExtensionAPI): void {
 			});
 		}
 		events.push(...(await checkEnded(false, newlyEnded))); // a quick first answer; later polls retry
+		if (dirty) saveItems();
 		flush();
 		refreshView();
 	}
@@ -734,6 +1004,9 @@ export default function (pi: ExtensionAPI): void {
 			});
 			for (const id of merged) {
 				snaps.delete(id);
+				// the package is done: what it still waited on is moot
+				for (const i of liveItems(itemsFile, id)) close(itemsFile, id, i.ref, { how: "stale" });
+				saveItems();
 				lines.push(
 					`[${id}] merged. ${ready.ready.length ? `Ready to spawn: ${ready.ready.join(", ")}.` : "Nothing new is ready to spawn."}${ready.running.length ? ` Running: ${ready.running.join(", ")}; they may need to rebase on the updated default branch.` : ""}${ready.all ? " All packages are done; tell the user, then /orch end." : ""}`,
 				);
@@ -819,11 +1092,12 @@ export default function (pi: ExtensionAPI): void {
 				for (const file of [...diff.split("\n").filter(Boolean), ...dirty]) all.add(prefix(wt.key, file));
 			}
 			const head = heads.join(",");
+			const porcelainHash = createHash("md5").update(por).digest("hex");
 			const files = [...all];
 			const prev = snaps.get(sub.id);
 			cur.set(sub.id, {
 				head,
-				porcelainHash: createHash("md5").update(por).digest("hex"),
+				porcelainHash,
 				done: st.status.done,
 				files,
 				heartbeat: st.status.heartbeat,
@@ -832,6 +1106,7 @@ export default function (pi: ExtensionAPI): void {
 				changedAt: prev?.changedAt ?? now,
 				reported: prev?.reported ?? { drift: [], overlap: [], offline: false, stalled: false },
 			});
+			setFingerprint(itemsFile, sub.id, fingerprintOf({ phase: st.status.phase, stage: st.status.stage, done: st.status.done, head, porcelainHash }));
 		}
 		const phases: Array<[string, Sub["state"]]> = [];
 		for (const [id, snap] of cur) {
@@ -839,8 +1114,11 @@ export default function (pi: ExtensionAPI): void {
 			const other = new Map<string, string[]>();
 			for (const [oid, os2] of cur) if (oid !== id) other.set(oid, os2.files);
 			const r = check(snaps.get(id), snap, { now, owns: sub.owns, forbids: sub.forbids, otherFiles: other, cfg });
+			// a sub-session with an open item waits for the orchestrator: that is not a stall
+			const waitingOnUs = liveItems(itemsFile, id).length > 0;
+			if (waitingOnUs) r.next.reported.stalled = false;
 			snaps.set(id, r.next);
-			for (const e of r.events) events.push(`[${id}] ${e.type}: ${e.text}`);
+			for (const e of r.events) if (!(waitingOnUs && e.type === "stalled")) events.push(`[${id}] ${e.type}: ${e.text}`);
 			if (snap.phase === "plan" && sub.state === "spawned") phases.push([id, "planning"]);
 			if (snap.phase === "execute" && (sub.state === "spawned" || sub.state === "planning")) phases.push([id, "executing"]);
 		}
@@ -853,6 +1131,7 @@ export default function (pi: ExtensionAPI): void {
 			});
 		}
 		events.push(...(await checkEnded(false)));
+		saveItems();
 		flush();
 		refreshView();
 	}
@@ -865,7 +1144,10 @@ export default function (pi: ExtensionAPI): void {
 		defaultBranches.clear();
 		currentView = null;
 		lastViewSig = "";
+		loadItems(o);
+		lastTickAt = Date.now();
 		every(5_000, readOutboxes);
+		every(5_000, itemTick);
 		every(cfg.pollSeconds * 1000, pollGit);
 		refreshView();
 		updateWidget();
@@ -1096,11 +1378,25 @@ export default function (pi: ExtensionAPI): void {
 			text: Type.String(),
 			replyTo: Type.Optional(Type.String({ description: "Question id, for an answer" })),
 			urgent: Type.Optional(Type.Boolean({ description: "directive only: interrupt the running turn" })),
+			userQuote: Type.Optional(Type.String({ description: "Answering an escalated question: an exact piece of a message the user typed after the escalation" })),
 		}),
 		async execute(_id, params) {
 			const { o, run } = need();
 			subOf(run, params.id);
+			const answered = params.replyTo ? findItem(itemsFile, params.id, params.replyTo) : undefined;
+			if (answered && answered.kind !== "question" && answered.kind !== "idle") throw new Error(`${params.replyTo} is a ${answered.kind} item: answer it with ${answered.kind === "menu" || answered.kind === "wait" ? "orch_decide" : answered.kind === "plan-review" ? "orch_review_plan" : "orch_accept"}, not orch_send`);
+			if (answered?.kind === "question" && params.type !== "answer") throw new Error(`${params.replyTo} is a question: answer it with type "answer" (a ${params.type} would leave the sub-session waiting)`);
+			// an escalated idle report is answered by the user: any message to that package needs their quote
+			const idleEsc = params.replyTo ? undefined : liveItems(itemsFile, params.id).find((i) => i.kind === "idle" && i.state === "escalated");
+			const subject = answered ?? idleEsc;
+			const bad = subject ? checkItemAnswer(subject, params.userQuote) : null;
+			if (bad) throw new Error(bad);
 			const m = appendMessage(sf(o, params.id, "inbox.jsonl"), "orch", { type: params.type, text: params.text, replyTo: params.replyTo, data: params.urgent ? { urgent: true } : undefined });
+			if (answered?.kind === "question" || subject?.kind === "idle") closeItem(params.id, subject!.ref, "answered", quoteOk(subject!, params.userQuote));
+			if (closeIdle(itemsFile, params.id, false).length) {
+				saveItems();
+				refreshView();
+			}
 			return text(`sent ${m.id} to ${params.id}`);
 		},
 	});
@@ -1116,11 +1412,15 @@ export default function (pi: ExtensionAPI): void {
 			approve: Type.Boolean(),
 			summary: Type.String({ description: "One line: what the plan does and why it fits the brief" }),
 			reasons: Type.Optional(Type.String({ description: "Required when rejecting: what to change" })),
+			userQuote: Type.Optional(Type.String({ description: "A plan review that was escalated to the user: an exact piece of a message they typed after the escalation" })),
 		}),
 		async execute(_id, params, _s, _u, ctx) {
 			uiCtx = ctx;
 			const { o, run } = need();
 			subOf(run, params.id);
+			const planItem = findItem(itemsFile, params.id, planRef(params.n));
+			const planBad = planItem ? checkItemAnswer(planItem, params.userQuote) : null;
+			if (planBad) throw new Error(planBad);
 			let approve = params.approve;
 			let reasons = params.reasons ?? "";
 			if (approve && cfg.confirmPlans && ctx.hasUI) {
@@ -1132,6 +1432,7 @@ export default function (pi: ExtensionAPI): void {
 			}
 			if (!approve && !reasons) throw new Error("reasons are required when rejecting a plan");
 			appendMessage(sf(o, params.id, "inbox.jsonl"), "orch", { type: "plan-verdict", text: approve ? "approved" : reasons, data: { approve, n: params.n } });
+			if (planItem) closeItem(params.id, planItem.ref, "answered", quoteOk(planItem, params.userQuote), approve ? "approved" : "rejected");
 			return text(approve ? `plan ${params.n} of ${params.id} approved` : `plan ${params.n} of ${params.id} rejected: ${reasons}`);
 		},
 	});
@@ -1141,7 +1442,7 @@ export default function (pi: ExtensionAPI): void {
 		label: "Orchestrate: accept",
 		description: "Accept or refuse the result a sub-session asked to merge, after checking its diff against the brief's criteria. Acceptance covers the tree it requested; if the worktree changed since, accept again after a new request.",
 		promptSnippet: "orch_accept: accept or refuse a sub-session's merge request",
-		parameters: Type.Object({ id: Type.String(), accept: Type.Boolean(), reasons: Type.Optional(Type.String({ description: "Required when refusing" })), repo: Type.Optional(Type.String({ description: "Multi-repo runs: the repo key of the request; default the repo of its latest request" })) }),
+		parameters: Type.Object({ id: Type.String(), accept: Type.Boolean(), reasons: Type.Optional(Type.String({ description: "Required when refusing" })), repo: Type.Optional(Type.String({ description: "Multi-repo runs: the repo key of the request; default the repo of its latest request" })), userQuote: Type.Optional(Type.String({ description: "An accept request that was escalated to the user: an exact piece of a message they typed after the escalation" })) }),
 		async execute(_id, params) {
 			const { o, run } = need();
 			const sub = subOf(run, params.id);
@@ -1151,6 +1452,9 @@ export default function (pi: ExtensionAPI): void {
 			if (!tree) throw new Error(`${params.id} has not asked for acceptance${wantRepo ? ` in repo ${wantRepo}` : ""} yet`);
 			const repo = reqs.length ? String(reqs[reqs.length - 1].data?.repo ?? workingKey(run)) : workingKey(run);
 			if (!params.accept && !params.reasons) throw new Error("reasons are required when refusing");
+			const accItem = findItem(itemsFile, params.id, acceptRef(repo, tree));
+			const accBad = accItem ? checkItemAnswer(accItem, params.userQuote) : null;
+			if (accBad) throw new Error(accBad);
 			if (params.accept) {
 				const wt = worktreesOf(sub, run).find((w) => w.key === repo);
 				const now = wt ? await git(wt.cwd, "rev-parse", "HEAD^{tree}") : null;
@@ -1162,11 +1466,71 @@ export default function (pi: ExtensionAPI): void {
 				text: params.accept ? `Tree ${tree}${repo ? ` of repo ${repo}` : ""} accepted; retry the merge.` : `Not accepted${repo ? ` (repo ${repo})` : ""}: ${params.reasons}`,
 				data: { accept: params.accept, tree, repo },
 			});
+			if (accItem) closeItem(params.id, accItem.ref, "answered", quoteOk(accItem, params.userQuote), params.accept ? "accepted" : "refused");
 			if (!params.accept) await mutate((r) => {
 				const s = subOf(r, params.id);
 				if (s.state === "awaiting-acceptance") s.state = "executing";
 			});
 			return text(params.accept ? `accepted tree ${tree}${repo ? ` of repo ${repo}` : ""} of ${params.id}` : `refused ${params.id}: ${params.reasons}`);
+		},
+	});
+
+	pi.registerTool({
+		name: "orch_decide",
+		label: "Orchestrate: decide",
+		description: "Answer a workflow menu or wait of a sub-session (an `ask` message): pick one of its options (choice, optional text for the sub-session) or end a wait (resume). Some answers are refused: approving or discussing in a plan menu, and anything that stops the flow or repeats a replan needs the user's quote (userQuote).",
+		promptSnippet: "orch_decide: answer a sub-session's workflow menu or wait",
+		parameters: Type.Object({
+			id: Type.String({ description: "Package id" }),
+			askId: Type.String({ description: "The askId of the menu or wait" }),
+			choice: Type.Optional(Type.String({ description: "One of the menu's options, exactly as written" })),
+			resume: Type.Optional(Type.Boolean({ description: "Waits only: end the wait (needs the user's userQuote)" })),
+			text: Type.Optional(Type.String({ description: "Sent to the sub-session after the choice is applied" })),
+			userQuote: Type.Optional(Type.String({ description: "An exact piece of a message the user typed after the item was escalated; required for escalated items, Stop, waits and a replan over the cap" })),
+		}),
+		async execute(_id, params) {
+			const { o, run } = need();
+			subOf(run, params.id);
+			const item = findItem(itemsFile, params.id, params.askId);
+			const d = checkDecision(item, params, countersOf(itemsFile, params.id), caps());
+			if (!d.ok) {
+				let extra = "";
+				if (d.escalate && item && item.state === "open") {
+					handleActions([escalate(item, Date.now(), d.reason)], true);
+					saveItems();
+					refreshView();
+					extra = " The item was escalated to the user: show it to them and relay their answer with userQuote.";
+				}
+				return text(`refused: ${d.reason}.${extra}`);
+			}
+			const t = params.text?.trim();
+			appendMessage(sf(o, params.id, "inbox.jsonl"), "orch", { type: "decision", text: `decision for ${params.askId}`, data: { askId: params.askId, ...(params.resume ? { resume: true } : { choice: params.choice }), ...(t ? { text: t } : {}) } });
+			closeItem(params.id, params.askId, "answered", d.byUser, d.outcome);
+			return text(`${params.resume ? "resumed" : `chose "${params.choice}" for`} ${params.askId} of ${params.id}${t ? " (with text)" : ""}`);
+		},
+	});
+
+	pi.registerTool({
+		name: "orch_escalate",
+		label: "Orchestrate: escalate",
+		description: "Escalate an open item (question, menu, idle report, plan review, accept request) to the user: it needs a person or a choice the brief does not settle. `question` is what the user sees. Then show it to the user and relay their answer with userQuote.",
+		promptSnippet: "orch_escalate: send an item that needs the user to them",
+		parameters: Type.Object({
+			id: Type.String({ description: "Package id" }),
+			ref: Type.String({ description: "The item's ref (question id, askId, plan-<n>, ...)" }),
+			question: Type.String({ description: "What the user must decide, with the options" }),
+		}),
+		async execute(_id, params) {
+			const { run } = need();
+			subOf(run, params.id);
+			const item = findItem(itemsFile, params.id, params.ref);
+			if (!item) throw new Error(`no item ${params.ref} of ${params.id} (open: ${liveItems(itemsFile, params.id).map((i) => i.ref).join(", ") || "none"})`);
+			if (item.state === "escalated") return text(`${params.ref} is already escalated to the user`);
+			if (item.state !== "open") throw new Error(`item ${params.ref} is ${item.state}; only an open item can be escalated`);
+			handleActions([escalate(item, Date.now(), "escalated by the orchestrator", params.question)], true);
+			saveItems();
+			refreshView();
+			return text(`escalated ${params.ref} of ${params.id} to the user: show it to them now and wait for their answer; relay it with userQuote.`);
 		},
 	});
 
@@ -1277,7 +1641,7 @@ export default function (pi: ExtensionAPI): void {
 					render(width: number): string[] {
 						const v = view as View;
 						const body = boardLines(v, selected, detail, width, Date.now(), paint);
-						return [theme.fg("accent", `orch board · ${v.runId} · ${v.subs.length} packages`), ...body, theme.fg("dim", "↑↓ select · enter details · esc back/close · refreshes every 2s")].map((l) => truncateToWidth(l, width));
+						return [theme.fg("accent", `orch board · ${v.runId} · ${v.subs.length} packages${v.waitingForUser ? ` · ${v.waitingForUser} waiting for you` : ""}`), ...body, theme.fg("dim", "↑↓ select · enter details · esc back/close · refreshes every 2s")].map((l) => truncateToWidth(l, width));
 					},
 					handleInput(data: string): void {
 						const n = (view as View).subs.length;
@@ -1323,6 +1687,10 @@ export default function (pi: ExtensionAPI): void {
 		pendingAsk = new Map();
 		k10 = null;
 		releaseHeld();
+		releaseAsks();
+		openSince.clear();
+		orphanNotified.clear();
+		itemsFile = emptyItems();
 		identity = "unknown";
 		mode = modeFromEntries(ctx.sessionManager.getBranch());
 		proposalReady = false;
@@ -1350,6 +1718,7 @@ export default function (pi: ExtensionAPI): void {
 		const become = (hit: { run: Run; sub: Sub }) => {
 			const m: Me = { common, run: hit.run, sub: hit.sub, dir: subDir(common, hit.run.id, hit.sub.id) };
 			me = m;
+			post("session-started", `sub-session of ${m.sub.id} started`, { instance: INSTANCE });
 			mode = "off";
 			const fresh = !fs.existsSync(`${m.dir}/status.json`);
 			started = !fresh;
@@ -1402,6 +1771,7 @@ export default function (pi: ExtensionAPI): void {
 		k10?.resolve(null);
 		k10 = null;
 		releaseHeld();
+		releaseAsks();
 		generation++;
 	});
 

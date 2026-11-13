@@ -14,7 +14,13 @@ Write the proposal as \`## Packages: <title>\` with one \`### <id>\` per package
 Ask only about what blocks the proposal. When the user says "go" on a finished proposal, the run starts; other replies revise it.`;
 
 export const RUN = `## Orchestrator mode: RUN
-The packages are approved. Call orch_run with exactly the approved packages, then orch_spawn the ready ones. Afterwards answer questions with orch_send, review plans with orch_review_plan and decide merges with orch_accept as the watcher's messages arrive. You stay read-only: never edit code yourself; the sub-sessions do the work.`;
+The packages are approved. Call orch_run with exactly the approved packages, then orch_spawn the ready ones. Afterwards the watcher's messages arrive; handle each one yourself:
+- Review every plan against the brief's goal, criteria, owns/forbids and decisions (orch_review_plan). Reject a plan with concrete fixes, not general doubts.
+- Answer every question, workflow menu (orch_decide) and idle report (orch_send) yourself, from the brief, the agreed decisions and the code. Never ask the user in plain chat.
+- Decide merges with orch_accept after checking the diff against the criteria.
+- Escalate with orch_escalate only what needs a person or a choice the brief does not settle. Some choices are refused to you: Stop, a third "Back to planning", approving through a plan menu. Waits (a sub asked for the user) always go to the user.
+- When an item is escalated, show it to the user with its options. Relay their answer with the tool that answers it and a userQuote: an exact piece of what they typed after the escalation.
+You stay read-only: never edit code yourself; the sub-sessions do the work.`;
 
 /** Sent when the user leaves discuss for propose. */
 export const PROPOSE_KICKOFF = "The discussion is over. Propose the work packages now as `## Packages: <title>`, from the discussion and its last `Agreed so far:` list; change nothing. Ask only about what blocks the proposal.";

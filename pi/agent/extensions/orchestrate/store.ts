@@ -3,6 +3,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Run, Sub } from "./brief.ts";
+import { emptyItems, type ItemsFile } from "./items.ts";
 import type { View } from "./view.ts";
 
 export type Exec = (command: string, args: string[], opts?: { cwd?: string }) => Promise<{ stdout: string; stderr?: string; code: number }>;
@@ -197,6 +198,19 @@ export function readView(common: string, runId: string): { view?: View; corrupt?
 	const r = readJson<View>(viewPath(common, runId));
 	if (r.value && (r.value.v !== 1 || !Array.isArray(r.value.subs))) return { corrupt: `${viewPath(common, runId)}: not a view file (v, subs)` };
 	return { view: r.value, corrupt: r.corrupt };
+}
+
+export const itemsPath = (common: string, runId: string): string => `${runDir(common, runId)}/items.json`;
+
+/** items.json: written by the orchestrator session only (tmp + rename). A missing file is empty; an unreadable one is empty with a `corrupt` text to report once. */
+export function readItems(common: string, runId: string): { file: ItemsFile; corrupt?: string } {
+	const r = readJson<ItemsFile>(itemsPath(common, runId));
+	if (r.value && (r.value.v !== 1 || !Array.isArray(r.value.items) || typeof r.value.subs !== "object" || !r.value.subs)) return { file: emptyItems(), corrupt: `${itemsPath(common, runId)}: not an items file (v, items, subs)` };
+	return { file: r.value ?? emptyItems(), corrupt: r.corrupt };
+}
+
+export function writeItems(common: string, runId: string, file: ItemsFile): void {
+	writeAtomic(itemsPath(common, runId), file);
 }
 
 /** One worktree set that an orchestrated run created (or is creating): the evidence the trust handler relies on. */

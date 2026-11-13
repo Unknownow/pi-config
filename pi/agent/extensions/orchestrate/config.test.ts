@@ -42,3 +42,13 @@ test("approvePattern: a bad regex falls back with a warning", () => {
 	assert.equal(parseConfig({ approvePattern: "^yes$" }).config.approvePattern, "^yes$");
 	assert.ok(new RegExp(DEFAULTS.approvePattern, "i").test("ok go"));
 });
+
+test("the caps: defaults, and positive integers only", () => {
+	assert.deepEqual([DEFAULTS.maxPlanRejections, DEFAULTS.maxReplans, DEFAULTS.maxAutoAnswers, DEFAULTS.maxIdleAnswers], [3, 2, 2, 3]);
+	const ok = parseConfig({ maxPlanRejections: 5, maxReplans: 1, maxAutoAnswers: 4, maxIdleAnswers: 6 });
+	assert.deepEqual([ok.config.maxPlanRejections, ok.config.maxReplans, ok.config.maxAutoAnswers, ok.config.maxIdleAnswers], [5, 1, 4, 6]);
+	const bad = parseConfig({ maxReplans: 0, maxAutoAnswers: "2" });
+	assert.equal(bad.config.maxReplans, 2);
+	assert.equal(bad.config.maxAutoAnswers, 2);
+	assert.match(bad.warning!, /maxReplans, maxAutoAnswers/);
+});
