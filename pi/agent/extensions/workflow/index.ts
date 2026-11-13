@@ -73,6 +73,7 @@ import { nextStage, parseStages, planWaitProblems, stageLine, stageNote, stageSt
 import { planToolProblem, planToolRefused, phaseToolRefusal } from "../shared/readonly-tools.ts";
 import { acceptanceRefusal, exactToolRegexes, keepExtraTools, parseStartPlan, planReviewAction, planReviewRoute, START_PLAN_PREFACE } from "./hooks.ts";
 import { emitClaims, gatherClaims } from "../shared/claims.ts";
+import { MAX_REASKS, PLAN_ARBITER, PLAN_APPROVE, PLAN_BACK, PLAN_FULL, type AskKey, type AskRole, type OpenAsk, askAnswer, askMenu, idleDue, idleNoticeAllowed, idlePayload, nextAskId, planMenuRequest, restoreAsks, resumeContent, waitPayload, waitResumeOutcome } from "./asks.ts";
 import { refilterPlanTools, hiddenInPhase, syncFlowOnlyTools } from "./plan-tools.ts";
 import { AGENT_ROLES } from "../agents/config.ts";
 import { countSubagent } from "./agent-events.ts";
@@ -172,7 +173,11 @@ interface FlowState {
 	/** Git roots edited in this flow that are neither the working folder's repo nor an added folder's repo. */
 	touchedRepos?: string[];
 	/** The flow waits for a person (and maybe a check) before it continues; no judge, delivery or stage advance meanwhile. */
-	waiting?: { reason: string; check?: string; step?: string; stage?: number; since: string; planned: boolean; atStageStart?: boolean; checkPassed?: boolean; held?: string };
+	waiting?: { askId?: string; manual?: boolean; reason: string; check?: string; step?: string; stage?: number; since: string; planned: boolean; atStageStart?: boolean; checkPassed?: boolean; held?: string };
+	/** Counter of the K12 asks this flow sent; the next ask id is derived from it. */
+	askSeq?: number;
+	/** The K12 menu ask that waits for an answer; a restart withdraws it. */
+	openAsk?: OpenAsk;
 	/** Deliveries made inside the plan, before the end of a stage or flow. */
 	checkpoints?: { step?: string; stage?: number; text: string; ok: boolean }[];
 	/** Per repo key: the commit the judge diffs from. It starts at HEAD when the flow starts executing and moves up when a stage passes (and when the base branch is merged in), so commits made meanwhile do not change what the judge sees. */
@@ -306,19 +311,80 @@ export default function workflow(pi: ExtensionAPI) {
 			child.unref();
 		} catch {}
 	}
-	/** A menu that waits for the user: notify, then ask. */
-	function askUser(ctx: ExtensionContext, title: string, options: string[]): Promise<string | undefined> {
-		notifyUser(ctx, title);
-		return ctx.ui.select(title, options);
+	/** A menu that waits for a person. K12 first: a listener (the orchestrator) may answer it; unclaimed, it notifies and asks locally as before. */
+	function askUser(ctx: ExtensionContext, key: AskKey, title: string, options: string[], opts: { detail?: string; roles?: Record<string, AskRole>; localNotice?: () => void; skipLocal?: boolean } = {}): Promise<string | undefined> {
+		return askMenu(
+			{
+				newId: () => {
+					state.askSeq = (state.askSeq ?? 0) + 1;
+					return nextAskId(state.planDoc?.flowId, state.askSeq);
+				},
+				setOpen: (o) => {
+					state.openAsk = o;
+					persist();
+				},
+				emit: (channel, data) => pi.events.emit(channel, data),
+				select: (t, o) => ctx.ui.select(t, o),
+				notify: (t) => notifyUser(ctx, t),
+				// After the caller applied the choice; a flow that ended meanwhile drops it.
+				deliverText: (text) => {
+					const t = setTimeout(() => {
+						if (state.phase !== "off") handover("workflow-orchestrator", text, ctx);
+					}, 0);
+					t.unref?.();
+				},
+			},
+			{ key, title, options, ...opts },
+		);
+	}
+	/** K13 handled the idle period: the local notification stays off until the next turn. */
+	let idleHandled = false;
+	/** The K13 claim is still open: the local notice waits for its answer. */
+	let idlePending = false;
+	let idle13Timer: ReturnType<typeof setTimeout> | undefined;
+	/** K13: a listener may take the idle session (the orchestrator is told it stopped). Independent of the notify settings. */
+	function scheduleIdleClaim(ctx: ExtensionContext): void {
+		if (idle13Timer) clearTimeout(idle13Timer);
+		idle13Timer = setTimeout(() => {
+			idle13Timer = undefined;
+			try {
+				if (!idleDue({ phase: state.phase, idle: ctx.isIdle(), compacting, compactPending, pendingHandover: !!pendingHandover })) {
+					if (state.phase === "plan" || state.phase === "execute") if (compacting || compactPending || pendingHandover) scheduleIdleClaim(ctx);
+					return;
+				}
+				const claims = emitClaims((d) => pi.events.emit("workflow:idle", d), idlePayload(state.planDoc?.flowId, state.phase, lastAssistantText(ctx)), 0);
+				if (!claims.claimed) return;
+				idlePending = true;
+				const settled = (handled: boolean): void => {
+					idlePending = false;
+					if (handled) idleHandled = true;
+					// Not handled: the notice that waited for this answer shows now.
+					else if (cfg.notify.enabled && ctx.hasUI && !notifiedSinceStart && !idleTimer && ctx.isIdle()) notifyUser(ctx, idleReason({ phase: state.phase, waiting: state.waiting?.reason }));
+				};
+				void claims.answer.then((a) => settled(!!a && typeof a === "object" && (a as { handled?: unknown }).handled === true), () => settled(false));
+			} catch {}
+		}, cfg.notify.idleMs);
+		idle13Timer.unref?.();
+	}
+	function lastAssistantText(ctx: ExtensionContext): string {
+		try {
+			const entries = ctx.sessionManager.getBranch() as { type: string; message?: AgentMessage }[];
+			for (let i = entries.length - 1; i >= 0; i--) {
+				const e = entries[i];
+				if (e.type === "message" && e.message?.role === "assistant") return assistantText(e.message).trim();
+			}
+		} catch {}
+		return "";
 	}
 	/** After a run settles, notify when the session stays idle; a new turn cancels it. */
 	function scheduleIdleNotice(ctx: ExtensionContext): void {
 		if (idleTimer) clearTimeout(idleTimer);
+		scheduleIdleClaim(ctx);
 		if (!cfg.notify.enabled || !ctx.hasUI) return;
 		idleTimer = setTimeout(() => {
 			idleTimer = undefined;
 			try {
-				if (notifiedSinceStart || !ctx.isIdle()) return;
+				if (notifiedSinceStart || !idleNoticeAllowed({ handled: idleHandled, pending: idlePending }) || !ctx.isIdle()) return;
 				if (compacting || compactPending || pendingHandover) return scheduleIdleNotice(ctx);
 				notifyUser(ctx, idleReason({ phase: state.phase, waiting: state.waiting?.reason }));
 			} catch {}
@@ -408,6 +474,7 @@ export default function workflow(pi: ExtensionAPI) {
 		state.passedTrees = undefined;
 		state.judgedMerges = undefined;
 		state.extraPlanTools = undefined;
+		endWaitAsk();
 		state.waiting = undefined;
 		stopWaitTimer();
 		updateStatus(ctx);
@@ -573,6 +640,7 @@ export default function workflow(pi: ExtensionAPI) {
 		state.judgeRounds = 0;
 		state.minorRounds = 0;
 		state.minorSentFor = undefined;
+		endWaitAsk();
 		state.waiting = undefined;
 		state.checkpoints = undefined;
 		if (!samePhase) {
@@ -1784,6 +1852,7 @@ export default function workflow(pi: ExtensionAPI) {
 		if (!state.checklist.length) state.checklist = undefined;
 		state.checkpoints = status.checkpoints?.map((c) => ({ ...c }));
 		await restoreReview(ctx, status);
+		endWaitAsk();
 		state.waiting = undefined;
 		publishWaitSince.clear();
 		if (status.waiting) {
@@ -2011,11 +2080,96 @@ export default function workflow(pi: ExtensionAPI) {
 
 	/** The wait is over: clears it and records the new state. */
 	function clearWait(ctx: ExtensionContext): void {
+		endWaitAsk();
 		state.waiting = undefined;
 		stopWaitTimer();
 		persist();
 		updateStatus(ctx);
 		planMilestone(ctx);
+	}
+
+	/** Ends the wait's K12 ask: whoever answers for the person drops it from their list. */
+	function endWaitAsk(w: FlowState["waiting"] = state.waiting): void {
+		if (w?.askId) pi.events.emit("workflow:ask-done", { v: 1, id: w.askId, how: "answered" });
+	}
+
+	/** K12 for a wait that was just set: a listener may resume it in place of the person. Unclaimed, the wait stays local as before. */
+	function askWait(ctx: ExtensionContext, manual?: boolean): void {
+		const w = state.waiting;
+		if (!w) return;
+		if (!w.askId) {
+			state.askSeq = (state.askSeq ?? 0) + 1;
+			w.askId = nextAskId(state.planDoc?.flowId, state.askSeq);
+		}
+		if (manual) w.manual = true;
+		sendWaitAsk(ctx, w);
+	}
+
+	/** Waits whose K12 ask a listener claimed: the workflow shows nothing local about them, it asks again instead. */
+	const claimedWaits = new Set<string>();
+	const waitClaimed = (w: NonNullable<FlowState["waiting"]>): boolean => !!w.askId && claimedWaits.has(w.askId);
+
+	function sendWaitAsk(ctx: ExtensionContext, w: NonNullable<FlowState["waiting"]>, detail?: string, tries = 0): void {
+		const id = w.askId;
+		if (!id) return;
+		const claims = emitClaims((d) => pi.events.emit("workflow:ask", d), waitPayload(id, w, detail), 0);
+		if (!claims.claimed) return;
+		claimedWaits.add(id);
+		void claims.answer.then(async (answer) => {
+			if (state.waiting !== w || w.askId !== id) return;
+			const a = askAnswer(answer, undefined, "wait");
+			if (a.kind === "local") {
+				claimedWaits.delete(id);
+				return;
+			}
+			if (a.kind === "invalid" && tries < MAX_REASKS) return sendWaitAsk(ctx, w, detail, tries + 1);
+			if (a.kind !== "resume") {
+				claimedWaits.delete(id);
+				return;
+			}
+			await resumeWait(ctx, w, a.text);
+		}, () => {
+			claimedWaits.delete(id);
+		});
+	}
+
+	/** The old ask is over and the wait is asked again under a new id, with what changed in the detail. */
+	function reaskWait(ctx: ExtensionContext, w: NonNullable<FlowState["waiting"]>, detail: string): void {
+		endWaitAsk(w);
+		if (w.askId) claimedWaits.delete(w.askId);
+		state.askSeq = (state.askSeq ?? 0) + 1;
+		w.askId = nextAskId(state.planDoc?.flowId, state.askSeq);
+		persist();
+		sendWaitAsk(ctx, w, detail);
+	}
+
+	/** The wait is over because a person typed, or a listener resumed it: clears it and returns the message that resumes the executor. */
+	function finishWait(ctx: ExtensionContext, w: NonNullable<FlowState["waiting"]>, how: "passed" | "forced" | "plain", text: string | undefined): string {
+		clearWait(ctx);
+		return resumeContent(resumePrefix(w.reason, how), w.held, text);
+	}
+
+	/** A listener resumed the wait: a check that does not pass sends a new ask with the check result; otherwise the wait ends like a typed message ends it. */
+	async function resumeWait(ctx: ExtensionContext, w: NonNullable<FlowState["waiting"]>, text: string | undefined): Promise<void> {
+		// A poll check that is running finishes first; the resume is never dropped.
+		for (let i = 0; waitChecking && i < 300; i++) await new Promise((r) => setTimeout(r, 200));
+		if (state.waiting !== w) return;
+		stopWaitTimer();
+		waitChecking = true;
+		let verdict: CheckVerdict | undefined;
+		try {
+			if (w.check && !w.checkPassed) verdict = await runWaitCheck(w.check);
+		} finally {
+			waitChecking = false;
+		}
+		if (state.waiting !== w) return;
+		if (waitResumeOutcome(w, verdict) === "reask" && w.check && verdict) {
+			startWaitTimer();
+			reaskWait(ctx, w, checkTitle(verdict, w.check));
+			return;
+		}
+		const content = finishWait(ctx, w, w.check ? "passed" : "plain", text);
+		pi.sendMessage({ customType: "workflow-wait", content, display: true }, { triggerTurn: true, deliverAs: "followUp" });
 	}
 
 	async function waitTick(): Promise<void> {
@@ -2028,7 +2182,9 @@ export default function workflow(pi: ExtensionAPI) {
 		if (d === "hold") return;
 		if (d === "stop") {
 			stopWaitTimer();
-			if (w.check && elapsedMs >= cfg.wait.maxMs) {
+			if (w.check && elapsedMs >= cfg.wait.maxMs && waitClaimed(w)) {
+				reaskWait(ctx, w, `stopped polling "${w.check}" after ${Math.round(elapsedMs / 60_000)} min`);
+			} else if (w.check && elapsedMs >= cfg.wait.maxMs) {
 				ctx.ui.notify(`workflow: stopped polling "${w.check}" after ${Math.round(elapsedMs / 60_000)} min; your next message checks again`, "warning");
 				notifyUser(ctx, `stopped waiting for "${w.check}" after ${Math.round(elapsedMs / 60_000)} min`);
 			}
@@ -2040,6 +2196,10 @@ export default function workflow(pi: ExtensionAPI) {
 			if (state.waiting !== w) return;
 			if (verdict.status === "broken") {
 				stopWaitTimer();
+				if (waitClaimed(w)) {
+					reaskWait(ctx, w, `the check can't run (${verdict.detail}): ${w.check}`);
+					return;
+				}
 				ctx.ui.notify(`workflow: wait check can't run (${verdict.detail}): ${w.check}; fix it or send a message to continue`, "warning");
 				notifyUser(ctx, `wait check can't run: ${verdict.detail}`);
 				return;
@@ -2050,6 +2210,9 @@ export default function workflow(pi: ExtensionAPI) {
 				clearWait(ctx);
 				const body = w.held ?? "Continue with the open steps of the plan.";
 				pi.sendMessage({ customType: "workflow-wait", content: `${resumePrefix(w.reason, "passed")} ${body}`, display: true }, { triggerTurn: true, deliverAs: "followUp" });
+			} else if (waitClaimed(w)) {
+				w.checkPassed = true;
+				reaskWait(ctx, w, `the check passed: ${w.check}`);
 			} else {
 				w.checkPassed = true;
 				persist();
@@ -2120,6 +2283,7 @@ export default function workflow(pi: ExtensionAPI) {
 				refreshChecklist();
 			}
 			state.waiting = { reason, ...(check ? { check } : {}), ...(step ? { step } : {}), stage: state.stage, since: new Date().toISOString(), planned };
+			askWait(ctx, params.manual);
 			persist();
 			updateStatus(ctx);
 			planMilestone(ctx);
@@ -2211,6 +2375,7 @@ export default function workflow(pi: ExtensionAPI) {
 				const since = waitSince(publishWaitSince.get(step), new Date().toISOString());
 				publishWaitSince.set(step, since);
 				state.waiting = { reason: why, check, step, stage: state.stage, since, planned: true, held: `Call publish_packages again with step ${step}.` };
+				askWait(ctx);
 				persist();
 				updateStatus(ctx);
 				planMilestone(ctx);
@@ -2526,7 +2691,9 @@ export default function workflow(pi: ExtensionAPI) {
 			pi.sendMessage({ customType: "workflow-judge", content: `**Merge request before the end of the flow**\n\nThe executor's reason: ${reason}\n\nThe arbiter's view: ${seen || "it hands the decision to you"}`, display: true }, { triggerTurn: false });
 			let answer: string | undefined;
 			try {
-				answer = await askUser(ctx, `Merge before the end of the flow? ${reason}`, ["Allow the merge", "Don't merge"]);
+				answer = await askUser(ctx, "merge-early", `Merge before the end of the flow? ${reason}`, ["Allow the merge", "Don't merge"], { detail: `The executor's reason: ${reason}
+
+The arbiter's view: ${seen || "it hands the decision to you"}` });
 			} catch {}
 			const allowed = answer === "Allow the merge";
 			recordMergeDecision(ctx, "user", allowed, reason);
@@ -2692,6 +2859,7 @@ export default function workflow(pi: ExtensionAPI) {
 			const t = await deliverTag(ctx, tag, isPlannedTag(stepText, tag.name, tag.move));
 			if (t.wait) {
 				state.waiting = { reason: t.wait, ...(planned && step ? { step } : {}), stage: state.stage, since: new Date().toISOString(), planned };
+				askWait(ctx);
 			}
 			state.checkpoints = [...(state.checkpoints ?? []), { ...(planned && step ? { step } : {}), stage: state.stage, text: checkpointText(planned ? step : undefined, t.text), ok: t.ok }];
 			persist();
@@ -2972,6 +3140,10 @@ export default function workflow(pi: ExtensionAPI) {
 	pi.on("agent_start", async () => {
 		if (idleTimer) clearTimeout(idleTimer);
 		idleTimer = undefined;
+		if (idle13Timer) clearTimeout(idle13Timer);
+		idle13Timer = undefined;
+		idleHandled = false;
+		idlePending = false;
 		notifiedSinceStart = false;
 		view.clearFinished(15_000);
 	});
@@ -3016,8 +3188,7 @@ export default function workflow(pi: ExtensionAPI) {
 				waitChecking = false;
 			}
 			if (state.waiting !== w) return { action: "continue" };
-			clearWait(ctx);
-			return { action: "transform", text: `${resumePrefix(w.reason, how)}\n\n${w.held ? `${w.held}\n\n` : ""}${typed}` };
+			return { action: "transform", text: finishWait(ctx, w, how, typed) };
 		}
 		// In discuss, a typed "go" only moves to planning: it never approves or executes.
 		if (state.phase === "discuss" && event.source !== "extension" && !event.streamingBehavior && approveRe().test(event.text.trim())) {
@@ -3171,7 +3342,7 @@ export default function workflow(pi: ExtensionAPI) {
 				const emitted = composePlan(planDraft);
 				const review = emitClaims((d) => pi.events.emit("workflow:plan-ready", d), { v: 1, title: planTitle(emitted), plan: emitted }, 0);
 				if (planReviewRoute(planReady, !!blocked, review.claimed) === "review") {
-					ctx.ui.notify("workflow: plan sent for review; type go to approve it yourself.", "info");
+					ctx.ui.notify("workflow: plan sent for review.", "info");
 					void review.answer.then(async (answer) => {
 						const current = state.phase === "plan" && planReady && composePlan(planDraft) === emitted;
 						const action = planReviewAction(answer, current);
@@ -3181,27 +3352,32 @@ export default function workflow(pi: ExtensionAPI) {
 						} else if (action === "reject") {
 							pi.sendMessage({ customType: "workflow-plan-review", content: `${(answer as { reject: string }).reject}\n\nRevise the plan: reply with the whole plan again as a new \`## Plan:\`.`, display: true }, { triggerTurn: true, deliverAs: "followUp" });
 						} else if (current) {
-							ctx.ui.notify(`workflow: no verdict on the plan (${answer && typeof answer === "object" && "error" in answer ? String((answer as { error: unknown }).error) : "none"}); say go to approve it.`, "warning");
+							ctx.ui.notify(`workflow: no verdict on the plan (${answer && typeof answer === "object" && "error" in answer ? String((answer as { error: unknown }).error) : "none"}).`, "warning");
 						}
 					}, () => {});
 					return;
 				}
 			}
-			if (!cfg.planPrompt) {
-				ctx.ui.notify(`workflow: say "go" to execute on ${describeRole(cfg.roles.execute)}, or keep discussing.`, "info");
-				return;
-			}
-			if (blocked) ctx.ui.notify(`workflow: can't approve: ${blocked}.`, "warning");
-			const approveLabel = "Approve";
-			const arbiterLabel = "Approve, arbiter solves plan flaws →";
+			const approveLabel = PLAN_APPROVE;
+			const arbiterLabel = PLAN_ARBITER;
 			const quick = state.profile === "quick";
-			const fullLabel = "Full flow instead";
-			const choice = await askUser(ctx, `${quick ? "Quick flow" : "Plan phase"} · execute on ${describeRole(cfg.roles.execute)}`, [...(blocked ? [] : [approveLabel, ...(cfg.planFlaw === "ask" && !quick ? [arbiterLabel] : [])]), quick ? fullLabel : "Back to discussion", "Keep discussing"]);
+			const fullLabel = PLAN_FULL;
+			// K12 first, whatever planPrompt says; unclaimed, the notices and the menu are what they were before.
+			const menu = planMenuRequest({ blocked: !!blocked, quick, planFlawAsk: cfg.planFlaw === "ask", planPrompt: cfg.planPrompt });
+			const choice = await askUser(ctx, menu.key, `${quick ? "Quick flow" : "Plan phase"} · execute on ${describeRole(cfg.roles.execute)}`, menu.options, {
+				roles: menu.roles,
+				detail: [blocked ? `Can't approve: ${blocked}.` : "", text.slice(0, 4000)].filter(Boolean).join("\n\n"),
+				skipLocal: menu.skipLocal,
+				localNotice: () => {
+					if (!cfg.planPrompt) ctx.ui.notify(`workflow: say "go" to execute on ${describeRole(cfg.roles.execute)}, or keep discussing.`, "info");
+					else if (blocked) ctx.ui.notify(`workflow: can't approve: ${blocked}.`, "warning");
+				},
+			});
 			if (choice === fullLabel) {
 				await toFullFlow(ctx);
 				return;
 			}
-			if (choice === "Back to discussion") {
+			if (choice === PLAN_BACK) {
 				await setPhase(ctx, "discuss");
 				ctx.ui.notify(`workflow: back to discussion on ${describeRole(cfg.roles.discuss)}`, "info");
 				return;
@@ -3218,7 +3394,7 @@ export default function workflow(pi: ExtensionAPI) {
 		// Waiting for a person: no judge, no delivery, no stage advance until the wait is over.
 		if (state.waiting) return;
 		if (skipJudge(last)) {
-			const choice = await askUser(ctx, "The executor's last reply ended in an error", ["Retry", "Back to planning", "Stop"]);
+			const choice = await askUser(ctx, "executor-error", "The executor's last reply ended in an error", ["Retry", "Back to planning", "Stop"], { roles: { "Back to planning": "replan", Stop: "stop" }, detail: assistantText(last).slice(0, 2000) });
 			if (choice === "Retry") {
 				pi.sendMessage(
 					{ customType: "workflow-retry", content: "Your last reply ended in an error. Continue with the open steps of the approved plan.", display: true },
@@ -3264,6 +3440,7 @@ export default function workflow(pi: ExtensionAPI) {
 	function holdForStageWait(ctx: ExtensionContext, stage: ReturnType<typeof parseStages>[number], held: string): boolean {
 		if (!stage.after) return false;
 		state.waiting = { reason: stage.after.reason, ...(stage.after.check ? { check: stage.after.check } : {}), stage: stage.n, since: new Date().toISOString(), planned: true, atStageStart: true, held };
+		askWait(ctx);
 		persist();
 		updateStatus(ctx);
 		planMilestone(ctx);
@@ -3302,7 +3479,7 @@ export default function workflow(pi: ExtensionAPI) {
 		if (what === "advance" && auto && !state.stageJudged) ctx.ui.notify(`workflow: stage ${staged.current} ended with no changes; continuing (${cfg.stageAdvance === "auto" ? "stageAdvance: auto" : "autopilot"})`, "info");
 		if (what === "ask") {
 			const yes = "Mark done and continue";
-			if ((await askUser(ctx, `Stage ${staged.current} ended with no changes`, [yes, "Wait"])) !== yes) return;
+			if ((await askUser(ctx, "stage-empty", `Stage ${staged.current} ended with no changes`, [yes, "Wait"], { roles: { Wait: "wait" } })) !== yes) return;
 		}
 		await stageWithoutChanges(ctx, staged);
 	}
@@ -3314,7 +3491,7 @@ export default function workflow(pi: ExtensionAPI) {
 		if ((state.checklist ?? []).some((i) => !isHuman(i) && !i.done)) {
 			if (!ctx.hasUI) return;
 			const yes = "Mark done and finish";
-			if ((await askUser(ctx, "All changes were delivered at checkpoints, but plan steps are still open", [yes, "Wait"])) !== yes) return;
+			if ((await askUser(ctx, "steps-open", "All changes were delivered at checkpoints, but plan steps are still open", [yes, "Wait"], { roles: { Wait: "wait" } })) !== yes) return;
 		}
 		state.minorRounds = 0;
 		state.minorSentFor = undefined;
@@ -3446,8 +3623,7 @@ export default function workflow(pi: ExtensionAPI) {
 		}
 		if (!manual && (cfg.autoJudge === "off" || seenDiffs.has(diff.hash))) return;
 		if (!manual && cfg.autoJudge === "ask" && !autopilotOn()) {
-			notifyUser(ctx, "diff ready for the judge");
-			const run = await ctx.ui.confirm("Diff ready", `Run the judge (${describeRole(flowSpec("judge"))}) on ${diff.files} changed file(s)?`);
+			const run = (await askUser(ctx, "run-judge", `Diff ready: run the judge (${describeRole(flowSpec("judge"))}) on ${diff.files} changed file(s)?`, ["Run the judge", "Skip"])) === "Run the judge";
 			if (!run) {
 				seenDiffs.add(diff.hash);
 				return;
@@ -3464,7 +3640,7 @@ export default function workflow(pi: ExtensionAPI) {
 		if (r.verdict === "ERROR") {
 			ctx.ui.notify(r.text, "error");
 			if (!ctx.hasUI || state.phase !== "execute") return;
-			const choice = await askUser(ctx, "The judge failed to run", ["Retry the judge", "Back to planning", "Stop"]);
+			const choice = await askUser(ctx, "judge-error", "The judge failed to run", ["Retry the judge", "Back to planning", "Stop"], { roles: { "Back to planning": "replan", Stop: "stop" }, detail: r.text });
 			if (choice === "Retry the judge") {
 				await reviewDiff(ctx, true);
 			} else if (choice === "Back to planning") {
@@ -3499,7 +3675,7 @@ export default function workflow(pi: ExtensionAPI) {
 	async function fixOrAsk(ctx: ExtensionContext, report: string | undefined): Promise<void> {
 		if (judgeCapReached(state.judgeRounds, judgeLimits().maxJudgeRounds)) {
 			if (report) pi.sendMessage({ customType: "workflow-judge", content: report, display: true }, { triggerTurn: false });
-			const choice = await askUser(ctx, `Judge failed ${state.judgeRounds} rounds in a row`, ["Keep fixing", "Escalate and keep fixing", "Stop"]);
+			const choice = await askUser(ctx, "judge-cap", `Judge failed ${state.judgeRounds} rounds in a row`, ["Keep fixing", "Escalate and keep fixing", "Stop"], { roles: { Stop: "stop" }, ...(report ? { detail: report } : {}) });
 			if (choice === "Keep fixing" || choice === "Escalate and keep fixing") {
 				if (choice !== "Keep fixing") await escalate(ctx);
 				state.judgeRounds = 0;
@@ -3541,7 +3717,7 @@ export default function workflow(pi: ExtensionAPI) {
 				return "stop";
 			}
 			const options = ["Back to planning", ...(canAsk ? ["Let the arbiter decide"] : []), "Ignore and continue", "Stop"];
-			const choice = await askUser(ctx, "Judge questions the plan", options);
+			const choice = await askUser(ctx, "plan-flaw", "Judge questions the plan", options, { roles: { "Back to planning": "replan", Stop: "stop" }, detail: report });
 			if (choice === "Back to planning") {
 				await setPhase(ctx, "plan");
 				pi.sendMessage({ customType: "workflow-judge", content: report, display: true }, { triggerTurn: false });
@@ -3930,6 +4106,14 @@ export default function workflow(pi: ExtensionAPI) {
 			}
 			updateStatus(ctx);
 			if (state.phase === "execute" && state.waiting) startWaitTimer();
+			// K12 after a restart: a saved menu ask is withdrawn (its caller is gone); a saved wait is asked again under its id.
+			const asks = restoreAsks({ openAsk: state.openAsk, waiting: state.waiting });
+			if (asks.withdraw) {
+				pi.events.emit("workflow:ask-done", { v: 1, id: asks.withdraw, how: "withdrawn" });
+				state.openAsk = undefined;
+				persist();
+			}
+			if (asks.resendWait && state.phase === "execute" && state.waiting) sendWaitAsk(ctx, state.waiting);
 			if (event.reason !== "reload") void planHousekeeping(ctx);
 			// Rewrites the plan file, which also (re)starts this session's claim on an unfinished flow.
 			if (state.planDoc && !state.planDoc.finished && state.approvedPlan) planMilestone(ctx, undefined, false);
@@ -3998,6 +4182,8 @@ export default function workflow(pi: ExtensionAPI) {
 	pi.on("session_shutdown", async () => {
 		if (idleTimer) clearTimeout(idleTimer);
 		idleTimer = undefined;
+		if (idle13Timer) clearTimeout(idle13Timer);
+		idle13Timer = undefined;
 		stopWaitTimer();
 		const dir = claimedFlow ? planDirs.get(claimedFlow) : undefined;
 		if (dir && claimedFlow) dropClaim(dir, claimedFlow);
