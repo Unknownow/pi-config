@@ -532,8 +532,8 @@ export default function (pi: ExtensionAPI): void {
 	/** The newest finished proposal (propose mode): what "go" would run. Cleared by any other reply, typed text or mode change. */
 	let lastProposal: { text: string; hash: string } | undefined;
 	let proposalReview: ProposalReview | undefined;
-	let proposalRun: { controller: AbortController; offEsc?: () => void; hash: string; reason?: "esc" | "command" | "message" | "mode" | "restart" } | undefined;
-	function abortProposal(reason: "esc" | "command" | "message" | "mode" | "restart"): void {
+	let proposalRun: { controller: AbortController; offEsc?: () => void; hash: string; reason?: "esc" | "command" | "force" | "message" | "mode" | "restart" } | undefined;
+	function abortProposal(reason: "esc" | "command" | "force" | "message" | "mode" | "restart"): void {
 		const r = proposalRun;
 		if (!r || r.reason) return;
 		r.reason = reason;
@@ -707,6 +707,10 @@ export default function (pi: ExtensionAPI): void {
 		const lp = lastProposal;
 		if (!lp) return say("nothing to judge");
 		let rounds = proposalGateRounds({ resetRounds, last: proposalReview });
+		const run: NonNullable<typeof proposalRun> = { controller: new AbortController(), hash: lp.hash };
+		proposalRun = run;
+		if (ctx.hasUI) run.offEsc = ctx.ui.onTerminalInput((d) => (isEscKey(d) ? (abortProposal("esc"), { consume: true }) : undefined));
+		updateWidget();
 		let repoTable: string | undefined;
 		try {
 			const repos = await sessionRepos(ctx);
@@ -715,12 +719,9 @@ export default function (pi: ExtensionAPI): void {
 			// the judge then gets the single-repo note
 		}
 		const prompts = proposalReviewPrompts({ proposal: lp.text, list: lastAgreedList(branchAssistantTexts(ctx.sessionManager.getBranch())), repoTable, recheck: decision === "recheck" ? proposalReview?.findings : undefined });
-		const run: NonNullable<typeof proposalRun> = { controller: new AbortController(), hash: lp.hash };
-		proposalRun = run;
-		if (ctx.hasUI) run.offEsc = ctx.ui.onTerminalInput((d) => (isEscKey(d) ? (abortProposal("esc"), { consume: true }) : undefined));
-		updateWidget();
 		let res: { ok: boolean; text: string; error?: string };
 		try {
+			if (run.reason || proposalRun !== run) throw new Error("cancelled");
 			ctx.ui.setWorkingMessage("judge reviewing the proposal…");
 			res = await runJudge(ctx, prompts, run.controller.signal);
 		} catch (e) {
@@ -1934,7 +1935,7 @@ export default function (pi: ExtensionAPI): void {
 					if (args.trim().split(/\s+/)[1]?.toLowerCase() !== "force") throw new Error("usage: /orch go force (runs the proposal without the judge)");
 					if (mode !== "propose") throw new Error("/orch go force works only in propose");
 					if (!lastProposal) throw new Error("no finished proposal to run");
-					abortProposal("command");
+					abortProposal("force");
 					moveToRun(ctx, proposalReview?.hash === lastProposal.hash ? proposalReview.findings : []);
 				} else if (sub === "judge") {
 					if (args.trim().split(/\s+/)[1]?.toLowerCase() !== "cancel") throw new Error("usage: /orch judge cancel");
