@@ -1,0 +1,19 @@
+{
+  "v": 1,
+  "flowId": "20261113-1316-orchestrated-runs-with-no-interaction-in-f360",
+  "rev": 1,
+  "updated": "2026-11-13T06:16:01.234Z",
+  "title": "Orchestrated runs with no interaction in sub-session windows",
+  "stage": 1,
+  "done": [],
+  "reviewBase": {
+    "d:/works/pi-config": "dfddb3e8dc6d25e83ab9efa9f1ae3c5f186f4d88"
+  },
+  "repos": [
+    {
+      "branch": "master",
+      "remote": "github.com/Unknownow/pi-config",
+      "primary": true
+    }
+  ]
+}
