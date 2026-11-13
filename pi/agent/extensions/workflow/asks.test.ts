@@ -193,3 +193,15 @@ test("the idle notice is suppressed while K13 handled the period or its claim is
 	assert.equal(idleNoticeAllowed({ handled: true, pending: false }), false);
 	assert.equal(idleNoticeAllowed({ handled: false, pending: true }), false);
 });
+
+test("bumpAskId persists the sequence in the state; waitDonePayload needs an askId", async () => {
+	const { bumpAskId, waitDonePayload } = await import("./asks.ts");
+	const st: { askSeq?: number; planDoc?: { flowId: string } } = { planDoc: { flowId: "f9" } };
+	assert.equal(bumpAskId(st), "f9:1");
+	assert.equal(bumpAskId(st), "f9:2");
+	assert.equal(st.askSeq, 2);
+	assert.equal(bumpAskId({ askSeq: 4 }), "flow:5");
+	assert.deepEqual(waitDonePayload({ askId: "f9:2" }), { v: 1, id: "f9:2", how: "answered" });
+	assert.equal(waitDonePayload({}), undefined);
+	assert.equal(waitDonePayload(undefined), undefined);
+});

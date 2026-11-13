@@ -73,7 +73,7 @@ import { nextStage, parseStages, planWaitProblems, stageLine, stageNote, stageSt
 import { planToolProblem, planToolRefused, phaseToolRefusal } from "../shared/readonly-tools.ts";
 import { acceptanceRefusal, exactToolRegexes, keepExtraTools, parseStartPlan, planReviewAction, planReviewRoute, START_PLAN_PREFACE } from "./hooks.ts";
 import { emitClaims, gatherClaims } from "../shared/claims.ts";
-import { MAX_REASKS, PLAN_ARBITER, PLAN_APPROVE, PLAN_BACK, PLAN_FULL, type AskKey, type AskRole, type OpenAsk, askAnswer, askMenu, idleDue, idleNoticeAllowed, idlePayload, nextAskId, planMenuRequest, restoreAsks, resumeContent, waitPayload, waitResumeOutcome } from "./asks.ts";
+import { MAX_REASKS, PLAN_ARBITER, PLAN_APPROVE, PLAN_BACK, PLAN_FULL, type AskKey, type AskRole, type OpenAsk, askAnswer, askMenu, idleDue, idleNoticeAllowed, idlePayload, bumpAskId, planMenuRequest, waitDonePayload, restoreAsks, resumeContent, waitPayload, waitResumeOutcome } from "./asks.ts";
 import { refilterPlanTools, hiddenInPhase, syncFlowOnlyTools } from "./plan-tools.ts";
 import { AGENT_ROLES } from "../agents/config.ts";
 import { countSubagent } from "./agent-events.ts";
@@ -316,8 +316,7 @@ export default function workflow(pi: ExtensionAPI) {
 		return askMenu(
 			{
 				newId: () => {
-					state.askSeq = (state.askSeq ?? 0) + 1;
-					return nextAskId(state.planDoc?.flowId, state.askSeq);
+					return bumpAskId(state);
 				},
 				setOpen: (o) => {
 					state.openAsk = o;
@@ -359,6 +358,7 @@ export default function workflow(pi: ExtensionAPI) {
 					idlePending = false;
 					if (handled) idleHandled = true;
 					// Not handled: the notice that waited for this answer shows now.
+					else if (compacting || compactPending || pendingHandover) scheduleIdleNotice(ctx);
 					else if (cfg.notify.enabled && ctx.hasUI && !notifiedSinceStart && !idleTimer && ctx.isIdle()) notifyUser(ctx, idleReason({ phase: state.phase, waiting: state.waiting?.reason }));
 				};
 				void claims.answer.then((a) => settled(!!a && typeof a === "object" && (a as { handled?: unknown }).handled === true), () => settled(false));
@@ -2090,7 +2090,8 @@ export default function workflow(pi: ExtensionAPI) {
 
 	/** Ends the wait's K12 ask: whoever answers for the person drops it from their list. */
 	function endWaitAsk(w: FlowState["waiting"] = state.waiting): void {
-		if (w?.askId) pi.events.emit("workflow:ask-done", { v: 1, id: w.askId, how: "answered" });
+		const done = waitDonePayload(w);
+		if (done) pi.events.emit("workflow:ask-done", done);
 	}
 
 	/** K12 for a wait that was just set: a listener may resume it in place of the person. Unclaimed, the wait stays local as before. */
@@ -2098,8 +2099,7 @@ export default function workflow(pi: ExtensionAPI) {
 		const w = state.waiting;
 		if (!w) return;
 		if (!w.askId) {
-			state.askSeq = (state.askSeq ?? 0) + 1;
-			w.askId = nextAskId(state.planDoc?.flowId, state.askSeq);
+			w.askId = bumpAskId(state);
 		}
 		if (manual) w.manual = true;
 		sendWaitAsk(ctx, w);
@@ -2137,8 +2137,7 @@ export default function workflow(pi: ExtensionAPI) {
 	function reaskWait(ctx: ExtensionContext, w: NonNullable<FlowState["waiting"]>, detail: string): void {
 		endWaitAsk(w);
 		if (w.askId) claimedWaits.delete(w.askId);
-		state.askSeq = (state.askSeq ?? 0) + 1;
-		w.askId = nextAskId(state.planDoc?.flowId, state.askSeq);
+		w.askId = bumpAskId(state);
 		persist();
 		sendWaitAsk(ctx, w, detail);
 	}

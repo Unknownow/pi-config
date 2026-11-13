@@ -159,3 +159,14 @@ export function planMenuRequest(o: { blocked: boolean; quick: boolean; planFlawA
 	const options = [...(o.blocked ? [] : [PLAN_APPROVE, ...(o.planFlawAsk && !o.quick ? [PLAN_ARBITER] : [])]), o.quick ? PLAN_FULL : PLAN_BACK, "Keep discussing"];
 	return { key: "plan-menu", options, roles: { [PLAN_APPROVE]: "approve", [PLAN_ARBITER]: "approve", [PLAN_FULL]: "discuss", [PLAN_BACK]: "discuss" }, skipLocal: !o.planPrompt };
 }
+
+/** Bumps the saved ask counter and returns the id of the new ask. */
+export function bumpAskId(state: { askSeq?: number; planDoc?: { flowId: string } }): string {
+	state.askSeq = (state.askSeq ?? 0) + 1;
+	return nextAskId(state.planDoc?.flowId, state.askSeq);
+}
+
+/** The `ask-done` payload for a wait that ended; none when the wait has no ask. */
+export function waitDonePayload(w: { askId?: string } | undefined): { v: 1; id: string; how: "answered" } | undefined {
+	return w?.askId ? { v: 1, id: w.askId, how: "answered" } : undefined;
+}
