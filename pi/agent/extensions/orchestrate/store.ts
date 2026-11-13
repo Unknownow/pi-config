@@ -28,6 +28,8 @@ export interface Status {
 	done?: number;
 	total?: number;
 	waiting?: boolean;
+	/** Set while the sub's workflow runs a judge gate. */
+	judging?: "discussion" | "plan";
 	heartbeat: number;
 	pid: number;
 }

@@ -16,3 +16,12 @@ test('post("flow-ended" appears once, inside the workflow:flow-end handler after
 	assert.ok(posts[0].index! > guard);
 	assert.ok(posts[0].index! - handler < 800, "the post is inside the handler");
 });
+
+test("handlePlanReady writes the judge section and the judge line; status copies judging; table uses phaseLabel", () => {
+	const a = source.indexOf("function handlePlanReady(");
+	const body = source.slice(a, a + 1500);
+	assert.ok(body.includes("judgeSection(") && body.includes("planReviewJudgeLine("));
+	const w = source.indexOf("function writeMyStatus(");
+	assert.ok(source.slice(w, w + 900).includes("judging:"));
+	assert.ok(source.includes("phaseLabel(st?.phase"));
+});
