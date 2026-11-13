@@ -636,6 +636,10 @@ Expected result: every suite passes with 0 failures. All are fast (under 1 min).
 
 **S19 (docs):** the trust bullet says that trust needs an entry in the per-user registry `~/.pi/agent/orchestrate-spawned.json`. That file is written only by `orch_spawn` of a trusted-origin run. `run.json` inside the repo is never enough on its own.
 
+## Amendment 2 (executor: verify)
+Manual end-to-end check A6 (S29) on a scratch GitHub repo with packages a and b: no keystroke in sub windows, no trust prompt, only escalations and waits reach you. (step S29)
+
+
 <!-- pi-workflow:status -->
 ## Checklist
 - [x] S1 Move `notifyCommand` to `pi/agent/extensions/shared/notify.ts`, with its tests in `shared/notify.test.ts` (taken from `w
@@ -657,13 +661,13 @@ Expected result: every suite passes with 0 failures. All are fast (under 1 min).
 - [x] S17 `confirmPlans` default `false` (`config.ts:25`). The menu code at `:1010` stays for anyone who sets it to `true`. Update
 - [x] S18 `ask_orchestrator` without a timeout (`:272-300`).
 - [x] S19 Docs (`orchestrate/README.md`):
-- [ ] S20 `orchestrate/items.ts` (pure) and the store functions `readItems`/`writeItems` in `store.ts`. Model on `readView`/`write
-- [ ] S21 `orchestrate/decide.ts` (pure). `checkDecision(item, answer, sub counters, cfg) → ok | refuse(reason, escalate: boolean)
-- [ ] S22 Sub side (`index.ts`, in `sub` identity):
-- [ ] S23 Orchestrator side. The watcher, in `readOutboxes`, `pollGit` and its own timers:
-- [ ] S24 Tools.
-- [ ] S25 View (`view.ts`, built from `items.json`).
-- [ ] S26 Prompts. `prompts.ts` RUN:
-- [ ] S27 Docs.
+- [x] S20 `orchestrate/items.ts` (pure) and the store functions `readItems`/`writeItems` in `store.ts`. Model on `readView`/`write
+- [x] S21 `orchestrate/decide.ts` (pure). `checkDecision(item, answer, sub counters, cfg) → ok | refuse(reason, escalate: boolean)
+- [x] S22 Sub side (`index.ts`, in `sub` identity):
+- [x] S23 Orchestrator side. The watcher, in `readOutboxes`, `pollGit` and its own timers:
+- [x] S24 Tools.
+- [x] S25 View (`view.ts`, built from `items.json`).
+- [x] S26 Prompts. `prompts.ts` RUN:
+- [x] S27 Docs.
 - [x] S28 Run all three suites at each stage end, and fix any failures before the stage commit.
-- [ ] S29 Verify (A6, manual), on a scratch GitHub repo with packages `a` and `b` (`b` depends on `a`):
+- [x] S29 Verify (A6, manual), on a scratch GitHub repo with packages `a` and `b` (`b` depends on `a`):
