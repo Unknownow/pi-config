@@ -305,14 +305,16 @@ Waits that aren't parked keep today's text.
 - [x] S5 `orchestrate/repos.ts` (next to `worktreesOf`): add `pickDiffBase(c: { viaTarget?: string | null; viaHead?: string | nul
 - [x] S6 `orchestrate/README.md`: one line in the `run.json` layout about `targets`, and one sentence that drift and overlap are 
 - [x] S7 `docs/workflow-improvements.md`:
-- [ ] S8 `workflow/index.ts`: add `setWaiting(next: FlowState["waiting"])`.
-- [ ] S9 `workflow/asks.ts`:
-- [ ] S10 `workflow/index.ts` `sendWaitAsk`: add an optional `checkStatus` parameter.
-- [ ] S11 `workflow/index.ts` `wait_for_user` (`:2228`):
-- [ ] S12 Persist `waitKind` across a resume:
-- [ ] S13 `workflow/waits.ts`: add `waitLimitMs(claimed: boolean, w: { maxMs: number; claimedMaxMs: number }): number`.
-- [ ] S14 `orchestrate/items.ts`:
-- [ ] S15 `orchestrate/index.ts` `askText` (`:770`): for a parked wait, send one line with no "escalated" or "Answer it with" text
-- [ ] S16 `orchestrate/view.ts`:
-- [ ] S17 `orchestrate/brief.ts` `kickoffText` (`:224-227`): add a rule:
-- [ ] S18 `orchestrate/README.md`: a short paragraph on parked waits. `docs/workflow-improvements.md`:
+- [x] S8 `workflow/index.ts`: add `setWaiting(next: FlowState["waiting"])`.
+- [x] S9 `workflow/asks.ts`:
+- [x] S10 `workflow/index.ts` `sendWaitAsk`: add an optional `checkStatus` parameter.
+- [x] S11 `workflow/index.ts` `wait_for_user` (`:2228`):
+- [x] S12 Persist `waitKind` across a resume:
+- [x] S13 `workflow/waits.ts`: add `waitLimitMs(claimed: boolean, w: { maxMs: number; claimedMaxMs: number }): number`.
+- [x] S14 `orchestrate/items.ts`:
+- [x] S15 `orchestrate/index.ts` `askText` (`:770`): for a parked wait, send one line with no "escalated" or "Answer it with" text
+- [x] S16 `orchestrate/view.ts`:
+- [x] S17 `orchestrate/brief.ts` `kickoffText` (`:224-227`): add a rule:
+- [x] S18 `orchestrate/README.md`: a short paragraph on parked waits. `docs/workflow-improvements.md`:
+## Outcome
+2026-11-13T11:51:39.972Z — ok: stage 1: flow/orchestrate-false-alarms, 2 commits since the review base, PR #39 OPEN https://github.com/Unknownow/pi-config/pull/39; stage 2: master, 2 commits since the review base, PR #39 MERGED https://github.com/Unknownow/pi-config/pull/39
