@@ -536,6 +536,8 @@ export default function (pi: ExtensionAPI): void {
 		}
 	};
 	let orchPrevModel: SavedModel | undefined;
+	/** Model switches run one after another, so a quick /orch off cannot be overtaken by the earlier switch. */
+	let roleSwitchChain: Promise<void> = Promise.resolve();
 	/** Puts the session on the orchestrator role's model; warns and keeps the current one when it is missing. Never throws. */
 	async function applyOrchestratorRole(ctx: ExtensionContext): Promise<void> {
 		try {
@@ -583,8 +585,8 @@ export default function (pi: ExtensionAPI): void {
 		}
 		if (announce) say(m === "off" ? "orchestrator mode off: the guard is lifted" : `orchestrator mode: ${m}`);
 		if (warning) say(warning, "warning");
-		if (action === "apply" && ctx) void applyOrchestratorRole(ctx);
-		else if (action === "restore" && ctx && saved) void restoreModel(ctx, saved);
+		if (action === "apply" && ctx) roleSwitchChain = roleSwitchChain.then(() => applyOrchestratorRole(ctx));
+		else if (action === "restore" && ctx && saved) roleSwitchChain = roleSwitchChain.then(() => restoreModel(ctx, saved));
 		if (m === "off") orchPrevModel = undefined;
 		updateWidget();
 	}
