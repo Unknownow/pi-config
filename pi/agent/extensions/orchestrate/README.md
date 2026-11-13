@@ -24,7 +24,7 @@ One orchestrator session splits a job into 2-4 work packages and runs each as a 
 When the session has added repos with `/folders add`, one run can span them. `orch_run` takes the working repo (first) and the git repos of the added folders as the run's `repos`, each with a key: the lowercased folder name (characters outside `a-z0-9._-` become `-`; two repos with one key are an error naming both paths). The propose and run prompts list the keys.
 - `owns` and `forbids` are `key:glob` (`web:src/**`); a glob with no key means the working repo. Duplicate owners are checked on the canonical form (`src/**` and `api:src/**` clash when api is the working repo). The optional `repos` field of a package lists extra repo keys it only reads. A run with no added git repos is a single-repo run: plain globs, no keys (a keyed glob is refused).
 - `orch_spawn` sends W1 `folders`: only the added folders of the repos the package uses (and plain folders) go into its set, and the answer's `repos` (`{ top, cwd }`) become `Sub.worktrees`. An old worktree extension that answers without `repos` leaves only the working repo watched; the spawn line says so. A needed repo missing from the answer is a warning line.
-- Drift and overlap use `key:path` files, so a file in another repo counts as drift. The diff base, the default-branch fallback and the gh call are per repo.
+- Drift and overlap use `key:path` files, so a file in another repo counts as drift. The diff base, the default-branch fallback and the gh call are per repo. Drift and overlap are measured from the merge base with the run's target (`run.targets`, set by `orch_run` from the upstream of each checkout or its `targets` parameter), then `origin/HEAD`, the gh default branch and the spawn commit.
 - **Acceptance is per repo**: the accept-request carries `{ tree, repo }`, `orch_accept` takes an optional `repo` (default: the repo of the latest request) and checks the tree of that repo's worktree; `accepted.json` stores `<key>:<tree>`; the verdict carries `repo`. A merge from a worktree that is not one of the package's is refused.
 - **Merged** per repo: a repo is touched when its worktree has commits since its spawn base or is dirty; a package is merged when every touched repo has a merged PR for the branch. The report names the repos that miss one.
 - **Other runs**: runs are not locked against each other. `orch_run` reads the active runs of the session's other repos and, when owned paths may overlap (same repo, nested literal folders), asks "Create anyway / Cancel" (a headless session creates the run and puts the overlaps into the result as a warning). A run found from one repo is checked against the new packages' paths in every repo of this session. Detection is one-sided: a run started from another repo that includes this one is not found from here.
@@ -63,7 +63,7 @@ A sub-session never shows a menu, a wait or an input-asking notice in its window
 Under `<git common dir>/pi/orchestra/<runId>/` (single writer per file; messages are append-only JSON lines, a last line without newline is ignored until complete):
 
 ```
-run.json                  orchestrator (tmp + rename)
+run.json                  orchestrator (tmp + rename; `targets`: per repo key the remote ref the PRs go into)
 view.json                 orchestrator's watcher (tmp + rename; the run as data for the widget and /orch board)
 <sub>/brief.md            orchestrator
 <sub>/status.json         sub-session (K4 events and a 60 s heartbeat)

@@ -39,6 +39,8 @@ export interface Run {
 	originTrusted?: boolean;
 	/** Multi-repo runs: the working repo first. Absent in a single-repo run (working key ""). */
 	repos?: Repo[];
+	/** The remote ref the packages' PRs go into, per repo key ("" in a single-repo run); drift and overlap are measured from the merge base with it. Absent in older runs. */
+	targets?: Record<string, string>;
 	subs: Sub[];
 }
 

@@ -24,7 +24,8 @@ import { checkDecision, checkItemAnswer } from "./decide.ts";
 import { acceptRef, close, closeIdle, countersOf, emptyItems, escalate, findItem, fingerprintOf, idleAllowed, liveItems, markStale, openItem, orphanDue, planRef, quoteOk, recordUserMessage, setFingerprint, tick, type Action, type Caps, type Item, type ItemsFile, type Outcome } from "./items.ts";
 import { HeldQueue, resolveAllPending, RUN_ENDED_ANSWER, type Identity } from "./identity.ts";
 import { decideTrust } from "./trust.ts";
-import { buildRepos, crossRunOverlaps, foldersFor, hasKeyPrefix, subRepos, worktreesOf, type Repo, type Worktree } from "./repos.ts";
+import { parsePorcelainZ } from "./paths.ts";
+import { buildRepos, crossRunOverlaps, foldersFor, hasKeyPrefix, subRepos, pickDiffBase, worktreesOf, type Repo, type Worktree } from "./repos.ts";
 import { verdictMatches } from "./inbox.ts";
 import { loadConfig, DEFAULTS, type OrchestrateConfig } from "./config.ts";
 import { isProposalReady, MODE_ENTRY, modeFromEntries, onTyped, toolRefusal, type Mode } from "./mode.ts";
@@ -48,6 +49,16 @@ export default function (pi: ExtensionAPI): void {
 		try {
 			const r = await exec("git", ["-C", cwd, ...args]);
 			return r.code === 0 ? r.stdout.trim() : null;
+		} catch {
+			return null;
+		}
+	};
+
+	/** Like git() but the output is not trimmed (porcelain lines start with a space). */
+	const gitRaw = async (cwd: string, ...args: string[]): Promise<string | null> => {
+		try {
+			const r = await exec("git", ["-C", cwd, ...args]);
+			return r.code === 0 ? r.stdout : null;
 		} catch {
 			return null;
 		}
@@ -1039,11 +1050,14 @@ export default function (pi: ExtensionAPI): void {
 		return { ok: true, missing };
 	}
 
-	/** Where the sub's own work starts: its merge base with the default branch now (so a rebase does not turn merged packages into drift); the spawn-time commit when that fails. */
+	/** Where the sub's own work starts: its merge base with the run's target branch (run.targets), else the default branch, now (so a rebase does not turn merged packages into drift); the spawn-time commit when that fails. */
 	async function diffBase(wt: Worktree, o: Owned, run: Run): Promise<string | undefined> {
 		if (!wt.cwd) return wt.base;
+		const target = run.targets?.[wt.key];
+		const viaTarget = target ? await git(wt.cwd, "merge-base", "HEAD", target) : null;
+		if (viaTarget) return pickDiffBase({ viaTarget });
 		const viaHead = await git(wt.cwd, "merge-base", "HEAD", "origin/HEAD");
-		if (viaHead) return viaHead;
+		if (viaHead) return pickDiffBase({ viaHead });
 		// no origin/HEAD (a repo made with git init + remote add): use the default branch name from gh, read once per repo
 		if (!defaultBranches.has(wt.key)) {
 			try {
@@ -1056,9 +1070,9 @@ export default function (pi: ExtensionAPI): void {
 		const name = defaultBranches.get(wt.key);
 		if (name) {
 			const viaName = await git(wt.cwd, "merge-base", "HEAD", `origin/${name}`);
-			if (viaName) return viaName;
+			if (viaName) return pickDiffBase({ viaName });
 		}
-		return wt.base;
+		return pickDiffBase({ spawn: wt.base });
 	}
 
 	async function pollGit(): Promise<void> {
@@ -1083,12 +1097,9 @@ export default function (pi: ExtensionAPI): void {
 				heads.push((await git(wt.cwd, "rev-parse", "HEAD")) ?? "");
 				const base = await diffBase(wt, o, run);
 				const diff = base ? ((await git(wt.cwd, "diff", "--name-only", `${base}...HEAD`)) ?? "") : "";
-				const p = (await git(wt.cwd, "status", "--porcelain")) ?? "";
+				const p = (await gitRaw(wt.cwd, "status", "--porcelain=v1", "-z")) ?? "";
 				por += `${wt.key}\n${p}\n`;
-				const dirty = p
-					.split("\n")
-					.filter(Boolean)
-					.map((l) => l.slice(3).replace(/^.* -> /, "").replace(/^"|"$/g, ""));
+				const dirty = parsePorcelainZ(p);
 				for (const file of [...diff.split("\n").filter(Boolean), ...dirty]) all.add(prefix(wt.key, file));
 			}
 			const head = heads.join(",");
@@ -1223,7 +1234,11 @@ export default function (pi: ExtensionAPI): void {
 		label: "Orchestrate: run",
 		description: "Create an orchestrated run from work packages (2 or more). Validates them, writes the briefs and starts watching. Spawn them afterwards with orch_spawn. One active run per repo.",
 		promptSnippet: "orch_run: define the work packages of an orchestrated run (then orch_spawn)",
-		parameters: Type.Object({ title: Type.String({ description: "Short title of the whole job" }), packages: Type.Array(pkgSchema) }),
+		parameters: Type.Object({
+			title: Type.String({ description: "Short title of the whole job" }),
+			packages: Type.Array(pkgSchema),
+			targets: Type.Optional(Type.Array(Type.String(), { description: 'Branch the PRs go into: "branch" (working repo) or "key:branch". Default: the upstream of each repo checkout' })),
+		}),
 		async execute(_id, params, _signal, _u, ctx) {
 			uiCtx = ctx;
 			// The check applies only while the guard is on: /orch off lifts it (D1).
@@ -1257,7 +1272,37 @@ export default function (pi: ExtensionAPI): void {
 					...(repos ? { repos: subRepos(p, repos[0].key) } : {}),
 				});
 			}
-			const run: Run = { v: 1, id, title: params.title, created: new Date().toISOString(), owner: { pid: process.pid, host: os.hostname(), session: ctx.sessionManager.getSessionFile() ?? "" }, state: "active", originTrusted: projectTrusted(ctx), ...(repos ? { repos } : {}), subs };
+			// where the PRs go: the upstream of each repo's own checkout, or the given targets (checked before anything is written)
+			const keys = repos ? repos.map((r) => r.key) : [""];
+			const tops = new Map<string, string>(repos ? repos.map((r) => [r.key, r.top] as [string, string]) : [["", (await git(ctx.cwd, "rev-parse", "--show-toplevel")) ?? ctx.cwd]]);
+			const given = new Map<string, string>();
+			for (const t of (params.targets as string[] | undefined) ?? []) {
+				const i = t.indexOf(":");
+				const key = i > 0 ? t.slice(0, i) : keys[0];
+				if (!keys.includes(key) || (!repos && i > 0)) throw new Error(`target ${t}: unknown repo key; known: ${keys.join(", ") || "(single repo: plain branch)"}`);
+				given.set(key, i > 0 ? t.slice(i + 1) : t);
+			}
+			const label = (k: string) => k || "the working repo";
+			const targets: Record<string, string> = {};
+			const targetLines: string[] = [];
+			for (const k of keys) {
+				const top = tops.get(k) as string;
+				const g = given.get(k);
+				if (g) {
+					const ref = `origin/${g.replace(/^origin\//, "")}`;
+					if ((await git(top, "rev-parse", "--verify", "--quiet", ref)) === null) throw new Error(`target ${g} not found in ${label(k)}: fetch it or fix the name`);
+					targets[k] = ref;
+				} else {
+					let ref = await git(top, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}");
+					if (!ref) {
+						const br = await git(top, "rev-parse", "--abbrev-ref", "HEAD");
+						if (br && br !== "HEAD" && (await git(top, "rev-parse", "--verify", "--quiet", `refs/remotes/origin/${br}`)) !== null) ref = `origin/${br}`;
+					}
+					if (ref) targets[k] = ref;
+				}
+				targetLines.push(targets[k] ? `Diff target (${label(k)}): ${targets[k]}` : `No diff target for ${label(k)}: drift is measured against the default branch`);
+			}
+			const run: Run = { v: 1, id, title: params.title, created: new Date().toISOString(), owner: { pid: process.pid, host: os.hostname(), session: ctx.sessionManager.getSessionFile() ?? "" }, state: "active", originTrusted: projectTrusted(ctx), ...(repos ? { repos } : {}), targets, subs };
 			fs.mkdirSync(runDir(common, id), { recursive: true });
 			for (const s of subs) {
 				fs.mkdirSync(subDir(common, id, s.id), { recursive: true });
@@ -1265,7 +1310,7 @@ export default function (pi: ExtensionAPI): void {
 			}
 			writeRun(common, run);
 			startWatcher({ common, runId: id, repoCwd: ctx.cwd });
-			return text(`Run ${id} created with ${subs.length} packages${repos ? ` over ${repos.length} repos (${repos.map((r) => r.key).join(", ")})` : ""}. Ready to spawn: ${readyToSpawn(run).join(", ") || "none"}. Briefs are in ${runDir(common, id)}/<id>/brief.md.${overlapNote ? `\n${overlapNote}` : ""}`);
+			return text(`Run ${id} created with ${subs.length} packages${repos ? ` over ${repos.length} repos (${repos.map((r) => r.key).join(", ")})` : ""}. Ready to spawn: ${readyToSpawn(run).join(", ") || "none"}. Briefs are in ${runDir(common, id)}/<id>/brief.md.\n${targetLines.join("\n")}${overlapNote ? `\n${overlapNote}` : ""}`);
 		},
 	});
 

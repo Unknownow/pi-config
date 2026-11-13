@@ -1,7 +1,7 @@
 // node --experimental-strip-types --test paths.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { globsMayOverlap, globToRegExp, outsideOwned } from "./paths.ts";
+import { globsMayOverlap, globToRegExp, outsideOwned, parsePorcelainZ } from "./paths.ts";
 
 test("globs", () => {
 	assert.ok(globToRegExp("src/**").test("src/a/b.ts"));
@@ -38,4 +38,17 @@ test("globsMayOverlap", () => {
 	assert.equal(globsMayOverlap("api:**", "api:anything/x.ts"), true);
 	assert.equal(globsMayOverlap("api:src", "api:srcx/**"), false);
 	assert.equal(globsMayOverlap("src/a*.ts", "src/ab/**"), true);
+});
+
+test("parsePorcelainZ keeps the first letter of the first path and skips rename sources", () => {
+	assert.deepEqual(parsePorcelainZ(" M unity/a.cs\0?? b.txt\0"), ["unity/a.cs", "b.txt"]);
+	assert.deepEqual(parsePorcelainZ("R  new.cs\0old.cs\0 M x.cs\0"), ["new.cs", "x.cs"]);
+	assert.deepEqual(parsePorcelainZ("?? my file.txt\0"), ["my file.txt"]);
+	assert.deepEqual(parsePorcelainZ(""), []);
+});
+
+test("an owned dirty file is not drift", () => {
+	const files = parsePorcelainZ(" M unity/Assets/_Project/Scripts/NewGameplay/Core/FailReason.cs\0");
+	assert.deepEqual(files, ["unity/Assets/_Project/Scripts/NewGameplay/Core/FailReason.cs"]);
+	assert.deepEqual(outsideOwned(files, ["unity/Assets/_Project/Scripts/NewGameplay/Core/**"], []), []);
 });
