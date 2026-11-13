@@ -624,11 +624,13 @@ Commands run from `pi/agent/extensions/workflow` and `pi/agent/extensions/orches
 - [x] S14 Wire the discussion gate (`index.ts`).
 - [x] S15 Tests for Stage 2.
 - [x] S16 Docs for Stage 2.
-- [ ] S17 Create the pure helpers in `orchestrate/plan-judge.ts` (new file; no imports from `workflow/`).
-- [ ] S18 Wire `orchestrate/index.ts`.
-- [ ] S19 Board.
-- [ ] S20 Tests for Stage 3.
-- [ ] S21 Docs for Stage 3.
+- [x] S17 Create the pure helpers in `orchestrate/plan-judge.ts` (new file; no imports from `workflow/`).
+- [x] S18 Wire `orchestrate/index.ts`.
+- [x] S19 Board.
+- [x] S20 Tests for Stage 3.
+- [x] S21 Docs for Stage 3.
 ## For you after the flow
 - S22 Verify: a local flow — look for:
 - S23 Verify: an orchestra run with 2 packages — look for:
+## Outcome
+2026-11-13T16:31:11.552Z — ok: stage 1: flow/judge-gates, 4 commits since the review base, PR #41 OPEN https://github.com/Unknownow/pi-config/pull/41; stage 2: flow/judge-gates, 2 commits since the review base, PR #41 OPEN https://github.com/Unknownow/pi-config/pull/41; stage 3: master, 3 commits since the review base, PR #41 MERGED https://github.com/Unknownow/pi-config/pull/41 · 2 human check(s) for you (see the card)

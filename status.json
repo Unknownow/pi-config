@@ -1,10 +1,9 @@
 {
   "v": 1,
   "flowId": "20261113-2312-automatic-judge-gates-for-the-discussion-ba4c",
-  "rev": 5,
-  "updated": "2026-11-13T16:28:32.853Z",
+  "rev": 6,
+  "updated": "2026-11-13T16:31:11.674Z",
   "title": "Automatic judge gates for the discussion and the plan",
-  "stage": 3,
   "done": [
     "S1",
     "S2",
@@ -21,20 +20,39 @@
     "S13",
     "S14",
     "S15",
-    "S16"
+    "S16",
+    "S17",
+    "S18",
+    "S19",
+    "S20",
+    "S21"
   ],
+  "finished": {
+    "at": "2026-11-13T16:31:11.552Z",
+    "ok": true,
+    "text": "stage 1: flow/judge-gates, 4 commits since the review base, PR #41 OPEN https://github.com/Unknownow/pi-config/pull/41; stage 2: flow/judge-gates, 2 commits since the review base, PR #41 OPEN https://github.com/Unknownow/pi-config/pull/41; stage 3: master, 3 commits since the review base, PR #41 MERGED https://github.com/Unknownow/pi-config/pull/41 · 2 human check(s) for you (see the card)"
+  },
   "reviewBase": {
-    "d:/works/pi-config": "5a4ba8bce0eab16bf6058b6bcf7a6ae5b7f7ff65"
+    "d:/works/pi-config": "0bfad1768166d3eb5292a949686a3099b3722cc7"
   },
   "passedTrees": {
     "d:/works/pi-config": [
       "ebcf9da5d2ed8ed032c5b6c70af27ce656dcfe0d",
-      "4b79d8fd47468e38a6010fe61fbc89d1dd32b42d"
+      "4b79d8fd47468e38a6010fe61fbc89d1dd32b42d",
+      "7bfa4cdda789a18a182bbee62f28286f4b7956c8",
+      "2308399213c65c2deda415039ca9ca3958da2950"
     ]
+  },
+  "judgedMerges": {
+    "d:/works/pi-config": {
+      "pr": "41",
+      "tree": "2308399213c65c2deda415039ca9ca3958da2950",
+      "stage": 3
+    }
   },
   "repos": [
     {
-      "branch": "flow/judge-gates",
+      "branch": "master",
       "remote": "github.com/Unknownow/pi-config",
       "primary": true
     }
