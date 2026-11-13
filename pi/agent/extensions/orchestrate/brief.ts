@@ -21,8 +21,18 @@ export interface Sub {
 	/** Multi-repo runs: the repo keys this package works in, and its worktree in each (the working one included). */
 	repos?: string[];
 	worktrees?: Worktree[];
-	/** Set when its flow ended; the merge is then confirmed with gh on every poll. */
+	/** When its flow last ended (the time of its latest flow-ended message); the merge is then confirmed against the delivered trees. */
 	endedAt?: string;
+	/** How the flow ended (K14); "unknown" for a sub that ended before the upgrade. Only "finished" merges on its own. */
+	endHow?: "finished" | "stopped" | "abandoned" | "unknown";
+	/** Automatic checks done since the flow ended (capped at 2). */
+	endChecks?: number;
+	/** Whether the "not confirmed merged" report was sent for this end. */
+	endReported?: boolean;
+	/** Merged by `/orch merged --force`, without a positive check. */
+	forced?: boolean;
+	/** What the check said when it was forced. */
+	forcedCheck?: string;
 	/** Set while orch_spawn creates the worktree (state "spawning"); the trust handler waits for it. */
 	spawningAt?: string;
 	state: SubState;
@@ -226,7 +236,9 @@ export function kickoffText(sub: Sub, run: Run, briefPath: string): string {
 		`- Stay inside your owned paths (${sub.owns.join(", ")}).`,
 		`- Never touch: ${sub.forbids.length ? sub.forbids.join(", ") : "paths owned by other packages"}.`,
 		"- Ask the orchestrator with the ask_orchestrator tool instead of guessing; it always answers. While you wait for an answer that was cancelled, continue with what is not blocked.",
-		"- Deliver with one pull request, merged at the end of your flow. The merge also needs the orchestrator's acceptance: when it is refused for that, end your turn and retry after the message arrives.",
+		"- Deliver into the run's target branch. Plan every stage of your package in one flow; don't start a second flow unless the orchestrator tells you to resume a stopped one.",
+		"- When the brief asks for a pull request per stage, merge each at that stage's `Deliver: merge` step; otherwise open one pull request and merge it at the end of the flow.",
+		"- The merge attempt itself sends the acceptance request to the orchestrator: never ask for acceptance in a question. When the merge is refused for that, end your turn and retry after the verdict arrives.",
 		"- To wait on another package's PR, CI or a release, call wait_for_user with kind \"external\" and a read-only check (for a PR: gh pr list --base <target> --head <branch> --state merged ...). It does not go to the user. If the orchestrator sends you a message while you wait, act on it, then wait again or move on.",
 		"",
 		`Goal: ${sub.goal}`,

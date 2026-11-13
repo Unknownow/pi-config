@@ -56,3 +56,45 @@ test("planReviewRoute: no claim goes to the menu, a claim to review", () => {
 test("acceptanceRefusal refuses answers outside the contract", () => {
 	for (const bad of ["ok", {}, { problem: "" }, { problem: 5 }]) assert.equal(acceptanceRefusal(bad), ACCEPTANCE_NO_ANSWER);
 });
+
+import { flowEndKind, flowEndPayload, k11Payload, K11_SITES, withEndFlow } from "./hooks.ts";
+
+test("flowEndKind: abandoned only when execute is left for discuss or off without endFlow", () => {
+	assert.equal(flowEndKind({ from: "execute", to: "discuss", viaEndFlow: false }), "abandoned");
+	assert.equal(flowEndKind({ from: "execute", to: "off", viaEndFlow: false }), "abandoned");
+	assert.equal(flowEndKind({ from: "execute", to: "plan", viaEndFlow: false }), null);
+	assert.equal(flowEndKind({ from: "execute", to: "off", viaEndFlow: true }), null);
+	assert.equal(flowEndKind({ from: "execute", to: "discuss", viaEndFlow: true }), null);
+	assert.equal(flowEndKind({ from: "plan", to: "off", viaEndFlow: false }), null);
+	assert.equal(flowEndKind({ from: "discuss", to: "execute", viaEndFlow: false }), null);
+});
+
+test("withEndFlow emits first, marks the flag during the body and resets it", async () => {
+	const flag = { on: false };
+	const log: string[] = [];
+	await withEndFlow(flag, "finished", (h) => log.push(`emit ${h} on=${flag.on}`), async () => {
+		log.push(`body on=${flag.on}`);
+		assert.equal(flowEndKind({ from: "execute", to: "execute", viaEndFlow: flag.on }), null); // quick flow: back to its start phase
+	});
+	assert.deepEqual(log, ["emit finished on=false", "body on=true"]);
+	assert.equal(flag.on, false);
+});
+
+test("withEndFlow resets the flag when the body throws", async () => {
+	const flag = { on: false };
+	await assert.rejects(withEndFlow(flag, "stopped", () => {}, async () => { throw new Error("x"); }), /x/);
+	assert.equal(flag.on, false);
+});
+
+test("k11Payload and K11_SITES", () => {
+	assert.deepEqual(k11Payload("git-task", String.raw`C:\a\b`, null), { v: 1, kind: "merge", cwd: "C:/a/b", tree: null, ask: "pre" });
+	assert.equal(K11_SITES["git-task"].ask, "pre");
+	for (const s of ["merge", "protected-push", "publish"] as const) assert.equal(k11Payload(s, "/x", "t").ask, "gate");
+	assert.equal(k11Payload("protected-push", "/x", "t").kind, "protected-push");
+	assert.equal(k11Payload("publish", "/x", null).kind, "publish");
+});
+
+test("flowEndPayload", () => {
+	assert.deepEqual(flowEndPayload("f1", "stopped"), { v: 1, flowId: "f1", how: "stopped" });
+	assert.deepEqual(flowEndPayload(undefined, "abandoned"), { v: 1, how: "abandoned" });
+});

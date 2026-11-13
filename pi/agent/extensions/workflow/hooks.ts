@@ -58,3 +58,44 @@ export function keepExtraTools(from: string, to: string): boolean {
 export function planReviewRoute(planReady: boolean, blocked: boolean, claimed: boolean): "review" | "menu" {
 	return planReady && !blocked && claimed ? "review" : "menu";
 }
+
+/** K11: where a merge-gate question comes from. */
+export type K11Site = "merge" | "protected-push" | "publish" | "git-task";
+
+/** What each site asks: "gate" is the real merge, protected push or publish; "pre" is the `git_task` advance check, which a listener must not answer with an accept request. */
+export const K11_SITES: Record<K11Site, { kind: "merge" | "protected-push" | "publish"; ask: "gate" | "pre" }> = {
+	merge: { kind: "merge", ask: "gate" },
+	"protected-push": { kind: "protected-push", ask: "gate" },
+	publish: { kind: "publish", ask: "gate" },
+	"git-task": { kind: "merge", ask: "pre" },
+};
+
+/** The K11 payload (without the claim) for a site. */
+export function k11Payload(site: K11Site, cwd: string, tree: string | null): { v: 1; kind: string; cwd: string; tree: string | null; ask: "gate" | "pre" } {
+	const s = K11_SITES[site];
+	return { v: 1, kind: s.kind, cwd: cwd.replace(/\\/g, "/"), tree, ask: s.ask };
+}
+
+export type FlowEndHow = "finished" | "stopped" | "abandoned";
+
+/** K14: "abandoned" when the execute phase is left for discuss or off without endFlow; a move to plan (replan) or any other move sends nothing. */
+export function flowEndKind(c: { from: string; to: string; viaEndFlow: boolean }): "abandoned" | null {
+	if (c.viaEndFlow || c.from !== "execute") return null;
+	return c.to === "discuss" || c.to === "off" ? "abandoned" : null;
+}
+
+/** K14 payload. */
+export function flowEndPayload(flowId: string | undefined, how: FlowEndHow): { v: 1; flowId?: string; how: FlowEndHow } {
+	return { v: 1, ...(flowId ? { flowId } : {}), how };
+}
+
+/** Runs `body` as an endFlow: emits K14 first, marks the flag while the body runs (its setPhase must not send "abandoned"), resets it in finally. */
+export async function withEndFlow<T>(flag: { on: boolean }, how: "finished" | "stopped", emit: (how: "finished" | "stopped") => void, body: () => Promise<T>): Promise<T> {
+	emit(how);
+	flag.on = true;
+	try {
+		return await body();
+	} finally {
+		flag.on = false;
+	}
+}

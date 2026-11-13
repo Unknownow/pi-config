@@ -71,7 +71,7 @@ import { pushArgs, tagDecision } from "./tags.ts";
 import { type CheckVerdict, autopilotAmendment, autopilotReply, checkTitle, checkVerdict, cleanCheck, waitCheckProblem, type HumanCheck, humanChecks, parseVerifyStep, parseWaitStep, pollDecision, waitLimitMs, waitKindProblem, autopilotSkipsWait, replaceWait, resumePrefix, verifyAmendment, waitAmendment } from "./waits.ts";
 import { nextStage, parseStages, planWaitProblems, stageLine, stageNote, stageStart, stagesOutcome } from "./stages.ts";
 import { planToolProblem, planToolRefused, phaseToolRefusal } from "../shared/readonly-tools.ts";
-import { acceptanceRefusal, exactToolRegexes, keepExtraTools, parseStartPlan, planReviewAction, planReviewRoute, START_PLAN_PREFACE } from "./hooks.ts";
+import { acceptanceRefusal, exactToolRegexes, flowEndKind, flowEndPayload, k11Payload, keepExtraTools, withEndFlow, type K11Site, parseStartPlan, planReviewAction, planReviewRoute, START_PLAN_PREFACE } from "./hooks.ts";
 import { emitClaims, gatherClaims } from "../shared/claims.ts";
 import { type CheckStatus, MAX_REASKS, PLAN_ARBITER, PLAN_APPROVE, PLAN_BACK, PLAN_FULL, type AskKey, type AskRole, type OpenAsk, askAnswer, askMenu, idleDue, idleNoticeAllowed, idlePayload, bumpAskId, planMenuRequest, waitDonePayload, restoreAsks, resumeContent, waitPayload, waitResumeOutcome } from "./asks.ts";
 import { refilterPlanTools, hiddenInPhase, syncFlowOnlyTools } from "./plan-tools.ts";
@@ -466,8 +466,20 @@ export default function workflow(pi: ExtensionAPI) {
 		return true;
 	}
 
+	const endFlowFlag = { on: false };
+	/** K14: tells other extensions the flow ended (before the phase changes, so the flow id is still set). */
+	function emitFlowEnd(how: "finished" | "stopped" | "abandoned"): void {
+		try {
+			pi.events.emit("workflow:flow-end", flowEndPayload(state.planDoc?.flowId, how));
+		} catch {}
+	}
+
 	/** A flow has ended: on to the phase `returnTo` names. */
-	async function endFlow(ctx: ExtensionContext): Promise<void> {
+	async function endFlow(ctx: ExtensionContext, how: "finished" | "stopped"): Promise<void> {
+		return withEndFlow(endFlowFlag, how, emitFlowEnd, () => endFlowBody(ctx));
+	}
+
+	async function endFlowBody(ctx: ExtensionContext): Promise<void> {
 		notifyUser(ctx, "flow finished");
 		await dropReviewRefs(ctx);
 		state.reviewBase = undefined;
@@ -613,6 +625,7 @@ export default function workflow(pi: ExtensionAPI) {
 	/** `profile`: "quick" starts a quick flow (plan phase only); see nextProfile. */
 	async function setPhase(ctx: ExtensionContext, phase: Phase, profile?: "quick"): Promise<void> {
 		const leavingFlow = state.phase === "execute" && phase !== state.phase;
+		if (flowEndKind({ from: state.phase, to: phase, viaEndFlow: endFlowFlag.on })) emitFlowEnd("abandoned");
 		if (leavingFlow && state.approvedPlan && !state.flowSummarized) {
 			summarizeFlow(stoppedSummary(phase === "plan" ? "back to planning" : phase === "discuss" ? "back to discussion" : "abandoned"), false);
 		}
@@ -2430,7 +2443,7 @@ export default function workflow(pi: ExtensionAPI) {
 			const cwd = params.repo ? path.resolve(ctx.cwd, params.repo) : ctx.cwd;
 			if (!fs.existsSync(cwd)) return reply(`git_task failed: ${cwd} does not exist.`);
 			const multi = (state.folders?.length ?? 0) > 0 || (state.touchedRepos?.length ?? 0) > 0;
-			const acceptance = allowed.ungated ? null : await acceptanceProblem("merge", cwd, null);
+			const acceptance = allowed.ungated ? null : await acceptanceProblem("git-task", cwd, null);
 			const spec: GitGuardSpec = {
 				roots: multi ? repos.map((r) => r.root) : [],
 				protectedBranches: cfg.protectedBranches,
@@ -3010,8 +3023,8 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 	}
 
 	/** K11: asks the listeners of `workflow:merge-gate` (after the judge gate passed) whether the merge, protected push or publish may go on; a refusal text or null. */
-	async function acceptanceProblem(kind: "merge" | "protected-push" | "publish", cwd: string, tree: string | null): Promise<string | null> {
-		return acceptanceRefusal(await gatherClaims((d) => pi.events.emit("workflow:merge-gate", d), { v: 1, kind, cwd: cwd.replace(/\\/g, "/"), tree }, 30_000));
+	async function acceptanceProblem(site: K11Site, cwd: string, tree: string | null): Promise<string | null> {
+		return acceptanceRefusal(await gatherClaims((d) => pi.events.emit("workflow:merge-gate", d), k11Payload(site, cwd, tree), 30_000));
 	}
 
 	function planAllowedTools(): RegExp[] {
@@ -3415,7 +3428,7 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 			} else {
 				ctx.ui.notify("workflow: stopped: the executor's reply failed", "warning");
 				summarizeFlow(stoppedSummary("stopped: the executor's reply failed"), false);
-				await endFlow(ctx);
+				await endFlow(ctx, "stopped");
 			}
 			return;
 		}
@@ -3509,7 +3522,7 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 		view.stage = "execute";
 		const decided = mergeDecisionsText(state.approvedPlan);
 		if (!summarizeFlow(decided ? `${outcome.text}; ${decided}` : outcome.text, outcome.ok)) persist();
-		await endFlow(ctx);
+		await endFlow(ctx, "finished");
 	}
 
 	/** A staged plan's stage ended with nothing to review: records it and starts the next stage, or ends the flow after the last one. */
@@ -3530,7 +3543,7 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 		state.stageOutcomes = undefined;
 		view.stage = "execute";
 		if (!summarizeFlow(finalText, final.ok)) persist();
-		await endFlow(ctx);
+		await endFlow(ctx, "finished");
 	}
 
 	/** The summary text for a flow that stops early: the stages already delivered, then `text`. Clears the stage state. */
@@ -3658,7 +3671,7 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 			} else {
 				ctx.ui.notify("workflow: stopped: the judge failed to run", "warning");
 				summarizeFlow(stoppedSummary("stopped: the judge failed to run"), false);
-				await endFlow(ctx);
+				await endFlow(ctx, "stopped");
 			}
 			return;
 		}
@@ -3695,7 +3708,7 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 			}
 			ctx.ui.notify(`workflow: stopped after ${state.judgeRounds} failed judge rounds`, "warning");
 			summarizeFlow(stoppedSummary(`stopped: judge failed ${state.judgeRounds} rounds`), false);
-			await endFlow(ctx);
+			await endFlow(ctx, "stopped");
 			return;
 		}
 		pi.sendMessage(
@@ -3723,7 +3736,7 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 			if (!ctx.hasUI) {
 				pi.sendMessage({ customType: "workflow-judge", content: report, display: true }, { triggerTurn: false });
 				summarizeFlow(stoppedSummary("stopped: judge questions the plan"), false);
-				await endFlow(ctx);
+				await endFlow(ctx, "stopped");
 				return "stop";
 			}
 			const options = ["Back to planning", ...(canAsk ? ["Let the arbiter decide"] : []), "Ignore and continue", "Stop"];
@@ -3744,7 +3757,7 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 			}
 			pi.sendMessage({ customType: "workflow-judge", content: report, display: true }, { triggerTurn: false });
 			summarizeFlow(stoppedSummary("stopped: judge questions the plan"), false);
-			await endFlow(ctx);
+			await endFlow(ctx, "stopped");
 			return "stop";
 		}
 	}
@@ -4022,7 +4035,7 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 		state.stageOutcomes = undefined;
 		view.stage = "execute";
 		if (!summarizeFlow(outcome.text, outcome.ok)) persist();
-		await endFlow(ctx);
+		await endFlow(ctx, "finished");
 	}
 
 
