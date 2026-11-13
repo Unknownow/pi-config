@@ -3380,6 +3380,7 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 		const stoppedNormally = last?.role === "assistant" && last.stopReason === "stop" && assistantText(last).trim().length > 0;
 
 		if (state.phase === "plan") {
+			const wasFixing = planFixing;
 			planFixing = false;
 			// Every finished reply offers the choice; aborted or errored ones do not.
 			// A typed "go" approves only a finished plan that is not waiting on an answer.
@@ -3406,7 +3407,7 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 			if (!planReady || blocked) planApproveQueued = false;
 			if (planReady && !blocked) {
 				const emitted = composePlan(planDraft);
-				const decision = planGateDecide({ mode: cfg.autoJudgePlan, quick: state.profile === "quick", planHash: textHash(emitted), gate: state.planGate });
+				const decision = planGateDecide({ mode: cfg.autoJudgePlan, quick: state.profile === "quick", planHash: textHash(emitted), gate: state.planGate, hasDisputes: wasFixing && planDisputes(text) !== undefined });
 				if (decision !== "off" && decision !== "reuse") {
 					void runPlanGate(ctx, emitted, text, decision);
 					return;

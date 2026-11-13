@@ -76,6 +76,12 @@ test("planGateDecide", () => {
 	assert.equal(planGateDecide({ ...base, gate: gate({ cappedHash: "h1", judgedPlan: "p" }) }), "confirm");
 	assert.equal(planGateDecide({ ...base, gate: gate({ judgedPlan: "p" }) }), "recheck");
 	assert.equal(planGateDecide({ ...base, gate: gate() }), "full");
+	// disputes on an unchanged plan
+	const same = { ...base, gate: gate({ planHash: "h2", judgedPlan: "p", autoFindings: [f("auto")] }) };
+	assert.equal(planGateDecide({ ...same, hasDisputes: true }), "recheck");
+	assert.equal(planGateDecide(same), "reuse");
+	assert.equal(planGateDecide({ ...same, hasDisputes: true, gate: { ...same.gate, cappedHash: "h2" } }), "reuse");
+	assert.equal(planGateDecide({ ...same, hasDisputes: true, gate: { ...same.gate, autoFindings: [], verdict: "PASS" } }), "reuse");
 	assert.equal(planGateDecide(base), "full");
 });
 

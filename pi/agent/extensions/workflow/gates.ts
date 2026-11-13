@@ -142,9 +142,11 @@ export function isEscKey(data: string): boolean {
 }
 
 /** What to do with a complete plan: skip the gate, reuse a verdict, or run the judge (confirm: one run, no fix loop). */
-export function planGateDecide(o: { mode: "off" | "auto"; quick: boolean; planHash: string; gate?: PlanGate }): "off" | "reuse" | "confirm" | "recheck" | "full" {
+export function planGateDecide(o: { mode: "off" | "auto"; quick: boolean; planHash: string; gate?: PlanGate; hasDisputes?: boolean }): "off" | "reuse" | "confirm" | "recheck" | "full" {
 	if (o.mode === "off" || o.quick) return "off";
 	const g = o.gate;
+	// The planner disputed findings without changing the plan: the judge rules on the disputes (unless the cap is reached).
+	if (g && g.planHash === o.planHash && o.hasDisputes && g.judgedPlan !== undefined && g.autoFindings.length + g.userFindings.length > 0 && !g.cappedHash && (g.verdict === "PASS" || g.verdict === "FAIL")) return "recheck";
 	if (g && g.planHash === o.planHash && (g.verdict === "PASS" || g.verdict === "FAIL")) return "reuse";
 	if (g?.cappedHash && g.cappedHash !== o.planHash) return "confirm";
 	if (g?.judgedPlan) return "recheck";
