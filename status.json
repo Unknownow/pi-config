@@ -1,10 +1,9 @@
 {
   "v": 1,
   "flowId": "20261113-1316-orchestrated-runs-with-no-interaction-in-f360",
-  "rev": 5,
-  "updated": "2026-11-13T06:54:41.565Z",
+  "rev": 6,
+  "updated": "2026-11-13T06:55:17.192Z",
   "title": "Orchestrated runs with no interaction in sub-session windows",
-  "stage": 3,
   "done": [
     "S1",
     "S2",
@@ -36,8 +35,13 @@
     "S28",
     "S29"
   ],
+  "finished": {
+    "at": "2026-11-13T06:55:17.068Z",
+    "ok": true,
+    "text": "stage 1: flow/orchestrated-no-interaction, 3 commits since the review base; stage 2: flow/orchestrated-no-interaction, 2 commits since the review base; stage 3: master, 2 commits since the review base, PR #38 MERGED https://github.com/Unknownow/pi-config/pull/38 · 1 human check(s) for you (see the card)"
+  },
   "reviewBase": {
-    "d:/works/pi-config": "df59f511b2b0518f64f0e70ed91f8d6f7a50d1b6"
+    "d:/works/pi-config": "bf831645eebf105021b8359f7af87086a3b4433a"
   },
   "passedTrees": {
     "d:/works/pi-config": [
@@ -50,9 +54,16 @@
       "57eaa243e8a8940fc05e4bc0bfa772ce4a819b90"
     ]
   },
+  "judgedMerges": {
+    "d:/works/pi-config": {
+      "pr": "38",
+      "tree": "57eaa243e8a8940fc05e4bc0bfa772ce4a819b90",
+      "stage": 3
+    }
+  },
   "repos": [
     {
-      "branch": "flow/orchestrated-no-interaction",
+      "branch": "master",
       "remote": "github.com/Unknownow/pi-config",
       "primary": true
     }

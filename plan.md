@@ -671,3 +671,5 @@ Manual end-to-end check A6 (S29) on a scratch GitHub repo with packages a and b:
 - [x] S27 Docs.
 - [x] S28 Run all three suites at each stage end, and fix any failures before the stage commit.
 - [x] S29 Verify (A6, manual), on a scratch GitHub repo with packages `a` and `b` (`b` depends on `a`):
+## Outcome
+2026-11-13T06:55:17.068Z — ok: stage 1: flow/orchestrated-no-interaction, 3 commits since the review base; stage 2: flow/orchestrated-no-interaction, 2 commits since the review base; stage 3: master, 2 commits since the review base, PR #38 MERGED https://github.com/Unknownow/pi-config/pull/38 · 1 human check(s) for you (see the card)
