@@ -1,0 +1,19 @@
+{
+  "v": 1,
+  "flowId": "20261114-0108-proposal-judge-orchestrator-role-and-for-29c5",
+  "rev": 1,
+  "updated": "2026-11-13T18:08:34.544Z",
+  "title": "Proposal judge, orchestrator role and forced moves for orchestrate",
+  "stage": 1,
+  "done": [],
+  "reviewBase": {
+    "d:/works/pi-config": "b6538c630d84056076990ab600c9a85962d4b7a5"
+  },
+  "repos": [
+    {
+      "branch": "master",
+      "remote": "github.com/Unknownow/pi-config",
+      "primary": true
+    }
+  ]
+}
