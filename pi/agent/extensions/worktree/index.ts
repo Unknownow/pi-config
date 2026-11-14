@@ -199,7 +199,7 @@ async function suggestName(git: Git, cfg: WtConfig, repos: string[]): Promise<st
 }
 
 /** Create a set for the working repo and the added folders (no terminal, no session). Reports problems itself and returns null. */
-async function createSet(pi: ExtensionAPI, ctx: SetCtx, name: string, progress: Progress, only?: string[]): Promise<Created | null> {
+async function createSet(pi: ExtensionAPI, ctx: SetCtx, name: string, progress: Progress, only?: string[], bases?: Record<string, string>): Promise<Created | null> {
 	const fail = (m: string) => {
 		ctx.ui.notify(m, "error");
 		return null;
@@ -227,7 +227,7 @@ async function createSet(pi: ExtensionAPI, ctx: SetCtx, name: string, progress: 
 	const bad = checkName(name);
 	if (bad) return fail(bad);
 
-	const pre = await preflight(git, found.repos, cfg, name);
+	const pre = await preflight(git, found.repos, cfg, name, bases);
 	for (const w of pre.warnings) ctx.ui.notify(w, "warning");
 	if (pre.errors.length) return fail(`Nothing created:\n${pre.errors.join("\n")}`);
 
@@ -243,7 +243,7 @@ async function createSet(pi: ExtensionAPI, ctx: SetCtx, name: string, progress: 
 		v: 1,
 		created: new Date().toISOString(),
 		branch: branchOf(cfg, name),
-		repos: pre.plan.map((p) => ({ main: mains.get(p.info.top) ?? p.info.top, dir: path.basename(p.target) })),
+		repos: pre.plan.map((p) => ({ main: mains.get(p.info.top) ?? p.info.top, dir: path.basename(p.target), ...(p.info.based ? { base: p.info.baseRef } : {}) })),
 	});
 	const targetOf = (top: string) => pre.plan.find((p) => p.info.top === top)?.target ?? top;
 	const rel = path.relative(found.workingTop, ctx.cwd).replace(/\\/g, "/");
@@ -265,8 +265,8 @@ interface Launched {
 }
 
 /** Creates the set and opens its terminal; null when creating failed (createSet has reported why). */
-async function createAndLaunch(pi: ExtensionAPI, ctx: SetCtx, name: string, progress: Progress, only?: string[]): Promise<Launched | null> {
-	const c = await createSet(pi, ctx, name, progress, only);
+async function createAndLaunch(pi: ExtensionAPI, ctx: SetCtx, name: string, progress: Progress, only?: string[], bases?: Record<string, string>): Promise<Launched | null> {
+	const c = await createSet(pi, ctx, name, progress, only, bases);
 	if (!c) return null;
 	progress.stage("opening terminal");
 	const git = makeGit(pi);
@@ -904,7 +904,7 @@ export default function worktree(pi: ExtensionAPI) {
 						}),
 					};
 					try {
-						const r = await createAndLaunch(pi, quiet, req.name, progress, req.folders);
+						const r = await createAndLaunch(pi, quiet, req.name, progress, req.folders, req.bases);
 						if (!r) return { error: errors.join("\n") || "worktree:create failed" };
 						return { name: r.name, branch: r.branch, cwd: r.cwd, setRoot: r.setRoot, launched: r.launched, text: r.text, repos: r.repos };
 					} catch (e) {

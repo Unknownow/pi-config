@@ -7,7 +7,8 @@ export interface SetMeta {
 	v: 1;
 	created: string;
 	branch: string;
-	repos: { main: string; dir: string }[];
+	/** `base`: the remote ref the set was created from, when the creator named one (a run's target); else the repo's default branch is the base. */
+	repos: { main: string; dir: string; base?: string }[];
 }
 
 export function readMeta(set: string): SetMeta | null {
