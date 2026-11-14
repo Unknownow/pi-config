@@ -5,6 +5,8 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Container, truncateToWidth } from "@earendil-works/pi-tui";
+import { isKnown } from "../shared/completions.ts";
+import { QUIET_SUBS, quietCompletions, quietDescription, quietUsage } from "./commands.ts";
 import { quietDefinition, summarizeArgs } from "./quiet.ts";
 
 export default function quietTools(pi: ExtensionAPI) {
@@ -50,13 +52,13 @@ export default function quietTools(pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("quiet", {
-		description: "Hide or show finished tool rows (/quiet, /quiet on, /quiet off)",
+		description: quietDescription(),
+		getArgumentCompletions: (prefix: string) => quietCompletions(prefix),
 		handler: async (args: string, ctx: any) => {
 			const a = (args ?? "").trim().toLowerCase();
 			if (a === "") toggle(ctx);
-			else if (a === "on") toggle(ctx, true);
-			else if (a === "off") toggle(ctx, false);
-			else if (ctx.hasUI) ctx.ui.notify("quiet: usage /quiet [on|off]", "warning");
+			else if (isKnown(QUIET_SUBS, a)) toggle(ctx, a === "on");
+			else if (ctx.hasUI) ctx.ui.notify(quietUsage(), "warning");
 		},
 	});
 

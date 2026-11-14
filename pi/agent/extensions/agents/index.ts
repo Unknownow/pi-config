@@ -16,6 +16,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
+import { agentsCompletions, agentsDescription, agentsUnknown } from "./commands.ts";
 import { branchTranscript } from "../shared/transcript.ts";
 import { AGENT_ROLES, type AgentRole, CONFIG_PATH, loadConfig, saveRole } from "./config.ts";
 import * as prompts from "./prompts.ts";
@@ -299,16 +300,8 @@ export default function agents(pi: ExtensionAPI) {
 	const specOf = (role: string) => loadConfig().config.roles[role as AgentRole];
 
 	pi.registerCommand("agents", {
-		description: "Models of the explore, advisor and test_run helpers: status, model [role] [provider/id[:thinking]]",
-		getArgumentCompletions: (prefix) => {
-			const parts = prefix.trimStart().split(/\s+/);
-			if (parts[0] === "model" && parts.length > 1) return roleCompletions("model", parts, ROLES, specOf, availableModels);
-			const subs = [
-				{ value: "status", label: "status - each role's model and the config path" },
-				{ value: "model", label: "model [role] [provider/id[:thinking]] - set a role's model (pickers when left out)" },
-			].filter((c) => c.value.startsWith(prefix.trim()));
-			return subs.length > 0 ? subs : null;
-		},
+		description: agentsDescription(),
+		getArgumentCompletions: (prefix) => agentsCompletions(prefix, { roles: ROLES, specOf, models: availableModels }),
 		handler: async (args, ctx) => {
 			const [sub = "status", role, spec] = args.trim().split(/\s+/).filter(Boolean);
 			if (sub === "status") {
@@ -319,7 +312,7 @@ export default function agents(pi: ExtensionAPI) {
 				return;
 			}
 			if (sub !== "model") {
-				ctx.ui.notify(`agents: unknown ${sub}. Try: status, model`, "warning");
+				ctx.ui.notify(agentsUnknown(sub), "warning");
 				return;
 			}
 			const usage = () => ctx.ui.notify(`Usage: /agents model <${ROLES.join("|")}> <provider/id[:thinking]>`, "warning");
