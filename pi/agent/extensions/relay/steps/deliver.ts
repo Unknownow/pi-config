@@ -126,6 +126,7 @@ async function deliverOnce(job: Job, ctx: StepCtx, attempt: number): Promise<Out
 	const verify = parsed.sections.Verify ?? "";
 	// 1-3: every repo is accepted before anything is pushed
 	for (const repo of job.repos) {
+		if (repo.merged) continue; // merged earlier in this delivery (a retry): its state is final
 		const a = await accept(job, repo, ctx, verify);
 		ctx.save(job);
 		if (!a.ok) return a.fix ? { kind: "fix", reason: a.fix } : { kind: "error", error: a.error ?? "delivery failed" };
@@ -134,6 +135,7 @@ async function deliverOnce(job: Job, ctx: StepCtx, attempt: number): Promise<Out
 	// push each repo, then PRs
 	const slugs = new Map<string, string | undefined>();
 	for (const repo of job.repos) {
+		if (repo.merged) continue;
 		if (ctx.stopped()) return { kind: "stopped" };
 		const pol = repoPolicy(ctx.cfg, repo.main);
 		const p = await pushJobBranch(ctx, repo, pol.protectedBranches);
@@ -170,7 +172,7 @@ async function deliverOnce(job: Job, ctx: StepCtx, attempt: number): Promise<Out
 			const ff = await ctx.run("git", ["merge-base", "--is-ancestor", `origin/${repo.target}`, sha], repo.worktree);
 			if (ff.code !== 0) {
 				if (attempt >= 3) return { kind: "error", error: `origin/${repo.target} keeps moving in ${repo.key}; gave up after ${attempt} rebases` };
-				for (const r of job.repos) delete r.acceptedTree;
+				for (const r of job.repos) if (!r.merged) delete r.acceptedTree;
 				return { kind: "retry" };
 			}
 			const gate = await gateCheck((c, a, d) => ctx.run(c, a, d), "protected-push", repo.worktree, sha, { passedTrees: [tree], noMerge: false });
