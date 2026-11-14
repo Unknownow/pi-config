@@ -253,6 +253,7 @@ export class Engine {
 
 	async drive(jr: JobRun): Promise<void> {
 		if (jr.ended) return;
+		if (jr.recovering) return; // restart, pause and recover re-drive the job when they are done
 		if (jr.driving) {
 			jr.again = true;
 			return;
@@ -448,6 +449,7 @@ export class Engine {
 
 	/** Drops the worker process; events of the old process are ignored from here on. */
 	private dropWorker(jr: JobRun): void {
+		this.pump(jr); // asks of the old worker are passed on; a done it sent is superseded by what follows
 		jr.gen++;
 		jr.worker?.kill();
 		jr.ws.alive = false;
@@ -494,6 +496,7 @@ export class Engine {
 			this.d.wake(`relay job ${jr.job.id}: the worker ${why} and could not be restarted (${(e as Error).message}). The job is paused; relay_resume or relay_stop.`);
 		} finally {
 			jr.recovering = false;
+			if (!jr.driving && !jr.ended) void this.drive(jr);
 		}
 	}
 
@@ -651,7 +654,7 @@ export class Engine {
 		await jr.worker?.abort();
 		await this.drive(jr);
 		// a step that was running winds down and writes the report before stop returns
-		while (jr.driving) await new Promise((r) => setTimeout(r, 20));
+		while (jr.driving || jr.recovering) await new Promise((r) => setTimeout(r, 20));
 		return { ok: true };
 	}
 
@@ -738,6 +741,7 @@ export class Engine {
 	private async restart(jr: JobRun, text: string, o: { reset?: "base" | "keep"; by?: "user" | "lead" }): Promise<{ ok: true; version: number; how: string } | { error: string }> {
 		const job = jr.job;
 		if (job.state !== "working" && job.state !== "paused") return { error: `job ${job.id} is ${job.state}: a restart needs a working or paused job (send a steer instead, or relay_stop)` };
+		if (job.paused?.why === "replan") return { error: `job ${job.id} waits for a re-plan: relay_replan {job, brief}, or relay_stop` };
 		if (jr.recovering) return { error: `job ${job.id} is being restarted already` };
 		const reset = o.reset ?? "keep";
 		const briefFile = path.join(jr.dir, "brief.md");
@@ -749,22 +753,23 @@ export class Engine {
 		try {
 			const checked = await this.checkAmendment(jr.dir, proposed, body, `amendment-${n}`);
 			if ("error" in checked) return checked;
+			// the critic took a while: the job may have moved on (a stop, the end of the job)
+			if (jr.ended || jr.stopRequested || (job.state !== "working" && job.state !== "paused") || job.paused?.why === "replan") return { error: `job ${job.id} moved on while the critic checked the amendment (now ${job.state}); send it again` };
 			this.dropWorker(jr);
 			if (reset === "base") {
 				for (const r of job.repos) {
+					// a follow-up resets to where the follow-up began, never into the job's earlier work
 					await this.d.run("git", ["rebase", "--abort"], r.worktree);
-					await this.d.run("git", ["reset", "-q", "--hard", r.base], r.worktree);
+					await this.d.run("git", ["reset", "-q", "--hard", r.followBase ?? r.base], r.worktree);
 					await this.d.run("git", ["clean", "-fdq"], r.worktree);
-					// the lead's edits are part of the job's base: they come back
-					if (r.leadEdits) {
+					// the lead's edits are part of the job's base: they come back (a follow-up's base already holds them)
+					if (r.leadEdits && !r.followBase) {
 						const ap = await applySnapshot(this.d.run, r.worktree, r.leadEdits.sha);
 						if (!ap.ok) job.notes.push(`restart: the lead's edits did not re-apply in ${r.key} (${ap.conflicts.join(", ") || ap.error})`);
 					}
 				}
 			}
 			this.setBrief(jr, proposed);
-			job.round = 0;
-			job.escalated = 0;
 			job.restarts = 0;
 			delete job.paused;
 			job.state = "working";
@@ -777,7 +782,7 @@ export class Engine {
 			return { error: `restart failed: ${(e as Error).message}` };
 		} finally {
 			jr.recovering = false;
-			if (jr.job.state === "working" && !jr.driving) void this.drive(jr);
+			if (!jr.driving && !jr.ended) void this.drive(jr);
 		}
 	}
 
@@ -797,6 +802,7 @@ export class Engine {
 			return { ok: true };
 		} finally {
 			jr.recovering = false;
+			if (!jr.driving && !jr.ended) void this.drive(jr);
 		}
 	}
 
@@ -924,7 +930,7 @@ export class Engine {
 			const jr = new JobRun(dir, job, lock);
 			this.jobs.set(job.id, jr);
 			const was = job.state;
-			if (how === "taken over" && job.worker?.pid) killSurvivor(job.worker.pid);
+			if (how === "taken over" && job.worker?.pid && lock.previous && lock.previous !== "unreadable" && lock.previous.host === this.d.me.host) killSurvivor(job.worker.pid);
 			job.restarts = 0;
 			appendLog(dir, { kind: "adopted", text: `${how}; was ${was}` });
 			try {
@@ -976,6 +982,9 @@ export class Engine {
 				appendLog(dir, { kind: "pr-merged", text: `${r.key}: ${r.pr}` });
 			}
 			if (!changed) continue;
+			// another lead may have started a follow-up on this job while gh was asked
+			const cur = readJob(dir);
+			if (!cur || cur.state !== "done" || (cur.followups ?? 0) !== (job.followups ?? 0)) continue;
 			if (job.repos.every((r) => r.merged || !r.pr)) {
 				const rm = await this.d.wt.remove({ name: job.set });
 				const msg = "error" in rm ? `set ${job.set} kept: ${rm.error}` : rm.kept.length ? `set ${job.set} removed, branches kept: ${rm.kept.join(", ")}` : `set ${job.set} removed (the PR merged)`;

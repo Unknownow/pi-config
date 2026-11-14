@@ -172,3 +172,12 @@ test("attach: the same lead re-attaches to its generation after a reload; anothe
 	assert.equal(new JobLock(d, me(2)).attach(), false);
 	assert.equal(new JobLock(tmp(), mine).attach(), false);
 });
+
+test("takeOver records the owner it replaced (its host decides whether a surviving worker pid may be killed)", async () => {
+	const d = tmp();
+	fs.writeFileSync(path.join(d, "owner.1.lock"), JSON.stringify({ pid: 5, sessionId: "x", host: "other-host", heartbeat: 0 }));
+	const b = new JobLock(d, me(2), { now: () => 10 * 60_000 });
+	assert.equal(b.previous, undefined);
+	assert.equal(await b.takeOver(), true);
+	assert.deepEqual(b.previous, { pid: 5, sessionId: "x", host: "other-host", heartbeat: 0 });
+});
