@@ -3,7 +3,7 @@
 import type { Finding } from "../shared/findings.ts";
 import { blockingFindings, findingsBlock, isClean, textHash } from "../shared/findings.ts";
 import { isProposalReady, type Mode, MODE_ENTRY } from "./mode.ts";
-import { JUDGE_PROPOSAL, JUDGE_PROPOSAL_RECHECK, NO_AGREED_NOTE } from "./prompts.ts";
+import { JUDGE_PROPOSAL, JUDGE_PROPOSAL_RECHECK, JUDGE_RELAY_CHECKS, NO_AGREED_NOTE } from "./prompts.ts";
 
 export interface ProposalReview {
 	hash: string;
@@ -47,10 +47,26 @@ export function proposalGateRounds(o: { resetRounds: boolean; last?: ProposalRev
 }
 
 /** The judge's system prompts. */
-export function proposalReviewPrompts(o: { proposal: string; list?: string; repoTable?: string; recheck?: Finding[] }): string[] {
-	const parts = [o.recheck ? JUDGE_PROPOSAL_RECHECK : JUDGE_PROPOSAL, "## Agreed list\n" + (o.list ?? NO_AGREED_NOTE), "## Repos\n" + (o.repoTable ?? "single repo: the working folder"), "## Proposal\n" + o.proposal];
+export function proposalReviewPrompts(o: { proposal: string; list?: string; repoTable?: string; recheck?: Finding[]; executor?: "relay" | "workflow" }): string[] {
+	const head = o.recheck ? JUDGE_PROPOSAL_RECHECK : JUDGE_PROPOSAL;
+	const parts = [o.executor === "relay" ? `${head}\n\n${JUDGE_RELAY_CHECKS}` : head, "## Agreed list\n" + (o.list ?? NO_AGREED_NOTE), "## Repos\n" + (o.repoTable ?? "single repo: the working folder"), "## Proposal\n" + o.proposal];
 	if (o.recheck) parts.splice(4, 0, "## Previous findings\n" + findingsBlock(o.recheck));
 	return parts;
+}
+
+/**
+ * The one-go chain at the end of a reply in propose mode. Both executors: an answer to a fix request is checked (`fix-reply`).
+ * Relay only: any other finished proposal starts the gate on its own (`gate`; after a pause too), no second "go".
+ */
+export function oneGoOnReply(o: { executor: "relay" | "workflow"; mode: Mode; ready: boolean; running: boolean; status?: ProposalReview["status"] }): "none" | "fix-reply" | "gate" {
+	if (o.mode !== "propose" || o.running) return "none";
+	if (o.status === "awaiting-fix") return "fix-reply";
+	return o.executor === "relay" && o.ready ? "gate" : "none";
+}
+
+/** What a pause (a finding routed to the user) does: relay runs ask the user through the model; workflow runs wait for a typed "go". */
+export function pauseAction(executor: "relay" | "workflow"): "ask-user" | "wait-go" {
+	return executor === "relay" ? "ask-user" : "wait-go";
 }
 
 /** The newest saved gate state; `awaiting-fix` becomes `idle` (the fix turn does not survive a restart). */

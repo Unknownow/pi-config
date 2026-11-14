@@ -2,7 +2,15 @@
 
 import { canonical, split, type Repo, type Worktree } from "./repos.ts";
 
-export type SubState = "planned" | "spawning" | "spawned" | "planning" | "executing" | "awaiting-acceptance" | "merged" | "stopped";
+/** Workflow runs use planned..stopped; relay runs use planned, dispatched, merged, delivered-pr (a PR waits for a hand merge), retry-pending, failed and blocked. */
+export type SubState = "planned" | "spawning" | "spawned" | "planning" | "executing" | "awaiting-acceptance" | "merged" | "stopped" | "dispatched" | "delivered-pr" | "retry-pending" | "failed" | "blocked";
+
+/** A repo of a relay job's delivery, as relay reports it (`repos[]` of job-end and job-query). */
+export interface JobRepo {
+	key: string;
+	pr?: string;
+	merged: boolean;
+}
 
 export interface Sub {
 	id: string;
@@ -35,6 +43,22 @@ export interface Sub {
 	forcedCheck?: string;
 	/** Set while orch_spawn creates the worktree (state "spawning"); the trust handler waits for it. */
 	spawningAt?: string;
+	/** Relay runs: the Verify commands (`<repo key>: <cmd>` runs in that repo), optional Scale and Budget lines of the brief. */
+	verify?: string[];
+	scale?: string;
+	budget?: string;
+	/** Relay runs: the relay job id, the follow-up retries sent, the latest weighted tokens of the job. */
+	job?: string;
+	retries?: number;
+	tokens?: number;
+	/** Set before the orchestrator stops the job itself (relay_stop, the run cap, /orch end): no retry then. */
+	stoppedBy?: "orchestrator";
+	/** Relay runs: why the package failed, is blocked or held; also the last job-end reason (the retry text). */
+	reason?: string;
+	/** Relay runs: the job's report.md path. */
+	report?: string;
+	/** Relay runs: the job's repos with PR and merge state from the last job-end or job-query. */
+	prs?: JobRepo[];
 	state: SubState;
 }
 
@@ -53,11 +77,17 @@ export interface Run {
 	targets?: Record<string, string>;
 	/** The run charter the user approved at "go" (also in charter.md). Absent in older runs. */
 	charter?: string;
+	/** Who runs the packages; absent in older runs (workflow). */
+	executor?: "relay" | "workflow";
+	/** Relay runs: the run Authority, one line per category (`<cat>: yes (<specifics>) | no | n/a`), copied into every brief. */
+	authority?: string[];
+	/** Relay runs: the working repo top of a single-repo run (multi-repo runs have `repos`). */
+	top?: string;
 	subs: Sub[];
 }
 
 /** The input of one package, before names and states are assigned. */
-export type PackageInput = Pick<Sub, "id" | "goal"> & Partial<Pick<Sub, "criteria" | "owns" | "forbids" | "dependsOn" | "decisions" | "notes">> & { repos?: string[]; /** The branch the package starts from and merges into, as the proposal names it. */ base?: string };
+export type PackageInput = Pick<Sub, "id" | "goal"> & Partial<Pick<Sub, "criteria" | "owns" | "forbids" | "dependsOn" | "decisions" | "notes" | "verify" | "scale" | "budget">> & { repos?: string[]; /** The branch the package starts from and merges into, as the proposal names it. */ base?: string };
 
 export const SUB_ID_RE = /^[a-z0-9][a-z0-9-]{0,15}$/;
 /** Copy of BRANCH_RE in worktree/layout.ts:7 (orchestrate never imports worktree). */

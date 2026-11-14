@@ -1,5 +1,5 @@
 {
-  "_comment": "Config for ~/.pi/agent/extensions/orchestrate. roles.orchestrator: model for the orchestrator session (switched on /orch start, restored on /orch off); roles.judge: model for the proposal judge. model is provider/model-id; thinking is off|minimal|low|medium|high|xhigh|max. autoJudgeProposal: off|auto; maxProposalJudgeRounds; judge: tools, timeoutMs, idleTimeoutMs, extensions. Synced by pi-config.",
+  "_comment": "Config for ~/.pi/agent/extensions/orchestrate. roles.orchestrator: model for the orchestrator session (switched on /orch start, restored on /orch off); roles.judge: model for the proposal judge. model is provider/model-id; thinking is off|minimal|low|medium|high|xhigh|max. autoJudgeProposal: off|auto; maxProposalJudgeRounds; judge: tools, timeoutMs, idleTimeoutMs, extensions. executor: relay|workflow (relay: one go runs proposal, judge and run as relay jobs); runTokens: weighted-token cap of a relay run; askUser: relay approval categories that go to the user. Synced by pi-config.",
   "confirmPlans": false,
   "roles": {
     "orchestrator": {
@@ -26,5 +26,8 @@
     "extensions": [
       "~/.pi/agent/npm/node_modules/pi-claude-bridge/src/index.ts"
     ]
-  }
+  },
+  "executor": "relay",
+  "runTokens": 20000000,
+  "askUser": []
 }

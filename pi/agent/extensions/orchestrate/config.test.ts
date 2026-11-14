@@ -107,3 +107,21 @@ test("roles.orchestrator: false means none; idleTimeoutMs 0 is allowed", () => {
 	assert.equal(r.config.roles.orchestrator, undefined);
 	assert.equal(r.config.judge.idleTimeoutMs, 0);
 });
+
+test("relay executor settings: defaults, values and bad values", () => {
+	const d = parseConfig(undefined, () => false).config;
+	assert.equal(d.executor, "relay");
+	assert.equal(d.runTokens, 20_000_000);
+	assert.deepEqual(d.askUser, []);
+	const ok = parseConfig({ executor: "workflow", runTokens: 5_000_000, askUser: ["publish", "deps"] }, () => false);
+	assert.equal(ok.warning, undefined);
+	assert.equal(ok.config.executor, "workflow");
+	assert.equal(ok.config.runTokens, 5_000_000);
+	assert.deepEqual(ok.config.askUser, ["publish", "deps"]);
+	const bad = parseConfig({ executor: "both", runTokens: 0, askUser: ["nope"] }, () => false);
+	assert.match(bad.warning!, /executor, runTokens, askUser/);
+	assert.equal(bad.config.executor, "relay");
+	assert.equal(bad.config.runTokens, 20_000_000);
+	assert.deepEqual(bad.config.askUser, []);
+	assert.deepEqual(parseConfig({}, () => false).config.askUser, [], "askUser is not shared between calls");
+});

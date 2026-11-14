@@ -32,7 +32,16 @@ export interface OrchestrateConfig {
 	maxProposalJudgeRounds: number;
 	/** How the proposal judge subagent runs. */
 	judge: { tools: string[]; timeoutMs: number; idleTimeoutMs: number; extensions: string[] };
+	/** Who runs the packages: relay jobs (one "go" starts proposal, judge and run) or workflow sub-sessions. Stored on the run at orch_run. */
+	executor: "relay" | "workflow";
+	/** Relay runs: weighted tokens of all the run's jobs together; at the cap every unfinished job is stopped. */
+	runTokens: number;
+	/** Relay runs: approval categories whose requests go to the user (the orchestrator refuses the others outside the run's Authority). */
+	askUser: string[];
 }
+
+/** The sensitive categories of relay (copy of relay/config.ts CATEGORIES; orchestrate never imports relay). */
+export const RELAY_CATEGORIES = ["merge", "publish", "comments", "delete", "formats", "deps"] as const;
 
 export const BRIDGE = "~/.pi/agent/npm/node_modules/pi-claude-bridge/src/index.ts";
 
@@ -46,6 +55,7 @@ export function defaults(exists: (p: string) => boolean = fs.existsSync): Orches
 		maxSubs: 4, pollSeconds: 60, stallMinutes: 20, confirmPlans: false, maxPlanRejections: 3, maxReplans: 2, maxAutoAnswers: 2, maxIdleAnswers: 3, approvePattern: GO_PATTERN,
 		roles: {}, autoJudgeProposal: "auto", maxProposalJudgeRounds: 2,
 		judge: { tools: ["read", "grep", "find", "ls"], timeoutMs: 900000, idleTimeoutMs: 300000, extensions: exists(expandHome(BRIDGE)) ? [BRIDGE] : [] },
+		executor: "relay", runTokens: 20_000_000, askUser: [],
 	};
 }
 
@@ -101,6 +111,18 @@ export function parseConfig(raw: unknown, exists: (p: string) => boolean = fs.ex
 	if ("autoJudgeProposal" in o) {
 		if (o.autoJudgeProposal === "off" || o.autoJudgeProposal === "auto") config.autoJudgeProposal = o.autoJudgeProposal;
 		else bad.push("autoJudgeProposal");
+	}
+	if ("executor" in o) {
+		if (o.executor === "relay" || o.executor === "workflow") config.executor = o.executor;
+		else bad.push("executor");
+	}
+	if ("runTokens" in o) {
+		if (typeof o.runTokens === "number" && Number.isInteger(o.runTokens) && o.runTokens >= 1) config.runTokens = o.runTokens;
+		else bad.push("runTokens");
+	}
+	if ("askUser" in o) {
+		if (isStrings(o.askUser) && o.askUser.every((c) => (RELAY_CATEGORIES as readonly string[]).includes(c))) config.askUser = [...new Set(o.askUser)];
+		else bad.push("askUser");
 	}
 	if ("roles" in o) {
 		const r = o.roles;

@@ -9,7 +9,7 @@
  */
 
 import { createHash, randomUUID } from "node:crypto";
-import { GATE_ENTRY, nextLastProposal, proposalGateAfterFixReply, proposalGateAfterVerdict, proposalGateFromEntries, proposalGateOnInput, proposalGateRounds, proposalGateStart, proposalReviewPrompts, roleOnRestore, roleSwitch, roleWarnText, type ProposalReview, type SavedModel } from "./proposal-gate.ts";
+import { GATE_ENTRY, nextLastProposal, oneGoOnReply, pauseAction, proposalGateAfterFixReply, proposalGateAfterVerdict, proposalGateFromEntries, proposalGateOnInput, proposalGateRounds, proposalGateStart, proposalReviewPrompts, roleOnRestore, roleSwitch, roleWarnText, type ProposalReview, type SavedModel } from "./proposal-gate.ts";
 import { runSubagent } from "../agents/subagent.ts";
 import { blockingFindings, branchAssistantTexts, findingsBlock, isEscKey, judgeVerdict, lastAgreedList, minorFindings, parseFindings } from "../shared/findings.ts";
 import type { Finding } from "../shared/findings.ts";
@@ -35,7 +35,8 @@ import { verdictMatches } from "./inbox.ts";
 import { applyOutbox, combineRepos, deliveryMerged, endDecision, lastDelivery, mergeGateDecision, needsBiggerPage, parseMergedArgs, pickBase, pickGhRepo, prTreeIndex, shouldPoll, stateAfterVerdict, verdictPayload, type EndHow } from "./delivery.ts";
 import { loadConfig, DEFAULTS, type OrchestrateConfig } from "./config.ts";
 import { MODE_ENTRY, mergesPullRequest, modeFromEntries, onTyped, toolRefusal, type Mode } from "./mode.ts";
-import { PROPOSAL_FIX, repoTableText, RUN_KICKOFF, section } from "./prompts.ts";
+import { PROPOSAL_ASK_USER, PROPOSAL_FIX, RELAY_RUN_KICKOFF, repoTableText, RUN_KICKOFF, section } from "./prompts.ts";
+import { authorityProblems, checkRunBriefs, claimHosted, type Executor, findingsFile, type Hosted, hostedChange, hostedDecision, hostedOffText, RelayExec, renderRelayBrief } from "./relay-exec.ts";
 import { check, OFFLINE_SECONDS, type Snapshot } from "./monitor.ts";
 import { boardLines, buildView, pendingOf, viewSig, widgetLines, type Paint, type SubInput, type View } from "./view.ts";
 import {
@@ -45,6 +46,7 @@ import {
 
 const ACTIVE: Sub["state"][] = ["spawning", "spawned", "planning", "executing", "awaiting-acceptance"];
 const text = (t: string) => ({ content: [{ type: "text" as const, text: t }], details: {} });
+const RELAY_MERGE_HINT = "in a relay run the jobs merge on their own under the run's Authority; a held PR is merged by hand (by the user) and released by the orchestrator's poll";
 
 export default function (pi: ExtensionAPI): void {
 	const exec: Exec = async (command, args, opts) => {
@@ -651,7 +653,38 @@ export default function (pi: ExtensionAPI): void {
 			say(`could not restore the model: ${(e as Error).message}`, "warning");
 		}
 	}
+	// ---- relay hosted mode (executor relay): claimed while an orchestrator mode is on
+	let hosted: Hosted | undefined;
+	/** A hosted claim or a job query met "no session context": retried at the first before_agent_start / input. */
+	let hostedRetry = false;
+	/** The open proposal-judge findings of the move to run; orch_run writes them to findings.md (relay runs). */
+	let openFindings: Finding[] = [];
+	/** The executor of the watched run, or else the configured one. */
+	const executorNow = (): Executor => (owned ? owned.executor ?? "workflow" : cfg.executor);
+	async function claimRelay(retried: boolean): Promise<void> {
+		const answer = await claimHosted((e, d) => pi.events.emit(e, d), true);
+		hosted = hostedDecision(answer, retried);
+		hostedRetry = hosted.state === "pending";
+		if (hosted.state === "off") say(hostedOffText(hosted.reason), "error");
+	}
+	const releaseRelay = (): void => {
+		hosted = undefined;
+		hostedRetry = false;
+		void claimHosted((e, d) => pi.events.emit(e, d), false);
+	};
+	/** At the first turn: the pending hosted claim and the relay rebuild are retried once. */
+	function retryRelayAtTurn(): void {
+		if (hostedRetry) {
+			hostedRetry = false;
+			void claimRelay(true);
+		}
+		if (relayExec?.needsContext) {
+			relayExec.needsContext = false;
+			void relayExec.tick().catch((e: Error) => say(e.message, "warning"));
+		}
+	}
 	function setMode(m: Mode, announce = true, ctx?: ExtensionContext): void {
+		const hostedDo = me ? null : hostedChange(mode, m, executorNow());
 		const phase = typeof lastK4?.phase === "string" ? lastK4.phase : undefined;
 		let action = roleSwitch({ from: mode, to: m, isSub: !!me, workflowPhase: phase, hasRole: !!cfg.roles.orchestrator, hasPrev: !!orchPrevModel });
 		const warning = action === "warn" ? roleWarnText(m === "off" ? "off" : "on", phase ?? "?", orchPrevModel) : undefined;
@@ -678,6 +711,8 @@ export default function (pi: ExtensionAPI): void {
 		if (action === "apply" && ctx) roleSwitchChain = roleSwitchChain.then(() => applyOrchestratorRole(ctx));
 		else if (action === "restore" && ctx && saved) roleSwitchChain = roleSwitchChain.then(() => restoreModel(ctx, saved));
 		if (m === "off") orchPrevModel = undefined;
+		if (hostedDo === "on") void claimRelay(false);
+		else if (hostedDo === "off") releaseRelay();
 		updateWidget();
 	}
 	const assistantText = (m: unknown): string => {
@@ -689,6 +724,7 @@ export default function (pi: ExtensionAPI): void {
 	// The section is always set (empty when off) so pi's patch replay of the system prompt stays stable.
 	let repoTableCache: { key: string; text: string | undefined } | undefined;
 	pi.on("before_agent_start", async (event, ctx) => {
+		if (!me) retryRelayAtTurn();
 		const sections = (event as { systemPromptOptions?: { sections?: Record<string, string> } }).systemPromptOptions?.sections;
 		if (!sections) return;
 		let table: string | undefined;
@@ -701,18 +737,25 @@ export default function (pi: ExtensionAPI): void {
 				table = undefined;
 			}
 		}
-		sections.orchestrate = me ? "" : section(mode, table);
+		sections.orchestrate = me ? "" : section(mode, table, executorNow(), cfg.askUser);
 	});
 
 	pi.on("tool_call", async (event) => {
 		if (me) return;
+		const executor = executorNow();
 		// merges of a live run go through /orch merge or orch_merge, also with the guard off
 		if (event.toolName === "bash" && owned && mergesPullRequest(String((event.input as { command?: unknown } | undefined)?.command ?? ""))) {
 			const live = current();
-			if (live && live.state !== "ended" && live.subs.some((s) => s.state !== "merged" && s.state !== "stopped")) return { block: true, reason: "merges in a run go through /orch merge <id> (user) or orch_merge" };
+			const done: Sub["state"][] = executor === "relay" ? ["merged", "stopped", "failed", "blocked"] : ["merged", "stopped"];
+			if (live && live.state !== "ended" && live.subs.some((s) => !done.includes(s.state))) return { block: true, reason: executor === "relay" ? RELAY_MERGE_HINT : "merges in a run go through /orch merge <id> (user) or orch_merge" };
 		}
-		if (mode === "off") return;
-		const why = toolRefusal(mode, event.toolName, (event.input ?? {}) as Record<string, unknown>);
+		// the orchestrator stops a job itself: no retry for it
+		if (event.toolName === "relay_stop" && relayExec) {
+			const job = (event.input as { job?: unknown } | undefined)?.job;
+			if (typeof job === "string") await relayExec.markOwnStop(job);
+		}
+		if (mode === "off" && !(owned && executor === "relay")) return;
+		const why = toolRefusal(mode, event.toolName, (event.input ?? {}) as Record<string, unknown>, executor);
 		if (why) return { block: true, reason: why };
 	});
 
@@ -722,6 +765,7 @@ export default function (pi: ExtensionAPI): void {
 			recordUserMessage(itemsFile, event.text, Date.now());
 			if (itemsFile.items.some((i) => i.state === "escalated")) saveItems();
 		}
+		if (!me && event.source !== "extension") retryRelayAtTurn();
 		if (me || mode === "off" || event.source === "extension" || event.streamingBehavior) return { action: "continue" as const };
 		const typed = event.text.trim();
 		if (typed.startsWith("/")) return { action: "continue" as const };
@@ -739,7 +783,7 @@ export default function (pi: ExtensionAPI): void {
 				return { action: "handled" as const };
 			}
 		}
-		const t = onTyped(mode, typed, !!lastProposal, goRe());
+		const t = onTyped(mode, typed, !!lastProposal, goRe(), executorNow());
 		lastProposal = undefined;
 		if (!t) return { action: "continue" as const };
 		setMode(t.mode, true, ctx);
@@ -752,10 +796,16 @@ export default function (pi: ExtensionAPI): void {
 		const last = [...msgs].reverse().find((m) => m.role === "assistant");
 		const body = assistantText(last).trim();
 		lastProposal = nextLastProposal(mode, body, last?.stopReason === "stop" && body.length > 0);
-		if (mode === "propose" && proposalReview?.status === "awaiting-fix" && !proposalRun) {
+		const next = oneGoOnReply({ executor: executorNow(), mode, ready: !!lastProposal, running: !!proposalRun, status: proposalReview?.status });
+		if (next === "fix-reply" && proposalReview) {
 			const a = proposalGateAfterFixReply({ prevHash: proposalReview.hash, ready: !!lastProposal, replyHash: lastProposal?.hash });
 			if (a === "recheck") void runProposalGate(ctx, "recheck", false);
 			else pauseProposal();
+		} else if (next === "gate" && lastProposal) {
+			// relay: a finished proposal goes to the gate on its own (one "go")
+			const d = proposalGateStart({ mode: cfg.autoJudgeProposal, hash: lastProposal.hash, last: proposalReview });
+			if (d === "move") moveToRun(ctx, proposalReview?.hash === lastProposal.hash ? blockingFindings(proposalReview.findings) : []);
+			else void runProposalGate(ctx, d, true);
 		}
 	});
 
@@ -767,16 +817,20 @@ export default function (pi: ExtensionAPI): void {
 			say(`could not save the proposal gate state: ${(e as Error).message}`, "warning");
 		}
 	}
-	function pauseProposal(): void {
+	/** `ask`: the findings routed to the user; a relay run has the model ask them (the next finished proposal is judged again). */
+	function pauseProposal(ask?: Finding[]): void {
 		if (proposalReview) proposalReview = { ...proposalReview, status: "paused" };
 		saveReview();
-		say(`the proposal judge needs your decision; answer, then say "go" (or /orch go force)`, "warning");
+		if (pauseAction(executorNow()) === "wait-go") return say(`the proposal judge needs your decision; answer, then say "go" (or /orch go force)`, "warning");
+		say("the proposal judge needs your decision; answer the question, the revised proposal is judged again on its own", "warning");
+		if (ask?.length) sendToModel("orchestrate-proposal-ask", `${PROPOSAL_ASK_USER}\n\n${findingsBlock(ask)}`);
 	}
 	/** Leaves propose for run and sends the kickoff, with the open judge findings when there are any. */
 	function moveToRun(ctx: ExtensionContext, open: Finding[], notes: Finding[] = []): void {
 		if (proposalReview) proposalReview = { ...proposalReview, status: "idle" };
+		openFindings = open;
 		setMode("run", true, ctx);
-		sendToModel("orchestrate-run-kickoff", RUN_KICKOFF + (open.length ? `\n\nOpen proposal-judge findings; settle them in the briefs' decisions:\n${findingsBlock(open)}` : "") + (notes.length ? `\n\nMinor proposal-judge notes (not blockers; take them into the briefs where they fit):\n${findingsBlock(notes)}` : ""));
+		sendToModel("orchestrate-run-kickoff", (executorNow() === "relay" ? RELAY_RUN_KICKOFF : RUN_KICKOFF) + (open.length ? `\n\nOpen proposal-judge findings; settle them in the briefs' decisions:\n${findingsBlock(open)}` : "") + (notes.length ? `\n\nMinor proposal-judge notes (not blockers; take them into the briefs where they fit):\n${findingsBlock(notes)}` : ""));
 	}
 	async function runJudge(ctx: ExtensionContext, systemPrompts: string[], signal: AbortSignal): Promise<{ ok: boolean; text: string; error?: string }> {
 		const role = cfg.roles.judge ?? (ctx.model ? { model: `${ctx.model.provider}/${ctx.model.id}`, thinking: "high" as const } : undefined);
@@ -800,7 +854,7 @@ export default function (pi: ExtensionAPI): void {
 		} catch {
 			// the judge then gets the single-repo note
 		}
-		const prompts = proposalReviewPrompts({ proposal: lp.text, list: lastAgreedList(branchAssistantTexts(ctx.sessionManager.getBranch())), repoTable, recheck: decision === "recheck" ? proposalReview?.findings : undefined });
+		const prompts = proposalReviewPrompts({ proposal: lp.text, list: lastAgreedList(branchAssistantTexts(ctx.sessionManager.getBranch())), repoTable, recheck: decision === "recheck" ? proposalReview?.findings : undefined, executor: executorNow() });
 		let res: { ok: boolean; text: string; error?: string };
 		try {
 			if (run.reason || proposalRun !== run) throw new Error("cancelled");
@@ -851,7 +905,7 @@ export default function (pi: ExtensionAPI): void {
 			saveReview();
 			return sendToModel("orchestrate-proposal-fix", `${PROPOSAL_FIX}\n\n${findingsBlock(blockingFindings(findings).filter((f) => f.route === "auto"))}`);
 		}
-		pauseProposal();
+		pauseProposal(blockingFindings(findings).filter((f) => f.route === "user"));
 	}
 
 	// ---------------------------------------------------------------- orchestrator side
@@ -860,8 +914,12 @@ export default function (pi: ExtensionAPI): void {
 		common: string;
 		runId: string;
 		repoCwd: string;
+		/** The run's executor (absent: workflow). */
+		executor?: Executor;
 	}
 	let owned: Owned | null = null;
+	/** The relay executor of the watched relay run (relay-exec.ts). */
+	let relayExec: RelayExec | undefined;
 	const snaps = new Map<string, Snapshot>();
 	/** Last known PR state per sub and repo key (from checkEnded). */
 	const prs = new Map<string, Map<string, "merged" | "not merged" | "unknown">>();
@@ -1066,6 +1124,7 @@ export default function (pi: ExtensionAPI): void {
 	function stopWatcher(): void {
 		stopTimers();
 		owned = null;
+		relayExec = undefined;
 		snaps.clear();
 		prs.clear();
 		defaultBranches.clear();
@@ -1750,7 +1809,57 @@ ${list.map((a) => `${a.line} → affects ${a.affects.join(", ") || "?"}`).join("
 		updateWidget();
 	}
 
+	/** Watches a relay run: no workflow watcher, stall checks or merge fallback; the relay poll every pollSeconds. */
+	function startRelay(o: Owned): RelayExec {
+		stopTimers();
+		owned = { ...o, executor: "relay" };
+		snaps.clear();
+		prs.clear();
+		itemsFile = emptyItems();
+		currentView = null;
+		lastViewSig = "";
+		const runId = o.runId;
+		const ex = new RelayExec({
+			emit: (e, d) => pi.events.emit(e, d),
+			read: () => readRun(o.common, runId).run ?? null,
+			mutate,
+			dir: runDir(o.common, runId),
+			runTokens: () => cfg.runTokens,
+			tell: (t) => {
+				try {
+					pi.sendMessage({ customType: "orchestrate-relay", content: `orchestrate: ${t}`, display: true });
+				} catch {
+					say(t);
+				}
+				notifyDesktop("orchestrate", t.split("\n")[0].slice(0, 200));
+			},
+			ended: () => {
+				unregister(runId);
+				if (relayExec === ex) stopWatcher();
+				if (mode !== "off") setMode("off", false, uiCtx);
+			},
+			changed: () => refreshView(),
+		});
+		relayExec = ex;
+		every(cfg.pollSeconds * 1000, () => ex.tick());
+		refreshView();
+		updateWidget();
+		return ex;
+	}
+
+	// relay's tagged job events: only the watched relay run's jobs count (relay-exec checks the tag)
+	const relayFail = (e: unknown) => say(`relay event: ${(e as Error).message}`, "warning");
+	const relayUnsubs: Array<() => void> = [
+		pi.events.on("relay:job-end", (d: unknown) => void relayExec?.onJobEnd(d).catch(relayFail)),
+		pi.events.on("relay:job-progress", (d: unknown) => void relayExec?.onProgress(d).catch(relayFail)),
+		pi.events.on("relay:approval", (d: unknown) => relayExec?.onApproval(d)),
+	];
+
 	async function table(): Promise<string> {
+		if (relayExec && owned) {
+			const run = current();
+			if (run) return relayExec.table(run);
+		}
 		const { o, run } = need();
 		const now = Date.now();
 		const rows = run.subs.map((s) => {
@@ -1784,7 +1893,7 @@ ${list.map((a) => `${a.line} → affects ${a.affects.join(", ") || "?"}`).join("
 	}
 
 	/** D7: owned paths that may overlap with active runs of the session's other repos; the user decides. One-sided: only runs found from this session's repos. */
-	async function confirmOverlaps(ctx: ExtensionContext, repos: Repo[], packages: PackageInput[]): Promise<string | undefined> {
+	async function confirmOverlaps(ctx: ExtensionContext, repos: Repo[], packages: PackageInput[], ask = true): Promise<string | undefined> {
 		const found: string[] = [];
 		const seen = new Set<string>();
 		for (const repo of repos.slice(1)) {
@@ -1798,6 +1907,8 @@ ${list.map((a) => `${a.line} → affects ${a.affects.join(", ") || "?"}`).join("
 		}
 		if (!found.length) return undefined;
 		const list = [...new Set(found)].slice(0, 10).join("\n- ");
+		// a relay run never asks the user: the model fixes the packages
+		if (!ask) throw new Error(`owned paths overlap with active runs in other repos; change the packages' owns so they do not overlap:\n- ${list}`);
 		if (!ctx.hasUI) return `WARNING: owned paths may overlap with active runs in other repos (no UI to ask; created anyway):\n- ${list}`;
 		const pick = await ctx.ui.select(`Owned paths overlap with other active runs:\n- ${list}`, ["Create anyway", "Cancel"]);
 		if (pick === "Create anyway") return `Note: owned paths may overlap with active runs in other repos (you chose to continue):\n- ${list}`;
@@ -1814,6 +1925,9 @@ ${list.map((a) => `${a.line} → affects ${a.affects.join(", ") || "?"}`).join("
 		decisions: Type.Optional(Type.Array(Type.String(), { description: "Decisions already made with the user" })),
 		notes: Type.Optional(Type.String()),
 		base: Type.Optional(Type.String({ description: "The branch this package starts from and merges into, as the proposal names it (e.g. feat/x); it must be the run's target" })),
+		verify: Type.Optional(Type.Array(Type.String(), { description: "Relay runs (required): the commands that prove the package works, one per entry; `<repo key>: <cmd>` runs in that repo" })),
+		scale: Type.Optional(Type.String({ description: "Relay runs: the numbers the package must handle" })),
+		budget: Type.Optional(Type.String({ description: "Relay runs: the job budget, `wall: 120m; tokens: 4M; size: small|normal|large`" })),
 		repos: Type.Optional(Type.Array(Type.String(), { description: "Multi-repo runs: extra repo keys the package needs to read (repos it owns paths in are included on their own)" })),
 	});
 
@@ -1827,6 +1941,7 @@ ${list.map((a) => `${a.line} → affects ${a.affects.join(", ") || "?"}`).join("
 			charter: Type.String({ description: "The proposal's `## Charter` section as approved: Goal, User decisions, Non-goals, Priorities, Target, Standing orders, Reserved for the user" }),
 			packages: Type.Array(pkgSchema),
 			targets: Type.Optional(Type.Array(Type.String(), { description: 'Branch the PRs go into: "branch" (working repo) or "key:branch". Default: the upstream of each repo checkout' })),
+			authority: Type.Optional(Type.Array(Type.String(), { description: "Relay runs (required): the proposal's `## Authority` lines, one per category merge, publish, comments, delete, formats, deps: `<category>: yes (<specifics>) | no | n/a`" })),
 		}),
 		async execute(_id, params, _signal, _u, ctx) {
 			uiCtx = ctx;
@@ -1834,6 +1949,17 @@ ${list.map((a) => `${a.line} → affects ${a.affects.join(", ") || "?"}`).join("
 			if (mode !== "off" && mode !== "run") throw new Error("approve the packages first (/orch, then go)");
 			const common = await commonDir(exec, ctx.cwd);
 			if (!common) throw new Error("not in a git repository");
+			const executor: Executor = cfg.executor;
+			const relay = executor === "relay";
+			if (relay) {
+				if (hosted?.state !== "on") await claimRelay(true);
+				if (hosted?.state !== "on") throw new Error(hostedOffText(hosted?.state === "off" ? hosted.reason : "relay did not answer"));
+				const problems: string[] = [];
+				if ((params.packages as PackageInput[]).length > 10) problems.push("a relay run has at most 10 packages");
+				problems.push(...authorityProblems((params.authority as string[] | undefined) ?? []));
+				for (const p of params.packages as PackageInput[]) if (!p.verify?.some((v) => v.trim())) problems.push(`${p.id}: verify is empty (the commands that prove the package works)`);
+				if (problems.length) throw new Error(`invalid relay run:\n- ${problems.join("\n- ")}`);
+			}
 			const active = listActiveRuns(common).runs;
 			if (active.length) throw new Error(`run ${active[0].id} is still active in this repo; finish it or end it with /orch end`);
 			const repos = await sessionRepos(ctx);
@@ -1878,6 +2004,7 @@ ${list.map((a) => `${a.line} → affects ${a.affects.join(", ") || "?"}`).join("
 						src = `upstream of ${(await git(top, "rev-parse", "--abbrev-ref", "HEAD")) ?? "the checkout"}`;
 					}
 				}
+				if (relay && !targets[k]) throw new Error(`no target branch for ${label(k)}: pass targets (${k ? `"${k}:<branch>"` : '"<branch>"'})`);
 				targetLines.push(targets[k] ? `Diff target (${label(k)}): ${targets[k]} (${src}); new worktrees start there` : `No diff target for ${label(k)}: drift is measured against the default branch`);
 			}
 			// a package that names another base than the run's target: the person decides before anything is written
@@ -1886,6 +2013,7 @@ ${list.map((a) => `${a.line} → affects ${a.affects.join(", ") || "?"}`).join("
 				if (!p.base || !targets[workKey]) continue;
 				const named = `origin/${p.base.replace(/^origin\//, "")}`;
 				if (named === targets[workKey]) continue;
+				if (relay) throw new Error(`package ${p.id} names the base ${named}, but the run's target is ${targets[workKey]}; pass targets: ["${p.base}"] or fix the package's base`);
 				if (!ctx.hasUI) throw new Error(`package ${p.id} names the base ${named}, but the run's target is ${targets[workKey]} (${given.has(workKey) ? "given" : "upstream of the checkout"}); pass targets: ["${p.base}"] or fix the package`);
 				const pick = await ctx.ui.select(`Package ${p.id} starts from ${named}, but the run's target is ${targets[workKey]}`, [`Use ${targets[workKey]}`, `Use ${named}`, "Cancel"]);
 				if (pick === `Use ${named}`) {
@@ -1894,7 +2022,7 @@ ${list.map((a) => `${a.line} → affects ${a.affects.join(", ") || "?"}`).join("
 					for (let i = 0; i < targetLines.length; i++) if (targetLines[i].startsWith(`Diff target (${label(workKey)})`)) targetLines[i] = `Diff target (${label(workKey)}): ${named} (chosen: package ${p.id}); new worktrees start there`;
 				} else if (pick !== `Use ${targets[workKey]}`) throw new Error("cancelled: no run was created");
 			}
-			const overlapNote = repos ? await confirmOverlaps(ctx, repos, packages) : undefined;
+			const overlapNote = repos ? await confirmOverlaps(ctx, repos, packages, !relay) : undefined;
 			let existing: string[] = [];
 			try {
 				existing = fs.readdirSync(orchestraDir(common));
@@ -1909,18 +2037,33 @@ ${list.map((a) => `${a.line} → affects ${a.affects.join(", ") || "?"}`).join("
 				subs.push({
 					id: p.id, goal: p.goal, criteria: p.criteria ?? [], owns: p.owns ?? [], forbids: p.forbids ?? [], dependsOn: p.dependsOn ?? [], decisions: p.decisions ?? [], notes: p.notes, name, state: "planned",
 					...(repos ? { repos: subRepos(p, repos[0].key) } : {}),
+					...(relay ? { verify: (p.verify ?? []).filter((v) => v.trim()), ...(p.scale?.trim() ? { scale: p.scale.trim() } : {}), ...(p.budget?.trim() ? { budget: p.budget.trim() } : {}) } : {}),
 				});
 			}
-			const run: Run = { v: 1, id, title: params.title, created: new Date().toISOString(), owner: { pid: process.pid, host: os.hostname(), session: ctx.sessionManager.getSessionFile() ?? "" }, state: "active", charter: params.charter.trim(), originTrusted: projectTrusted(ctx), ...(repos ? { repos } : {}), targets, subs };
+			const relayFields = relay ? { executor, authority: ((params.authority as string[] | undefined) ?? []).map((a) => a.replace(/^\s*[-*]\s+/, "").trim()).filter(Boolean), ...(repos ? {} : { top: tops.get("") as string }) } : {};
+			const run: Run = { v: 1, id, title: params.title, created: new Date().toISOString(), owner: { pid: process.pid, host: os.hostname(), session: ctx.sessionManager.getSessionFile() ?? "" }, state: "active", charter: params.charter.trim(), originTrusted: projectTrusted(ctx), ...(repos ? { repos } : {}), targets, ...relayFields, subs };
+			if (relay) {
+				const bad = checkRunBriefs(run);
+				if (bad.length) throw new Error(`the relay briefs are incomplete:\n- ${bad.join("\n- ")}`);
+			}
 			fs.mkdirSync(runDir(common, id), { recursive: true });
 			for (const s of subs) {
 				fs.mkdirSync(subDir(common, id, s.id), { recursive: true });
-				fs.writeFileSync(`${subDir(common, id, s.id)}/brief.md`, renderBrief(s, run, decisionsPath(common, id)));
+				fs.writeFileSync(`${subDir(common, id, s.id)}/brief.md`, relay ? renderRelayBrief(s, run) : renderBrief(s, run, decisionsPath(common, id)));
+			}
+			if (relay) {
+				fs.writeFileSync(findingsFile(runDir(common, id)), openFindings.length ? `${findingsBlock(openFindings)}\n` : "None.\n");
+				openFindings = [];
 			}
 			fs.writeFileSync(charterPath(common, id), `${params.charter.trim()}
 `);
 			fs.writeFileSync(decisionsPath(common, id), "");
 			writeRun(common, run);
+			if (relay) {
+				const ex = startRelay({ common, runId: id, repoCwd: ctx.cwd });
+				void ex.dispatchReady().then(() => ex.settle()).catch((e: Error) => say(e.message, "warning"));
+				return text(`Run ${id} created with ${subs.length} packages as relay jobs${repos ? ` over ${repos.length} repos (${repos.map((r) => r.key).join(", ")})` : ""}. Dispatching now: ${readyToSpawn(run).join(", ") || "none"}; the others follow when their dependencies are merged. Briefs are in ${runDir(common, id)}/<id>/brief.md.\n${targetLines.join("\n")}`);
+			}
 			startWatcher({ common, runId: id, repoCwd: ctx.cwd });
 			return text(`Run ${id} created with ${subs.length} packages${repos ? ` over ${repos.length} repos (${repos.map((r) => r.key).join(", ")})` : ""}. Ready to spawn: ${readyToSpawn(run).join(", ") || "none"}. Briefs are in ${runDir(common, id)}/<id>/brief.md.\n${targetLines.join("\n")}${overlapNote ? `\n${overlapNote}` : ""}`);
 		},
@@ -2231,6 +2374,7 @@ ${list.map((a) => `${a.line} → affects ${a.affects.join(", ") || "?"}`).join("
 			let sub = args.trim().split(/\s+/)[0];
 			if (!sub) sub = owned || me ? "status" : mode === "off" ? "start" : "mode";
 			try {
+				if (owned?.executor === "relay" && ["merge", "merged", "spawn"].includes(sub)) throw new Error(`/orch ${sub} is for workflow runs: ${RELAY_MERGE_HINT}`);
 				if (sub === "start") {
 					if (me) throw new Error("this is a sub-session of a run; start orchestrating from another session");
 					if (lastK4 && typeof lastK4.phase === "string" && lastK4.phase !== "off") throw new Error(`the workflow is in phase ${lastK4.phase}; end it (/flow off) before /orch start`);
@@ -2270,6 +2414,9 @@ ${list.map((a) => `${a.line} → affects ${a.affects.join(", ") || "?"}`).join("
 					if (mode === "off") throw new Error("no active run in this session");
 					setMode("off", true, ctx);
 				} else if (sub === "end") {
+					// a relay run: the unfinished jobs are stopped first (marked as the orchestrator's stops, so none is retried)
+					const stopErrors = relayExec ? await relayExec.stopAll("the run was ended with /orch end") : [];
+					if (stopErrors.length) ctx.ui.notify(`orchestrate: could not stop: ${stopErrors.join("; ")}`, "warning");
 					await mutate((r) => {
 						r.state = "ended";
 					});
@@ -2288,8 +2435,13 @@ ${assumed}` : ""}`, "info");
 					const mine = run.owner.session && run.owner.session === (ctx.sessionManager.getSessionFile() ?? "");
 					const alive = run.owner.host === os.hostname() && pidAlive(run.owner.pid) && run.owner.pid !== process.pid;
 					if (!mine && alive) throw new Error(`run ${run.id} is watched by another live session (pid ${run.owner.pid})`);
-					startWatcher({ common, runId: run.id, repoCwd: ctx.cwd });
+					const relayRun = run.executor === "relay";
+					const ex = relayRun ? startRelay({ common, runId: run.id, repoCwd: ctx.cwd }) : undefined;
+					if (!relayRun) startWatcher({ common, runId: run.id, repoCwd: ctx.cwd });
+					const wasOff = mode === "off";
 					setMode("run", false, ctx);
+					if (ex && !wasOff) void claimRelay(false); // setMode claims only from off
+					if (ex) void ex.tick().catch((e: Error) => say(e.message, "warning"));
 					await resetStaleSpawning(run); // before the owner changes: a dead owner is part of the test
 					await mutate((r) => {
 						r.owner = { pid: process.pid, host: os.hostname(), session: ctx.sessionManager.getSessionFile() ?? "" };
@@ -2382,6 +2534,9 @@ ${assumed}` : ""}`, "info");
 		uiCtx = ctx;
 		stopTimers();
 		owned = null;
+		relayExec = undefined;
+		hosted = undefined;
+		hostedRetry = false;
 		me = null;
 		started = false;
 		pendingAsk = new Map();
@@ -2432,7 +2587,14 @@ ${assumed}` : ""}`, "info");
 			becomeSub();
 			if (fresh) void startSubSession(m, ctx).catch((e: Error) => ctx.ui.notify(`orchestrate: ${e.message}`, "error"));
 		};
-		if (!listed.runs.length) return becomeNotSub();
+		// a restored orchestrator mode with executor relay claims relay's hosted mode again
+		const hostedAtStart = () => {
+			if (mode !== "off" && cfg.executor === "relay") void claimRelay(false);
+		};
+		if (!listed.runs.length) {
+			hostedAtStart();
+			return becomeNotSub();
+		}
 		const hit = top ? findSubByToplevel(listed.runs, top) : null;
 		if (hit) {
 			become(hit);
@@ -2440,13 +2602,24 @@ ${assumed}` : ""}`, "info");
 		}
 		const file = ctx.sessionManager.getSessionFile() ?? "";
 		const mine = file ? listed.runs.find((r) => r.owner.session === file) : undefined;
+		if (mine && mine.executor === "relay") {
+			// restart: hosted again, then the package states are rebuilt from relay:job-query (a "no session context" answer is retried at the first turn)
+			const ex = startRelay({ common, runId: mine.id, repoCwd: ctx.cwd });
+			say(`resumed run ${mine.id} (relay jobs)`);
+			void claimRelay(false);
+			void ex.tick().catch((e: Error) => say(e.message, "warning"));
+			return becomeNotSub();
+		}
 		if (mine) {
 			startWatcher({ common, runId: mine.id, repoCwd: ctx.cwd });
 			say(`resumed watching run ${mine.id}`);
 			void resetStaleSpawning(mine).catch((e: Error) => say(e.message, "warning"));
 			return becomeNotSub();
 		}
-		if (mode !== "off" || !top) return becomeNotSub();
+		if (mode !== "off" || !top) {
+			hostedAtStart();
+			return becomeNotSub();
+		}
 		// the terminal may open before orch_spawn has written this worktree into run.json: look again for about 15 s
 		if (top) {
 			void (async () => {
@@ -2466,6 +2639,13 @@ ${assumed}` : ""}`, "info");
 
 	pi.on("session_shutdown", async () => {
 		stopTimers();
+		for (const u of relayUnsubs.splice(0)) {
+			try {
+				u();
+			} catch {
+				// already gone
+			}
+		}
 		try {
 			uiCtx?.ui.setStatus("orchestrate", undefined);
 		} catch {

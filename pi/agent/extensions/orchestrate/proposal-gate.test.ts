@@ -90,3 +90,52 @@ test("nextLastProposal", () => {
 	assert.equal(nextLastProposal("propose", "which one?", true), undefined);
 	assert.equal(nextLastProposal("discuss", body, true), undefined);
 });
+
+import { oneGoOnReply, pauseAction } from "./proposal-gate.ts";
+import { JUDGE_RELAY_CHECKS } from "./prompts.ts";
+import { blockingFindings, parseFindings } from "../shared/findings.ts";
+
+test("one go (relay): a finished proposal starts the gate on its own; fix replies and pauses as before", () => {
+	const r = { executor: "relay", mode: "propose", ready: true, running: false } as const;
+	assert.equal(oneGoOnReply(r), "gate");
+	assert.equal(oneGoOnReply({ ...r, status: "paused" }), "gate", "after the user's answer the next ready proposal is judged again, no go");
+	assert.equal(oneGoOnReply({ ...r, status: "idle" }), "gate");
+	assert.equal(oneGoOnReply({ ...r, status: "awaiting-fix" }), "fix-reply");
+	assert.equal(oneGoOnReply({ ...r, ready: false }), "none", "a reply that asks the user waits for the answer");
+	assert.equal(oneGoOnReply({ ...r, running: true }), "none");
+	assert.equal(oneGoOnReply({ ...r, mode: "discuss" }), "none");
+	assert.equal(oneGoOnReply({ ...r, mode: "run" }), "none");
+	// the workflow executor keeps the two-step go: only the fix reply is automatic
+	assert.equal(oneGoOnReply({ ...r, executor: "workflow" }), "none");
+	assert.equal(oneGoOnReply({ ...r, executor: "workflow", status: "awaiting-fix" }), "fix-reply");
+	assert.equal(pauseAction("relay"), "ask-user");
+	assert.equal(pauseAction("workflow"), "wait-go");
+});
+
+test("one go (relay): autoJudgeProposal off moves a ready proposal straight to the run", () => {
+	assert.equal(proposalGateStart({ mode: "off", hash: "h" }), "move");
+	assert.equal(proposalGateStart({ mode: "auto", hash: "h" }), "full");
+});
+
+test("relay judge prompt checks Authority, Verify and unstated grants; an unstated grant pauses for the user", () => {
+	const p = proposalReviewPrompts({ proposal: "## Packages: x", executor: "relay" });
+	assert.ok(p[0].includes(JUDGE_RELAY_CHECKS));
+	assert.match(p[0], /Authority/);
+	assert.match(p[0], /verify/);
+	assert.match(p[0], /did not state is a blocker with fix: user/);
+	assert.ok(!proposalReviewPrompts({ proposal: "x" }).join("\n").includes(JUDGE_RELAY_CHECKS), "workflow prompts unchanged");
+	assert.ok(proposalReviewPrompts({ proposal: "x", executor: "relay", recheck: [] })[0].includes(JUDGE_RELAY_CHECKS));
+	const judged = `- blocker - [authority] fix: user - publish: yes was not stated by the user
+  Why: the agreed list says nothing about publishing
+  Fix: ask the user or set publish: no
+VERDICT: FAIL`;
+	const findings = parseFindings(judged);
+	assert.equal(blockingFindings(findings)[0].route, "user");
+	assert.equal(proposalGateAfterVerdict({ verdict: "FAIL", findings, rounds: 1, max: 2 }), "pause");
+	const missing = parseFindings(`- blocker - [authority] fix: auto - no run Authority
+  Why: the proposal has no ## Authority
+  Fix: add the six lines
+VERDICT: FAIL`);
+	assert.equal(proposalGateAfterVerdict({ verdict: "FAIL", findings: missing, rounds: 1, max: 2 }), "fix");
+	assert.equal(proposalGateAfterVerdict({ verdict: "FAIL", findings: missing, rounds: 2, max: 2 }), "move-open");
+});
