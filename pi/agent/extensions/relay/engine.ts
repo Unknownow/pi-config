@@ -374,7 +374,7 @@ export class Engine {
 			tools: [...spec.tools, ...(k?.tools ?? [])],
 			task,
 			cwd,
-			extensions: [path.join(this.relayDir, "reviewer.ts")],
+			extensions: [...this.cfg.reviewer.extensions, path.join(this.relayDir, "reviewer.ts")],
 			timeoutMs: 30 * 60_000,
 			idleTimeoutMs: 10 * 60_000,
 			mcp: k ? { servers: k.servers, extension: path.join(this.relayDir, "mcp-forward.ts") } : undefined,

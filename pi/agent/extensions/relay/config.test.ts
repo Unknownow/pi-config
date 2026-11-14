@@ -67,3 +67,12 @@ test("loadConfig reads a file; a broken file gives defaults and a warning; saveR
 	assert.equal(c.roles.judge.prompt, DEFAULTS.roles.judge.prompt);
 	fs.rmSync(d, { recursive: true, force: true });
 });
+
+test("reviewer.extensions and worker.extensions are lists of paths", () => {
+	const r = parseConfig({ reviewer: { extensions: ["/p/provider.ts"] }, worker: { extensions: ["/p/provider.ts"] } });
+	assert.deepEqual(r.config.reviewer.extensions, ["/p/provider.ts"]);
+	assert.deepEqual(r.config.worker.extensions, ["/p/provider.ts"]);
+	const bad = parseConfig({ reviewer: { extensions: "x" } });
+	assert.deepEqual(bad.config.reviewer.extensions, []);
+	assert.equal(bad.warnings.length, 1);
+});

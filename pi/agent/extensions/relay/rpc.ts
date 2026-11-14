@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { FORWARD_ENV } from "./mcp-forward.ts";
 import { piCommand } from "./pi-bin.ts";
+import { expandHome } from "./subagent.ts";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -51,7 +52,7 @@ export interface WorkerOpts {
 /** The pi arguments for a worker. The `-e` list is exactly worker.ts, the configured extensions, and (with `mcp`) builtin:mcp and mcp-forward.ts. */
 export function workerArgs(o: WorkerOpts): string[] {
 	const a = ["--mode", "rpc", "-ne", "-ns", "-np", "-e", path.join(here, "worker.ts")];
-	for (const e of o.extensions) a.push("-e", e);
+	for (const e of o.extensions) a.push("-e", expandHome(e));
 	if (o.mcp) a.push("-e", "builtin:mcp", "-e", path.join(here, "mcp-forward.ts"));
 	a.push("--session-dir", o.sessionDir);
 	if (o.resume) a.push("-c");

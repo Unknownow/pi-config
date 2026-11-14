@@ -45,6 +45,8 @@ export interface RelayConfig {
 	bashTimeoutMin: number;
 	toolTimeouts: { pattern: string; minutes: number }[];
 	worker: { extensions: string[] };
+	/** Extensions the critic and judge processes load next to reviewer.ts (normally just the model provider). */
+	reviewer: { extensions: string[] };
 	repos: Record<string, Partial<RepoPolicy>>;
 	defaultMerge: MergeMode;
 	askUser: Category[];
@@ -80,6 +82,7 @@ export const DEFAULTS: RelayConfig = {
 	bashTimeoutMin: 60,
 	toolTimeouts: [],
 	worker: { extensions: [] },
+	reviewer: { extensions: [] },
 	repos: {},
 	defaultMerge: "pr-only",
 	askUser: [],
@@ -183,6 +186,10 @@ export function parseConfig(raw: unknown): Loaded {
 			// keep the default
 		} else if (isStrings(raw.worker.extensions)) c.worker.extensions = raw.worker.extensions;
 		else warn("worker.extensions: expected a list of paths; using none");
+	}
+	if (isObject(raw.reviewer)) {
+		if (isStrings(raw.reviewer.extensions)) c.reviewer.extensions = raw.reviewer.extensions;
+		else if (raw.reviewer.extensions !== undefined) warn("reviewer.extensions: expected a list of paths; using none");
 	}
 	if (raw.repos !== undefined) {
 		if (!isObject(raw.repos)) warn("repos: expected an object; using none");

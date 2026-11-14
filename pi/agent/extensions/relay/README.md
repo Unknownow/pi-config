@@ -107,6 +107,7 @@ The path is `RELAY_CONFIG`, or else `<agent dir>/relay.json`. Invalid keys fall 
 | `budget` | `{wallMin: 120, tokens: 4000000, graceMin: 30, graceTokenShare: 0.1}` |
 | `stallMin`, `bashTimeoutMin` | `10`, `60` |
 | `toolTimeouts` | `[]` (`[{pattern, minutes}]`); a pattern longer than the wall budget warns on load, and a job whose Verify or Design matches gets at least timeout x 2 + 60 min |
+| `reviewer.extensions` | `[]`; the critic and judge load these next to `reviewer.ts` (normally the model provider, e.g. `~/.pi/agent/npm/node_modules/pi-claude-bridge/src/index.ts`) |
 | `worker.extensions` | `[]` (the worker's `-e` list is `worker.ts` plus these, plus `builtin:mcp` and `mcp-forward.ts` only when the knowledge server is registered) |
 | `repos` | `{"<path glob or owner/name>": {merge: "after-pass"\|"pr-only", protectedBranches, sensitivePaths}}` |
 | `defaultMerge` | `"pr-only"` |

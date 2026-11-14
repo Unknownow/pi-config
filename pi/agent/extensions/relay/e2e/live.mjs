@@ -37,15 +37,21 @@ git(repo, "remote", "add", "origin", bare);
 git(repo, "push", "-q", "-u", "origin", "main");
 
 const cfgFile = path.join(base, "relay.json");
-fs.writeFileSync(cfgFile, JSON.stringify({ repos: { [fwd(repo)]: { merge: "after-pass" } }, caps: { critic: 2 } }));
+const provider = process.env.RELAY_E2E_PROVIDER ?? path.join(os.homedir(), ".pi", "agent", "npm", "node_modules", "pi-claude-bridge", "src", "index.ts");
+fs.writeFileSync(cfgFile, JSON.stringify({ repos: { [fwd(repo)]: { merge: "after-pass" } }, caps: { critic: 2 }, worker: { extensions: [provider] }, reviewer: { extensions: [provider] } }));
 
-const pi = spawn(process.env.RELAY_E2E_PI ?? "pi", ["--mode", "rpc", "-ne", "-a", "--model", model, "-e", path.join(ext, "relay", "index.ts"), "-e", path.join(ext, "worktree", "index.ts"), "-e", path.join(ext, "sandbox", "index.ts")], {
+const pi = spawn(process.env.RELAY_E2E_PI ?? "pi", ["--mode", "rpc", "-ne", "-a", "--model", model, "-e", provider, "-e", path.join(ext, "relay", "index.ts"), "-e", path.join(ext, "worktree", "index.ts"), "-e", path.join(ext, "sandbox", "index.ts")], {
 	cwd: repo,
 	env: { ...process.env, RELAY_CONFIG: cfgFile },
 	stdio: ["pipe", "pipe", "inherit"],
 	shell: process.platform === "win32",
 });
-pi.on("exit", (c) => c !== 0 && c !== null && console.error(`pi exited with ${c}`));
+let piExited = false;
+pi.on("exit", (c) => {
+	piExited = true;
+	if (c !== 0 && c !== null) console.error(`pi exited with ${c}`);
+});
+pi.stdin.on("error", () => {});
 
 // strict LF framing
 let buf = Buffer.alloc(0);
@@ -101,6 +107,8 @@ for (;;) {
 await new Promise((r) => setTimeout(r, 15_000)); // cleanup: the worker exits, the set is removed
 send({ type: "abort" });
 pi.stdin.end();
+for (let i = 0; i < 40 && !piExited; i++) await new Promise((r) => setTimeout(r, 500));
+if (!piExited) pi.kill();
 
 if (job.state !== "done") fail(`job ${job.id} ended ${job.state}: ${job.endReason ?? ""}`);
 const report = fs.readFileSync(path.join(root, job.id, "report.md"), "utf8");
@@ -110,5 +118,9 @@ if (shown !== "hello") fail(`origin main greeting.txt is "${shown}"`);
 const listed = git(repo, "worktree", "list");
 if (listed.split("\n").length !== 1) fail(`the set was not removed:\n${listed}`);
 console.log(`${job.id} delivered`);
-fs.rmSync(base, { recursive: true, force: true });
+try {
+	fs.rmSync(base, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
+} catch (e) {
+	console.error(`(left ${base}: ${e.code})`);
+}
 process.exit(0);
