@@ -26,7 +26,7 @@ import { addUsage, emptyUsage, mapLimit, noContextFilesFor, type RunResult, runS
 import { callDir, formatTaskResult, parseRunnerReply, runnerGate, sanitizeIds, scheduleTasks, taskCard, taskRecord, type TestTask, verifyRun } from "./test-run.ts";
 import { applyEvent, endRun, newRun, type RunView, shortModel } from "../shared/runs.ts";
 import { DEFAULT_TOKEN_WEIGHTS } from "../shared/tokens.ts";
-import { describeRole, parseRoleSpec, pickRoleSpec, roleCompletions } from "../shared/roles.ts";
+import { describeRole, parseRoleSpec, pickRoleSpec } from "../shared/roles.ts";
 import { forwardedServers, roleTools } from "./knowledge.ts";
 import { foldersForCwd } from "./session-folders.ts";
 import { knowledgeTools } from "./prompts.ts";

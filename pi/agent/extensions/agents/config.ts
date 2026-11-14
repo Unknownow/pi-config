@@ -53,7 +53,7 @@ export interface AgentsConfig {
 export const DEFAULTS: AgentsConfig = {
 	roles: {
 		explore: { model: "claude-bridge/claude-haiku-5-5", thinking: "medium" },
-		advisor: { model: "claude-bridge/claude-opus-5-5", thinking: "medium" },
+		advisor: { model: "claude-bridge/claude-opus-5-5", thinking: "high" },
 		runner: { model: "claude-bridge/claude-haiku-5-5", thinking: "low" },
 	},
 	explore: { maxQueries: 8, concurrency: 8, tools: ["read", "grep", "find", "ls"], contextFiles: false },

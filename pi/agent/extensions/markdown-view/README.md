@@ -32,7 +32,7 @@ constant in `view.ts`: marked 15.0.12, DOMPurify 3.2.6, highlight.js 11.11.1, me
 Offline, the page shows the raw markdown in a `<pre>` (marked or DOMPurify missing) or leaves
 diagrams as code blocks (mermaid missing).
 
-Tests: `node --experimental-strip-types --test view.test.ts`
+Tests: `node --experimental-strip-types --test view.test.ts commands.test.ts`
 
 ## Completions
 

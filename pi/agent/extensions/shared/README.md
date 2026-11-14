@@ -24,7 +24,7 @@ Layout (`width` = terminal width): right empty: left lines full width. Left empt
 
 Changing an export's name, signature or meaning changes every extension that uses it; run all their tests.
 
-Tests: `node --experimental-strip-types --test claims.test.ts readonly-bash.test.ts readonly-tools.test.ts tokens.test.ts runs.test.ts dock.test.ts roles.test.ts boundary.test.ts notify.test.ts`
+Tests: `node --experimental-strip-types --test claims.test.ts readonly-bash.test.ts readonly-tools.test.ts tokens.test.ts runs.test.ts dock.test.ts roles.test.ts boundary.test.ts notify.test.ts completions.test.ts`
 
 ## Completions
 

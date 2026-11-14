@@ -18,7 +18,7 @@ Helpers that run as separate `pi` processes, usable in every session — with or
 - **Flow tracking**: after every run the extension emits `pi.events.emit("agents:subagent-finished", { role, label, ms, usage, model, ok, error, bootMs, turns, tools })`. The workflow extension listens while a flow is active: it adds the usage to the stage's tokens, writes a `subagent` line to `metrics.jsonl` and, for the advisor, resets the repeated-error counter. Outside a flow nothing listens.
 - **Files**: `subagent.ts` (the sub-`pi` runner), `mcp-forward.ts` and `runner-guard.ts` (loaded by the sub-processes), `test-run.ts` (pure parts of `test_run`), `render.ts` (live rows and result rendering, shared with the workflow's judge), `prompts.ts`, `config.ts`, `types.ts`. Code shared with the workflow (shell parser, repo helpers, token counts, run cards, role specs and the model picker) comes from `../shared/` (see its README); nothing is imported from `../workflow/`, so this extension works without it (`boundary.test.ts` checks this). The workflow imports `config.ts`, `subagent.ts`, `render.ts`, `knowledge.ts` and `prompts.ts` from here.
 
-Tests: `node --experimental-strip-types --test config.test.ts subagent.test.ts mcp-forward.test.ts test-run.test.ts runner-guard.test.ts session-folders.test.ts boundary.test.ts`
+Tests: `node --experimental-strip-types --test config.test.ts subagent.test.ts mcp-forward.test.ts test-run.test.ts runner-guard.test.ts session-folders.test.ts boundary.test.ts commands.test.ts`
 
 ## Completions
 
