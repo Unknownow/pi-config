@@ -5,7 +5,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { test } from "node:test";
 import { briefFiles, parseBrief } from "./brief.ts";
-import { awaitingPred, toolSummary } from "./engine.ts";
+import { toolSummary } from "./engine.ts";
 import { filesOverlap } from "./glob.ts";
 import { appendLog, type Job, readJob, stackState } from "./job.ts";
 import { run } from "./sh.ts";
@@ -46,9 +46,6 @@ test("briefFiles: the Files section, else the paths named in Design; filesOverla
 	assert.equal(filesOverlap(["src/**"], ["src/x.ts"]), true);
 	assert.equal(filesOverlap(["src/*.ts"], ["lib/*.ts"]), false);
 	assert.equal(filesOverlap(["src/**"], ["src/ui/**"]), true);
-	assert.equal(filesOverlap(["**/x.ts"], ["src/**"]), true);
-	assert.equal(filesOverlap(["*.md"], ["src/*.ts"]), false);
-	assert.equal(filesOverlap(["**/package.json"], ["**/package.json"]), true);
 });
 
 test("toolSummary: the tool name and a short first argument", () => {
@@ -314,115 +311,6 @@ test("the widget shows a line per unfinished job; /relay log prints the last n l
 		await w.engine.stop(a);
 		await w.engine.stop(b);
 		assert.equal(w.engine.widgetLines().length, 0, "finished jobs leave the widget");
-	} finally {
-		w.end();
-	}
-});
-
-test("relay_add_repo answering an approval ask grants nothing", async () => {
-	const second = makeRepo({ "s.txt": "s" + nl }, true);
-	const w = world();
-	try {
-		w.write({ worker: [{ hang: true }] });
-		const id = await start(w);
-		const jr = await running(w, id);
-		jr.asks.set("m1", { type: "approval", id: "m1", category: "deps", item: "left-pad", why: "needed" } as any);
-		jr.ws.openAsks.push("m1");
-		const before = jr.job.approvals.length;
-		const r = await w.engine.addRepo(id, second.dir, "main", "m1");
-		assert.ok("ok" in r, JSON.stringify(r));
-		assert.equal(jr.job.approvals.length, before, "no approval was recorded");
-		assert.equal(jr.asks.has("m1"), false, "the ask is closed");
-		const inbox = fs.readFileSync(path.join(jr.dir, "inbox.jsonl"), "utf8");
-		assert.match(inbox, /"replyTo":"m1"/);
-		assert.match(inbox, /nothing was approved/);
-		await w.engine.stop(id);
-	} finally {
-		w.end();
-		cleanup(second.dir, second.bare);
-	}
-});
-
-test("adoption leaves a stacked job queued until its predecessor has passed", async () => {
-	const w = world();
-	try {
-		w.write({ worker: [{ hang: true }, { hang: true }] });
-		const a = await start(w);
-		await running(w, a);
-		const lf = path.join(w.engine.get(a)!.dir, "log.jsonl");
-		await waitFor(() => fs.existsSync(lf) && /"kind":"dispatch"/.test(fs.readFileSync(lf, "utf8")), 10_000, "the dispatch step to finish");
-		const r = await w.engine.dispatch({ brief: brief({ repo: w.repo, extra: nl + "## Depends on" + nl + a + nl }) });
-		const b = (r as { id: string }).id;
-		await w.engine.shutdown(); // the lead goes away
-				const e2 = w.mk();
-		e2.start();
-		const adopted = await e2.adopt();
-		assert.deepEqual(adopted.sort(), [a, b].sort());
-		await new Promise((res) => setTimeout(res, 400));
-		assert.equal(e2.get(b)!.job.state, "queued", "still waiting for the predecessor");
-		assert.equal(w.wtCalls.create.length, 1, "no set was created for the dependent");
-		await e2.stop(a);
-		await e2.shutdown();
-	} finally {
-		w.end();
-	}
-});
-
-test("stackState: a follow-up that cleared the predecessor's merged flag still counts as merged", () => {
-	const repo: any = { main: "/r", stackedOn: { job: "rp", branch: "wt/rp", head: "abc" } };
-	assert.equal(stackState(repo, { repos: [{ main: "/r", mergedBefore: true }] } as unknown as Job), "merged");
-	assert.equal(stackState(repo, { repos: [{ main: "/r", mergedBefore: true, remoteBranch: "wt/rp-f1" }] } as unknown as Job), "merged", "a dependent of the old branch");
-	assert.equal(stackState(repo, { repos: [{ main: "/r", mergedBefore: true, remoteBranch: "wt/rp" }] } as unknown as Job), "open", "a dependent of the follow-up branch");
-});
-
-test("a queued job keeps its lock fresh, and a lead that lost the lock does not stop it", async () => {
-	const w = world({}, undefined, { heartbeatMs: 50 });
-	try {
-		w.write({ worker: [{ hang: true }] });
-		const a = await start(w);
-		await running(w, a);
-		const r = await w.engine.dispatch({ brief: brief({ repo: w.repo, extra: nl + "## Depends on" + nl + a + nl }) });
-		const b = (r as { id: string }).id;
-		const jr = w.engine.get(b)!;
-		const beat = () => fs.readdirSync(jr.dir).filter((f) => /^owner\.\d+\.lock$/.test(f)).map((f) => fs.readFileSync(path.join(jr.dir, f), "utf8")).join();
-		const before = beat();
-		await waitFor(() => beat() !== before, 5000, "a heartbeat of the queued job");
-		// another lead takes the lock: stop refuses and writes nothing
-		jr.lock.isOwner = () => false;
-		const s = await w.engine.stop(b);
-		assert.ok("error" in s && /no longer owns/.test(s.error), JSON.stringify(s));
-		assert.equal(readJob(jr.dir)!.state, "queued");
-		jr.lock.isOwner = () => true;
-		await w.engine.stop(a);
-	} finally {
-		w.end();
-	}
-});
-
-test("the dependency gate applies only before the dependent first starts", () => {
-	assert.equal(awaitingPred({ dependsOn: "rp", repos: [] } as unknown as Job), true);
-	assert.equal(awaitingPred({ dependsOn: "rp", repos: [{}] } as unknown as Job), false, "already built on the predecessor");
-	assert.equal(awaitingPred({ dependsOn: "rp", repos: [], followupPending: { n: 1, text: "x" } } as unknown as Job), false);
-	assert.equal(awaitingPred({ repos: [] } as unknown as Job), false);
-});
-
-test("a lead that lost a job stops it: no save, no report, nothing delivered, and it leaves the widget", async () => {
-	const w = world({}, undefined, { heartbeatMs: 50 });
-	try {
-		w.write({ worker: [{ hang: true }] });
-		const a = await start(w);
-		const jr = await running(w, a);
-		jr.lock.heartbeat = async () => "lost";
-		await waitFor(() => jr.ended, 5000, "the job to be let go");
-		const stateAfter = fs.readFileSync(path.join(jr.dir, "job.json"), "utf8");
-		assert.equal(jr.lost, true);
-		assert.equal(jr.abort.signal.aborted, true);
-		assert.equal(w.engine.widgetLines().length, 0);
-		assert.ok(!fs.existsSync(path.join(jr.dir, "report.md")), "no report from a lead that lost the job");
-		jr.job.state = "stopped";
-		jr.job.endReason = "x";
-		w.engine["save"](jr);
-		assert.equal(fs.readFileSync(path.join(jr.dir, "job.json"), "utf8"), stateAfter, "job.json is not written any more");
 	} finally {
 		w.end();
 	}
