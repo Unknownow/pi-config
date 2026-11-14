@@ -184,3 +184,7 @@ The dependency is one-way. This extension uses only the workflow's public contra
 node --experimental-strip-types --test create-event.test.ts config.test.ts add-folder.test.ts layout.test.ts files.test.ts git-ops.test.ts manage.test.ts unity-guard.test.ts vscode-bridge.test.ts update.test.ts rename.test.ts progress.test.ts index.test.ts folders.test.ts boundary.test.ts live.test.ts sessions.test.ts meta.test.ts shared-guard.test.ts clean.test.ts exec.test.ts
 node --test vscode/request.test.js
 ```
+
+## Completions
+
+`/wt ` offers the subcommands with a description (`commands.ts`); `open`, `use`, `update`, `remove` and `rename` then list the set names.

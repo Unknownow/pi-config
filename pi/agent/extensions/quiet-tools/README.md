@@ -46,3 +46,7 @@ would stay blank after quiet mode is turned off. Failure mode on a pi change is 
 ```
 cd pi/agent/extensions/quiet-tools && node --experimental-strip-types --test quiet.test.ts
 ```
+
+## Completions
+
+`/quiet ` offers `on` and `off` (table in `commands.ts`).

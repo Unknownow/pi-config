@@ -25,3 +25,7 @@ Layout (`width` = terminal width): right empty: left lines full width. Left empt
 Changing an export's name, signature or meaning changes every extension that uses it; run all their tests.
 
 Tests: `node --experimental-strip-types --test claims.test.ts readonly-bash.test.ts readonly-tools.test.ts tokens.test.ts runs.test.ts dock.test.ts roles.test.ts boundary.test.ts notify.test.ts`
+
+## Completions
+
+`completions.ts` holds the helpers every slash command uses for `getArgumentCompletions`: a table of `{value, description, arg?, next?}` per command, `subcommandCompletions` (prefix filter; the value ends in a space when something follows), `isKnown`, `safe` (a completion function never throws). `roleCompletions` in `roles.ts` completes role, model and thinking level for `/flow model`, `/agents model` and `/relay model`.

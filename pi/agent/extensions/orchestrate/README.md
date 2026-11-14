@@ -192,3 +192,7 @@ Each worktree is its own Unity project; its first open imports every asset (slow
 ### Plan review
 
 `orch_review_plan` approves with optional `notes` (appended to the plan as `## Orchestrator notes`, so an approved plan is not re-planned); reject only for a blocker or major problem. While a package's plan is under review `orch_send` refuses `directive` and `info` (use notes or reasons); a message that arrives anyway is held by the sub-session and delivered after the verdict. Answers stay allowed.
+
+## Completions
+
+`/orch ` offers the subcommands with a description (`commands.ts`); `go` → `force`, `judge` → `cancel`, and `merge` lists the package ids of the run this session owns (one read of its `run.json`; nothing for a relay run or without a run), then `--force`.

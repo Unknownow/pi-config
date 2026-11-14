@@ -207,3 +207,7 @@ All payloads are `v: 1`. Fields marked optional are additive.
 - Stacking needs GitHub: the predecessor counts as merged when its PR is `MERGED` (the PR-only scan) or relay merged it; without a PR a stacked job stays stacked.
 - A stacked job assumes the predecessor's branch is not rewritten after the dependent started; if it is, the plain rebase onto it can conflict and becomes a fix round. Overlap detection is by file names and globs only, per repo name.
 - Bash is not blocked against the edit budget up front.
+
+## Completions
+
+`/relay ` offers the subcommands with a one-line description (`commands.ts`). `stop`, `pause`, `resume`, `followup` and `log` then list **this session's jobs** (from memory, with the state), and `model` walks role → models with auth → thinking level (`provider/id:<level>`). The table in `commands.ts` also builds the description and the tests.

@@ -33,3 +33,7 @@ Offline, the page shows the raw markdown in a `<pre>` (marked or DOMPurify missi
 diagrams as code blocks (mermaid missing).
 
 Tests: `node --experimental-strip-types --test view.test.ts`
+
+## Completions
+
+`/view ` lists the numbers of the last 10 assistant replies with the first line of each (taken from the last session context). A path gets no completion.
