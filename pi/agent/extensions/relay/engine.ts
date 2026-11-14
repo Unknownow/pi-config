@@ -359,6 +359,7 @@ export class Engine {
 					try {
 						next = await STEPS[step].run(jr.job, this.ctxFor(jr));
 					} catch (e) {
+						if (jr.lost) break; // another lead owns the job: no log line, no wake
 						appendLog(jr.dir, { kind: "error", text: `${step}: ${(e as Error).message}` });
 						if (step === "report" || step === "cleanup") next = "end";
 						else {
@@ -571,6 +572,7 @@ export class Engine {
 	}
 
 	private pauseJob(jr: JobRun, from: "working" | "judging", why: string): void {
+		if (jr.lost) return;
 		jr.job.state = "paused";
 		jr.job.paused = { from, why };
 		this.save(jr);
