@@ -59,12 +59,26 @@ export async function readPdf(params: PdfParams, deps: PdfDeps = {}): Promise<{ 
 	if (!fs.existsSync(file) || !fs.statSync(file).isFile()) throw new Error(`no such file: ${file}`);
 	const find = deps.find ?? findBinary;
 	const run = deps.run ?? runProgram;
+	let count: number | undefined;
 	const pdfinfo = find("pdfinfo");
-	if (!pdfinfo) throw new Error(missing("pdfinfo"));
-	const info = await run(pdfinfo, [file], deps.signal);
-	if (info.code !== 0) throw new Error(`pdfinfo failed: ${info.stderr.trim().slice(0, 500)}`);
-	const count = parsePageCount(info.stdout);
-	if (!count) throw new Error("pdfinfo reported no page count");
+	if (pdfinfo) {
+		const info = await run(pdfinfo, [file], deps.signal);
+		if (info.code === 0) count = parsePageCount(info.stdout);
+	}
+	// Without pdfinfo (or a count), pdftotext on the whole file gives one form feed per page.
+	if (!count) {
+		const text = find("pdftotext");
+		if (!text) throw new Error(missing("pdfinfo"));
+		const tmp = path.join(os.tmpdir(), `pi-read-pdf-count-${process.pid}-${Date.now()}.txt`);
+		try {
+			const r = await run(text, ["-layout", file, tmp], deps.signal);
+			if (r.code !== 0 || !fs.existsSync(tmp)) throw new Error(`pdftotext failed: ${r.stderr.trim().slice(0, 500)}`);
+			count = fs.readFileSync(tmp, "utf8").split("\f").length - 1;
+		} finally {
+			fs.rmSync(tmp, { force: true });
+		}
+		if (!count) throw new Error("could not get the page count");
+	}
 	const range = parsePages(params.pages, count);
 	if ("error" in range) throw new Error(range.error);
 

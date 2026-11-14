@@ -87,3 +87,11 @@ test("a missing binary, a missing file and a bad range are errors", async () => 
 	await assert.rejects(readPdf({ path: file, pages: "5" }, { cwd: d, find: (n) => n, run }), /past the end/);
 	await assert.rejects(readPdf({ path: file, images: true }, { cwd: d, find: (n) => (n === "pdftoppm" ? undefined : n), run }), /pdftoppm not found/);
 });
+
+test("without pdfinfo the page count comes from pdftotext form feeds", { skip }, async () => {
+	const d = tmp();
+	const file = path.join(d, "e.pdf");
+	makePdf(file, 3);
+	const r = await readPdf({ path: file }, { cwd: d, dir: path.join(d, "out"), find: (n) => (n === "pdfinfo" ? undefined : findBinary(n)) });
+	assert.match(r.text, /Pages: 3/);
+});
