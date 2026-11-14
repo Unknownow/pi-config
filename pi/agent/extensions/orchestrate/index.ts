@@ -520,10 +520,10 @@ export default function (pi: ExtensionAPI): void {
 				sendToModel("orchestrate-message", `Orchestrator${m.type === "accept-verdict" ? ` (acceptance ${m.data?.accept === true ? "granted" : "refused"})` : ""}: ${m.text}`);
 			}
 		}
-		// after the workflow has acted on the verdict (its continuation runs as a microtask)
-		if (!k10 && heldDuringReview.length) setTimeout(() => {
-			if (!k10) for (const m of heldDuringReview.splice(0)) sendToModel("orchestrate-message", `Orchestrator ${m.type === "directive" ? "directive" : "info"}: ${m.text}`, m.data?.urgent === true ? "steer" : "followUp");
-		}, 0);
+		// flush once no review is open and the workflow is past the plan phase (its handover has been sent); polled every 3 s
+		if (!k10 && heldDuringReview.length && lastK4?.phase !== "plan") {
+			for (const m of heldDuringReview.splice(0)) sendToModel("orchestrate-message", `Orchestrator ${m.type === "directive" ? "directive" : "info"}: ${m.text}`, m.data?.urgent === true ? "steer" : "followUp");
+		}
 		if (r.cursor !== readCursor(cur) || r.bad) writeCursor(cur, r.cursor);
 		if (r.bad) say(`${r.bad} unreadable line(s) in the inbox were skipped`, "warning");
 		updateSubStatus();
