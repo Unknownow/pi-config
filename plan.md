@@ -606,8 +606,10 @@ The rest of S2 is unchanged.
 - [x] S26 Step back instead of escalating.
 - [x] S27 Prompts.
 - [x] S28 Docs and backlog: README, plus row A51 Done. The measure is escalations per run, which should be only reserved ones.
-- [ ] S29 Judge cap on autopilot (`:4040-4058`).
-- [ ] S30 Error retries. On autopilot, the first judge-error (`:4009`) or executor-error (`:3464`) in a row is retried automatical
-- [ ] S31 Plan-judge `fix: user` findings. On autopilot, blocking `fix: user` findings go to the planner (`:3768-3781`) with `PLAN
-- [ ] S32 Final card. `flow-report.ts` gains an "Autopilot decisions" section listing:
-- [ ] S33 Docs and backlog: the README autopilot section (`:184`), plus row A52 Done. The measure is menus shown per flow on autop
+- [x] S29 Judge cap on autopilot (`:4040-4058`).
+- [x] S30 Error retries. On autopilot, the first judge-error (`:4009`) or executor-error (`:3464`) in a row is retried automatical
+- [x] S31 Plan-judge `fix: user` findings. On autopilot, blocking `fix: user` findings go to the planner (`:3768-3781`) with `PLAN
+- [x] S32 Final card. `flow-report.ts` gains an "Autopilot decisions" section listing:
+- [x] S33 Docs and backlog: the README autopilot section (`:184`), plus row A52 Done. The measure is menus shown per flow on autop
+## Outcome
+2026-11-14T06:26:13.988Z — ok: stage 1: flow/merge-fixes-and-autonomy, 3 commits since the review base, PR #43 OPEN https://github.com/Unknownow/pi-config/pull/43; stage 2: flow/merge-fixes-and-autonomy, 2 commits since the review base, PR #43 OPEN https://github.com/Unknownow/pi-config/pull/43; stage 3: flow/merge-fixes-and-autonomy, 1 commit since the review base, PR #43 OPEN https://github.com/Unknownow/pi-config/pull/43; stage 4: flow/merge-fixes-and-autonomy, 1 commit since the review base, PR #43 OPEN https://github.com/Unknownow/pi-config/pull/43; stage 5: flow/merge-fixes-and-autonomy, 1 commit since the review base, PR #43 OPEN https://github.com/Unknownow/pi-config/pull/43
