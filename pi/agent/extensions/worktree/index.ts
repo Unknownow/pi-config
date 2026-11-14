@@ -22,6 +22,7 @@ import { mainRepoOf, preflight, withLockRetry, type Gh, type Git } from "./git-o
 import { SWEEP_SCRIPT, classifySet, detectSession, listSets, listText, openPlan, parseEditors, quitReminder, removeForEvent, removeWithConfirm, repoDirsIn, reposOf, sessionConfig, worktreePrompt, type WorkspaceEnv, type WtSession } from "./manage.ts";
 import { cleanFlow, deleteRemotes, discoverMains, fetchAll, planClean, remoteCandidates } from "./clean.ts";
 import { guardProblem } from "./unity-guard.ts";
+import { isKnownWt, wtCompletions, wtDescription, wtUsage } from "./commands.ts";
 import { renameSet } from "./rename.ts";
 import { reattach, updateSet, worthNotifying } from "./update.ts";
 import { execRunner } from "./exec.ts";
@@ -31,7 +32,6 @@ import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { attachDock, publishDock, unpublishDock } from "../shared/dock.ts";
 import { branchOf, checkName, launchSpec, nextFreeName, rootProblem, setRootOf, vscodeTerminalSpec } from "./layout.ts";
 
-const SUBCOMMANDS = ["new", "open", "use", "list", "update", "remove", "rename", "clean", "done", "unlink"];
 
 const slash = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "");
 const fold = (p: string) => (process.platform === "win32" ? slash(p).toLowerCase() : slash(p));
@@ -1038,17 +1038,8 @@ export default function worktree(pi: ExtensionAPI) {
 		if (shared) return { block: true, reason: shared };
 	});
 	pi.registerCommand("wt", {
-		description: "Parallel pi sessions on git worktrees: new [NAME], open NAME, use [NAME], list, update [NAME], remove NAME, rename [OLD] [NEW], clean, done, unlink PATH",
-		getArgumentCompletions: async (prefix) => {
-			const m = /^(remove|open|update|use|rename)\s+(\S*)$/i.exec(prefix.trimStart());
-			if (m) {
-				const sets = listSets(completionConfig()).filter((n) => n.startsWith(m[2]));
-				return sets.length ? sets.map((n) => ({ value: `${m[1].toLowerCase()} ${n}`, label: n })) : null;
-			}
-			if (/\s/.test(prefix.trim())) return null;
-			const items = SUBCOMMANDS.filter((s) => s.startsWith(prefix.trim().toLowerCase())).map((s) => ({ value: s, label: s }));
-			return items.length ? items : null;
-		},
+		description: wtDescription(),
+		getArgumentCompletions: (prefix) => wtCompletions(prefix, () => listSets(completionConfig())),
 		handler: async (args, ctx) => {
 			const [sub, ...rest] = args.trim().split(/\s+/);
 			const progress = new Progress(ctx.hasUI ? ctx.ui : null, `/wt ${args.trim()}`, truncateToWidth);
@@ -1066,7 +1057,7 @@ export default function worktree(pi: ExtensionAPI) {
 				if (sub === "rename") return await renameCmd(pi, ctx, rest[0] ?? "", rest[1] ?? "", progress, session);
 				if (sub === "clean") return await cleanCmd(pi, ctx, progress);
 				if (sub === "done") return await doneCmd(pi, ctx, progress);
-				ctx.ui.notify("Usage: /wt new [NAME] | /wt open NAME | /wt use [NAME] | /wt list | /wt update [NAME] | /wt remove NAME | /wt rename [OLD] [NEW] | /wt clean | /wt done | /wt unlink PATH", "info");
+				ctx.ui.notify(sub && !isKnownWt(sub) ? `Unknown: /wt ${sub}. ${wtUsage()}` : wtUsage(), "info");
 			} catch (e) {
 				ctx.ui.notify(`/wt ${sub ?? ""} failed: ${(e as Error).message}`, "error");
 			} finally {
