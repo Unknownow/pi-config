@@ -105,7 +105,7 @@ test("/flow plan force moves to plan with the matching findings and never starts
 	const b = source.slice(a, source.indexOf("return;", m));
 	assert.ok(b.includes("moveToPlan(ctx, forcedOpenFindings("));
 	assert.ok(!b.includes("startDiscussionGate("));
-	assert.ok(source.includes('{ value: "plan force"'));
+	assert.ok(fs.readFileSync(new URL("./commands.ts", import.meta.url), "utf8").includes('plan: [{ value: "force"'));
 });
 
 // K16: relay and workflow never own a session together.

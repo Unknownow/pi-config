@@ -44,7 +44,7 @@ import {
 	saveRole,
 	type WorkflowConfig,
 } from "./config.ts";
-import { describeRole, parseRoleSpec, pickRoleSpec, roleCompletions, type Thinking } from "../shared/roles.ts";
+import { describeRole, parseRoleSpec, pickRoleSpec, type Thinking } from "../shared/roles.ts";
 import { judgeAddenda, profileRole, nextProfile, handoverAction, handoverKind, preFlowModelAction, gitTaskAllowed, migrateSavedState, afterPass, noChangeStage, arbiterFirst, fixableFindings, codeVerdict, lateFindingLines, findingLines, canApprove, approvalBlock, addPlanReply, composePlan, type PlanDraft, hasPlanFlaw, planFlawLines, planFlawOnPass,  judgeCapReached, minorFixOpen, passPending, stageEndAction, parseArbiter, parseMergeArbiter, phaseAfterFlow, shouldResume, skipJudge } from "./agent-end.ts";
 import { countTokens, fmtTok, type Tok } from "../shared/tokens.ts";
 import { idleReason, notifyCommand, notifyDue } from "./notify.ts";
@@ -53,7 +53,8 @@ import { discussionReviewPrompts, discussionVerdict, lastAgreedList } from "./di
 import { branchTranscript } from "../shared/transcript.ts";
 import { type DiscussionReview, type Finding, type PlanGate, type SpecKind, discussionGateAfterFixReply, discussionGateAfterVerdict, discussionGateOnInput, discussionGateStart, discussionRecheckPrompts, findingText, forcedOpenFindings, blockingFindings, isClean, minorFindings, isEscKey, menuJudgeLines, parseFindings, planDisputes, planGateAfterVerdict, planGateDecide, planGateReset, planOfferAction, planReadyJudge, planReviewPrompts, planTextDiff, textHash } from "./gates.ts";
 import { planTitle } from "./delivery.ts";
-import { pathCompletions } from "./pickers.ts";
+import { FLOW_UNKNOWN, FOLDERS_SUBS, flowCompletions, foldersCompletions, foldersDescription, foldersUsage } from "./commands.ts";
+import { isKnown } from "../shared/completions.ts";
 import { ghCandidates, withPathDir } from "./gh-path.ts";
 import { citeNames, collectRepoDiff as collectRepoDiffImpl, needsFinalFullReview, shouldSkipRepeatFullReview, type RepoDiff } from "./repo-diff.ts";
 import { GIT_GUARD_ENV, type GitGuardSpec } from "./git-guard.ts";
@@ -4765,26 +4766,6 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 	// /flow
 	// ----------------------------------------------------------------------
 
-	const SUBCOMMANDS = [
-		{ value: "status", label: "status - phase, models, config path" },
-		{ value: "board", label: "board - live view of every flow on this machine" },
-		{ value: "discuss", label: "discuss - discuss phase (read-only, talk before planning)" },
-		{ value: "plan", label: "plan - plan phase (read-only, planner model); from a quick scope card, a full flow" },
-		{ value: "plan force", label: "plan force - from discuss, move to plan without the discussion judge" },
-		{ value: "quick", label: "quick [request] - quick flow: short scope card, execute, one review, full delivery" },
-		{ value: "approve", label: "approve - approve the plan, switch to execute and start" },
-		{ value: "execute", label: "execute - execute phase without sending anything" },
-		{ value: "off", label: "off - leave the workflow; restore the model from before the flow" },
-		{ value: "escalate", label: "escalate - switch to the escalate model (Fable)" },
-		{ value: "back", label: "back - return to the phase's own model" },
-		{ value: "judge", label: "judge - review the current diff now (in discuss: the conclusion; in plan: the plan; \"judge cancel\" stops a running judge)" },
-		{ value: "tokens", label: "tokens - token breakdown of the current flow so far" },
-		{ value: "model", label: "model [role] [provider/id[:thinking]] - set a role's model (lists when left out)" },
-		{ value: "autopilot", label: "autopilot [on|off] - resolve waits and routine menus without asking (no argument toggles)" },
-		{ value: "reload", label: "reload - re-read workflow.json" },
-		{ value: "resume", label: "resume [flowId] - pick up an unfinished flow from its plan ref (e.g. on another device)" },
-	];
-
 	function statusText(): string {
 		const lines = [
 			`phase      ${state.phase}${state.escalated ? " (escalated)" : ""}${state.profile === "quick" ? " (quick flow)" : ""}`,
@@ -4805,32 +4786,20 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 	}
 
 	pi.registerCommand("folders", {
-		description: "Folders that are part of this session: add PATH, remove PATH or N, list",
-		getArgumentCompletions: (prefix) => {
-			const addM = prefix.match(/^add\s+(.*)$/i);
-			if (addM) {
-				const readDirs = (dir: string): string[] | null => {
+		description: foldersDescription(),
+		getArgumentCompletions: (prefix) =>
+			foldersCompletions(prefix, {
+				cwd: lastCtx?.cwd ?? process.cwd(),
+				home: os.homedir(),
+				readDirs: (dir) => {
 					try {
 						return fs.readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name);
 					} catch {
 						return null;
 					}
-				};
-				const items = pathCompletions(addM[1], lastCtx?.cwd ?? process.cwd(), os.homedir(), readDirs).map((p) => ({ value: `add ${p.includes(" ") ? `"${p}"` : p}`, label: p }));
-				return items.length > 0 ? items : null;
-			}
-			const remM = prefix.match(/^remove\s+(.*)$/i);
-			if (remM) {
-				const typed = remM[1].trim().toLowerCase();
-				const items = (state.folders ?? [])
-					.map((f, i) => ({ value: `remove ${i + 1}`, label: `${i + 1}. ${f}`, f, n: String(i + 1) }))
-					.filter((x) => x.n.startsWith(typed) || x.f.toLowerCase().startsWith(typed))
-					.map(({ value, label }) => ({ value, label }));
-				return items.length > 0 ? items : null;
-			}
-			const matches = ["add", "remove", "list"].filter((c) => c.startsWith(prefix.trim())).map((c) => ({ value: c, label: c }));
-			return matches.length > 0 ? matches : null;
-		},
+				},
+				folders: state.folders ?? [],
+			}),
 		handler: async (args, ctx) => {
 			const m = args.trim().match(/^(\S+)\s*([\s\S]*)$/);
 			const sub = (m?.[1] ?? "list").toLowerCase();
@@ -4846,8 +4815,8 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 				ctx.ui.notify(lines.join("\n"), "info");
 				return;
 			}
-			if (sub !== "add" && sub !== "remove") {
-				ctx.ui.notify("Usage: /folders add PATH | remove PATH or N | list", "warning");
+			if (!isKnown(FOLDERS_SUBS, sub)) {
+				ctx.ui.notify(foldersUsage(), "warning");
 				return;
 			}
 			if (!arg) {
@@ -4931,12 +4900,7 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 
 	pi.registerCommand("flow", {
 		description: "Plan -> execute -> judge workflow with a model per role",
-		getArgumentCompletions: (prefix) => {
-			const parts = prefix.trimStart().split(/\s+/);
-			if (parts[0] === "model" && parts.length > 1) return roleCompletions("model", parts, MODEL_ROLES, roleSpecOf, () => lastCtx?.modelRegistry.getAvailable() ?? []);
-			const matches = SUBCOMMANDS.filter((c) => c.value.startsWith(prefix.trim()));
-			return matches.length > 0 ? matches : null;
-		},
+		getArgumentCompletions: (prefix) => flowCompletions(prefix, { roles: MODEL_ROLES, specOf: roleSpecOf, models: () => lastCtx?.modelRegistry.getAvailable() ?? [] }),
 		handler: async (args, ctx) => {
 			const [sub = "status", ...rest] = args.trim().split(/\s+/).filter(Boolean);
 			switch (sub.toLowerCase()) {
@@ -5129,7 +5093,7 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 					return;
 				}
 				default:
-					ctx.ui.notify(`Unknown: ${sub}. Try: ${SUBCOMMANDS.map((c) => c.value).join(", ")}`, "warning");
+					ctx.ui.notify(FLOW_UNKNOWN(sub), "warning");
 			}
 		},
 	});
