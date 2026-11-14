@@ -1142,7 +1142,16 @@ export class Engine {
 		}
 		this.save(jr);
 		appendLog(jr.dir, { kind: "add-repo", text: `${folder} -> ${target} at ${state.worktree} (branch ${r.branch})` });
-		if (askId && jr.asks.has(askId)) this.approve(id, askId, true, `repo ${folder} added at ${state.worktree}`);
+		const ask = askId ? jr.asks.get(askId) : undefined;
+		if (askId && ask) {
+			// answers the ask without granting anything: an approval request is not approved by adding a repo
+			if (ask.type === "ask") this.approve(id, askId, true, `repo ${folder} added at ${state.worktree}`);
+			else {
+				append(inboxPath(jr.dir), { type: "answer", replyTo: askId, text: `repo ${folder} added at ${state.worktree}; nothing was approved` });
+				jr.ws.openAsks = jr.ws.openAsks.filter((x) => x !== askId);
+				jr.asks.delete(askId);
+			}
+		}
 		const told = await this.send(id, `Repo ${folder} is part of this job now: work in ${state.worktree} (branch ${r.branch}, target ${target}). It is judged and delivered with the rest.`, "steer", { by: "lead" });
 		if ("error" in told) appendLog(jr.dir, { kind: "error", text: `add-repo: the worker was not told: ${told.error}` });
 		return { ok: true, key: folder, path: state.worktree, branch: r.branch };

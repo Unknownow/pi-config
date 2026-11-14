@@ -315,3 +315,27 @@ test("the widget shows a line per unfinished job; /relay log prints the last n l
 		w.end();
 	}
 });
+
+test("relay_add_repo answering an approval ask grants nothing", async () => {
+	const second = makeRepo({ "s.txt": "s" + nl }, true);
+	const w = world();
+	try {
+		w.write({ worker: [{ hang: true }] });
+		const id = await start(w);
+		const jr = await running(w, id);
+		jr.asks.set("m1", { type: "approval", id: "m1", category: "deps", item: "left-pad", why: "needed" } as any);
+		jr.ws.openAsks.push("m1");
+		const before = jr.job.approvals.length;
+		const r = await w.engine.addRepo(id, second.dir, "main", "m1");
+		assert.ok("ok" in r, JSON.stringify(r));
+		assert.equal(jr.job.approvals.length, before, "no approval was recorded");
+		assert.equal(jr.asks.has("m1"), false, "the ask is closed");
+		const inbox = fs.readFileSync(path.join(jr.dir, "inbox.jsonl"), "utf8");
+		assert.match(inbox, /"replyTo":"m1"/);
+		assert.match(inbox, /nothing was approved/);
+		await w.engine.stop(id);
+	} finally {
+		w.end();
+		cleanup(second.dir, second.bare);
+	}
+});

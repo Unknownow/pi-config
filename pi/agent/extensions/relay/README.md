@@ -188,5 +188,6 @@ The numbers are starting values, to be tuned after first use.
 - A restart or follow-up critic check costs one model run; a critic failure twice refuses the change rather than skipping the check.
 - Escalation switches the model with `set_model`; the thinking level of the escalate role is not applied to a running worker.
 - File locks are reliable on one host only; about 10 workers at once at roughly 300 MB per process; a diff larger than `judge.maxDiffChars` gives the judge the file list plus the diffs that fit.
+- Stacking needs GitHub: the predecessor counts as merged when its PR is `MERGED` (the PR-only scan) or relay merged it; without a PR a stacked job stays stacked.
 - A stacked job assumes the predecessor's branch is not rewritten after the dependent started; if it is, the plain rebase onto it can conflict and becomes a fix round. Overlap detection is by file names and globs only, per repo name.
 - Bash is not blocked against the edit budget up front.

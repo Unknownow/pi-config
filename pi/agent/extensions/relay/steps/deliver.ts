@@ -63,6 +63,8 @@ async function accept(job: Job, repo: RepoState, ctx: StepCtx, verify: string): 
 		return { ok: false, fix: `Rebasing ${repo.key} onto origin/${tgt} conflicts in ${conflicts.join(", ") || "some files"}. Rebase your branch onto origin/${tgt}${stack === "merged" ? ` (git rebase --onto origin/${repo.target} ${repo.stackedOn!.head})` : ""}, resolve the conflicts, and report_done again.` };
 	}
 	repo.base = upstream;
+	// the cut point of a later --onto: the predecessor's head this branch now sits on
+	if (stack === "open") repo.stackedOn!.head = upstream;
 	if (stack === "merged") {
 		// the predecessor merged: this repo is a plain job on the target from here on, and its PR has to follow
 		delete repo.stackedOn;
