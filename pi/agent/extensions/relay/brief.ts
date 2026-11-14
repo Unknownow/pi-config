@@ -115,6 +115,17 @@ export function parseBrief(text: string): Brief | { errors: string[] } {
 	return errors.length ? { errors } : b;
 }
 
+/** The files a job touches: its `Files` globs, or else the paths named in backticks in Design (S30). */
+export function briefFiles(b: Brief): string[] {
+	if (b.files?.length) return b.files;
+	const out = new Set<string>();
+	for (const m of (b.sections.Design ?? "").matchAll(/`([^`\s]+)`/g)) {
+		const t = m[1];
+		if (/^[\w@.*-]+(\/[\w@.*-]+)+\/?$/.test(t) || /^[\w-]+\.[A-Za-z0-9]{1,6}$/.test(t)) out.add(t);
+	}
+	return [...out];
+}
+
 /** What a complete brief needs and this one lacks (D6). Empty when the brief may go. */
 export function validateBrief(b: Brief): string[] {
 	const e: string[] = [];

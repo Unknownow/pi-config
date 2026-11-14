@@ -46,3 +46,22 @@ export function globsOverlap(a: string[], b: string[]): boolean {
 	}
 	return false;
 }
+
+/** Whether two file lists (paths or globs) can name the same file: equal, one matches the other, or two globs share a literal directory prefix. */
+export function filesOverlap(a: string[], b: string[]): boolean {
+	const dirOf = (g: string) => {
+		const lit = normPath(g).split(/[*?]/)[0];
+		return lit.endsWith("/") ? lit : lit.slice(0, lit.lastIndexOf("/") + 1);
+	};
+	for (const x of a.map(normPath)) {
+		for (const y of b.map(normPath)) {
+			if (x === y || globToRegExp(x).test(y) || globToRegExp(y).test(x)) return true;
+			if (/[*?]/.test(x) && /[*?]/.test(y)) {
+				const dx = dirOf(x);
+				const dy = dirOf(y);
+				if (dx.startsWith(dy) || dy.startsWith(dx)) return true;
+			}
+		}
+	}
+	return false;
+}

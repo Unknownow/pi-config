@@ -18,7 +18,7 @@ export interface World {
 	sets: string;
 	jobRoot: string;
 	script: string;
-	wtCalls: { create: any[]; remove: any[]; refuse: number };
+	wtCalls: { create: any[]; remove: any[]; addRepo: any[]; refuse: number };
 	wakes: string[];
 	notices: string[];
 	events: { name: string; payload: any }[];
@@ -76,7 +76,7 @@ export async function waitFor(cond: () => boolean, ms = 30_000, what = "conditio
 	}
 }
 
-export function makeWt(sets: string, repo: string, wtCalls: { create: any[]; remove: any[]; refuse: number }): Wt {
+export function makeWt(sets: string, repo: string, wtCalls: { create: any[]; remove: any[]; addRepo: any[]; refuse: number }): Wt {
 	return {
 		async create(req) {
 			wtCalls.create.push(req);
@@ -108,6 +108,14 @@ export function makeWt(sets: string, repo: string, wtCalls: { create: any[]; rem
 			fs.rmSync(wtDir, { recursive: true, force: true });
 			return { removed: true, paths: [wtDir], backups: [], kept: [], warnings: [] };
 		},
+		async addRepo(req) {
+			wtCalls.addRepo.push(req);
+			const dest = path.join(sets, `${req.name}-${path.basename(req.folder)}`);
+			const r = await run("git", ["worktree", "add", "-q", "-b", `wt/${req.name}-${path.basename(req.folder)}`, dest, req.base ?? "HEAD"], req.folder);
+			if (r.code !== 0) return { error: r.stderr };
+			git(dest, "config", "core.autocrlf", "false");
+			return { path: fwd(dest), branch: `wt/${req.name}` };
+		},
 	};
 }
 
@@ -118,7 +126,7 @@ export function world(cfgRaw: object = {}, files?: Record<string, string>, over:
 	fs.mkdirSync(sets, { recursive: true });
 	const script = path.join(base, "script.json");
 	const jobRoot = path.join(repo, ".git", "pi", "relay");
-	const wtCalls = { create: [] as any[], remove: [] as any[], refuse: 0 };
+	const wtCalls = { create: [] as any[], remove: [] as any[], addRepo: [] as any[], refuse: 0 };
 	const wt = makeWt(sets, repo, wtCalls);
 	const cfg = parseConfig({ stallMin: 10, ...cfgRaw }).config;
 	const w: World = {

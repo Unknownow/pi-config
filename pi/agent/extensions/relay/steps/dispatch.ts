@@ -60,6 +60,18 @@ export const dispatchStep: Step = {
 			tops.push({ key: t.repo, main, target: t.branch });
 		}
 
+		// a stacked job starts each repo at the head of its predecessor's pushed branch (D17); a merged predecessor means a plain start
+		const stacked = new Map<string, NonNullable<RepoState["stackedOn"]>>();
+		const pred = job.dependsOn ? ctx.job(job.dependsOn) : undefined;
+		if (job.dependsOn && !pred) return fail(`Depends on: job ${job.dependsOn} was not found`);
+		for (const t of tops) {
+			const pr = pred?.repos.find((x) => same(x.main, t.main));
+			if (!pred || !pr || pr.merged || !pr.remoteBranch || !pr.remotePushed) continue;
+			await ctx.run("git", ["fetch", "origin"], t.main);
+			const head = await gitOut(ctx.run, t.main, ["rev-parse", `origin/${pr.remoteBranch}`]).catch(() => "");
+			if (head) stacked.set(t.main, { job: pred.id, branch: pr.remoteBranch, head });
+		}
+
 		// 4: snapshot the lead's edits in each Target repo
 		const snaps = new Map<string, Awaited<ReturnType<typeof snapshotEdits>>>();
 		for (const t of tops) snaps.set(t.main, await snapshotEdits(ctx.run, t.main, job.id));
@@ -69,7 +81,7 @@ export const dispatchStep: Step = {
 
 		// 5: the set
 		const bases: Record<string, string> = {};
-		for (const t of tops) bases[t.main] = `origin/${t.target}`;
+		for (const t of tops) bases[t.main] = `origin/${stacked.get(t.main)?.branch ?? t.target}`;
 		const lead = ctx.folders().map(fwd);
 		const folders = lead.filter((f) => tops.some((t) => same(t.main, f)));
 		const reply = await ctx.wt.create({ name: job.set, bases, ...(folders.length ? { folders } : {}) });
@@ -88,8 +100,9 @@ export const dispatchStep: Step = {
 				await ctx.wt.remove({ name: job.set, force: true });
 				return fail(`the set has no worktree for ${t.key}`);
 			}
-			const sha = await gitOut(ctx.run, t.main, ["rev-parse", `origin/${t.target}`]).catch(() => "");
-			repos.push({ key: t.key, main: t.main, worktree: fwd(entry.cwd), target: t.target, base: sha, branch: reply.branch, ...(snaps.get(t.main) ? { leadEdits: snaps.get(t.main)! } : {}) });
+			const st = stacked.get(t.main);
+			const sha = st ? st.head : await gitOut(ctx.run, t.main, ["rev-parse", `origin/${t.target}`]).catch(() => "");
+			repos.push({ key: t.key, main: t.main, worktree: fwd(entry.cwd), target: t.target, base: sha, branch: reply.branch, ...(st ? { stackedOn: st } : {}), ...(snaps.get(t.main) ? { leadEdits: snaps.get(t.main)! } : {}) });
 		}
 		job.repos = repos;
 		ctx.save(job);
@@ -122,7 +135,7 @@ export const dispatchStep: Step = {
 		ctx.save(job);
 		await ctx.startWorker(job, { prompt: workerPrompt(ctx, job) });
 		ctx.emit(JOB_START, jobStartPayload(job.id, job.title, repos.map((r) => r.key)));
-		ctx.log("dispatch", `set ${job.set}, ${repos.length} repo(s), worker started`);
+		ctx.log("dispatch", `set ${job.set}, ${repos.length} repo(s), worker started${stacked.size ? `, stacked on job ${job.dependsOn}` : ""}`);
 		return "work";
 	},
 };

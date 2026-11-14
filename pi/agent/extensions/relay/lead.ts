@@ -36,6 +36,7 @@ export interface LeadDeps {
 	timeoutMs?: number;
 	/** The interval of the adoption scan (default 10 min). */
 	scanMs?: number;
+	widgetMs?: number;
 }
 
 const text = (t: string, details: object = {}) => ({ content: [{ type: "text" as const, text: t }], details });
@@ -54,6 +55,22 @@ export function createLead(pi: ExtensionAPI, d: LeadDeps) {
 	let overBudgetNoted = false;
 	let scanTimer: ReturnType<typeof setInterval> | undefined;
 	let scans = 0;
+	let widgetTimer: ReturnType<typeof setInterval> | undefined;
+	let widgetShown = false;
+
+	/** The status widget: one line per unfinished job of this session (S33). */
+	function paintWidget(): void {
+		const ui = lastCtx?.ui;
+		if (!ui?.setWidget || !engine) return;
+		const lines = engine.widgetLines();
+		if (!lines.length && !widgetShown) return;
+		widgetShown = lines.length > 0;
+		try {
+			ui.setWidget("relay", lines.length ? lines : undefined, { placement: "belowEditor" });
+		} catch {
+			// a missing UI is fine
+		}
+	}
 
 	// K16: registered at load, answers only for relay.
 	const unsubK16 = pi.events.on("flow:active", (data: unknown) => {
@@ -84,6 +101,8 @@ export function createLead(pi: ExtensionAPI, d: LeadDeps) {
 			// resume and adoption (S27): once lead mode is on, then every 10 min
 			scanTimer = setInterval(() => void scan(lastCtx ?? ctx), d.scanMs ?? 10 * 60_000);
 			scanTimer.unref?.();
+			widgetTimer = setInterval(paintWidget, d.widgetMs ?? 2000);
+			widgetTimer.unref?.();
 			void scan(ctx);
 		}
 		if (was === "undecided" && !on && act.reason && !/relay json|worker or reviewer/.test(act.reason)) ctx.ui?.notify?.(act.reason.startsWith("relay") ? act.reason : `relay: ${act.reason}`, "info");
@@ -98,6 +117,7 @@ export function createLead(pi: ExtensionAPI, d: LeadDeps) {
 			if ("error" in eng) return;
 			await eng.adopt();
 			await eng.prCleanup();
+			await eng.restack();
 		} catch (e) {
 			ctx.ui?.notify?.(`relay: scan of unfinished jobs failed: ${(e as Error).message}`, "warning");
 		}
@@ -114,6 +134,7 @@ export function createLead(pi: ExtensionAPI, d: LeadDeps) {
 	const wt: Wt = {
 		create: (req) => claimWt("worktree:create", { name: req.name, launch: "none", bases: req.bases, ...(req.folders ? { folders: req.folders } : {}) }, 15 * 60_000),
 		remove: (req) => claimWt("worktree:remove", { name: req.name, ...(req.force ? { force: true } : {}) }, 5 * 60_000),
+		addRepo: (req) => claimWt("worktree:add-repo", { name: req.name, folder: req.folder, ...(req.base ? { base: req.base } : {}) }, 5 * 60_000),
 	};
 
 	const say = (customType: string, content: string, trigger: boolean) => {
@@ -219,6 +240,7 @@ export function createLead(pi: ExtensionAPI, d: LeadDeps) {
 	pi.on("session_shutdown", async () => {
 		unsubK16?.();
 		if (scanTimer) clearInterval(scanTimer);
+		if (widgetTimer) clearInterval(widgetTimer);
 		await engine?.shutdown();
 	});
 
@@ -397,6 +419,21 @@ export function createLead(pi: ExtensionAPI, d: LeadDeps) {
 	});
 
 	pi.registerTool({
+		name: "relay_add_repo",
+		label: "Relay add repo",
+		description: "Add another repo to a running job (the worker asked for it, or the change needs it): a worktree of `folder` joins the job's set on origin/<target>, the worker is told, and the judge diff and delivery include it. Pass askId to answer the worker's ask.",
+		promptSnippet: "relay_add_repo: add a repo to a running job",
+		parameters: T.Object({ job: T.String(), folder: T.String({ description: "The repo folder, or the name of the lead's repo or an added folder" }), target: T.String({ description: "The target branch, e.g. main" }), askId: T.Optional(T.String({ description: "The worker's open ask this answers" })) }),
+		async execute(_id: string, p: any, _s: any, _u: any, ctx: any) {
+			const refuse = await needsLead(ctx);
+			if (refuse) return refuse;
+			if (!engine) return text("relay_add_repo: no jobs in this session");
+			const r = await engine.addRepo(p.job, p.folder, p.target, p.askId);
+			return text("error" in r ? `relay_add_repo: ${r.error}` : `repo ${r.key} added to job ${p.job}: ${r.path} (branch ${r.branch}); the worker was told.`);
+		},
+	});
+
+	pi.registerTool({
 		name: "relay_followup",
 		label: "Relay follow-up",
 		description: "A follow-up on a finished job (done, stopped or failed): an amendment of the same job, worked in the same set (or a new one when the old is gone or the job merged), judged on its own diff, delivered and reported like the job. Also works for jobs of an earlier session.",
@@ -416,7 +453,7 @@ export function createLead(pi: ExtensionAPI, d: LeadDeps) {
 	// ----------------------------------------------------------------------------------------- commands
 
 	pi.registerCommand("relay", {
-		description: "relay: status | on | off | go | stop <job> | pause <job> | resume <job> | followup <job> <text> | model <role> <provider/id[:thinking]>",
+		description: "relay: status | on | off | go | stop <job> | pause <job> | resume <job> | followup <job> <text> | log <job> [n] | model <role> <provider/id[:thinking]>",
 		handler: async (args: string, ctx: any) => {
 			lastCtx = ctx;
 			const [sub = "status", ...rest] = args.trim().split(/\s+/);
@@ -446,6 +483,12 @@ export function createLead(pi: ExtensionAPI, d: LeadDeps) {
 					const r = engine ? await (sub === "pause" ? engine.pause(rest[0]) : engine.resume(rest[0])) : { error: "no jobs in this session" };
 					const set = engine?.get(rest[0])?.job.set ?? rest[0];
 					note("error" in r ? `relay: ${r.error}` : sub === "pause" ? `relay: job ${rest[0]} paused; work in its set with /wt open ${set}, then /relay resume ${rest[0]}` : `relay: job ${rest[0]} resumed`, "error" in r ? "warning" : "info");
+				}
+			} else if (sub === "log") {
+				if (!rest[0]) note("usage: /relay log <job> [n]", "warning");
+				else {
+					const eng = await engineFor(ctx);
+					note("error" in eng ? `relay: ${eng.error}` : eng.logText(rest[0], Number(rest[1]) > 0 ? Number(rest[1]) : 20));
 				}
 			} else if (sub === "followup") {
 				const [job, ...words] = rest;

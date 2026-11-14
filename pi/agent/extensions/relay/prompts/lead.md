@@ -21,3 +21,7 @@ You are woken only for: a worker question, an approval request, the judge cap, a
 The user's words about a running job go through `relay_send` (it records an amendment): `steer` for a correction, `follow_up` for something that can wait for the worker's turn, `restart` (with `reset: "base"` to drop its commits) for a change of direction. An amendment after PASS holds delivery until the new version is judged. Unrelated input is yours to handle. `/relay pause <job>` lets the user work in the set with `/wt open`; `relay_resume` continues. For a finished job use `relay_followup`.
 
 When the worker failed every round, relay wakes you to re-plan: revise the brief on the judge's findings (same Targets) and call `relay_replan`, or `relay_stop` when the goal itself is wrong. A worker that crashed or stalled twice pauses the job: look at the set, then `relay_resume` or `relay_stop`.
+
+## Several jobs
+
+Up to 3 jobs run at once; more queue. Split independent work into separate jobs with disjoint `Files`. For work that builds on another job, add `## Depends on` with its job id: the dependent starts on that job's branch and is restacked after it merges. When a worker needs another repo, add it with `relay_add_repo {job, folder, target, askId?}`. `/relay log <job> [n]` shows what a job did.

@@ -155,13 +155,23 @@ The numbers are starting values, to be tuned after first use.
 - **K16 `flow:active`**: one owner per session with workflow. `{v:1, from:"workflow"|"relay", claim}`; each extension ignores its own `from`. Relay's listener is registered at load; while its activation is undecided it claims `{owner:"relay"}` when `active` is true. `leadOn(ctx)` decides once, on the first of `input`, `before_agent_start` or any relay tool or command: it emits `{from:"relay"}`; an `owner:"workflow"` answer keeps lead mode off with a notice, anything else (nobody, a timeout, `{error}`) turns it on. A restored workflow flow wins; otherwise relay wins over workflow's `startPhase`. `/relay on` asks again and refuses while workflow claims.
 - **Job-set sessions.** A session whose cwd is inside a `.pi-set.json` folder named like a job set (`r1a2b3c`, `r1a2b3c-f1`) (a worker, a `/wt open` takeover) never claims and keeps lead mode off: no edit budget, no "go" hook, no dispatch.
 
+## Parallel and stacked jobs, add-repo, widget and log
+
+**Queue.** `maxJobs` (3) jobs run at once; the rest are `queued` and start in creation order when a slot frees (a worker slot is held only by a job that started). Two jobs whose `Files` (or the paths named in backticks in Design) overlap, in a repo with the same name, get a notice and an `overlap` log entry each at dispatch; relay does not serialise them.
+
+**Stacked jobs (D17).** `## Depends on` names a job id of this repo. The dependent stays `queued` (holding no slot) until its predecessor is `done`, or `delivering` with every repo pushed; its set starts at the head of the predecessor's pushed branch (`origin/<remoteBranch>`), its judge diff is `base..HEAD` of its own work, and its PR is opened against the predecessor's branch and is not merged. A predecessor that already merged means a plain job on the target. Once the predecessor merged (the PR-only scan sets `merged`, or an after-pass delivery did), the dependent is delivered again: `git rebase --onto origin/<target> <predecessor head>` (this also drops a squash-merged predecessor), the D14 rules (overlap, Verify, `passedViaRebase`), `gh pr edit --base <target>`, then a push with the lease against `remotePushed`. If the predecessor stops or fails, its dependents stop with that reason. An unknown predecessor is refused at dispatch.
+
+**Add a repo.** `relay_add_repo {job, folder, target, askId?}` emits W3: a worktree of `folder` joins the job's set on `origin/<target>`; the repo is added to the job (judge diff, delivery, guard paths), the worker is told with a steer and, with `askId`, its ask is answered. Only a working or paused job.
+
+**Widget and log.** A widget under the editor shows one line per unfinished job: id, state, round (`e` once escalated), wall minutes used/budget, tokens used. `/relay log <job> [n]` shows the last n lines of `log.jsonl` (tool names with a short first argument, verdicts, amendments, approvals, overlaps, restacks) and the job's paths.
+
 ## Events
 
 `v: 1` on all: `relay:job-start {v, job, title, repos}`, `relay:job-end {v, job, how: "delivered"|"stopped"|"failed", report}`, `relay:approval {v, job, category, item, by: "brief"|"lead", reason}`.
 
 ## Tools and commands
 
-`relay_critic {brief, draft?}`, `relay_dispatch {brief, size?, draft?, overrides?}`, `relay_status {job?}`, `relay_approve {job, askId, approve, reason}`, `relay_stop {job}`, `relay_deliver {job}`, `relay_send {job, text, mode, reset?, from?}`, `relay_replan {job, brief}`, `relay_resume {job}`, `relay_followup {job, text}`. Commands: `/relay` (status), `/relay on|off` (off is refused while this lead owns running jobs), `/relay go`, `/relay stop <job>`, `/relay pause <job>`, `/relay resume <job>`, `/relay followup <job> <text>`, `/relay model <role> <spec>`.
+`relay_critic {brief, draft?}`, `relay_dispatch {brief, size?, draft?, overrides?}`, `relay_status {job?}`, `relay_approve {job, askId, approve, reason}`, `relay_stop {job}`, `relay_deliver {job}`, `relay_send {job, text, mode, reset?, from?}`, `relay_replan {job, brief}`, `relay_resume {job}`, `relay_followup {job, text}`, `relay_add_repo {job, folder, target, askId?}`. Commands: `/relay` (status), `/relay on|off` (off is refused while this lead owns running jobs), `/relay go`, `/relay stop <job>`, `/relay pause <job>`, `/relay resume <job>`, `/relay followup <job> <text>`, `/relay log <job> [n]`, `/relay model <role> <spec>`.
 
 ## Copies from workflow
 
@@ -169,13 +179,14 @@ The numbers are starting values, to be tuned after first use.
 
 ## Tests
 
-`node --experimental-strip-types --test *.test.ts` in this folder (about 2 min; `running.test.ts` covers the stage 3 behaviour with a fake clock where time matters). The engine tests use `RELAY_PI_BIN=test/fake-pi.mjs`, one scripted file that serves the RPC worker and the json-mode critic and judge (it switches on `--mode`), with real git repos and bare remotes. `e2e/live.mjs` runs the whole thing with real models (15-25 min): `node pi/agent/extensions/relay/e2e/live.mjs`.
+`node --experimental-strip-types --test *.test.ts` in this folder (about 2 min; `running.test.ts` covers the running-job behaviour with a fake clock where time matters; `stage4.test.ts` the queue, stacked jobs with a faked `gh`, add-repo, widget and log). The engine tests use `RELAY_PI_BIN=test/fake-pi.mjs`, one scripted file that serves the RPC worker and the json-mode critic and judge (it switches on `--mode`), with real git repos and bare remotes. `e2e/live.mjs` runs the whole thing with real models (15-25 min): `node pi/agent/extensions/relay/e2e/live.mjs`.
 
 ## Limits
 
 - The judge rechecks the whole diff each round (plus the previous findings), not only the delta.
-- Closing the lead session kills its workers; the jobs stay on disk and the next lead session adopts them (after 2 min if the pid is alive, at once if the pid is dead or the session is the same). Killing a surviving worker by pid assumes the pid was not reused. Parallel and stacked jobs, add-repo and the widget come in a later stage.
+- Closing the lead session kills its workers; the jobs stay on disk and the next lead session adopts them (after 2 min if the pid is alive, at once if the pid is dead or the session is the same). Killing a surviving worker by pid assumes the pid was not reused.
 - A restart or follow-up critic check costs one model run; a critic failure twice refuses the change rather than skipping the check.
 - Escalation switches the model with `set_model`; the thinking level of the escalate role is not applied to a running worker.
 - File locks are reliable on one host only; about 10 workers at once at roughly 300 MB per process; a diff larger than `judge.maxDiffChars` gives the judge the file list plus the diffs that fit.
+- A stacked job assumes the predecessor's branch is not rewritten after the dependent started; if it is, the plain rebase onto it can conflict and becomes a fix round. Overlap detection is by file names and globs only, per repo name.
 - Bash is not blocked against the edit budget up front.

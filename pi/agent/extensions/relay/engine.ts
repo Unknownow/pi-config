@@ -6,11 +6,12 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { countTokens } from "../shared/tokens.ts";
 import { APPROVAL, approvalPayload } from "./events.ts";
-import { appendAmendment, checkBrief, parseBrief, replaceBrief } from "./brief.ts";
+import { type Brief, appendAmendment, briefFiles, checkBrief, parseBrief, replaceBrief } from "./brief.ts";
+import { filesOverlap } from "./glob.ts";
 import { parseFindings } from "../shared/findings.ts";
 import { budgetState, longToolWall, toolTimeoutMs } from "./budget.ts";
-import { CATEGORIES, type Category, type RelayConfig, type Size } from "./config.ts";
-import { type Job, type JobState, appendLog, draftDir, emptyJob, FINISHED, jobDir, listJobs, newId, readJob, readLog, writeJob } from "./job.ts";
+import { CATEGORIES, type Category, type RelayConfig, repoPolicy, type Size } from "./config.ts";
+import { type Job, type JobState, type RepoState, stackState, appendLog, draftDir, emptyJob, FINISHED, jobDir, listJobs, newId, readJob, readLog, writeJob } from "./job.ts";
 import { JobLock, type Me, pidAlive } from "./lock.ts";
 import { append, inboxPath, outboxPath, takeNew, type OutMsg } from "./mailbox.ts";
 import { forwardedServers, roleTools } from "./knowledge.ts";
@@ -18,7 +19,7 @@ import { type RpcCallbacks, type RpcWorker, startWorker as realStartWorker, type
 import type { Run } from "./sh.ts";
 import { runSubagent, type RunOptions, type RunResult } from "./subagent.ts";
 import { applySnapshot } from "./snapshot.ts";
-import { dispatchStep, workerPrompt } from "./steps/dispatch.ts";
+import { dispatchStep, resolveRepo, workerPrompt } from "./steps/dispatch.ts";
 import { followupStep } from "./steps/followup.ts";
 import { deliverStep } from "./steps/deliver.ts";
 import { judgeStep, workStep } from "./steps/loop.ts";
@@ -126,6 +127,14 @@ class JobRun {
 	}
 }
 
+/** A tool call as one short log line: the name and its first argument, shortened. */
+export function toolSummary(name: string, args: unknown): string {
+	const a = (args ?? {}) as Record<string, unknown>;
+	const v = a.command ?? a.path ?? a.file_path ?? a.pattern ?? a.query ?? Object.values(a).find((x) => typeof x === "string");
+	const s = typeof v === "string" ? v.replace(/\s+/g, " ").trim() : "";
+	return s ? `${name}: ${s.length > 80 ? `${s.slice(0, 77)}...` : s}` : name;
+}
+
 export class Engine {
 	readonly jobs = new Map<string, JobRun>();
 	private timer: ReturnType<typeof setInterval> | undefined;
@@ -183,6 +192,12 @@ export class Engine {
 		const checked = checkBrief(input.brief);
 		if ("errors" in checked) return { error: `the brief is not complete:\n- ${checked.errors.join("\n- ")}` };
 		const brief = checked.brief;
+		if (brief.dependsOn) {
+			const pred = this.peek(brief.dependsOn);
+			if (!pred) return { error: `Depends on: job "${brief.dependsOn}" is unknown (a job id of this repo)` };
+			const w = this.depState(brief.dependsOn);
+			if (typeof w === "object") return { error: `Depends on: ${w.stop}` };
+		}
 		const id = newId("r", (x) => fs.existsSync(jobDir(this.d.root, x)));
 		const dir = jobDir(this.d.root, id);
 		fs.mkdirSync(dir, { recursive: true });
@@ -203,7 +218,10 @@ export class Engine {
 			job.budget.wallMs = long.wallMs;
 			job.notes.push(long.note);
 		}
-		if (brief.dependsOn) job.notes.push(`Depends on ${brief.dependsOn}: dependent jobs are not supported yet; the job runs on its own`);
+		if (brief.dependsOn) {
+			job.dependsOn = brief.dependsOn;
+			job.notes.push(`stacked on job ${brief.dependsOn}: starts at the head of its branch once that job has passed`);
+		}
 		if (input.draft && /^d[0-9a-z]{6}$/.test(input.draft)) {
 			const src = path.join(draftDir(this.d.root, input.draft), "critic");
 			if (fs.existsSync(src)) fs.cpSync(src, path.join(dir, "critic"), { recursive: true });
@@ -211,10 +229,12 @@ export class Engine {
 		const jr = new JobRun(dir, job, lock);
 		this.jobs.set(id, jr);
 		for (const a of job.approvals) this.d.emit(APPROVAL, approvalPayload(id, a.category, a.item, "brief", a.reason));
-		if (this.runningCount() >= cfg.maxJobs) {
+		this.noteOverlaps(jr, brief);
+		const waiting = brief.dependsOn && this.depState(brief.dependsOn) === "wait";
+		if (waiting || this.runningCount() >= cfg.maxJobs) {
 			job.state = "queued";
 			this.save(jr);
-			appendLog(dir, { kind: "queued", text: `queued behind ${cfg.maxJobs} running jobs` });
+			appendLog(dir, { kind: "queued", text: waiting ? `queued until job ${brief.dependsOn} has passed` : `queued behind ${cfg.maxJobs} running jobs` });
 			return { id, state: "queued", queued: true };
 		}
 		job.state = "queued";
@@ -223,10 +243,61 @@ export class Engine {
 		return { id, state: job.state, queued: false };
 	}
 
+	/** Queued jobs start in creation order when a slot is free and their predecessor (if any) has passed. */
 	private startQueued() {
 		for (const jr of [...this.jobs.values()].sort((a, b) => a.job.createdAt - b.job.createdAt)) {
 			if (this.runningCount() >= this.cfg.maxJobs) return;
-			if (jr.job.state === "queued" && !jr.ended && !jr.driving) void this.drive(jr);
+			if (jr.job.state !== "queued" || jr.ended || jr.driving) continue;
+			if (jr.job.dependsOn && this.depState(jr.job.dependsOn) !== "go") continue;
+			void this.drive(jr);
+		}
+	}
+
+	/** Another job by id: this lead's own, or one on disk. */
+	private peek(id: string): Job | undefined {
+		return this.jobs.get(id)?.job ?? readJob(jobDir(this.d.root, id));
+	}
+
+	/** Whether a job that depends on `id` may start (the predecessor passed and pushed, or merged), must wait, or must stop. */
+	private depState(id: string): "go" | "wait" | { stop: string } {
+		const p = this.peek(id);
+		if (!p) return { stop: `predecessor ${id} was not found` };
+		if (p.state === "stopped" || p.state === "failed") return { stop: `predecessor ${id} ${p.state}${p.endReason ? `: ${p.endReason}` : ""}` };
+		if (p.state === "done") return "go";
+		if (p.state === "delivering" && p.repos.length && p.repos.every((r) => r.merged || r.remotePushed)) return "go";
+		return "wait";
+	}
+
+	/** A job whose predecessor stopped or failed stops too, with the reason (D17). */
+	private async cascade(): Promise<void> {
+		for (const jr of [...this.jobs.values()]) {
+			if (jr.ended || FINISHED.includes(jr.job.state) || !jr.job.dependsOn) continue;
+			const d = this.depState(jr.job.dependsOn);
+			if (typeof d !== "object") continue;
+			const r = await this.stop(jr.job.id, d.stop);
+			if ("ok" in r) this.d.notify(`relay job ${jr.job.id}: stopped, ${d.stop}`);
+		}
+	}
+
+	/** Two jobs whose files overlap get a notice and a log entry each (S30). */
+	private noteOverlaps(jr: JobRun, brief: Brief): void {
+		const mine = briefFiles(brief);
+		if (!mine.length) return;
+		const repoNames = brief.targets.map((t) => path.basename(t.repo).toLowerCase());
+		for (const other of this.jobs.values()) {
+			if (other === jr || other.ended || FINISHED.includes(other.job.state)) continue;
+			let theirs: ReturnType<typeof parseBrief>;
+			try {
+				theirs = parseBrief(fs.readFileSync(path.join(other.dir, "brief.md"), "utf8"));
+			} catch {
+				continue;
+			}
+			if ("errors" in theirs || !theirs.targets.some((t) => repoNames.includes(path.basename(t.repo).toLowerCase()))) continue;
+			if (!filesOverlap(mine, briefFiles(theirs))) continue;
+			const text = `jobs ${jr.job.id} and ${other.job.id} name overlapping files; expect a rebase conflict in the second delivery`;
+			appendLog(jr.dir, { kind: "overlap", text });
+			appendLog(other.dir, { kind: "overlap", text });
+			this.d.notify(`relay: ${text}`);
 		}
 	}
 
@@ -313,6 +384,8 @@ export class Engine {
 		jr.lock.release();
 		this.save(jr);
 		this.startQueued();
+		void this.cascade();
+		void this.restack().catch(() => undefined);
 	}
 
 	// ------------------------------------------------------------------------------------------------ step context
@@ -333,6 +406,7 @@ export class Engine {
 			isOwner: () => jr.lock.isOwner(),
 			stopped: () => jr.stopRequested,
 			wt: d.wt,
+			job: (id) => this.peek(id),
 			worker: jr.ws,
 			startWorker: (job, o) => this.startWorker(jr, o),
 			setWorkerModel: async (model) => {
@@ -386,7 +460,9 @@ export class Engine {
 				if (live()) jr.lastActivity = this.now();
 			},
 			onToolStart: (id, name, args) => {
-				if (live()) jr.tools.set(id, { name, startedAt: this.now(), timeoutMs: toolTimeoutMs(cfg, name, args) });
+				if (!live()) return;
+				jr.tools.set(id, { name, startedAt: this.now(), timeoutMs: toolTimeoutMs(cfg, name, args) });
+				appendLog(jr.dir, { kind: "tool", text: toolSummary(name, args) });
 			},
 			onToolEnd: (id) => {
 				if (live()) jr.tools.delete(id);
@@ -544,6 +620,8 @@ export class Engine {
 	/** One poll: heartbeat, the worker's outbox, the budget. Drives only jobs that are working. */
 	async tick(): Promise<void> {
 		const now = this.now();
+		await this.cascade();
+		this.startQueued();
 		for (const jr of [...this.jobs.values()]) {
 			if (jr.ended || FINISHED.includes(jr.job.state) || jr.job.state === "queued") continue;
 			const dt = jr.lastTick ? now - jr.lastTick : 0;
@@ -652,12 +730,12 @@ export class Engine {
 		return { ok: true, text: "approved" };
 	}
 
-	async stop(id: string): Promise<{ ok: true } | { error: string }> {
+	async stop(id: string, reason?: string): Promise<{ ok: true } | { error: string }> {
 		const jr = this.find(id);
 		if ("error" in jr) return jr;
 		if (jr.ended || FINISHED.includes(jr.job.state)) return { error: `job ${id} is already ${jr.job.state}` };
 		jr.stopRequested = true;
-		jr.job.endReason = "stopped by the lead";
+		jr.job.endReason = reason ?? "stopped by the lead";
 		jr.job.state = "stopped";
 		this.save(jr);
 		jr.abort.abort();
@@ -1011,6 +1089,85 @@ export class Engine {
 			out.push(job.id);
 		}
 		return out;
+	}
+
+	/** Stacked jobs whose predecessor merged since they were delivered: delivery runs again, which restacks them onto the target, retargets the PR and pushes with the lease (D17). */
+	async restack(): Promise<string[]> {
+		const out: string[] = [];
+		for (const { dir, job } of listJobs(this.root)) {
+			if (job.state !== "done" || !job.repos.some((r) => r.stackedOn)) continue;
+			const known = this.jobs.get(job.id);
+			if (known && !known.ended) continue;
+			const cur = known?.job ?? job;
+			if (!cur.repos.some((r) => stackState(r, r.stackedOn ? this.peek(r.stackedOn.job) : undefined) === "merged")) continue;
+			const lock = new JobLock(dir, this.d.me);
+			if (!(lock.acquire() || (await lock.takeOver()))) continue;
+			cur.state = "delivering";
+			cur.notes.push("the predecessor merged: restacking onto the target");
+			const jr = new JobRun(dir, cur, lock);
+			this.jobs.set(cur.id, jr);
+			this.save(jr);
+			appendLog(dir, { kind: "restack", text: "the predecessor merged: rebase --onto the target, retarget the PR, push with the lease" });
+			await this.drive(jr);
+			out.push(cur.id);
+		}
+		return out;
+	}
+
+	/** W3 mid-job (S32): another repo joins the set; the judge diff and delivery include it from now on, and the worker is told. */
+	async addRepo(id: string, folder: string, target: string, askId?: string): Promise<{ ok: true; key: string; path: string; branch: string } | { error: string }> {
+		const jr = this.find(id);
+		if ("error" in jr) return jr;
+		const job = jr.job;
+		if (jr.ended || (job.state !== "working" && job.state !== "paused")) return { error: `job ${id} is ${job.state}: a repo can be added to a working or paused job` };
+		const ctx = this.ctxFor(jr);
+		const main = await resolveRepo(ctx, folder);
+		if (!main) return { error: `"${folder}" is not a git repo` };
+		if (job.repos.some((r) => r.main.toLowerCase() === main.toLowerCase())) return { error: `repo ${folder} is already in job ${id}` };
+		await this.d.run("git", ["fetch", "origin"], main);
+		const base = (await this.d.run("git", ["rev-parse", `origin/${target}`], main)).stdout.trim();
+		if (!base) return { error: `origin/${target} not found in ${folder}` };
+		const r = await this.d.wt.addRepo({ name: job.set, folder: main, base: `origin/${target}` });
+		if ("error" in r) return { error: r.error };
+		const state: RepoState = { key: folder, main, worktree: r.path.split("\\").join("/"), target, base, branch: r.branch };
+		job.repos.push(state);
+		// the worker guard's sensitive paths cover the new repo too
+		try {
+			const gf = path.join(jr.dir, "guard.json");
+			const g = JSON.parse(fs.readFileSync(gf, "utf8"));
+			g.sensitivePaths = [...new Set([...(g.sensitivePaths ?? []), ...repoPolicy(this.cfg, main).sensitivePaths])];
+			fs.writeFileSync(gf, JSON.stringify(g, null, 2));
+		} catch {
+			// the guard keeps the paths it has
+		}
+		this.save(jr);
+		appendLog(jr.dir, { kind: "add-repo", text: `${folder} -> ${target} at ${state.worktree} (branch ${r.branch})` });
+		if (askId && jr.asks.has(askId)) this.approve(id, askId, true, `repo ${folder} added at ${state.worktree}`);
+		const told = await this.send(id, `Repo ${folder} is part of this job now: work in ${state.worktree} (branch ${r.branch}, target ${target}). It is judged and delivered with the rest.`, "steer", { by: "lead" });
+		if ("error" in told) appendLog(jr.dir, { kind: "error", text: `add-repo: the worker was not told: ${told.error}` });
+		return { ok: true, key: folder, path: state.worktree, branch: r.branch };
+	}
+
+	/** `/relay log`: the last n summarised log lines and the job's paths. */
+	logText(id: string, n = 20): string {
+		const jr = this.jobs.get(id);
+		const dir = jr?.dir ?? jobDir(this.d.root, id);
+		const job = jr?.job ?? readJob(dir);
+		if (!job) return `unknown job "${id}"`;
+		const lines = readLog(dir, Math.max(1, n)).map((e) => `${(e.at ?? "").slice(11, 19)} ${e.kind}: ${e.text}`);
+		const paths = [`job folder: ${dir}`, `log: ${path.join(dir, "log.jsonl")}`, `set: ${job.set}${job.cwd ? ` (${job.cwd})` : ""}`, `brief: ${path.join(dir, "brief.md")}`, `report: ${path.join(dir, "report.md")}`];
+		return `${lines.join("\n") || "(no log lines)"}\n\n${paths.join("\n")}`;
+	}
+
+	/** One line per job of this session that is not finished: id, state, round and budget used. */
+	widgetLines(): string[] {
+		return [...this.jobs.values()]
+			.filter((j) => !j.ended || !FINISHED.includes(j.job.state))
+			.map((jr) => {
+				const j = jr.job;
+				const wall = Math.round(j.used.wallMs / 60_000);
+				return `relay ${j.id} ${j.state} r${j.round + 1}${j.escalated ? "e" : ""} ${wall}/${Math.round(j.budget.wallMs / 60_000)}m ${Math.round((j.used.tokens / j.budget.tokens) * 100)}% tok${j.dependsOn ? ` <- ${j.dependsOn}` : ""}`;
+			});
 	}
 
 	status(id?: string): string {

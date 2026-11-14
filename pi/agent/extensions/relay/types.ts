@@ -36,6 +36,8 @@ export interface WtRemoveReply {
 export interface Wt {
 	create(req: { name: string; bases: Record<string, string>; folders?: string[] }): Promise<WtCreateReply | { error: string }>;
 	remove(req: { name: string; force?: boolean }): Promise<WtRemoveReply | { error: string }>;
+	/** W3: a worktree of another repo in an existing set. */
+	addRepo(req: { name: string; folder: string; base?: string }): Promise<{ path: string; branch: string } | { error: string }>;
 }
 
 export type Shell = (cmd: string, cwd: string, timeoutMs?: number) => Promise<{ code: number; out: string }>;
@@ -71,6 +73,8 @@ export interface StepCtx {
 	/** The lead stopped the job (or its budget ended) while a step ran: the step must not push, merge or change state. */
 	stopped(): boolean;
 	wt: Wt;
+	/** Another job of this lead (in memory, or from disk): a stacked job reads its predecessor's state. */
+	job(id: string): Job | undefined;
 	worker: WorkerState;
 	startWorker(job: Job, o: { prompt: string; resume?: boolean }): Promise<void>;
 	/** Sends a prompt to the running worker and clears `settled`; a worker that is not running is restarted (`-c`) with it. */

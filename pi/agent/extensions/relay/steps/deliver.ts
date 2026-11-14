@@ -3,7 +3,7 @@
 import { type AuthorityItem, parseBrief } from "../brief.ts";
 import { repoPolicy } from "../config.ts";
 import { dropSnapshotBranch } from "../snapshot.ts";
-import type { Job, RepoState } from "../job.ts";
+import { type Job, type RepoState, stackState } from "../job.ts";
 import { gateCheck } from "../merge-gate.ts";
 import { originRepo } from "../merge-gate.ts";
 import { type PushContext, pushProblem } from "../push-guard.ts";
@@ -36,12 +36,15 @@ type Outcome = { kind: "amended" } | { kind: "done" } | { kind: "stopped" } | { 
 
 async function accept(job: Job, repo: RepoState, ctx: StepCtx, verify: string): Promise<{ ok: true } | { ok: false; fix?: string; error?: string }> {
 	const git = (...args: string[]) => ctx.run("git", args, repo.worktree);
+	// a stacked repo rebases onto its predecessor's branch while that is open, and --onto the target once it merged (D17)
+	const stack = stackState(repo, repo.stackedOn ? ctx.job(repo.stackedOn.job) : undefined);
+	const tgt = stack === "open" ? repo.stackedOn!.branch : repo.target;
 	const fetch = await git("fetch", "origin");
 	if (fetch.code !== 0) return { ok: false, error: `git fetch failed in ${repo.key}: ${firstLine(fetch.stderr)}` };
-	const upstream = firstLine((await git("rev-parse", `origin/${repo.target}`)).stdout);
-	if (!upstream) return { ok: false, error: `origin/${repo.target} not found in ${repo.key}` };
+	const upstream = firstLine((await git("rev-parse", `origin/${tgt}`)).stdout);
+	if (!upstream) return { ok: false, error: `origin/${tgt} not found in ${repo.key}` };
 	const headTree = firstLine((await git("rev-parse", "HEAD^{tree}")).stdout);
-	if (upstream === repo.base) {
+	if (upstream === repo.base && stack !== "merged") {
 		// nothing new upstream: the judged tree is the tree to deliver, and only that
 		// (a retry after delivery stopped past a rebase: HEAD is the tree relay accepted then)
 		if (repo.passedViaRebase && headTree === repo.acceptedTree && headTree !== repo.judgedTree) return { ok: true };
@@ -52,13 +55,19 @@ async function accept(job: Job, repo: RepoState, ctx: StepCtx, verify: string): 
 	}
 	const jobFiles = (await git("diff", "--name-only", `${repo.base}..HEAD`)).stdout.split(/\r?\n/).filter(Boolean);
 	const upFiles = new Set((await git("diff", "--name-only", `${repo.base}..${upstream}`)).stdout.split(/\r?\n/).filter(Boolean));
-	const rebase = await ctx.run("git", ["-c", "user.name=relay", "-c", "user.email=relay@localhost", "rebase", `origin/${repo.target}`], repo.worktree);
+	const rebaseArgs = stack === "merged" ? ["rebase", "--onto", `origin/${repo.target}`, repo.stackedOn!.head] : ["rebase", `origin/${tgt}`];
+	const rebase = await ctx.run("git", ["-c", "user.name=relay", "-c", "user.email=relay@localhost", ...rebaseArgs], repo.worktree);
 	if (rebase.code !== 0) {
 		const conflicts = (await git("diff", "--name-only", "--diff-filter=U")).stdout.split(/\r?\n/).filter(Boolean);
 		await git("rebase", "--abort");
-		return { ok: false, fix: `Rebasing ${repo.key} onto origin/${repo.target} conflicts in ${conflicts.join(", ") || "some files"}. Rebase your branch onto origin/${repo.target}, resolve the conflicts, and report_done again.` };
+		return { ok: false, fix: `Rebasing ${repo.key} onto origin/${tgt} conflicts in ${conflicts.join(", ") || "some files"}. Rebase your branch onto origin/${tgt}${stack === "merged" ? ` (git rebase --onto origin/${repo.target} ${repo.stackedOn!.head})` : ""}, resolve the conflicts, and report_done again.` };
 	}
 	repo.base = upstream;
+	if (stack === "merged") {
+		// the predecessor merged: this repo is a plain job on the target from here on, and its PR has to follow
+		delete repo.stackedOn;
+		repo.retarget = true;
+	}
 	const overlap = jobFiles.filter((f) => upFiles.has(f));
 	if (overlap.length) return { ok: false, fix: `origin/${repo.target} changed files you also changed (${overlap.join(", ")}). The rebase went through, but check that your change still fits what is upstream now, run Verify, and report_done again.` };
 	const newTree = firstLine((await git("rev-parse", "HEAD^{tree}")).stdout);
@@ -104,7 +113,7 @@ async function github(ctx: StepCtx, repo: RepoState): Promise<string | undefined
 	return v.code === 0 ? slug : undefined;
 }
 
-async function ensurePr(ctx: StepCtx, job: Job, repo: RepoState, slug: string, goal: string): Promise<string | undefined> {
+async function ensurePr(ctx: StepCtx, job: Job, repo: RepoState, slug: string, goal: string, base: string): Promise<string | undefined> {
 	const rb = repo.remoteBranch ?? repo.branch;
 	const view = await ctx.run("gh", ["pr", "view", rb, "-R", slug, "--json", "url,state"], repo.worktree);
 	if (view.code === 0) {
@@ -115,7 +124,7 @@ async function ensurePr(ctx: StepCtx, job: Job, repo: RepoState, slug: string, g
 			// create a new one below
 		}
 	}
-	const create = await ctx.run("gh", ["pr", "create", "-R", slug, "--base", repo.target, "--head", rb, "--title", job.title, "--body", `${goal}\n\nrelay job ${job.id}`], repo.worktree);
+	const create = await ctx.run("gh", ["pr", "create", "-R", slug, "--base", base, "--head", rb, "--title", job.title, "--body", `${goal}\n\nrelay job ${job.id}`], repo.worktree);
 	if (create.code !== 0) return undefined;
 	return create.stdout.trim().split(/\r?\n/).filter(Boolean).pop();
 }
@@ -140,13 +149,22 @@ async function deliverOnce(job: Job, ctx: StepCtx, attempt: number): Promise<Out
 		if (repo.merged) continue;
 		if (ctx.stopped()) return { kind: "stopped" };
 		const pol = repoPolicy(ctx.cfg, repo.main);
+		const slug = await github(ctx, repo);
+		slugs.set(repo.key, slug);
+		// the predecessor merged and this repo was restacked: the PR follows to the target before the push (D17)
+		if (repo.retarget) {
+			if (slug && repo.pr) {
+				const ed = await ctx.run("gh", ["pr", "edit", repo.pr, "-R", slug, "--base", repo.target], repo.worktree);
+				if (ed.code !== 0) return { kind: "error", error: `gh pr edit --base ${repo.target} failed in ${repo.key}: ${firstLine(ed.stderr)}` };
+			}
+			delete repo.retarget;
+			ctx.log("retarget", `${repo.key}: PR now targets ${repo.target}`);
+		}
 		const p = await pushJobBranch(ctx, repo, pol.protectedBranches);
 		ctx.save(job);
 		if (!p.ok) return { kind: "error", error: p.error };
-		const slug = await github(ctx, repo);
-		slugs.set(repo.key, slug);
 		if (slug) {
-			const pr = await ensurePr(ctx, job, repo, slug, parsed.sections.Goal ?? job.title);
+			const pr = await ensurePr(ctx, job, repo, slug, parsed.sections.Goal ?? job.title, repo.stackedOn && stackState(repo, ctx.job(repo.stackedOn.job)) === "open" ? repo.stackedOn.branch : repo.target);
 			if (pr) repo.pr = pr;
 			else ctx.notify(`relay job ${job.id}: pushed ${repo.remoteBranch} but could not open a pull request in ${repo.key}`);
 			ctx.save(job);
@@ -159,6 +177,11 @@ async function deliverOnce(job: Job, ctx: StepCtx, attempt: number): Promise<Out
 		// an amendment since the PASS holds the merge: nothing merges until the new brief version is judged
 		if (!repo.merged && workAmendments(job, ctx.brief()).length) return { kind: "amended" };
 		const pol = repoPolicy(ctx.cfg, repo.main);
+		// a stacked repo merges only after its predecessor did: its PR waits against the predecessor's branch
+		if (repo.stackedOn && stackState(repo, ctx.job(repo.stackedOn.job)) === "open") {
+			ctx.log("stacked", `${repo.key}: PR is stacked on ${repo.stackedOn.branch} (job ${repo.stackedOn.job}); it merges after that one`);
+			continue;
+		}
 		if (repo.merged || !mergeAllowed(parsed.authority.merge, mergeApproved, pol.merge)) continue;
 		const slug = slugs.get(repo.key);
 		const tree = repo.acceptedTree ?? "";
