@@ -51,6 +51,8 @@ export interface Run {
 	repos?: Repo[];
 	/** The remote ref the packages' PRs go into, per repo key ("" in a single-repo run); drift and overlap are measured from the merge base with it. Absent in older runs. */
 	targets?: Record<string, string>;
+	/** The run charter the user approved at "go" (also in charter.md). Absent in older runs. */
+	charter?: string;
 	subs: Sub[];
 }
 
@@ -190,11 +192,13 @@ export const keyOf = (g: string): string => split(g).key;
 
 const list = (items: string[], empty: string) => (items.length ? items.map((i) => `- ${i}`).join("\n") : `- ${empty}`);
 
-export function renderBrief(sub: Sub, run: Run): string {
+export function renderBrief(sub: Sub, run: Run, decisionsPath?: string): string {
 	const others = run.subs.filter((s) => s.id !== sub.id);
 	return [
 		`# Package ${sub.id}: ${run.title}`,
 		"",
+		...(run.charter ? ["## Run charter", run.charter.trim(), ""] : []),
+		...(decisionsPath ? [`## Decision log`, `The orchestrator's decisions and assumptions are appended to ${decisionsPath}. Read it before you ask anything.`, ""] : []),
 		"## Goal",
 		sub.goal,
 		"",
@@ -227,11 +231,12 @@ export function renderBrief(sub: Sub, run: Run): string {
 	].join("\n");
 }
 
-export function kickoffText(sub: Sub, run: Run, briefPath: string): string {
+export function kickoffText(sub: Sub, run: Run, briefPath: string, decisionsPath?: string): string {
 	return [
 		`You are package "${sub.id}" of the orchestrated run "${run.title}". Read the brief at ${briefPath} first; it is the whole job.`,
 		"",
 		...(sub.worktrees?.length ? ["Your worktrees:", ...sub.worktrees.map((w) => `- ${w.key || "(working repo)"}: ${w.cwd}`), ""] : []),
+		...(run.charter || decisionsPath ? [`Read the run charter in the brief${decisionsPath ? ` and the decision log at ${decisionsPath}` : ""} before you ask anything: most questions are answered there.`, ""] : []),
 		"Rules:",
 		`- Stay inside your owned paths (${sub.owns.join(", ")}).`,
 		`- Never touch: ${sub.forbids.length ? sub.forbids.join(", ") : "paths owned by other packages"}.`,

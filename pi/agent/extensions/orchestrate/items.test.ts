@@ -61,7 +61,7 @@ test("openItem: a new accept-request of the same sub and repo makes the old one 
 	assert.equal(findItem(f, "a", planRef(1))?.state, "stale");
 });
 
-test("tick: reminders at 60 s, 5 min and 10 min of orchestrator idle time, escalation at 15 min", () => {
+test("tick: reminders at 60 s, 5 min and 10 min of orchestrator idle time, one overdue notice at 15 min (no escalation)", () => {
 	const f = emptyItems();
 	const q = msg("question");
 	open(f, q);
@@ -78,12 +78,14 @@ test("tick: reminders at 60 s, 5 min and 10 min of orchestrator idle time, escal
 	assert.equal(it.reminders, 3);
 	assert.deepEqual(step(4 * MIN), []);
 	assert.equal(it.state, "open");
-	assert.deepEqual(step(MIN).map((a) => a.type), ["escalate"]); // 15 min idle
-	assert.equal(it.state, "escalated");
-	assert.deepEqual(step(20 * MIN), []); // escalated: no more reminders
+	const overdue = step(MIN); // 15 min idle
+	assert.deepEqual(overdue.map((a) => a.type), ["remind"]);
+	assert.equal(overdue[0].type === "remind" && Boolean(overdue[0].overdue), true);
+	assert.equal(it.state, "open");
+	assert.deepEqual(step(20 * MIN), []); // the notice is sent once
 });
 
-test("tick: nothing counts while the orchestrator is busy; the 30 min ceiling escalates anyway", () => {
+test("tick: nothing counts while the orchestrator is busy; the 30 min ceiling gives the overdue notice anyway", () => {
 	const f = emptyItems();
 	const q = msg("question");
 	open(f, q);
@@ -92,8 +94,8 @@ test("tick: nothing counts while the orchestrator is busy; the 30 min ceiling es
 	assert.equal(it.idleMs, 0);
 	assert.deepEqual(tick(f, T0 + 29 * MIN, false, 19 * MIN), []);
 	const act = tick(f, T0 + ESCALATE_CEILING_MS, false, MIN);
-	assert.deepEqual(act.map((a) => a.type), ["escalate"]);
-	assert.equal(it.state, "escalated");
+	assert.deepEqual(act.map((a) => a.type), ["remind"]);
+	assert.equal(it.state, "open");
 });
 
 test("tick: closing ends the counting; accept requests follow the same timing", () => {
@@ -105,7 +107,7 @@ test("tick: closing ends the counting; accept requests follow the same timing", 
 	assert.deepEqual(tick(f, T0 + 20 * MIN, true, 19 * MIN), []);
 	const q = msg("question");
 	open(f, q, T0);
-	assert.deepEqual(tick(f, T0 + 15 * MIN, true, 15 * MIN).map((a) => a.type), ["escalate"]);
+	assert.deepEqual(tick(f, T0 + 15 * MIN, true, 15 * MIN).map((a) => a.type), ["remind"]);
 });
 
 test("an idle item is closed by a message to its sub and by idle-end; an escalated one only by idle-end", () => {
@@ -120,7 +122,7 @@ test("an idle item is closed by a message to its sub and by idle-end; an escalat
 	assert.equal(liveItems(f).length, 0);
 });
 
-test("restart: items and counters survive a write and a read; a saved idleMs continues; an item past the ceiling escalates on the first tick; a missing file is empty", () => {
+test("restart: items and counters survive a write and a read; a saved idleMs continues; an item past the ceiling gets the overdue notice on the first tick; a missing file is empty", () => {
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "orch-items-")).replace(/\\/g, "/");
 	const common = `${dir}/.git`;
 	assert.deepEqual(readItems(common, "r1").file, emptyItems());
@@ -136,7 +138,7 @@ test("restart: items and counters survive a write and a read; a saved idleMs con
 	assert.deepEqual(tick(back.file, T0 + 7 * MIN, true, 3 * MIN).map((a) => a.type), ["remind"]); // 7 + 3 = 10 min of saved idle time
 	const old = emptyItems();
 	open(old, msg("question"), T0);
-	assert.deepEqual(tick(old, T0 + 40 * MIN, true, 0).map((a) => a.type), ["escalate"]);
+	assert.deepEqual(tick(old, T0 + 40 * MIN, true, 0).map((a) => a.type), ["remind"]);
 	fs.writeFileSync(`${common}/pi/orchestra/r1/items.json`, "{nope");
 	const bad = readItems(common, "r1");
 	assert.ok(bad.corrupt);

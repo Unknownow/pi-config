@@ -39,7 +39,7 @@ import { PROPOSAL_FIX, repoTableText, RUN_KICKOFF, section } from "./prompts.ts"
 import { check, OFFLINE_SECONDS, type Snapshot } from "./monitor.ts";
 import { boardLines, buildView, pendingOf, viewSig, widgetLines, type Paint, type SubInput, type View } from "./view.ts";
 import {
-	addAccepted, appendMerges, appendMessage, commonDir, itemsPath, findSubByToplevel, listActiveRuns, norm, orchestraDir, readAccepted, readCursor, readItems, readMerges, readNew, readRun, readStatus, readSpawnRegistry, readView, runDir, sameDir, spawnRegistryPath, subDir, withoutSpawnEntries, withSpawnEntry, writeSpawnRegistry, writeCursor, writeItems, writeRun, writeStatus, writeView,
+	addAccepted, appendDecision, appendMerges, charterPath, decisionsPath, readAssumptions, appendMessage, commonDir, itemsPath, findSubByToplevel, listActiveRuns, norm, orchestraDir, readAccepted, readCursor, readItems, readMerges, readNew, readRun, readStatus, readSpawnRegistry, readView, runDir, sameDir, spawnRegistryPath, subDir, withoutSpawnEntries, withSpawnEntry, writeSpawnRegistry, writeCursor, writeItems, writeRun, writeStatus, writeView,
 	type Exec, type Message, type SpawnEntry, type Status,
 } from "./store.ts";
 
@@ -592,7 +592,7 @@ export default function (pi: ExtensionAPI): void {
 		});
 		await new Promise((r) => setTimeout(r, 500));
 		const briefPath = f(m, "brief.md");
-		const claims = emitClaims((d) => pi.events.emit("workflow:start-plan", d), { v: 1, title: `${m.run.title}: ${m.sub.id}`, brief: kickoffText(m.sub, m.run, briefPath), allowTools: ["ask_orchestrator"] }, 10_000);
+		const claims = emitClaims((d) => pi.events.emit("workflow:start-plan", d), { v: 1, title: `${m.run.title}: ${m.sub.id}`, brief: kickoffText(m.sub, m.run, briefPath, decisionsPath(m.common, m.run.id)), allowTools: ["ask_orchestrator"] }, 10_000);
 		const ans = (await claims.answer) as { ok?: boolean; error?: string } | null;
 		if (!claims.claimed || !ans || ans.error || !ans.ok) {
 			ctx.ui.notify(`orchestrate: could not start the flow from the brief (${!claims.claimed ? "workflow extension did not answer" : ans?.error ?? "no answer"}); brief: ${briefPath}`, "error");
@@ -1013,8 +1013,13 @@ export default function (pi: ExtensionAPI): void {
 	/** Reminders and escalations: a desktop notification and a message for the orchestrator model (unless `quiet`: its tool result says it). */
 	function handleActions(actions: Action[], quiet = false): void {
 		for (const a of actions) {
+			if (a.type === "step-back") {
+				events.push(`Limit reached (${a.why}): ${describeItem(a.item)}. Do not ask the user. Step back: re-read the brief, the plan and the decision log, ask the advisor, then replan, split or narrow the package (answer the item with a different approach, or send a directive after it). Stopping a package is reserved for the user.`);
+				continue;
+			}
 			if (a.type === "remind") {
-				events.push(`Still open: ${describeItem(a.item)}. Answer it (${answerTool(a.item)}) or call orch_escalate {id:"${a.item.sub}", ref:"${a.item.ref}", question} when it needs the user.`);
+				if (a.overdue) uiCtx?.ui?.notify?.(`orchestrate: ${a.item.sub} waits for the orchestrator (${a.overdue})`, "warning");
+				events.push(`Still open${a.overdue ? ` (${a.overdue})` : ""}: ${describeItem(a.item)}. Answer it (${answerTool(a.item)}); call orch_escalate {id:"${a.item.sub}", ref:"${a.item.ref}", question} only for a reserved action.`);
 				continue;
 			}
 			notifyDesktop("orchestrate: needs you", `${a.item.sub}: ${clipText(a.item.escalation ?? a.item.summary, 160)}`);
@@ -1521,10 +1526,22 @@ export default function (pi: ExtensionAPI): void {
 			const s = subOf(r, id);
 			s.state = stateAfterVerdict(s.state);
 		});
-		return { merged: done.length > 0 && !problems.length, waiting, failed, text: [...done.map((d) => `${id}: pull request ${d}`), ...problems.map((p) => `${id}: ${p}`)].join("\n") || `${id}: nothing to merge` };
+		const merged = done.length > 0 && !problems.length;
+		const doneText = done.map((d) => `${id}: pull request ${d}`).join("; ");
+		if (merged && owned) appendDecision(owned.common, owned.runId, id, opt.force ? "forced merge" : "merge", doneText);
+		return { merged, waiting, failed, text: [...done.map((d) => `${id}: pull request ${d}`), ...problems.map((p) => `${id}: ${p}`)].join("\n") || `${id}: nothing to merge` };
 	}
 
 	/** `/orch merge` and `orch_merge`: merge, then (flow not running) confirm and mark the package merged. A waiting sub-session stays registered. */
+	/** The logged assumptions with the packages that build on them, for the final report. */
+	function assumptionReport(): string {
+		if (!owned) return "";
+		const list = readAssumptions(owned.common, owned.runId);
+		if (!list.length) return "";
+		return `Assumptions made without the user (${list.length}; reverse any with a directive):
+${list.map((a) => `${a.line} → affects ${a.affects.join(", ") || "?"}`).join("\n")}`;
+	}
+
 	async function mergeAndConfirm(id: string, opt: { force?: boolean; repo?: string }): Promise<string> {
 		const r = await mergePackage(id, opt);
 		const lines = r.merged && !r.waiting ? await checkEnded(true, [id], false) : [];
@@ -1602,7 +1619,7 @@ export default function (pi: ExtensionAPI): void {
 				for (const i of liveItems(itemsFile, m.id)) close(itemsFile, m.id, i.ref, { how: "stale" });
 				saveItems();
 				lines.push(
-					`[${m.id}] merged${m.forcedCheck !== undefined ? ` (forced; check: ${m.forcedCheck || "positive"})` : ""}${m.notes.length ? ` (${m.notes.join("; ")})` : ""}. ${ready.ready.length ? `Ready to spawn: ${ready.ready.join(", ")}.` : "Nothing new is ready to spawn."}${ready.running.length ? ` Running: ${ready.running.join(", ")}; they may need to rebase on ${target}.` : ""}${ready.all ? " All packages are done; tell the user, then /orch end." : ""}`,
+					`[${m.id}] merged${m.forcedCheck !== undefined ? ` (forced; check: ${m.forcedCheck || "positive"})` : ""}${m.notes.length ? ` (${m.notes.join("; ")})` : ""}. ${ready.ready.length ? `Ready to spawn: ${ready.ready.join(", ")}.` : "Nothing new is ready to spawn."}${ready.running.length ? ` Running: ${ready.running.join(", ")}; they may need to rebase on ${target}.` : ""}${ready.all ? ` All packages are done; tell the user, then /orch end. In that report list every assumption with the packages it affects, and the checks only a person can do.${assumptionReport() ? `\n${assumptionReport()}` : ""}` : ""}`,
 				);
 			}
 		}
@@ -1742,7 +1759,8 @@ export default function (pi: ExtensionAPI): void {
 			const steps = st?.total ? ` ${st.done ?? 0}/${st.total}` : "";
 			return `${s.id.padEnd(16)} ${(s.state === "merged" && s.forced ? "merged (forced)" : s.state).padEnd(20)} ${phaseLabel(st?.phase ?? "-", st?.judging) + steps + (st?.waiting ? " (waiting)" : "")}`.padEnd(52) + ` beat ${age}${s.branch ? `  ${s.branch}` : ""}`;
 		});
-		return `Run ${run.id} (${run.title}), running ${activeCount(run)}/${cfg.maxSubs}\n${rows.join("\n")}`;
+		const assumed = readAssumptions(o.common, o.runId).length;
+		return `Run ${run.id} (${run.title}), running ${activeCount(run)}/${cfg.maxSubs}${assumed ? `, ${assumed} assumption${assumed === 1 ? "" : "s"} logged` : ""}\n${rows.join("\n")}`;
 	}
 
 	const addedOf = (ctx: ExtensionContext): string[] => foldersFromEntries(ctx.sessionManager.getBranch() as { type: string; customType?: string; data?: unknown }[]);
@@ -1806,6 +1824,7 @@ export default function (pi: ExtensionAPI): void {
 		promptSnippet: "orch_run: define the work packages of an orchestrated run (then orch_spawn)",
 		parameters: Type.Object({
 			title: Type.String({ description: "Short title of the whole job" }),
+			charter: Type.String({ description: "The proposal's `## Charter` section as approved: Goal, User decisions, Non-goals, Priorities, Target, Standing orders, Reserved for the user" }),
 			packages: Type.Array(pkgSchema),
 			targets: Type.Optional(Type.Array(Type.String(), { description: 'Branch the PRs go into: "branch" (working repo) or "key:branch". Default: the upstream of each repo checkout' })),
 		}),
@@ -1822,6 +1841,7 @@ export default function (pi: ExtensionAPI): void {
 				const keyed = (params.packages as PackageInput[]).flatMap((p) => [...(p.owns ?? []), ...(p.forbids ?? [])]).filter(hasKeyPrefix);
 				if (keyed.length) throw new Error(`invalid packages: no other repos in this session, so use plain globs (not ${keyed.slice(0, 3).join(", ")}); add repos with /folders add`);
 			}
+			if (!params.charter?.trim()) throw new Error("charter is required: pass the proposal's `## Charter` section (ask the user to settle it first)");
 			const errors = validatePackages(params.packages as PackageInput[], repos);
 			if (errors.length) throw new Error(`invalid packages:\n- ${errors.join("\n- ")}`);
 			const packages = repos ? canonicalPackages(params.packages as PackageInput[], repos).packages : (params.packages as PackageInput[]);
@@ -1891,12 +1911,15 @@ export default function (pi: ExtensionAPI): void {
 					...(repos ? { repos: subRepos(p, repos[0].key) } : {}),
 				});
 			}
-			const run: Run = { v: 1, id, title: params.title, created: new Date().toISOString(), owner: { pid: process.pid, host: os.hostname(), session: ctx.sessionManager.getSessionFile() ?? "" }, state: "active", originTrusted: projectTrusted(ctx), ...(repos ? { repos } : {}), targets, subs };
+			const run: Run = { v: 1, id, title: params.title, created: new Date().toISOString(), owner: { pid: process.pid, host: os.hostname(), session: ctx.sessionManager.getSessionFile() ?? "" }, state: "active", charter: params.charter.trim(), originTrusted: projectTrusted(ctx), ...(repos ? { repos } : {}), targets, subs };
 			fs.mkdirSync(runDir(common, id), { recursive: true });
 			for (const s of subs) {
 				fs.mkdirSync(subDir(common, id, s.id), { recursive: true });
-				fs.writeFileSync(`${subDir(common, id, s.id)}/brief.md`, renderBrief(s, run));
+				fs.writeFileSync(`${subDir(common, id, s.id)}/brief.md`, renderBrief(s, run, decisionsPath(common, id)));
 			}
+			fs.writeFileSync(charterPath(common, id), `${params.charter.trim()}
+`);
+			fs.writeFileSync(decisionsPath(common, id), "");
 			writeRun(common, run);
 			startWatcher({ common, runId: id, repoCwd: ctx.cwd });
 			return text(`Run ${id} created with ${subs.length} packages${repos ? ` over ${repos.length} repos (${repos.map((r) => r.key).join(", ")})` : ""}. Ready to spawn: ${readyToSpawn(run).join(", ") || "none"}. Briefs are in ${runDir(common, id)}/<id>/brief.md.\n${targetLines.join("\n")}${overlapNote ? `\n${overlapNote}` : ""}`);
@@ -2020,6 +2043,8 @@ export default function (pi: ExtensionAPI): void {
 			replyTo: Type.Optional(Type.String({ description: "Question id, for an answer" })),
 			urgent: Type.Optional(Type.Boolean({ description: "directive only: interrupt the running turn" })),
 			userQuote: Type.Optional(Type.String({ description: "Answering an escalated question: an exact piece of a message the user typed after the escalation" })),
+			assumption: Type.Optional(Type.Boolean({ description: "true when the brief, the charter and the log do not settle the question and you chose the most reversible option: it is logged as an assumption and listed in the final report" })),
+			affects: Type.Optional(Type.Array(Type.String(), { description: "Package ids that build on this assumption (default: the package you answer)" })),
 		}),
 		async execute(_id, params) {
 			const { o, run } = need();
@@ -2034,6 +2059,7 @@ export default function (pi: ExtensionAPI): void {
 			const bad = subject ? checkItemAnswer(subject, params.userQuote) : null;
 			if (bad) throw new Error(bad);
 			const m = appendMessage(sf(o, params.id, "inbox.jsonl"), "orch", { type: params.type, text: params.text, replyTo: params.replyTo, data: params.urgent ? { urgent: true } : undefined });
+			appendDecision(o.common, o.runId, params.id, params.type, params.text, { assumption: params.assumption, affects: params.affects });
 			if (answered?.kind === "question" || subject?.kind === "idle") closeItem(params.id, subject!.ref, "answered", quoteOk(subject!, params.userQuote));
 			if (closeIdle(itemsFile, params.id, false).length) {
 				saveItems();
@@ -2076,6 +2102,7 @@ export default function (pi: ExtensionAPI): void {
 				}
 			}
 			if (!approve && !reasons) throw new Error("reasons are required when rejecting a plan");
+			appendDecision(o.common, o.runId, params.id, approve ? `plan ${params.n} approved` : `plan ${params.n} rejected`, approve ? [params.summary, params.notes ? `notes: ${params.notes}` : ""].filter(Boolean).join("; ") : reasons);
 			appendMessage(sf(o, params.id, "inbox.jsonl"), "orch", { type: "plan-verdict", text: approve ? "approved" : reasons, data: { approve, n: params.n, ...(approve && params.notes?.trim() ? { notes: params.notes.trim() } : {}) } });
 			if (planItem) closeItem(params.id, planItem.ref, "answered", quoteOk(planItem, params.userQuote), approve ? "approved" : "rejected");
 			return text(approve ? `plan ${params.n} of ${params.id} approved` : `plan ${params.n} of ${params.id} rejected: ${reasons}`);
@@ -2112,6 +2139,7 @@ export default function (pi: ExtensionAPI): void {
 				text: params.accept ? `Tree ${tree}${repo ? ` of repo ${repo}` : ""} accepted; retry the merge.` : `Not accepted${repo ? ` (repo ${repo})` : ""}: ${params.reasons}`,
 				data: verdictPayload({ tree, repo, kind: lastReq.data?.kind, ask: lastReq.data?.ask }, params.accept),
 			});
+			if (!params.accept) appendDecision(o.common, o.runId, params.id, "accept refused", params.reasons ?? "");
 			if (accItem) closeItem(params.id, accItem.ref, "answered", quoteOk(accItem, params.userQuote), params.accept ? "accepted" : "refused");
 			await mutate((r) => {
 				const s = subOf(r, params.id);
@@ -2164,6 +2192,7 @@ export default function (pi: ExtensionAPI): void {
 			}
 			const t = params.text?.trim();
 			appendMessage(sf(o, params.id, "inbox.jsonl"), "orch", { type: "decision", text: `decision for ${params.askId}`, data: { askId: params.askId, ...(params.resume ? { resume: true } : { choice: params.choice }), ...(t ? { text: t } : {}) } });
+			appendDecision(o.common, o.runId, params.id, "decide", `${params.resume ? "resume" : `chose "${params.choice}"`} for ${item?.key ?? params.askId}${t ? `: ${t}` : ""}`);
 			closeItem(params.id, params.askId, "answered", d.byUser, d.outcome);
 			return text(`${params.resume ? "resumed" : `chose "${params.choice}" for`} ${params.askId} of ${params.id}${t ? " (with text)" : ""}`);
 		},
@@ -2172,7 +2201,7 @@ export default function (pi: ExtensionAPI): void {
 	pi.registerTool({
 		name: "orch_escalate",
 		label: "Orchestrate: escalate",
-		description: "Escalate an open item (question, menu, idle report, plan review, accept request) to the user: it needs a person or a choice the brief does not settle. `question` is what the user sees. Then show it to the user and relay their answer with userQuote.",
+		description: "Escalate an open item to the user, only for an action the charter reserves for them: stopping or dropping a package, changing the goal or scope, or an irreversible action no plan covers. Everything else you decide yourself (an assumption, the advisor, step back). `question` is what the user sees. Then show it to the user and relay their answer with userQuote.",
 		promptSnippet: "orch_escalate: send an item that needs the user to them",
 		parameters: Type.Object({
 			id: Type.String({ description: "Package id" }),
@@ -2245,10 +2274,12 @@ export default function (pi: ExtensionAPI): void {
 						r.state = "ended";
 					});
 					const id = owned?.runId;
+					const assumed = assumptionReport();
 					if (id) unregister(id);
 					stopWatcher();
 					if (mode !== "off") setMode("off", false, ctx);
-					ctx.ui.notify(`orchestrate: run ${id} ended; the worktrees stay (remove them with /wt)`, "info");
+					ctx.ui.notify(`orchestrate: run ${id} ended; the worktrees stay (remove them with /wt)${assumed ? `
+${assumed}` : ""}`, "info");
 				} else if (sub === "watch") {
 					const common = await commonDir(exec, ctx.cwd);
 					if (!common) throw new Error("not in a git repository");
