@@ -4,11 +4,13 @@
  *   run_code   run JavaScript in a child node process, get a capped result
  *   fetch_url     fetch a page, save it as markdown/json/text, get a short summary
  *   video_frames  probe a video and get still frames as images (ffmpeg)
+ *   read_pdf      text of a PDF (pdftotext) or page images (pdftoppm)
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { fetchUrl } from "./fetch-url.ts";
+import { readPdf } from "./read-pdf.ts";
 import { runCode } from "./run-code.ts";
 import { videoFrames } from "./video-frames.ts";
 
@@ -65,6 +67,27 @@ export default function sandbox(pi: ExtensionAPI) {
 			return {
 				content: [{ type: "text", text: r.text }, ...r.frames.map((f) => ({ type: "image" as const, data: f.data, mimeType: f.mimeType }))],
 				details: { frames: r.frames.map((f) => ({ time: f.time, file: f.file })) },
+			};
+		},
+	});
+
+	pi.registerTool({
+		name: "read_pdf",
+		label: "Read PDF",
+		description:
+			"Read a PDF. Default: the text (pdftotext -layout) saved to a temp file; returns the page count, size, the first 2,000 characters and the file path, then grep or read that file for more. If the pages have no text layer it says so; then pass images: true to get page images (at most 8 pages per call, a larger range is clipped; width default 900, max 1920). pages is \"A\" or \"A-B\" (1-based).",
+		promptSnippet: "read_pdf: get a PDF's text (saved to a file, with a summary) or page images (images: true, max 8 pages)",
+		parameters: Type.Object({
+			path: Type.String({ description: "PDF file; relative paths resolve against the session folder" }),
+			pages: Type.Optional(Type.String({ description: "Page or range, \"A\" or \"A-B\" (default: all for text, the first 8 for images)" })),
+			images: Type.Optional(Type.Boolean({ description: "Return page images instead of text" })),
+			width: Type.Optional(Type.Number({ description: "Image width in pixels (default 900, max 1920)" })),
+		}),
+		async execute(_id, params, signal, _onUpdate, ctx) {
+			const r = await readPdf(params, { cwd: ctx.cwd, signal });
+			return {
+				content: [{ type: "text", text: r.text }, ...r.images.map((i) => ({ type: "image" as const, data: i.data, mimeType: i.mimeType }))],
+				details: { images: r.images.map((i) => ({ page: i.page, file: i.file })) },
 			};
 		},
 	});
