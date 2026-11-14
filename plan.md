@@ -589,10 +589,10 @@ The rest of S2 is unchanged.
 - [x] S9 Targets in the orchestrator.
 - [x] S10 Name the repo in the workflow's gh calls. `gh pr view` at `workflow/index.ts:2555, 4235, 4309` passes `-R <owner/name>`,
 - [x] S11 Docs and backlog.
-- [ ] S12 Add approval notes to `orch_review_plan` (`orchestrate/index.ts:1778-1810`).
-- [ ] S13 Append the notes to the plan (workflow K10). In `hooks.ts:23-29`, `index.ts:3637-3640` and `approve` (`:800`): when ther
-- [ ] S14 Hold messages during review.
-- [ ] S15 Docs and backlog: K10 notes in both READMEs, and row A50 Done. The measure is plans per package, which should be 1-2.
+- [x] S12 Add approval notes to `orch_review_plan` (`orchestrate/index.ts:1778-1810`).
+- [x] S13 Append the notes to the plan (workflow K10). In `hooks.ts:23-29`, `index.ts:3637-3640` and `approve` (`:800`): when ther
+- [x] S14 Hold messages during review.
+- [x] S15 Docs and backlog: K10 notes in both READMEs, and row A50 Done. The measure is plans per package, which should be 1-2.
 - [ ] S16 Severity helpers in `shared/findings.ts`.
 - [ ] S17 Minors become notes.
 - [ ] S18 Fix code minors without a re-review.
