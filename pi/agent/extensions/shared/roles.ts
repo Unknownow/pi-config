@@ -38,21 +38,42 @@ export function modelChoices(models: Model[], current?: string): { value: string
 		});
 }
 
-/** Tab completions for `<sub> <role> <provider/id>`: the role, then the models with auth. */
+/** Tab completions for `<sub> <role> <provider/id[:thinking]>`: the role, the models with auth, then the thinking level. */
 export function roleCompletions(
 	sub: string,
 	parts: string[],
 	roles: readonly string[],
 	specOf: (role: string) => RoleSpec,
 	models: () => Model[],
-): { value: string; label: string }[] | null {
-	if (parts.length === 2) return roles.filter((r) => r.startsWith(parts[1])).map((r) => ({ value: `${sub} ${r} `, label: `${r} (${describeRole(specOf(r))})` }));
-	if (parts.length !== 3 || !roles.includes(parts[1])) return null;
+): { value: string; label: string; description: string }[] | null {
 	try {
-		const items = modelChoices(models(), specOf(parts[1]).model)
-			.filter((c) => c.value.toLowerCase().startsWith(parts[2].toLowerCase()))
-			.slice(0, 50)
-			.map((c) => ({ value: `${sub} ${parts[1]} ${c.value}`, label: c.label }));
+		if (parts.length === 2) {
+			const found = roles.filter((r) => r.startsWith(parts[1])).map((r) => ({ value: `${sub} ${r} `, label: r, description: describeRole(specOf(r)) }));
+			return found.length > 0 ? found : null;
+		}
+		if (parts.length !== 3 || !roles.includes(parts[1])) return null;
+		const role = parts[1];
+		const typed = parts[2];
+		const current = specOf(role);
+		const all = models();
+		const colon = typed.indexOf(":");
+		const items: { value: string; label: string; description: string }[] = [];
+		if (colon < 0) {
+			const byValue = new Map(all.map((m) => [`${m.provider}/${m.id}`, m]));
+			for (const c of modelChoices(all, current.model).filter((c) => c.value.toLowerCase().startsWith(typed.toLowerCase())).slice(0, 50)) {
+				const m = byValue.get(c.value)!;
+				items.push({ value: `${sub} ${role} ${c.value}`, label: c.label, description: `default thinking · ${m.provider}/${m.name ?? m.id}` });
+			}
+		}
+		const base = colon < 0 ? typed : typed.slice(0, colon);
+		const levelPrefix = colon < 0 ? "" : typed.slice(colon + 1).toLowerCase();
+		if (colon >= 0 || all.some((m) => `${m.provider}/${m.id}` === base)) {
+			for (const level of THINKING_LEVELS) {
+				if (!level.startsWith(levelPrefix) || typeof parseRoleSpec(`${base}:${level}`) === "string") continue;
+				const now = current.model === base && current.thinking === level;
+				items.push({ value: `${sub} ${role} ${base}:${level}`, label: `${base}:${level}`, description: `thinking ${level}${now ? " (current)" : ""}` });
+			}
+		}
 		return items.length > 0 ? items : null;
 	} catch {
 		return null;
