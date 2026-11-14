@@ -50,7 +50,7 @@
   "maxPlanRevisions": 2,
   "delivery": {
     "splitCommits": true,
-    "mergeMethod": "merge",
+    "mergeMethod": "squash",
     "deleteBranch": true,
     "base": "",
     "branchPrefix": "flow/"
