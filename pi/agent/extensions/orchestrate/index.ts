@@ -194,14 +194,15 @@ export default function (pi: ExtensionAPI): void {
 	};
 
 	/** The run's target branches and the default branches: shared, never a package's own head branch. */
-	const sharedBranch = (run: Run | null | undefined, b: string): boolean => b === "main" || b === "master" || Object.values(run?.targets ?? {}).some((t) => t.replace(/^[^/]+\//, "") === b);
+	const sharedBranch = (run: Run | null | undefined, b: string): boolean => b === "main" || b === "master" || Object.values(run?.targets ?? {}).some((t) => (t.startsWith("origin/") ? t.slice(7) : t) === b);
 
 	/** Adds the branch checked out in `dir` to the status's branch list (restored from the old status file after a restart). */
 	async function noteBranch(dir: string | undefined): Promise<void> {
 		if (!me || !started || !dir) return;
 		if (!myBranches.length) myBranches.push(...(readStatus(f(me, "status.json")).status?.branches ?? []).filter((b) => typeof b === "string"));
 		const b = (await git(dir, "rev-parse", "--abbrev-ref", "HEAD"))?.trim();
-		if (!b || b === "HEAD" || sharedBranch(readRun(me.common, me.run.id).run ?? me.run, b) || myBranches[myBranches.length - 1] === b) return;
+		const dflt = (await git(dir, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"))?.trim().replace(/^origin\//, "");
+		if (!b || b === "HEAD" || b === dflt || sharedBranch(readRun(me.common, me.run.id).run ?? me.run, b) || myBranches[myBranches.length - 1] === b) return;
 		const at = myBranches.indexOf(b);
 		if (at >= 0) myBranches.splice(at, 1);
 		myBranches.push(b);
