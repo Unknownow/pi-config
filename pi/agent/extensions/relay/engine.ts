@@ -602,6 +602,7 @@ export class Engine {
 			this.d.notify(`relay job ${jr.job.id}: the worker ${why}; restarting it`);
 			await this.startWorker(jr, { resume: true, prompt: `Your session was restarted because ${why}. Continue the job where you stopped: check git status and git log in the worktree first. If the work is finished, call report_done.` });
 		} catch (e) {
+			if (jr.lost) return;
 			this.pauseJob(jr, "working", `restart failed: ${(e as Error).message}`);
 			this.d.wake(`relay job ${jr.job.id}: the worker ${why} and could not be restarted (${(e as Error).message}). The job is paused; relay_resume or relay_stop.`);
 		} finally {
@@ -950,6 +951,7 @@ export class Engine {
 			this.dropWorker(jr);
 			await this.startWorker(jr, { resume: true, prompt: workerPrompt(this.ctxFor(jr), job, "The job was paused and is resumed; your session continues. Check git status and git log first, and read the brief again: it may have been amended while paused.") });
 		} catch (e) {
+			if (jr.lost) return { error: "this lead no longer owns the job" };
 			this.pauseJob(jr, "working", `resume failed: ${(e as Error).message}`);
 			return { error: `could not restart the worker: ${(e as Error).message}` };
 		}
@@ -989,6 +991,7 @@ export class Engine {
 		try {
 			await this.startWorker(jr, { prompt: workerPrompt(this.ctxFor(jr), job, `Re-plan: the previous approach failed the judge repeatedly. The worktree holds the last attempt; rework it as the revised brief says. The judge's last findings are in ${path.join(jr.dir, "judge")}.`) });
 		} catch (e) {
+			if (jr.lost) return { error: "this lead no longer owns the job" };
 			this.pauseJob(jr, "working", `re-plan start failed: ${(e as Error).message}`);
 			return { error: `could not start the worker: ${(e as Error).message}` };
 		}
@@ -1070,6 +1073,7 @@ export class Engine {
 				this.d.notify(`relay job ${job.id}: ${how} after the lead went away (was ${was}); ${was === "paused" ? "still paused" : "continuing"}`);
 				adopted.push(job.id);
 			} catch (e) {
+				if (jr.lost) continue;
 				this.pauseJob(jr, "working", `adoption failed: ${(e as Error).message}`);
 				this.d.wake(`relay job ${job.id}: ${how}, but its worker could not be restarted (${(e as Error).message}). The job is paused; relay_resume or relay_stop.`);
 			}
