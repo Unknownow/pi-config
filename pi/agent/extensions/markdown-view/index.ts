@@ -7,8 +7,9 @@ import { spawn } from "node:child_process";
 import { mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { buildHtml, parseViewArgs, replyTexts, viewFileName } from "./view.ts";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { viewCompletions, viewDescription } from "./commands.ts";
+import { buildHtml, parseViewArgs, recentReplies, replyTexts, viewFileName } from "./view.ts";
 
 const MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
@@ -42,9 +43,16 @@ function openFile(file: string, onError: (e: Error) => void): void {
 }
 
 export default function markdownView(pi: ExtensionAPI) {
+	/** Last seen session context, for the completions. */
+	let lastCtx: ExtensionContext | undefined;
+	pi.on("session_start", (_e, ctx) => {
+		lastCtx = ctx;
+	});
 	pi.registerCommand("view", {
-		description: "Open an assistant reply (/view, /view N) or a markdown file (/view <path>) in the browser, with mermaid diagrams",
+		description: viewDescription(),
+		getArgumentCompletions: (prefix) => viewCompletions(prefix, () => (lastCtx ? recentReplies(lastCtx.sessionManager.getBranch(), 10) : null)),
 		handler: async (args, ctx) => {
+			lastCtx = ctx;
 			try {
 				const parsed = parseViewArgs(args);
 				if ("error" in parsed) {

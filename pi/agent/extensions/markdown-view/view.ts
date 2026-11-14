@@ -25,26 +25,43 @@ export function parseViewArgs(args: string): ViewArgs {
 	return a ? { kind: "file", path: a } : { error: "empty path" };
 }
 
+/** Text of one assistant message entry; "" for anything else (other roles, no text, malformed). */
+export function replyText(e: unknown): string {
+	try {
+		const entry = e as { type?: unknown; message?: { role?: unknown; content?: unknown } } | null;
+		if (!entry || entry.type !== "message" || !entry.message || entry.message.role !== "assistant") return "";
+		const content = entry.message.content;
+		let text = "";
+		if (typeof content === "string") text = content;
+		else if (Array.isArray(content)) {
+			text = content
+				.filter((b) => b && (b as { type?: unknown }).type === "text" && typeof (b as { text?: unknown }).text === "string")
+				.map((b) => (b as { text: string }).text)
+				.join("\n\n");
+		}
+		return text.trim() ? text : "";
+	} catch {
+		return ""; // skip malformed entry
+	}
+}
+
 /** Text of each assistant message, oldest first. Skips empty and malformed entries. */
 export function replyTexts(entries: unknown[]): string[] {
 	const out: string[] = [];
 	for (const e of Array.isArray(entries) ? entries : []) {
-		try {
-			const entry = e as { type?: unknown; message?: { role?: unknown; content?: unknown } } | null;
-			if (!entry || entry.type !== "message" || !entry.message || entry.message.role !== "assistant") continue;
-			const content = entry.message.content;
-			let text = "";
-			if (typeof content === "string") text = content;
-			else if (Array.isArray(content)) {
-				text = content
-					.filter((b) => b && (b as { type?: unknown }).type === "text" && typeof (b as { text?: unknown }).text === "string")
-					.map((b) => (b as { text: string }).text)
-					.join("\n\n");
-			}
-			if (text.trim()) out.push(text);
-		} catch {
-			// skip malformed entry
-		}
+		const text = replyText(e);
+		if (text) out.push(text);
+	}
+	return out;
+}
+
+/** The newest replies, newest first (index 0 is `/view 1`); walks from the end and stops after `max`. */
+export function recentReplies(entries: unknown[], max = 10): string[] {
+	const out: string[] = [];
+	if (!Array.isArray(entries)) return out;
+	for (let i = entries.length - 1; i >= 0 && out.length < max; i--) {
+		const text = replyText(entries[i]);
+		if (text) out.push(text);
 	}
 	return out;
 }
