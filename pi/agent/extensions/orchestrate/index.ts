@@ -36,7 +36,7 @@ import { applyOutbox, combineRepos, deliveryMerged, endDecision, lastDelivery, m
 import { loadConfig, DEFAULTS, type OrchestrateConfig } from "./config.ts";
 import { MODE_ENTRY, mergesPullRequest, modeFromEntries, onTyped, toolRefusal, type Mode } from "./mode.ts";
 import { PROPOSAL_ASK_USER, PROPOSAL_FIX, RELAY_RUN_KICKOFF, repoTableText, RUN_KICKOFF, section } from "./prompts.ts";
-import { authorityProblems, checkRunBriefs, claimHosted, type Executor, findingsFile, type Hosted, hostedChange, hostedDecision, hostedOffText, RelayExec, renderRelayBrief } from "./relay-exec.ts";
+import { authorityProblems, checkRunBriefs, claimHosted, type Executor, executorOf, findingsFile, type Hosted, hostedChange, hostedDecision, hostedOffText, RelayExec, type RepoFolders, relayNames, renderRelayBrief } from "./relay-exec.ts";
 import { check, OFFLINE_SECONDS, type Snapshot } from "./monitor.ts";
 import { boardLines, buildView, pendingOf, viewSig, widgetLines, type Paint, type SubInput, type View } from "./view.ts";
 import {
@@ -662,7 +662,7 @@ export default function (pi: ExtensionAPI): void {
 	/** The user typed something since the last proposal pause (relay: only then is a paused proposal judged again). */
 	let userAnswered = false;
 	/** The executor of the watched run, or else the configured one. */
-	const executorNow = (): Executor => (owned ? owned.executor ?? "workflow" : cfg.executor);
+	const executorNow = (): Executor => executorOf(owned ? { executor: owned.executor } : null, cfg.executor);
 	async function claimRelay(retried: boolean): Promise<void> {
 		const answer = await claimHosted((e, d) => pi.events.emit(e, d), true);
 		hosted = hostedDecision(answer, retried);
@@ -1827,6 +1827,7 @@ ${list.map((a) => `${a.line} → affects ${a.affects.join(", ") || "?"}`).join("
 			read: () => readRun(o.common, runId).run ?? null,
 			mutate,
 			dir: runDir(o.common, runId),
+			folders: () => relayFolders(o.repoCwd, uiCtx),
 			runTokens: () => cfg.runTokens,
 			tell: (t) => {
 				try {
@@ -1838,8 +1839,8 @@ ${list.map((a) => `${a.line} → affects ${a.affects.join(", ") || "?"}`).join("
 			},
 			ended: () => {
 				unregister(runId);
+				if (mode !== "off") setMode("off", false, uiCtx); // before stopWatcher: the hosted release reads the run's executor
 				if (relayExec === ex) stopWatcher();
-				if (mode !== "off") setMode("off", false, uiCtx);
 			},
 			changed: () => refreshView(),
 		});
@@ -1891,6 +1892,8 @@ ${list.map((a) => `${a.line} → affects ${a.affects.join(", ") || "?"}`).join("
 	}
 
 	const addedOf = (ctx: ExtensionContext): string[] => foldersFromEntries(ctx.sessionManager.getBranch() as { type: string; customType?: string; data?: unknown }[]);
+	/** The folders relay names a run's repos by (relayNames): the cwd, the added folders of ctx (none without one), the filesystem. */
+	const relayFolders = (cwd: string, ctx: ExtensionContext | undefined): RepoFolders => ({ cwd, added: ctx ? addedOf(ctx) : [], exists: fs.existsSync });
 	const topOf = async (dir: string): Promise<string | null> => {
 		const t = await git(dir, "rev-parse", "--show-toplevel");
 		return t ? norm(t) : null;
@@ -2062,14 +2065,16 @@ ${list.map((a) => `${a.line} → affects ${a.affects.join(", ") || "?"}`).join("
 			}
 			const relayFields = relay ? { executor, authority: ((params.authority as string[] | undefined) ?? []).map((a) => a.replace(/^\s*[-*]\s+/, "").trim()).filter(Boolean), ...(repos ? {} : { top: tops.get("") as string }) } : {};
 			const run: Run = { v: 1, id, title: params.title, created: new Date().toISOString(), owner: { pid: process.pid, host: os.hostname(), session: ctx.sessionManager.getSessionFile() ?? "" }, state: "active", charter: params.charter.trim(), originTrusted: projectTrusted(ctx), ...(repos ? { repos } : {}), targets, ...relayFields, subs };
+			const folders = relayFolders(ctx.cwd, ctx);
+			const names = relayNames(run, folders);
 			if (relay) {
-				const bad = checkRunBriefs(run);
+				const bad = checkRunBriefs(run, folders);
 				if (bad.length) throw new Error(`the relay briefs are incomplete:\n- ${bad.join("\n- ")}`);
 			}
 			fs.mkdirSync(runDir(common, id), { recursive: true });
 			for (const s of subs) {
 				fs.mkdirSync(subDir(common, id, s.id), { recursive: true });
-				fs.writeFileSync(`${subDir(common, id, s.id)}/brief.md`, relay ? renderRelayBrief(s, run) : renderBrief(s, run, decisionsPath(common, id)));
+				fs.writeFileSync(`${subDir(common, id, s.id)}/brief.md`, relay ? renderRelayBrief(s, run, names) : renderBrief(s, run, decisionsPath(common, id)));
 			}
 			if (relay) {
 				fs.writeFileSync(findingsFile(runDir(common, id)), openFindings.length ? `${findingsBlock(openFindings)}\n` : "None.\n");
@@ -2443,8 +2448,8 @@ ${list.map((a) => `${a.line} → affects ${a.affects.join(", ") || "?"}`).join("
 					const id = owned?.runId;
 					const assumed = assumptionReport();
 					if (id) unregister(id);
+					if (mode !== "off") setMode("off", false, ctx); // before stopWatcher: the hosted release reads the run's executor
 					stopWatcher();
-					if (mode !== "off") setMode("off", false, ctx);
 					ctx.ui.notify(`orchestrate: run ${id} ended; the worktrees stay (remove them with /wt)${assumed ? `
 ${assumed}` : ""}`, "info");
 				} else if (sub === "watch") {

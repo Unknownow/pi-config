@@ -14,6 +14,9 @@ function sub(id: string, dependsOn: string[] = [], extra: Partial<Sub> = {}): Su
 	return { id, goal: `do ${id}`, criteria: [`${id} works`], owns: [`src/${id}/**`], forbids: [], dependsOn, decisions: [`${id} uses x`], name: `o1-${id}`, state: "planned", verify: [`npm test -- ${id}`], ...extra };
 }
 
+const FOLDERS = { cwd: "D:/w/proj", added: [], exists: () => false };
+const NAMES = relayNames(makeRun(), FOLDERS);
+
 function makeRun(subs: Sub[] = [sub("a"), sub("b"), sub("c", ["a"])]): Run {
 	return {
 		v: 1, id: "o11140900-x", title: "X", created: "2026-11-14T09:00:00Z", owner: { pid: 1, host: "h", session: "s" }, state: "active", executor: "relay",
@@ -117,7 +120,7 @@ function harness(run: Run = makeRun(), runTokens = 20_000_000) {
 		chain = p.catch(() => {});
 		return p;
 	};
-	const ex = new RelayExec({ emit: bus.emit, read: () => JSON.parse(JSON.stringify(stored)), mutate, dir, runTokens: () => runTokens, tell: (t) => told.push(t), ended: () => ended++, timeoutMs: 2000 });
+	const ex = new RelayExec({ folders: () => FOLDERS, emit: bus.emit, read: () => JSON.parse(JSON.stringify(stored)), mutate, dir, runTokens: () => runTokens, tell: (t) => told.push(t), ended: () => ended++, timeoutMs: 2000 });
 	const pending: Promise<unknown>[] = [];
 	bus.on("relay:job-end", (d) => pending.push(ex.onJobEnd(d)));
 	bus.on("relay:job-progress", (d) => pending.push(ex.onProgress(d)));
@@ -247,7 +250,7 @@ test("run cap: every unfinished job is stopped, undispatched packages blocked, t
 	assert.equal(h.relay.controls.length, 2);
 	assert.equal(h.told.filter((t) => /run cap reached/.test(t)).length, 1);
 	// a fresh executor (restart) does not stop them again either
-	const ex2 = new RelayExec({ emit: h.bus.emit, read: () => h.run(), mutate: (fn) => Promise.resolve(fn(h.run())), dir: h.dir, runTokens: () => 1000, tell: (t) => h.told.push(t), ended: () => {} });
+	const ex2 = new RelayExec({ folders: () => FOLDERS, emit: h.bus.emit, read: () => h.run(), mutate: (fn) => Promise.resolve(fn(h.run())), dir: h.dir, runTokens: () => 1000, tell: (t) => h.told.push(t), ended: () => {} });
 	await ex2.checkCap();
 	assert.equal(h.relay.controls.length, 2);
 	h.relay.end("a", "stopped", { reason: "stopped by the lead" });
@@ -304,7 +307,7 @@ test("restart: rebuild from job-query (no session context first), finished jobs 
 	h.relay.jobs.delete(h.relay.byPkg("b").id);
 	h.relay.queryError = "no session context";
 	// a new session: a fresh executor over the same run.json
-	const ex2 = new RelayExec({ emit: h.bus.emit, read: () => h.run(), mutate: (fn) => Promise.resolve(fn(h.run())), dir: h.dir, runTokens: () => 1e9, tell: () => {}, ended: () => {} });
+	const ex2 = new RelayExec({ folders: () => FOLDERS, emit: h.bus.emit, read: () => h.run(), mutate: (fn) => Promise.resolve(fn(h.run())), dir: h.dir, runTokens: () => 1e9, tell: () => {}, ended: () => {} });
 	await ex2.tick();
 	assert.equal(ex2.needsContext, true, "retried at the first turn");
 	assert.equal(h.st("a").state, "dispatched");
@@ -347,45 +350,63 @@ test("hostedChange and executorOf", () => {
 	assert.equal(executorOf({ executor: "relay" }, "workflow"), "relay", "the run's executor wins over a later config change");
 });
 
-test("brief mapping: multi-repo keys become relay repo names, a clash uses the full top", () => {
+test("brief mapping: multi-repo keys become relay repo names; the cwd repo keeps its folder name, the other repos their full tops", () => {
 	const run = makeRun([sub("a", [], { owns: ["api:src/**"], verify: ["api: npm test", "web: npm run lint", "echo a: b"], repos: ["api", "web"], scale: "1000 users", budget: "wall: 60m; tokens: 2M" }), sub("b", [], { owns: ["web:ui/**"], repos: ["web"] })]);
 	run.repos = [{ key: "api", top: "D:/w/Api" }, { key: "web", top: "D:/w/web" }];
 	run.targets = { api: "origin/main", web: "origin/dev" };
 	delete run.top;
-	assert.deepEqual([...relayNames(run)], [["api", "Api"], ["web", "web"]]);
-	const brief = renderRelayBrief(run.subs[0], run);
-	assert.deepEqual(checkRelayBrief(brief, ["Api", "web"]), []);
+	const names = relayNames(run, { cwd: "D:/w/Api", added: ["D:/w/web"], exists: () => false });
+	assert.deepEqual([...names], [["api", "Api"], ["web", "D:/w/web"]]);
+	const brief = renderRelayBrief(run.subs[0], run, names);
+	assert.deepEqual(checkRelayBrief(brief, [...names.values()]), []);
 	assert.match(brief, /^- Api: main$/m);
-	assert.match(brief, /^- web: dev$/m);
+	assert.match(brief, /^- D:\/w\/web: dev$/m);
 	assert.match(brief, /^- Api: npm test$/m);
-	assert.match(brief, /^- web: npm run lint$/m);
+	assert.match(brief, /^- D:\/w\/web: npm run lint$/m);
 	assert.match(brief, /^- echo a: b$/m);
 	assert.match(brief, /^## Files\n- Api:src\/\*\*$/m);
-	assert.match(brief, /web:ui\/\*\* \(package b owns it\)/);
+	assert.match(brief, /D:\/w\/web:ui\/\*\* \(package b owns it\)/);
 	assert.match(brief, /^## Scale\n1000 users$/m);
 	assert.match(brief, /^## Budget\nwall: 60m; tokens: 2M$/m);
 	assert.match(brief, /User decision: keep the API/);
 	assert.match(brief, /- run the tests/);
 	assert.match(brief, /Non-goal of the run: no UI/);
 	// b works only in web: a Verify line for api has no Targets line
-	const b = renderRelayBrief({ ...run.subs[1], verify: ["api: npm test"] }, run);
-	assert.ok(checkRelayBrief(b, ["Api", "web"]).some((e) => /names the repo "Api", which has no Targets line/.test(e)));
-	// two repos with one folder name: the full tops are the keys, the same in Targets, Verify and Files
+	const b = renderRelayBrief({ ...run.subs[1], verify: ["api: npm test"] }, run, names);
+	assert.ok(checkRelayBrief(b, [...names.values()]).some((e) => /names the repo "Api", which has no Targets line/.test(e)));
+	// a basename clash (app and App): the cwd repo's name is its full top too, and so is the added repo's
 	const clash = makeRun([sub("a", [], { owns: ["x:src/**"], verify: ["x: npm test", "y: npm test"], repos: ["x", "y"] }), sub("b", [], { owns: ["y:lib/**"] })]);
 	clash.repos = [{ key: "x", top: "D:/one/app" }, { key: "y", top: "D:/two/App" }];
 	clash.targets = { x: "origin/main", y: "origin/main" };
-	const names = relayNames(clash);
-	assert.deepEqual([...names.values()], ["D:/one/app", "D:/two/App"]);
-	const cb = renderRelayBrief(clash.subs[0], clash);
-	assert.deepEqual(checkRelayBrief(cb, [...names.values()]), []);
+	const cnames = relayNames(clash, { cwd: "D:/one/app", added: ["D:/two/App"], exists: () => false });
+	assert.deepEqual([...cnames.values()], ["D:/one/app", "D:/two/App"]);
+	const cb = renderRelayBrief(clash.subs[0], clash, cnames);
+	assert.deepEqual(checkRelayBrief(cb, [...cnames.values()]), []);
 	assert.match(cb, /^- D:\/one\/app: main$/m);
 	assert.match(cb, /^- D:\/two\/App: npm test$/m);
 	assert.match(cb, /^- D:\/one\/app:src\/\*\*$/m);
 });
 
+test("relay repo names: the cwd repo's folder name only when cwd is its top, no added folder has that name and <cwd>/<name> does not exist", () => {
+	const run = makeRun();
+	const name = (cwd: string, added: string[] = [], exists: (p: string) => boolean = () => false) => relayNames(run, { cwd, added, exists }).get("");
+	assert.equal(name("D:/w/proj"), "proj", "cwd is the top");
+	assert.equal(name("d:\\W\\PROJ"), "proj", "cwd equal to the top, forward or back slashes, any case");
+	assert.equal(name("D:/w/proj/src"), "D:/w/proj", "cwd is a subfolder of the top: the full top");
+	assert.equal(name("D:/w/proj", [], (p) => p === "D:/w/proj/proj"), "D:/w/proj", "<cwd>/<name> exists: the full top");
+	assert.equal(name("D:/w/proj", ["D:/x/PROJ"]), "D:/w/proj", "basename clash with an added folder (case-insensitive): the full top");
+	assert.equal(name("D:/w/proj", ["D:/x/other"]), "proj", "an added folder with another name does not clash");
+	const multi = makeRun();
+	multi.repos = [{ key: "app", top: "D:/a/app" }, { key: "web", top: "D:/b/web" }];
+	multi.targets = { app: "origin/main", web: "origin/main" };
+	delete multi.top;
+	assert.deepEqual([...relayNames(multi, { cwd: "D:/a/app", added: ["D:/b/web"], exists: () => false })], [["app", "app"], ["web", "D:/b/web"]], "cwd top plus an added repo: the added repo's full path");
+	assert.deepEqual([...relayNames(multi, { cwd: "D:/a/app/src", added: ["D:/b/web"], exists: () => false })], [["app", "D:/a/app"], ["web", "D:/b/web"]]);
+});
+
 test("the local brief check: sections, Authority syntax, Targets, Depends on, Budget", () => {
 	const run = makeRun();
-	const good = renderRelayBrief(run.subs[0], run);
+	const good = renderRelayBrief(run.subs[0], run, NAMES);
 	assert.deepEqual(checkRelayBrief(good, ["proj"]), []);
 	assert.ok(checkRelayBrief(good.replace(/## Scale\n[^\n]*\n/, ""), ["proj"]).some((e) => /"Scale" is missing/.test(e)));
 	assert.ok(checkRelayBrief(good.replace("- publish: no", "- publish: maybe"), ["proj"]).some((e) => /cannot read "publish: maybe"/.test(e)));
@@ -393,9 +414,9 @@ test("the local brief check: sections, Authority syntax, Targets, Depends on, Bu
 	assert.ok(checkRelayBrief(good.replace("- merge: yes (squash-merge into master after PASS)", "- merge: yes"), ["proj"]).some((e) => /needs specifics/.test(e)));
 	assert.ok(checkRelayBrief(`${good}\n## Depends on\nr123456\n`, ["proj"]).some((e) => /Depends on/.test(e)));
 	assert.ok(checkRelayBrief(`${good}\n## Budget\nwall: soon\n`, ["proj"]).some((e) => /Budget/.test(e)));
-	const noVerify = renderRelayBrief({ ...run.subs[0], verify: [] }, run);
+	const noVerify = renderRelayBrief({ ...run.subs[0], verify: [] }, run, NAMES);
 	assert.ok(checkRelayBrief(noVerify, ["proj"]).some((e) => /"Verify" is missing/.test(e)));
-	const noTarget = renderRelayBrief(run.subs[0], { ...run, targets: {} });
+	const noTarget = renderRelayBrief(run.subs[0], { ...run, targets: {} }, NAMES);
 	assert.ok(checkRelayBrief(noTarget, ["proj"]).some((e) => /Targets/.test(e)));
 	assert.ok(checkRelayBrief(good.replace("- src/a/**", "- other:src/a/**"), ["proj"]).some((e) => /unknown repo "other"/.test(e)));
 });

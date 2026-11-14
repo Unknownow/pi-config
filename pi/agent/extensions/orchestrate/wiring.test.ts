@@ -84,3 +84,17 @@ test("setMode aborts the proposal run; the widget gets the judging label; comman
 	assert.ok(source.includes('import { runSubagent } from "../agents/subagent.ts"'));
 	assert.ok(source.includes("go force") && source.includes("judge cancel"));
 });
+
+test("both run-end paths set the mode off before stopWatcher (the hosted release reads the ended run's executor)", () => {
+	const ended = source.indexOf("ended: () => {");
+	assert.ok(ended > 0);
+	const e = source.slice(ended, ended + 400);
+	const off = e.indexOf('setMode("off", false, uiCtx)');
+	assert.ok(off > 0 && off < e.indexOf("stopWatcher()"));
+	const end = source.indexOf('sub === "end"');
+	assert.ok(end > 0);
+	const b = source.slice(end, end + 1500);
+	const off2 = b.indexOf('setMode("off", false, ctx)');
+	assert.ok(off2 > 0 && off2 < b.indexOf("stopWatcher()"));
+	assert.ok(source.includes('const executorNow = (): Executor => executorOf(owned ? { executor: owned.executor } : null, cfg.executor);'));
+});

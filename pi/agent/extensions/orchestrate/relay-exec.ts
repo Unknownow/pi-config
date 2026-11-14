@@ -62,19 +62,36 @@ export const hostedOffText = (reason: string): string => `relay is unavailable o
 const slash = (p: string) => p.split("\\").join("/").replace(/\/+$/, "");
 const base = (p: string) => slash(p).split("/").pop() ?? p;
 
-/** Orchestrate repo key -> relay repo name: the folder name of the repo top; two repos with one folder name (case-insensitive) use their full tops. */
-export function relayNames(run: Pick<Run, "repos" | "top">): Map<string, string> {
+/** The session's folders for relay's names: the lead's cwd, the added folders, and whether a path exists. */
+export interface RepoFolders {
+	cwd: string;
+	added: string[];
+	exists: (path: string) => boolean;
+}
+
+/**
+ * Orchestrate repo key -> relay repo name. Every added repo uses its full top (forward slashes). The cwd repo uses its folder
+ * name only when cwd is its top, no added folder has that name (case-insensitive) and `<cwd>/<name>` does not exist (relay
+ * resolves names through the lead's cwd first); otherwise it uses its full top too.
+ */
+export function relayNames(run: Pick<Run, "repos" | "top">, folders: RepoFolders): Map<string, string> {
+	const cwd = slash(folders.cwd);
+	const addedNames = new Set(folders.added.map((a) => base(a).toLowerCase()));
 	const tops: Array<[string, string]> = run.repos?.length ? run.repos.map((r) => [r.key, slash(r.top)]) : [["", slash(run.top ?? "")]];
-	const count = new Map<string, number>();
-	for (const [, t] of tops) count.set(base(t).toLowerCase(), (count.get(base(t).toLowerCase()) ?? 0) + 1);
-	return new Map(tops.map(([k, t]) => [k, (count.get(base(t).toLowerCase()) ?? 0) > 1 ? t : base(t)]));
+	return new Map(
+		tops.map(([k, t]) => {
+			const name = base(t);
+			const useName = t.toLowerCase() === cwd.toLowerCase() && !addedNames.has(name.toLowerCase()) && !folders.exists(`${cwd}/${name}`);
+			return [k, useName ? name : t];
+		}),
+	);
 }
 
 /** The repo keys a package works in (its Targets): every repo of a single-repo run, a multi-repo package's `repos`. */
 const keysOf = (sub: Sub, run: Run): string[] => (run.repos?.length ? (sub.repos?.length ? sub.repos : run.repos.map((r) => r.key)) : [""]);
 
 /** A canonical glob with relay's repo name instead of the orchestrate key. */
-export function relayGlob(glob: string, run: Run, names = relayNames(run)): string {
+export function relayGlob(glob: string, run: Run, names: Map<string, string>): string {
 	if (!run.repos?.length) return glob;
 	const { key, path } = split(glob);
 	const name = names.get(key || run.repos[0].key);
@@ -82,7 +99,7 @@ export function relayGlob(glob: string, run: Run, names = relayNames(run)): stri
 }
 
 /** A Verify line with relay's repo name instead of the orchestrate key (`api: npm test`). Lines with no repo key stay as they are. */
-export function relayVerifyLine(line: string, run: Run, names = relayNames(run)): string {
+export function relayVerifyLine(line: string, run: Run, names: Map<string, string>): string {
 	const l = line.replace(/^\s*[-*]\s+/, "").trim();
 	if (!run.repos?.length) return l;
 	const m = /^([^\s:]+):\s+(.+)$/.exec(l);
@@ -125,8 +142,7 @@ export const DEFAULT_SCALE = "No numbers were given: assume the repo's current s
 const bullets = (items: string[], empty: string) => (items.length ? items.map((i) => `- ${i}`).join("\n") : empty ? `- ${empty}` : "");
 
 /** Relay's brief for one package: every section relay requires, never a `## Depends on` (dependents wait for the merge). */
-export function renderRelayBrief(sub: Sub, run: Run): string {
-	const names = relayNames(run);
+export function renderRelayBrief(sub: Sub, run: Run, names: Map<string, string>): string {
 	const others = run.subs.filter((s) => s.id !== sub.id);
 	const files = sub.owns.map((g) => relayGlob(g, run, names));
 	const targets = keysOf(sub, run).map((k) => {
@@ -270,9 +286,9 @@ export function checkRelayBrief(text: string, names: string[]): string[] {
 }
 
 /** The brief problems of every package of a run (by package). */
-export function checkRunBriefs(run: Run): string[] {
-	const names = [...relayNames(run).values()];
-	return run.subs.flatMap((s) => checkRelayBrief(renderRelayBrief(s, run), names).map((p) => `${s.id}: ${p}`));
+export function checkRunBriefs(run: Run, folders: RepoFolders): string[] {
+	const names = relayNames(run, folders);
+	return run.subs.flatMap((s) => checkRelayBrief(renderRelayBrief(s, run, names), [...names.values()]).map((p) => `${s.id}: ${p}`));
 }
 
 // ------------------------------------------------------------------------------------------ the state machine
@@ -300,6 +316,8 @@ export interface ExecDeps {
 	mutate: <T>(fn: (run: Run) => T) => Promise<T>;
 	/** The run folder. */
 	dir: string;
+	/** The session's folders (the lead's cwd and the added ones) for relay's repo names. */
+	folders: () => RepoFolders;
 	runTokens: () => number;
 	/** Something the user must see (shown in the chat). */
 	tell: (text: string) => void;
@@ -473,8 +491,9 @@ export class RelayExec {
 				const now = this.d.read();
 				const sub = now?.subs.find((s) => s.id === id);
 				if (!now || !sub || sub.state !== "planned") continue;
-				const brief = renderRelayBrief(sub, now);
-				const problems = checkRelayBrief(brief, [...relayNames(now).values()]);
+				const names = relayNames(now, this.d.folders());
+				const brief = renderRelayBrief(sub, now, names);
+				const problems = checkRelayBrief(brief, [...names.values()]);
 				if (problems.length) {
 					await this.fail(id, `the brief is incomplete: ${problems.join("; ")}`);
 					continue;
