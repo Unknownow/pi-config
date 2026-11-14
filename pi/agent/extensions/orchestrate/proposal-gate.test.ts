@@ -98,7 +98,8 @@ import { blockingFindings, parseFindings } from "../shared/findings.ts";
 test("one go (relay): a finished proposal starts the gate on its own; fix replies and pauses as before", () => {
 	const r = { executor: "relay", mode: "propose", ready: true, running: false } as const;
 	assert.equal(oneGoOnReply(r), "gate");
-	assert.equal(oneGoOnReply({ ...r, status: "paused" }), "gate", "after the user's answer the next ready proposal is judged again, no go");
+	assert.equal(oneGoOnReply({ ...r, status: "paused", answered: true }), "gate", "after the user's answer the next ready proposal is judged again, no go");
+	assert.equal(oneGoOnReply({ ...r, status: "paused", answered: false }), "none", "not before the user answered");
 	assert.equal(oneGoOnReply({ ...r, status: "idle" }), "gate");
 	assert.equal(oneGoOnReply({ ...r, status: "awaiting-fix" }), "fix-reply");
 	assert.equal(oneGoOnReply({ ...r, ready: false }), "none", "a reply that asks the user waits for the answer");

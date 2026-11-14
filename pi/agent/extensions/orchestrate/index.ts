@@ -659,6 +659,8 @@ export default function (pi: ExtensionAPI): void {
 	let hostedRetry = false;
 	/** The open proposal-judge findings of the move to run; orch_run writes them to findings.md (relay runs). */
 	let openFindings: Finding[] = [];
+	/** The user typed something since the last proposal pause (relay: only then is a paused proposal judged again). */
+	let userAnswered = false;
 	/** The executor of the watched run, or else the configured one. */
 	const executorNow = (): Executor => (owned ? owned.executor ?? "workflow" : cfg.executor);
 	async function claimRelay(retried: boolean): Promise<void> {
@@ -769,6 +771,7 @@ export default function (pi: ExtensionAPI): void {
 		if (me || mode === "off" || event.source === "extension" || event.streamingBehavior) return { action: "continue" as const };
 		const typed = event.text.trim();
 		if (typed.startsWith("/")) return { action: "continue" as const };
+		userAnswered = true;
 		const isGo = goRe().test(typed);
 		const gi = proposalGateOnInput({ running: !!proposalRun, isGo });
 		if (gi === "notice") {
@@ -796,7 +799,7 @@ export default function (pi: ExtensionAPI): void {
 		const last = [...msgs].reverse().find((m) => m.role === "assistant");
 		const body = assistantText(last).trim();
 		lastProposal = nextLastProposal(mode, body, last?.stopReason === "stop" && body.length > 0);
-		const next = oneGoOnReply({ executor: executorNow(), mode, ready: !!lastProposal, running: !!proposalRun, status: proposalReview?.status });
+		const next = oneGoOnReply({ executor: executorNow(), mode, ready: !!lastProposal, running: !!proposalRun, status: proposalReview?.status, answered: userAnswered });
 		if (next === "fix-reply" && proposalReview) {
 			const a = proposalGateAfterFixReply({ prevHash: proposalReview.hash, ready: !!lastProposal, replyHash: lastProposal?.hash });
 			if (a === "recheck") void runProposalGate(ctx, "recheck", false);
@@ -820,6 +823,7 @@ export default function (pi: ExtensionAPI): void {
 	/** `ask`: the findings routed to the user; a relay run has the model ask them (the next finished proposal is judged again). */
 	function pauseProposal(ask?: Finding[]): void {
 		if (proposalReview) proposalReview = { ...proposalReview, status: "paused" };
+		userAnswered = false;
 		saveReview();
 		if (pauseAction(executorNow()) === "wait-go") return say(`the proposal judge needs your decision; answer, then say "go" (or /orch go force)`, "warning");
 		say("the proposal judge needs your decision; answer the question, the revised proposal is judged again on its own", "warning");

@@ -58,9 +58,11 @@ export function proposalReviewPrompts(o: { proposal: string; list?: string; repo
  * The one-go chain at the end of a reply in propose mode. Both executors: an answer to a fix request is checked (`fix-reply`).
  * Relay only: any other finished proposal starts the gate on its own (`gate`; after a pause too), no second "go".
  */
-export function oneGoOnReply(o: { executor: "relay" | "workflow"; mode: Mode; ready: boolean; running: boolean; status?: ProposalReview["status"] }): "none" | "fix-reply" | "gate" {
+export function oneGoOnReply(o: { executor: "relay" | "workflow"; mode: Mode; ready: boolean; running: boolean; status?: ProposalReview["status"]; answered?: boolean }): "none" | "fix-reply" | "gate" {
 	if (o.mode !== "propose" || o.running) return "none";
 	if (o.status === "awaiting-fix") return "fix-reply";
+	// a pause waits for the user's answer: a proposal the model writes before it is not judged again (no loop)
+	if (o.status === "paused" && !o.answered) return "none";
 	return o.executor === "relay" && o.ready ? "gate" : "none";
 }
 

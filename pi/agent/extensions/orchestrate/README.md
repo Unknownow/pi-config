@@ -1,6 +1,6 @@
 # orchestrate
 
-One orchestrator session splits a job into 2-4 work packages and runs each as a workflow sub-session in its own `wt` worktree (visible terminal). Each sub-session starts at the **plan** phase from a brief (no discuss). The orchestrator reviews the plans, watches progress and owned paths through git, answers questions, and accepts each result before the sub-session merges its own PR.
+One orchestrator session splits a job into work packages. With `executor: "relay"` (the default) each package is a relay job and a single typed "go" runs proposal, judge and run on their own (see [Relay executor](#relay-executor)). With `executor: "workflow"` it splits the job into 2-4 packages and runs each as a workflow sub-session in its own `wt` worktree (visible terminal); the rest of this section and Usage describe that executor. Each sub-session starts at the **plan** phase from a brief (no discuss). The orchestrator reviews the plans, watches progress and owned paths through git, answers questions, and accepts each result before the sub-session merges its own PR.
 
 ## Usage
 
@@ -82,12 +82,51 @@ With `autoJudgeProposal: "auto"` (the default), a typed "go" on a finished `## P
 - Rollback: `autoJudgeProposal: "off"`.
 - With `confirmPlans` on, the approval prompt shows the sub's `judge:` line.
 
+## Relay executor
+
+`executor: "relay"` in `orchestrate.json` (the default) runs the packages as relay jobs. The executor is stored on the run at `orch_run` (`run.json` `executor`), so a later config change does not affect a running run; runs without it are workflow runs. `executor: "workflow"` keeps everything above unchanged (including the two-step "go").
+
+**One go.** `/orch start`, discuss as usual (the discuss prompt also asks to settle the run's Authority), then a single typed "go": the model writes the proposal; when the reply is a finished proposal the proposal gate runs on its own (with `autoJudgeProposal: "off"` the proposal goes straight to the run). `move`: the model is told to call `orch_run` (the kickoff does not claim the user approved the packages) and the ready packages are dispatched automatically. `fix`: the findings go back to the model and the gate reruns (up to `maxProposalJudgeRounds`). `move-open`: the run starts and the open findings go to `findings.md` and the report. `pause` (a `fix: user` finding): the model asks the user; after the user's answer the next finished proposal is judged again, no "go" needed. The user's "go" is the only input and the run report the only output.
+
+**Proposal fields.** The proposal has a `## Charter`, a run `## Authority` (one line for each of merge, publish, comments, delete, formats, deps in relay syntax `<cat>: yes (<specifics>) | no | n/a`) and 2-10 packages, each with `verify` (commands; `<repo key>: <cmd>` runs in that repo) and optional `scale` and `budget` (`wall: 120m; tokens: 4M; size: ...`). `orch_run` takes them as `authority` and the packages' `verify`, `scale`, `budget`. The proposal judge treats a missing run Authority or a package without Verify as a blocker, and an Authority `yes` (other than merge into the run's target) that the user did not state in the discussion as a blocker routed to the user (pause). Targets come from `run.targets` (each repo needs one) and the repo tops, not per package.
+
+**orch_run never asks** in a relay run: a cross-run overlap or a package base other than the run's target is a tool error the model fixes. `orch_run` also needs relay's hosted mode (below), the run Authority and every package's Verify, and checks every generated brief before it writes anything; the brief goes to `<sub>/brief.md`.
+
+**Brief mapping** (`relay-exec.ts`): Goal (goal), Done when (criteria), Non-goals (forbids and the other packages' owns), Constraints ("stay inside Files", the charter's standing orders and non-goals), Decisions (locked) (decisions and the charter's user decisions), Design (notes and the other packages' goals and Files), Scale (the package's or a fixed default line), Verify, Targets (`<repo name>: <branch>`, `origin/` stripped), Authority (the run's six lines), Budget (when given), Files (owns). Never a `## Depends on`: dependents wait for the merge (no stacking). **Repo names:** relay matches `<key>: <cmd>` Verify lines verbatim against the Targets keys, so Targets, Verify and Files all use the folder name of the repo top (relay resolves it through the lead's cwd or added folders); when two repos of the run share a folder name (case-insensitive), their full tops (forward slashes) are the key in all three. A local check (a copy of relay's required-section and Authority rules, plus every repo name in Verify and Files having a Targets line; no import) runs on every brief.
+
+**Hosted mode.** With executor relay, entering orchestrator mode and a session start with a restored orchestrator mode or an active relay run emit `relay:hosted {v:1, on:true, claim}`; `/orch off` emits `{on:false}`. A `mode:"off"` answer with reason "no session context" (relay has not seen its `session_start` yet) is retried at the first `before_agent_start` / `input`; still not on after that, or any other `off` (e.g. workflow owns the session), and the user is told relay cannot host this session; `orch_run` then refuses.
+
+**Dispatch.** `relay:dispatch {v:1, brief, tag:{run, package}}`; the job id goes to the package (`job`), state `dispatched`. An `{error}` answer fails the package. A package with `dependsOn` is dispatched only after all its dependencies are `merged`; independent packages go at once in proposal order (relay queues beyond its `maxJobs`).
+
+**Job end** (`relay:job-end` with this run's tag; a job-end for a package that is not `dispatched` is ignored): `delivered` with every repo merged -> `merged`, and the dependents that became ready are dispatched. `delivered` with a repo not merged -> `delivered-pr` (a **PR hold**): the user is told which PR holds which packages. Held PRs are re-checked with `relay:job-query` every `pollSeconds`; when every repo shows `merged`, the package is `merged` and its dependents are released. Relay notices a hand merge in its PR scan (about every 10 minutes), so a release can take that long.
+
+**Retry rule.** `stopped` / `failed` -> `retry-pending` when the package has no retry yet, it was not stopped by the orchestrator, and the reason does not start with `budget:`; otherwise `failed` with the reason and every transitive dependent `blocked` ("blocked by <pkg>: <reason>"). A retry is one `relay:control {action:"followup"}` whose text carries the job-end reason and the report path, sent once job-query shows the job finished (a "still finishing" error is retried at the next poll; any other error fails the package). A successful follow-up puts the package back to `dispatched` with `retries` + 1.
+
+**Own stops.** Job ids the model passes to `relay_stop` (seen in the `tool_call` hook), the run cap's stops and `/orch end`'s stops set the package's `stoppedBy: "orchestrator"` before the stop: no retry.
+
+**Run cap.** The latest `used.tokens` of each job (from `relay:job-progress`, `relay:job-end` and a job-query of the unfinished packages every `pollSeconds`) is the package's `tokens`; their sum is the run's. At `runTokens` (default 20M weighted tokens) every unfinished job is stopped (`relay:control stop`), the packages not dispatched are `blocked` ("run cap"), the user is told and the report is written. The cap is soft by up to one poll interval.
+
+**Wakes.** Relay wakes of the run's jobs (prefix `[<package>] `) are handled by the orchestrator model (the relay run section): questions it answers itself (`relay_approve` with a reason); approval requests it refuses as outside the run's Authority, except the categories in orchestrate.json `askUser`: it asks the user in the chat and calls `relay_approve {job, askId, approve, reason}` quoting the answer. A category also listed in relay.json `askUser` cannot be approved by the lead at all, so list it only in orchestrate.json. Stall/crash and judge-failed-twice pauses: `relay_resume` once, then `relay_stop`; the judge cap: one `relay_replan`, then `relay_stop`; a plan flaw: `relay_stop`; delivery stopped: `relay_deliver` once, then `relay_stop`; job ends are information only. In run mode the tool guard allows `relay_status`, `relay_approve`, `relay_send`, `relay_resume`, `relay_stop`, `relay_replan`, `relay_deliver` (not `relay_followup` or `relay_dispatch`). Only askUser approvals, a package failed after its retry, a PR hold and the run cap reach the user.
+
+**Workflow-only paths are closed** for relay runs: `orch_spawn`, `orch_send`, `orch_review_plan`, `orch_accept` and `orch_merge` are refused (also with the guard off); `/orch merge|merged|spawn` refuse with the hint that a held PR is merged by hand and released by the poll; the bash merge guard gives the same hint. `/orch end` on a relay run stops the unfinished jobs (`relay:control stop`, `stoppedBy: "orchestrator"`) before ending. The workflow watcher, stall checks and the mergePackage fallback do not run for relay runs.
+
+**Report.** Every `relay:approval` of the run is appended to `approvals.jsonl`. When no package can move any more (all merged, failed or blocked, or only PR holds left), `report.md` is written and shown: Approvals first, then per package the state, PR and merge per repo, the job's report.md, the blocked/held reasons, then the run's tokens and the open proposal findings. With no PR hold left the run is `ended`, unregistered and its timers stopped; while a hold is open the run stays active, and a later release continues the run and replaces the report.
+
+**Restart.** At session start with an active relay run of this session, hosted is claimed again and the package states are rebuilt with `relay:job-query` for the job ids in run.json (relay's files are never read; a "no session context" error is retried at the first turn and at every poll). `done` counts as delivered, `stopped`/`failed` as in job-end, `unknown` fails the package ("job not found"); finished jobs are processed as if their job-end had arrived. `/orch watch` does the same for a run of a dead session.
+
+**Contracts used** (relay README, "Events"): `relay:dispatch`, `relay:control`, `relay:job-query`, `relay:hosted` (claims through `../shared/claims.ts`), and the tagged `relay:job-progress`, `relay:job-end` (`used`, `repos`, `reason`) and `relay:approval`. Never an import of `../relay` (`boundary.test.ts`).
+
+**Limits.** The tool guard and wake handling rely on the orchestrator model following the run section; relay itself enforces each brief's Authority. A release after a hand merge waits for relay's PR scan.
+
 ## Files
 
 Under `<git common dir>/pi/orchestra/<runId>/` (single writer per file; messages are append-only JSON lines, a last line without newline is ignored until complete):
 
 ```
-run.json                  orchestrator (tmp + rename; `targets`: per repo key the remote ref the PRs go into)
+run.json                  orchestrator (tmp + rename; `targets`: per repo key the remote ref the PRs go into; relay runs: `executor`, `authority` (six lines), `top` (single repo), and per package `verify`, `scale?`, `budget?`, `job?`, `retries?`, `tokens?`, `stoppedBy?`, `reason?`, `report?`, `prs?` ([{key, pr?, merged}]), states planned, dispatched, merged, delivered-pr, retry-pending, failed, blocked)
+approvals.jsonl           relay runs: one line per relay:approval of the run's jobs {at, job, package, category, item, by, reason}
+findings.md               relay runs: the open proposal-judge findings ("None." when there are none), written by orch_run
+report.md                 relay runs: the run report (replaced when a PR hold is released)
 view.json                 orchestrator's watcher (tmp + rename; the run as data for the widget and /orch board)
 <sub>/brief.md            orchestrator
 <sub>/status.json         sub-session (K4 events and a 60 s heartbeat)
@@ -116,6 +155,9 @@ New keys (all optional; a bad value falls back with a warning naming its key pat
 | `maxProposalJudgeRounds` | 2 | Judge runs per "go" before open auto findings go to the run. |
 | `judge.tools` / `timeoutMs` / `idleTimeoutMs` | `["read","grep","find","ls"]` / 900000 / 300000 | How the judge subagent runs. |
 | `judge.extensions` | the pi-claude-bridge path if that file exists, else `[]` | Extensions the judge loads (needed for `claude-bridge/` models). |
+| `executor` | `"relay"` | `"relay"` (packages are relay jobs, one "go") or `"workflow"` (sub-sessions, two "go"s). Stored on the run at `orch_run`. |
+| `runTokens` | 20000000 | Relay runs: the weighted-token cap of all the run's jobs together. |
+| `askUser` | `[]` | Relay runs: approval categories (merge, publish, comments, delete, formats, deps) whose requests the orchestrator takes to the user; all others outside the run's Authority are refused. |
 
 Without `orchestrate.json` no model is switched. The repo ships one (`pi/agent/orchestrate.json`) that is installed with the rest.
 
@@ -135,7 +177,7 @@ Each worktree is its own Unity project; its first open imports every asset (slow
 
 ## Tests
 
-`cd pi/agent/extensions/orchestrate && node --experimental-strip-types --test config.test.ts paths.test.ts brief.test.ts store.test.ts monitor.test.ts inbox.test.ts boundary.test.ts mode.test.ts repos.test.ts folders.test.ts view.test.ts trust.test.ts identity.test.ts items.test.ts decide.test.ts`
+`cd pi/agent/extensions/orchestrate && node --experimental-strip-types --test *.test.ts`. `relay-exec.test.ts` runs the relay executor against a fake relay listener on a fake bus (dispatch, retries, PR holds, run cap, report, restart).
 
 `index.ts` needs the pi runtime and has no unit test; the end-to-end check is manual (scratch GitHub repo: two packages `a`, `b` depending on `a`).
 
