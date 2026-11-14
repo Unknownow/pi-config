@@ -243,6 +243,9 @@ FAIL if there is any blocker or major finding. ${GAP_RULE} Minors never fail a r
 /** Sent to the planner with the plan judge's fixable findings. */
 export const PLAN_FIX = "The plan judge found problems you can fix. Fix each finding below: check the code where it says so, then reply with the whole plan again as a new `## Plan:` (or `## Plan changes` for a staged plan's changes). If a finding is wrong, put a `Disputes:` block (the finding and your evidence, file:line) on its own lines BEFORE the `## Plan` heading instead of changing the plan for it.";
 
+/** Added to PLAN_FIX on autopilot when findings need a decision nobody can make. */
+export const PLAN_ASSUME = "Some findings need a decision, and nobody is available to make it. For each one pick the recommended option, apply it in the plan, and record it as `A<n>: <finding> → <choice>` under an `Assumptions:` heading in the plan.";
+
 /** Added to the plan judge's prompt when there is no spec to check the plan against. */
 export const NO_SPEC_NOTE = "No agreed spec: judge the plan against the code and for internal consistency; do not report a missing spec.";
 

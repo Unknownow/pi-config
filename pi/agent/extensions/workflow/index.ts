@@ -65,7 +65,7 @@ import { blockedWaitCheck, classifyPublish, lockDecision, lockWaitCheck, NO_JUDG
 import { type Finished, mergeChecklist, newFlowId, isHuman, openStepsReminder, parseChecklist, type PlanStatus, planCard, pruneIds, renderPlanFile, splitPlanFile, type ChecklistItem } from "./plan-doc.ts";
 import { addToRegistry, type BoardEntry, boardLines, boardRows, detailLines, liveEvents, type LiveInfo, readLive, readRegistry } from "./board.ts";
 import { adoptHigher, claimLive, commitRef, dropClaim, pidAlive, readClaim, writeClaim, deleteLocal, deleteRef, deleteReviewRef, fetchMirror, type Git, listRefs, plansDir, pushRef, readLocalStatuses, readPlanMd, refRev, remoteOf, repoInfo, type RefEntry, sweepReviewRefs, writeLocal, writeReviewRef } from "./plan-store.ts";
-import { type FlowFinding, recordFindings, reportFindings, type ReportStep } from "./flow-report.ts";
+import { autopilotDecisions, type FlowFinding, recordFindings, reportFindings, type ReportStep } from "./flow-report.ts";
 import { readOnlyProblem } from "../shared/readonly-bash.ts";
 import { afterMergeStep, gateOpenSteps, deliverMergeOpen, mergeAmendment, mergeDecisions, mergeDecisionsText, checkpointAmendment, checkpointNote, checkpointOutcome, deliverHint, deliverHintsBlock, deliverStepSpec, hasCheckpointAmendment, checkpointText, isPlannedTag, parseDeliverStep, publishRefusal, withCheckpoints } from "./checkpoints.ts";
 import { pushArgs, tagDecision } from "./tags.ts";
@@ -124,6 +124,10 @@ interface FlowState {
 	minorFix?: { trees: Record<string, string>; cited: string[]; text: string };
 	/** Late findings (new problems a recheck found outside the changed lines, not blockers): listed on the final card, never blocking. */
 	lateFindings?: string[];
+	/** Autopilot: judge caps taken, automatic retries in a row, and the decisions listed on the final card. */
+	autoCaps?: number;
+	autoRetries?: number;
+	autoDecisions?: string[];
 	/** Hash of the last diff the judge passed. */
 	passedDiff?: string;
 	/** The last judge round, so the next one reviews only what changed since. */
@@ -434,6 +438,11 @@ export default function workflow(pi: ExtensionAPI) {
 	/** /flow autopilot sets this for the session; it is not persisted, so a restart falls back to the config. */
 	let autopilotOverride: boolean | undefined;
 	const autopilotOn = (): boolean => autopilotOverride ?? cfg.autopilot;
+	/** An autopilot choice for the final card. */
+	const noteAuto = (text: string): void => {
+		state.autoDecisions = [...(state.autoDecisions ?? []), text.replace(/\s+/g, " ").slice(0, 240)].slice(-30);
+		persist();
+	};
 	const view = new FlowView(cfg.roles);
 
 	pi.registerFlag("add-dir", {
@@ -486,10 +495,14 @@ export default function workflow(pi: ExtensionAPI) {
 		state.flowFindings = undefined;
 		const lateFindings = state.lateFindings?.length ? state.lateFindings : undefined;
 		state.lateFindings = undefined;
+		const autopilot = autopilotDecisions(state.approvedPlan, state.autoDecisions);
+		state.autoDecisions = undefined;
+		state.autoCaps = undefined;
+		state.autoRetries = undefined;
 		if (state.planDoc && !state.planDoc.finished) planMilestone(undefined, { at: new Date().toISOString(), ok, text: outcome });
 		state.touchedRepos = undefined;
 		view.settleMain();
-		if (!view.hasFlowUsage() && !steps && !findings && !lateFindings && !human.length) {
+		if (!view.hasFlowUsage() && !steps && !findings && !lateFindings && !autopilot.length && !human.length) {
 			if (flowId) {
 				const empty = view.peekFlow(outcome, ok);
 				recordMetric({ kind: "flow", at: new Date().toISOString(), flowId, outcome, ok, started: empty.started, ended: empty.ended, stages: empty.stages, ...(state.profile ? { profile: state.profile } : {}) });
@@ -498,7 +511,7 @@ export default function workflow(pi: ExtensionAPI) {
 			return false;
 		}
 		const summary = view.endFlow(outcome, ok);
-		pi.appendEntry(SUMMARY_ENTRY, { ...summary, steps, findings, ...(lateFindings ? { lateFindings } : {}), ...(human.length ? { humanChecks: human } : {}) });
+		pi.appendEntry(SUMMARY_ENTRY, { ...summary, steps, findings, ...(lateFindings ? { lateFindings } : {}), ...(autopilot.length ? { autopilot } : {}), ...(human.length ? { humanChecks: human } : {}) });
 		if (flowId) recordMetric({ kind: "flow", at: new Date().toISOString(), flowId, outcome, ok, started: summary.started, ended: summary.ended, stages: summary.stages, ...(state.profile ? { profile: state.profile } : {}) });
 		persist();
 		return true;
@@ -2393,6 +2406,7 @@ export default function workflow(pi: ExtensionAPI) {
 			const planned = !!step && !!parseWaitStep(plan, step);
 			if (autopilotSkipsWait(autopilotOn(), params.manual, params.kind)) {
 				const kind = params.kind === "approve" ? "approve" : "act";
+				noteAuto(`wait skipped: ${reason}`);
 				state.approvedPlan = `${plan.replace(/\s+$/, "")}\n\n${autopilotAmendment(nextAmendmentNumber(), { reason, step, kind })}\n`;
 				refreshChecklist();
 				persist();
@@ -3569,8 +3583,15 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 		if (state.phase !== "execute") return;
 		// Waiting for a person: no judge, no delivery, no stage advance until the wait is over.
 		if (state.waiting) return;
+		if (!skipJudge(last)) state.autoRetries = 0;
 		if (skipJudge(last)) {
-			const choice = await askUser(ctx, "executor-error", "The executor's last reply ended in an error", ["Retry", "Back to planning", "Stop"], { roles: { "Back to planning": "replan", Stop: "stop" }, detail: assistantText(last).slice(0, 2000) });
+			const autoRetry = autopilotOn() && !(state.autoRetries ?? 0);
+			if (autoRetry) {
+				state.autoRetries = 1;
+				noteAuto("executor error: retried automatically");
+				ctx.ui.notify("workflow: autopilot: the executor's reply failed; retrying once", "info");
+			}
+			const choice = autoRetry ? "Retry" : await askUser(ctx, "executor-error", "The executor's last reply ended in an error", ["Retry", "Back to planning", "Stop"], { roles: { "Back to planning": "replan", Stop: "stop" }, detail: assistantText(last).slice(0, 2000) });
 			if (choice === "Retry") {
 				pi.sendMessage(
 					{ customType: "workflow-retry", content: "Your last reply ended in an error. Continue with the open steps of the approved plan.", display: true },
@@ -3896,10 +3917,12 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 		state.planGate = g;
 		persist();
 		pi.sendMessage({ customType: "workflow-plan-judge", content: `**Plan judge: ${verdict}** (run ${rounds}/${cfg.maxPlanJudgeRounds})\n\n${outcome.text}`, display: true }, { triggerTurn: false });
-		if (after.action === "fix") {
+		const assume = autopilotOn() && !confirm && !after.capped && !clean && after.user.length > 0;
+		if (assume) noteAuto(`plan judge: ${after.user.length} finding(s) that needed a decision were settled by the planner as assumptions`);
+		if (after.action === "fix" || assume) {
 			planFixing = true;
-			const listed = after.auto.map((f) => `- ${findingText(f).replace(/\n/g, "\n  ")}`).join("\n");
-			pi.sendMessage({ customType: "workflow-plan-fix", content: `${prompts.PLAN_FIX}\n\n${listed}`, display: true }, { triggerTurn: true, deliverAs: "followUp" });
+			const listed = [...after.auto, ...after.user].map((f) => `- ${findingText(f).replace(/\n/g, "\n  ")}`).join("\n");
+			pi.sendMessage({ customType: "workflow-plan-fix", content: `${prompts.PLAN_FIX}${assume ? ` ${prompts.PLAN_ASSUME}` : ""}\n\n${listed}`, display: true }, { triggerTurn: true, deliverAs: "followUp" });
 			return;
 		}
 		const queued = planApproveQueued;
@@ -4139,7 +4162,13 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 		if (r.verdict === "ERROR") {
 			ctx.ui.notify(r.text, "error");
 			if (!ctx.hasUI || state.phase !== "execute") return;
-			const choice = await askUser(ctx, "judge-error", "The judge failed to run", ["Retry the judge", "Back to planning", "Stop"], { roles: { "Back to planning": "replan", Stop: "stop" }, detail: r.text });
+			const autoRetry = autopilotOn() && !(state.autoRetries ?? 0);
+			if (autoRetry) {
+				state.autoRetries = 1;
+				noteAuto("judge error: retried automatically");
+				ctx.ui.notify("workflow: autopilot: the judge failed to run; retrying once", "info");
+			}
+			const choice = autoRetry ? "Retry the judge" : await askUser(ctx, "judge-error", "The judge failed to run", ["Retry the judge", "Back to planning", "Stop"], { roles: { "Back to planning": "replan", Stop: "stop" }, detail: r.text });
 			if (choice === "Retry the judge") {
 				await reviewDiff(ctx, true);
 			} else if (choice === "Back to planning") {
@@ -4151,6 +4180,7 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 			}
 			return;
 		}
+		state.autoRetries = 0;
 		// The verdict travels with the next instruction, so they reach the transcript in order.
 		const report = `**Judge: ${r.verdict}**\n\n${r.text}`;
 		if (hasPlanFlaw(r.text)) {
@@ -4174,12 +4204,18 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 	async function fixOrAsk(ctx: ExtensionContext, report: string | undefined): Promise<void> {
 		if (judgeCapReached(state.judgeRounds, judgeLimits().maxJudgeRounds)) {
 			if (report) pi.sendMessage({ customType: "workflow-judge", content: report, display: true }, { triggerTurn: false });
-			const choice = await askUser(ctx, "judge-cap", `Judge failed ${state.judgeRounds} rounds in a row`, ["Keep fixing", "Escalate and keep fixing", "Stop"], { roles: { Stop: "stop" }, ...(report ? { detail: report } : {}) });
+			const autoCap = autopilotOn() ? ((state.autoCaps ?? 0) === 0 ? "Escalate and keep fixing" : "Stop") : undefined;
+			if (autoCap) {
+				state.autoCaps = (state.autoCaps ?? 0) + 1;
+				noteAuto(`judge cap (${state.judgeRounds} failed rounds): ${autoCap === "Stop" ? "stopped (second cap)" : "escalated and kept fixing (advisor asked once)"}`);
+				ctx.ui.notify(`workflow: autopilot: judge cap reached; ${autoCap === "Stop" ? "stopping" : "escalating and fixing on"}`, "warning");
+			}
+			const choice = autoCap ?? await askUser(ctx, "judge-cap", `Judge failed ${state.judgeRounds} rounds in a row`, ["Keep fixing", "Escalate and keep fixing", "Stop"], { roles: { Stop: "stop" }, ...(report ? { detail: report } : {}) });
 			if (choice === "Keep fixing" || choice === "Escalate and keep fixing") {
 				if (choice !== "Keep fixing") await escalate(ctx);
 				state.judgeRounds = 0;
 				persist();
-				pi.sendMessage({ customType: "workflow-fix", content: prompts.FIX_MESSAGE, display: true }, { triggerTurn: true, deliverAs: "followUp" });
+				pi.sendMessage({ customType: "workflow-fix", content: autoCap ? `${prompts.FIX_MESSAGE} Before you change code, ask the advisor about the open findings above.` : prompts.FIX_MESSAGE, display: true }, { triggerTurn: true, deliverAs: "followUp" });
 				return;
 			}
 			ctx.ui.notify(`workflow: stopped after ${state.judgeRounds} failed judge rounds`, "warning");

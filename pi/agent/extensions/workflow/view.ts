@@ -93,6 +93,8 @@ export interface FlowSummary {
 	humanChecks?: { id?: string; text: string }[];
 	/** Late judge findings (new problems outside the changed lines of a recheck, not blockers): reported, not fixed. */
 	lateFindings?: string[];
+	/** Autopilot decisions: the plan's assumptions, skipped waits, judge cap and retry choices. */
+	autopilot?: string[];
 	/** The card was posted again after a compaction hid it. */
 	reposted?: boolean;
 }
@@ -167,7 +169,7 @@ export function summaryLines(s: FlowSummary, theme: Theme): string[] {
 		);
 	}
 	const tone = { head: "text", done: "success", open: "warning", fixed: "dim", noted: "muted", human: "accent" } as const;
-	for (const l of reportLines(s.steps, s.findings, s.humanChecks, s.lateFindings)) lines.push(l.tone === "head" ? theme.bold(l.text) : theme.fg(tone[l.tone], l.text));
+	for (const l of reportLines(s.steps, s.findings, s.humanChecks, s.lateFindings, s.autopilot)) lines.push(l.tone === "head" ? theme.bold(l.text) : theme.fg(tone[l.tone], l.text));
 	return lines;
 }
 
