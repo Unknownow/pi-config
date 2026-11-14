@@ -33,28 +33,29 @@ test("dockLines: header, running and finished tools (newest first, 3 at most), j
 		jr.job.state = "working";
 		const head = w.engine.widgetLines()[0].replace(/^relay /, "");
 		assert.ok(head.startsWith(id));
-		assert.deepEqual(w.engine.dockLines(1000), [head]);
+		const model = "  worker claude-sonnet-5-5:medium"; // brief size normal, provider prefix dropped
+		assert.deepEqual(w.engine.dockLines(1000), [head, model]);
 		jr.ring = [
 			{ id: "1", name: "read", arg: "a.ts", startedAt: 100, endedAt: 150 },
 			{ id: "2", name: "edit", arg: "b.ts", startedAt: 200, endedAt: 250 },
 			{ id: "3", name: "bash", arg: "npm test", startedAt: 300, endedAt: 350 },
 			{ id: "4", name: "bash", arg: "x".repeat(200), startedAt: 400 },
 		];
-		let lines = w.engine.dockLines(400 + 45_000);
+		let lines = w.engine.dockLines(400 + 45_000).filter((_, i) => i !== 1);
 		assert.equal(lines[0], head);
 		assert.equal(lines[1], `▸ bash ${"x".repeat(200)} 45s`, "the whole argument: only the dock truncates");
 		assert.deepEqual(lines.slice(2), ["· bash npm test", "· edit b.ts", "· read a.ts"]);
 		assert.equal(lines.length, 5);
-		assert.equal(w.engine.dockLines(400 + 372_000)[1].slice(-5), "6m12s");
-		assert.equal(w.engine.dockLines(400 + 3_780_000)[1].slice(-5), "1h03m");
+		assert.equal(w.engine.dockLines(400 + 372_000)[2].slice(-5), "6m12s");
+		assert.equal(w.engine.dockLines(400 + 3_780_000)[2].slice(-5), "1h03m");
 		jr.ring = jr.ring.slice(1); // the model keeps 3; formatting of the finished ones
-		assert.deepEqual(w.engine.dockLines(500).slice(2), ["· bash npm test", "· edit b.ts"]);
+		assert.deepEqual(w.engine.dockLines(500).slice(3), ["· bash npm test", "· edit b.ts"]);
 
 		// verdict newer than every tool call is shown; the next tool call hides it
 		jr.job.lastVerdict = verdict(1, "FAIL");
 		jr.verdictAt = 1000;
 		lines = w.engine.dockLines(1100);
-		assert.equal(lines[1], "judge round 1: FAIL (6 findings)");
+		assert.equal(lines[2], "judge round 1: FAIL (6 findings)");
 		jr.ring.push({ id: "5", name: "read", arg: "c.ts", startedAt: 1200 });
 		assert.ok(!w.engine.dockLines(1300).some((l) => l.startsWith("judge round")));
 		jr.ring[jr.ring.length - 1].endedAt = 1250;
@@ -63,11 +64,18 @@ test("dockLines: header, running and finished tools (newest first, 3 at most), j
 		// judging: one line; other states: header only
 		jr.job.state = "judging";
 		jr.job.round = 1;
-		assert.deepEqual(w.engine.dockLines(1300), [w.engine.widgetLines()[0].replace(/^relay /, ""), "judge reviewing round 2"]);
+		assert.deepEqual(w.engine.dockLines(1300), [w.engine.widgetLines()[0].replace(/^relay /, ""), "  judge claude-opus-5-5:high", "judge reviewing round 2"]);
 		for (const s of ["queued", "paused", "delivering", "critic"] as const) {
 			(jr.job as { state: string }).state = s;
-			assert.equal(w.engine.dockLines(1300).length, 1, s);
+			assert.equal(w.engine.dockLines(1300).length, 2, s);
 		}
+		assert.equal(w.engine.dockLines(1300)[1], "  critic claude-opus-5-5:high");
+		jr.job.state = "working";
+		jr.job.escalated = 1;
+		assert.equal(w.engine.dockLines(1300)[1], "  worker (escalated) claude-opus-5-5:high");
+		jr.job.escalated = 0;
+		jr.job.worker = { pid: 1, model: "other/some-model", sessionDir: "" };
+		assert.equal(w.engine.dockLines(1300)[1], "  worker some-model", "the running worker's own model; thinking only when it is the configured one");
 		jr.job.state = "done";
 		assert.deepEqual(w.engine.dockLines(1300), [], "finished jobs leave");
 		jr.job.state = "working";
@@ -92,8 +100,8 @@ test("a real worker tool call lands in the ring and the stream; more than 2 jobs
 		const b = await start(w);
 		const c = await start(w);
 		const all = w.engine.dockLines(Date.now());
-		assert.equal(all.length, 3, all.join("|"));
-		assert.ok([a, b, c].every((id, i) => all[i].startsWith(id)));
+		assert.equal(all.length, 6, all.join("|"));
+		assert.ok([a, b, c].every((id, i) => all[2 * i].startsWith(id) && all[2 * i + 1].startsWith("  worker ")));
 		for (const id of [a, b, c]) await w.engine.stop(id);
 	} finally {
 		w.end();

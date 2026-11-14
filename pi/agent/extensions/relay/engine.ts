@@ -1297,15 +1297,34 @@ export class Engine {
 	}
 
 	/**
+	 * Who works on the job right now and with which model, for the dock: the critic or the judge while they review, else the
+	 * worker (the escalate model once escalated; the model the running worker was started with when there is one).
+	 * Short form: `<role> <model id>[:thinking]`, the provider prefix dropped.
+	 */
+	activeModel(job: Job): string {
+		const r = this.cfg.roles;
+		const pick = (): [string, { model: string; thinking?: string }] => {
+			if (job.state === "judging") return ["judge", r.judge];
+			if (job.state === "critic") return ["critic", r.critic];
+			const spec = job.escalated > 0 ? r.escalate : r.worker[job.size];
+			const model = job.worker?.model ?? spec.model;
+			return [job.escalated > 0 ? "worker (escalated)" : "worker", { model, thinking: model === spec.model ? spec.thinking : undefined }];
+		};
+		const [role, spec] = pick();
+		const id = spec.model.slice(spec.model.indexOf("/") + 1);
+		return `${role} ${id}${spec.thinking ? `:${spec.thinking}` : ""}`;
+	}
+
+	/**
 	 * The dock's right column: per unfinished job a header and, while working, the judge's latest verdict and the last 3 tool calls;
-	 * judging shows one line; more than 2 unfinished jobs collapse to headers. Full lines: the dock truncates.
+	 * judging shows one line; more than 2 unfinished jobs collapse to headers. Under every header, also when collapsed, a model line `  <role> <model>` (activeModel): its own line, so the dock's 60-column cut never hides it. Full lines: the dock truncates.
 	 */
 	dockLines(now: number): string[] {
 		const runs = [...this.jobs.values()].filter((j) => !j.ended && !FINISHED.includes(j.job.state));
 		const head = this.widgetLines().map((l) => l.replace(/^relay /, ""));
 		const out: string[] = [];
 		runs.forEach((jr, i) => {
-			out.push(head[i]);
+			out.push(head[i], `  ${this.activeModel(jr.job)}`);
 			if (runs.length > 2) return;
 			const j = jr.job;
 			if (j.state === "judging") out.push(`judge reviewing round ${j.round + 1}`);
