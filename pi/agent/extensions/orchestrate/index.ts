@@ -25,6 +25,7 @@ import { emitClaims } from "../shared/claims.ts";
 import { notifyCommand } from "../shared/notify.ts";
 import { activeCount, canonicalPackages, kickoffText, makeRunId, readyToSpawn, renderBrief, revertSpawning, setName, staleSpawning, validatePackages, type PackageInput, type Run, type Sub } from "./brief.ts";
 import { foldersFromEntries } from "./folders.ts";
+import { isKnownOrch, orchCompletions, orchDescription, orchUsage } from "./commands.ts";
 import { checkDecision, checkItemAnswer } from "./decide.ts";
 import { acceptRef, close, closeIdle, countersOf, emptyItems, escalate, findItem, fingerprintOf, idleAllowed, isParkedWait, liveItems, markStale, openItem, orphanDue, planRef, quoteOk, recordUserMessage, setFingerprint, tick, type Action, type Caps, type Item, type ItemsFile, type Outcome } from "./items.ts";
 import { HeldQueue, resolveAllPending, RUN_ENDED_ANSWER, type Identity } from "./identity.ts";
@@ -2391,9 +2392,14 @@ ${list.map((a) => `${a.line} → affects ${a.affects.join(", ") || "?"}`).join("
 	});
 
 	pi.registerCommand("orch", {
-		description: "Orchestrator mode and run: start (read-only discussion; \"go\" on a proposal runs the proposal judge first), off, go force, judge cancel, status, watch (resume watching a run), merge <id> [--force] (merge an accepted PR now; --force skips the acceptance), end",
+		description: orchDescription(),
 		getArgumentCompletions: (prefix) =>
-			["start", "off", "go", "judge", "status", "board", "watch", "merge", "end"].filter((s) => s.startsWith(prefix.trim())).map((s) => ({ value: s, label: s })),
+			orchCompletions(prefix, {
+				packages: () => {
+					if (!owned || owned.executor === "relay") return null;
+					return readRun(owned.common, owned.runId).run?.subs ?? null;
+				},
+			}),
 		handler: async (args, ctx) => {
 			uiCtx = ctx;
 			let sub = args.trim().split(/\s+/)[0];
@@ -2473,7 +2479,7 @@ ${assumed}` : ""}`, "info");
 					});
 					ctx.ui.notify(`orchestrate: watching run ${run.id}`, "info");
 				} else {
-					ctx.ui.notify("usage: /orch start [title] | off | go force | judge cancel | status | board | watch | merged <id> | end", "warning");
+					ctx.ui.notify(isKnownOrch(sub) ? orchUsage() : `orchestrate: unknown ${sub}; ${orchUsage()}`, "warning");
 				}
 			} catch (e) {
 				ctx.ui.notify(`orchestrate: ${(e as Error).message}`, "error");

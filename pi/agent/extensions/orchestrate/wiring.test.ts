@@ -80,7 +80,7 @@ test("runProposalGate: rounds helper, signal, offEsc in finally", () => {
 test("setMode aborts the proposal run; the widget gets the judging label; commands and import", () => {
 	assert.ok(slice("function setMode(", 1800).includes("abortProposal("));
 	assert.ok(source.includes('proposalRun ? "proposal" : undefined'));
-	assert.ok(source.includes('"go", "judge"'));
+	assert.ok(fs.readFileSync(new URL("./commands.ts", import.meta.url), "utf8").includes('value: "go"') && source.includes('sub === "judge"'));
 	assert.ok(source.includes('import { runSubagent } from "../agents/subagent.ts"'));
 	assert.ok(source.includes("go force") && source.includes("judge cancel"));
 });
