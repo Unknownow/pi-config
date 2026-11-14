@@ -67,7 +67,7 @@ test("Stop: refused without a quote and auto-escalated; accepted with a valid qu
 	assert.deepEqual(decide(f, item, { choice: "Stop", userQuote: "stop the flow" }), { ok: true, role: "stop", byUser: true, outcome: "choice" });
 });
 
-test("replan: the 3rd is refused without a quote and auto-escalates; the user's answer leaves replans alone", () => {
+test("replan: a replan over the cap is allowed without a quote (the orchestrator steps back instead)", () => {
 	const f = emptyItems();
 	const opts = ["Back to planning", "Keep going"];
 	const roles = { "Back to planning": "replan" };
@@ -82,13 +82,7 @@ test("replan: the 3rd is refused without a quote and auto-escalates; the user's 
 	const { item } = menu("plan-flaw", opts, roles, f);
 	assert.equal(item.state, "open");
 	const d = decide(f, item, { choice: "Back to planning" });
-	assert.equal(!d.ok && d.escalate, true);
-	escalate(item, 5, "x");
-	recordUserMessage(f, "yes, replan it", 6);
-	const ok = decide(f, item, { choice: "Back to planning", userQuote: "replan it" });
-	assert.equal(ok.ok, true);
-	close(f, "a", item.ref, { how: "answered", byUser: true, outcome: "replan" });
-	assert.equal(countersOf(f, "a").replans, 2); // your answer does not reset it, and does not count
+	assert.equal(d.ok && d.outcome, "replan");
 });
 
 test("waits: a resume without a quote is refused, with a valid one accepted; a choice on a wait is refused", () => {

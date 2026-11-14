@@ -5,7 +5,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { test } from "node:test";
-import { worktreeForFolder } from "./add-folder.ts";
+import { addRepoToSet, worktreeForFolder } from "./add-folder.ts";
 import { defaults } from "./config.ts";
 import type { Git } from "./git-ops.ts";
 import { readMeta, writeMeta } from "./meta.ts";
@@ -111,4 +111,45 @@ test("a worktree folder deleted by hand is recreated, not reused", async () => {
 	fs.rmSync(`${f.setRoot}/other`, { recursive: true, force: true });
 	const r = await f.ask(`${f.d}/other`);
 	assert.ok(r && ("error" in r || fs.existsSync(r.folder)), JSON.stringify(r));
+});
+
+const progress = () => new Progress(null, "t", (l) => l);
+
+/** Gives `other` a second commit on origin/dev. */
+function devBranch(f: { d: string }): void {
+	run(`${f.d}/other`, [...id, "commit", "--allow-empty", "-m", "second"]);
+	run(`${f.d}/other`, ["push", "origin", "HEAD:dev"]);
+	run(`${f.d}/other`, ["fetch", "origin"]);
+}
+
+test("with base the new worktree starts at that ref", async () => {
+	const f = fixture();
+	devBranch(f);
+	const r = await worktreeForFolder(git, { cfg: f.cfg, setRoot: f.setRoot, folder: `${f.d}/other`, base: "origin/dev" }, progress());
+	assert.ok(r && "folder" in r, JSON.stringify(r));
+	assert.equal(run(r.folder, ["rev-parse", "HEAD"]), run(`${f.d}/other`, ["rev-parse", "origin/dev"]));
+});
+
+test("W3: adding a second repo returns path and the set branch; base is honoured", async () => {
+	const f = fixture();
+	devBranch(f);
+	const r = await addRepoToSet(git, { cfg: f.cfg, name: "s1", folder: `${f.d}/other`, base: "origin/dev" }, progress());
+	assert.ok("path" in r, JSON.stringify(r));
+	assert.equal(r.path, `${f.setRoot}/other`);
+	assert.equal(r.branch, "wt/s1");
+	assert.equal(run(r.path, ["rev-parse", "HEAD"]), run(`${f.d}/other`, ["rev-parse", "origin/dev"]));
+});
+
+test("W3: a repo already in the set is an error and nothing is created or reused", async () => {
+	const f = fixture();
+	assert.deepEqual(await addRepoToSet(git, { cfg: f.cfg, name: "s1", folder: `${f.d}/repo` }, progress()), { error: "repo already in the set" });
+	await addRepoToSet(git, { cfg: f.cfg, name: "s1", folder: `${f.d}/other` }, progress());
+	assert.deepEqual(await addRepoToSet(git, { cfg: f.cfg, name: "s1", folder: `${f.d}/other` }, progress()), { error: "repo already in the set" });
+});
+
+test("W3: a non-git folder and an unknown set are errors", async () => {
+	const f = fixture();
+	fs.mkdirSync(`${f.d}/plain`);
+	assert.deepEqual(await addRepoToSet(git, { cfg: f.cfg, name: "s1", folder: `${f.d}/plain` }, progress()), { error: "not a git repo" });
+	assert.deepEqual(await addRepoToSet(git, { cfg: f.cfg, name: "nope", folder: `${f.d}/other` }, progress()), { error: 'unknown set "nope"' });
 });

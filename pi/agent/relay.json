@@ -1,0 +1,26 @@
+{
+  "_comment": "Config for ~/.pi/agent/extensions/relay. Missing keys fall back to the defaults in relay/config.ts. Edit here or with `/relay model <role> <provider/id[:thinking]>`. Synced by pi-config.",
+  "active": true,
+  "roles": {
+    "critic": { "model": "claude-bridge/claude-opus-5-5", "thinking": "high" },
+    "judge": { "model": "claude-bridge/claude-opus-5-5", "thinking": "high" },
+    "escalate": { "model": "claude-bridge/claude-opus-5-5", "thinking": "high" },
+    "worker": {
+      "small": { "model": "claude-bridge/claude-haiku-5-5", "thinking": "medium" },
+      "normal": { "model": "claude-bridge/claude-sonnet-5-5", "thinking": "medium" },
+      "large": { "model": "claude-bridge/claude-opus-5-5", "thinking": "medium" }
+    }
+  },
+  "editBudget": { "lines": 40, "files": 3 },
+  "maxJobs": 3,
+  "caps": { "critic": 3, "judge": 3, "escalate": 2, "replans": 1 },
+  "budget": { "wallMin": 120, "tokens": 4000000, "graceMin": 30, "graceTokenShare": 0.1 },
+  "stallMin": 10,
+  "bashTimeoutMin": 60,
+  "toolTimeouts": [],
+  "worker": { "extensions": ["~/.pi/agent/npm/node_modules/pi-claude-bridge/src/index.ts"] },
+  "reviewer": { "extensions": ["~/.pi/agent/npm/node_modules/pi-claude-bridge/src/index.ts"] },
+  "repos": {},
+  "defaultMerge": "pr-only",
+  "askUser": []
+}

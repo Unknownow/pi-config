@@ -1,7 +1,7 @@
 /** Pure helpers for orchestrate's model switch (and, later, the proposal judge gate). Imports only from `shared/` and this folder. */
 
 import type { Finding } from "../shared/findings.ts";
-import { findingsBlock, isClean, textHash } from "../shared/findings.ts";
+import { blockingFindings, findingsBlock, isClean, textHash } from "../shared/findings.ts";
 import { isProposalReady, type Mode, MODE_ENTRY } from "./mode.ts";
 import { JUDGE_PROPOSAL, JUDGE_PROPOSAL_RECHECK, NO_AGREED_NOTE } from "./prompts.ts";
 
@@ -19,14 +19,14 @@ export function proposalGateStart(o: { mode: "off" | "auto"; hash: string; last?
 	if (o.mode === "off") return "move";
 	const l = o.last;
 	if (l && l.hash === o.hash && isClean(l.verdict, l.findings)) return "move";
-	if (l && l.findings.length > 0) return "recheck";
+	if (l && blockingFindings(l.findings).length > 0) return "recheck";
 	return "full";
 }
 
 /** After a judge run (`rounds` counts this run): move on, send the auto findings back for a fix, or pause. */
 export function proposalGateAfterVerdict(o: { verdict: string; findings: Finding[]; rounds: number; max: number }): "move" | "fix" | "pause" | "move-open" {
 	if (isClean(o.verdict, o.findings)) return "move";
-	if (o.findings.some((f) => f.route === "user")) return "pause";
+	if (blockingFindings(o.findings).some((f) => f.route === "user")) return "pause";
 	return o.rounds < o.max ? "fix" : "move-open";
 }
 

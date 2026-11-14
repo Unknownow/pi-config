@@ -1,9 +1,9 @@
 /** Pure decisions of the automatic judge gates (the plan judge now, the discussion gate later). `index.ts` only runs judges, sends messages and keeps the runtime handle. */
 
 import type { Finding } from "../shared/findings.ts";
-import { findingText, findingsBlock, isClean, parseFindings, textHash } from "../shared/findings.ts";
+import { blockingFindings, findingText, findingsBlock, isClean, minorFindings, parseFindings, textHash } from "../shared/findings.ts";
 export type { Finding, Severity } from "../shared/findings.ts";
-export { findingText, findingsBlock, isClean, isEscKey, parseFindings, textHash } from "../shared/findings.ts";
+export { blockingFindings, findingText, findingsBlock, isClean, isEscKey, minorFindings, parseFindings, textHash } from "../shared/findings.ts";
 import { endsInQuestion } from "./agent-end.ts";
 import { JUDGE_DISCUSSION_RECHECK, JUDGE_PLAN, JUDGE_PLAN_RECHECK, NO_SPEC_NOTE } from "./prompts.ts";
 
@@ -23,6 +23,8 @@ export interface PlanGate {
 	/** Set when a run ended at the cap: a changed plan then gets one confirm run, no fix loop. */
 	cappedHash?: string;
 	spec: SpecKind;
+	/** Minors of the last run (and late majors): shown as a count and appended to the approved plan as notes for the executor. */
+	notes?: Finding[];
 }
 
 /** The optional `judge` field of K10 `workflow:plan-ready`. */
@@ -33,6 +35,8 @@ export interface K10Judge {
 	spec: SpecKind;
 	findings: string[];
 	userFindings: string[];
+	/** Number of minor findings, kept as notes for the executor (optional, version stays 1). */
+	notes?: number;
 }
 
 /** A line diff of `prev` against `next` with 2 lines of context (`+`, `-`, ` ` prefixes, `@@` between hunks). "" when equal; null when too big (cells over 4M or output over `cap` lines). */
@@ -94,12 +98,15 @@ export function planGateDecide(o: { mode: "off" | "auto"; quick: boolean; planHa
 }
 
 /** After a plan-judge run (`rounds` already counts it): send the auto findings to the planner, or offer the plan. User findings are never sent. */
-export function planGateAfterVerdict(o: { verdict: string; findings: Finding[]; rounds: number; max: number; confirm: boolean }): { action: "offer" | "fix"; auto: Finding[]; user: Finding[]; capped: boolean } {
-	const auto = o.findings.filter((f) => f.route === "auto");
-	const user = o.findings.filter((f) => f.route !== "auto");
-	if (isClean(o.verdict, o.findings)) return { action: "offer", auto, user, capped: false };
+export function planGateAfterVerdict(o: { verdict: string; findings: Finding[]; rounds: number; max: number; confirm: boolean }): { action: "offer" | "fix"; auto: Finding[]; user: Finding[]; notes: Finding[]; capped: boolean } {
+	// Only blocking findings are fixed or shown as open; minors become notes for the executor.
+	const blocking = blockingFindings(o.findings);
+	const auto = blocking.filter((f) => f.route === "auto");
+	const user = blocking.filter((f) => f.route !== "auto");
+	const notes = minorFindings(o.findings);
+	if (isClean(o.verdict, o.findings)) return { action: "offer", auto, user, notes, capped: false };
 	const capped = o.rounds >= o.max;
-	return { action: !o.confirm && auto.length > 0 && !capped ? "fix" : "offer", auto, user, capped };
+	return { action: !o.confirm && auto.length > 0 && !capped ? "fix" : "offer", auto, user, notes, capped };
 }
 
 /** A "go" typed while the gate ran: approve only after a clean PASS, otherwise show the menu. */
@@ -109,7 +116,7 @@ export function planOfferAction(o: { clean: boolean; queuedGo: boolean }): "appr
 
 /** The K10 `judge` field from the gate's state; `ran` is false when the judge was cancelled or failed. */
 export function planReadyJudge(gate: PlanGate, ran: boolean): K10Judge {
-	return { ran, verdict: gate.verdict ?? (ran ? "FAIL" : "error"), rounds: gate.rounds, spec: gate.spec, findings: gate.autoFindings.map(findingText), userFindings: gate.userFindings.map(findingText) };
+	return { ran, verdict: gate.verdict ?? (ran ? "FAIL" : "error"), rounds: gate.rounds, spec: gate.spec, findings: gate.autoFindings.map(findingText), userFindings: gate.userFindings.map(findingText), ...(gate.notes?.length ? { notes: gate.notes.length } : {}) };
 }
 
 /** A new flow, or a replan, starts clean ("enter-plan"); an orchestrator rejection keeps what the judge knows but gives a fresh budget. */
@@ -129,6 +136,7 @@ export function menuJudgeLines(gate: PlanGate | undefined, note?: string): strin
 		if (gate.autoFindings.length) out.push(`Plan judge: ${gate.autoFindings.length} open finding${gate.autoFindings.length === 1 ? "" : "s"}${gate.cappedHash !== undefined ? " after the cap" : ""}`, ...gate.autoFindings.map((f) => `- ${f.head}`));
 		if (gate.userFindings.length) out.push("Needs your decision:", ...gate.userFindings.map((f) => `- ${f.head}`));
 	}
+	if (gate.notes?.length) out.push(`${gate.notes.length} minor note${gate.notes.length === 1 ? "" : "s"} go to the executor`);
 	if (gate.spec === "none") out.push("spec: none");
 	return out;
 }
@@ -159,6 +167,8 @@ export interface DiscussionReview {
 	afterEntryId?: string;
 	rounds: number;
 	status: "idle" | "awaiting-fix" | "paused";
+	/** Set by the restate request: false for a manual `/flow judge`, which starts no fix loop. */
+	restateLoop?: boolean;
 }
 
 /** The findings `/flow plan force` carries into planning: the last review's, only when it belongs to the current agreed list. */
@@ -172,14 +182,14 @@ export function discussionGateStart(o: { mode: "off" | "auto"; quick: boolean; l
 	if (!o.listHash) return "warn-move";
 	const l = o.last;
 	if (l && l.listHash === o.listHash && isClean(l.verdict, l.findings)) return "move";
-	if (l && l.afterEntryId && l.findings.length > 0 && o.sinceChars <= o.cap) return "recheck";
+	if (l && l.afterEntryId && blockingFindings(l.findings).length > 0 && o.sinceChars <= o.cap) return "recheck";
 	return "full";
 }
 
 /** After a discussion judge run: move on, send the findings to the discuss model, or pause for the user. */
 export function discussionGateAfterVerdict(o: { verdict: string; findings: Finding[]; rounds: number; max: number }): "move" | "fix" | "pause" | "move-open" {
 	if (isClean(o.verdict, o.findings)) return "move";
-	if (o.findings.some((f) => f.route === "user")) return "pause";
+	if (blockingFindings(o.findings).some((f) => f.route === "user")) return "pause";
 	return o.rounds < o.max ? "fix" : "move-open";
 }
 

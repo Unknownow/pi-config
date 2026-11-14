@@ -63,8 +63,37 @@ export function reportFindings(list: FlowFinding[] | undefined, plan: string | u
 	});
 }
 
+/** The plan's `Assumptions:` entries and the flow's logged autopilot choices, in one list. */
+export function autopilotDecisions(plan: string | undefined, logged: string[] | undefined): string[] {
+	const out: string[] = [];
+	let inside = false;
+	let seen = false;
+	for (const l of (plan ?? "").split(/\r?\n/)) {
+		if (/^\s*(?:#+\s*)?Assumptions:?\s*$/i.test(l)) {
+			inside = true;
+			seen = false;
+			continue;
+		}
+		if (!inside) continue;
+		if (/^#+\s/.test(l)) {
+			inside = false;
+			continue;
+		}
+		if (!l.trim()) {
+			if (seen) inside = false;
+			continue;
+		}
+		const m = l.match(/^\s*(?:[-*]\s*)?(A\d+:.*)$/);
+		if (m) {
+			out.push(m[1].trim());
+			seen = true;
+		}
+	}
+	return [...out, ...(logged ?? [])];
+}
+
 /** The card's step and finding lines, without colours. */
-export function reportLines(steps: ReportStep[] | undefined, findings: ReportFinding[] | undefined, human?: { id?: string; text: string }[]): ReportLine[] {
+export function reportLines(steps: ReportStep[] | undefined, findings: ReportFinding[] | undefined, human?: { id?: string; text: string }[], late?: string[], autopilot?: string[]): ReportLine[] {
 	const lines: ReportLine[] = [];
 	if (steps?.length) {
 		lines.push({ text: `Steps ${steps.filter((s) => s.done).length}/${steps.length} done`, tone: "head" });
@@ -82,6 +111,15 @@ export function reportLines(steps: ReportStep[] | undefined, findings: ReportFin
 			lines.push({ text: `  ${f.status.padEnd(5)} ${stage}${cut(f.line, 120)}`, tone: f.status });
 		}
 		if (ordered.length > MAX_SHOWN) lines.push({ text: `  +${ordered.length - MAX_SHOWN} more`, tone: "fixed" });
+	}
+	if (late?.length) {
+		lines.push({ text: `Late findings (not fixed): ${late.length}`, tone: "head" });
+		for (const l of late.slice(0, MAX_SHOWN)) lines.push({ text: `  ${cut(l, 120)}`, tone: "noted" });
+	}
+	if (autopilot?.length) {
+		lines.push({ text: `Autopilot decisions: ${autopilot.length}`, tone: "head" });
+		for (const a of autopilot.slice(0, MAX_SHOWN)) lines.push({ text: `  ${cut(a, 120)}`, tone: "noted" });
+		if (autopilot.length > MAX_SHOWN) lines.push({ text: `  +${autopilot.length - MAX_SHOWN} more`, tone: "fixed" });
 	}
 	if (human?.length) {
 		lines.push({ text: `Human checks (after the flow): ${human.length}`, tone: "head" });

@@ -66,7 +66,7 @@ export function findBinary(name: string, env: NodeJS.ProcessEnv = process.env): 
 	return undefined;
 }
 
-function runProgram(bin: string, args: string[], signal?: AbortSignal): Promise<RunResult> {
+export function runProgram(bin: string, args: string[], signal?: AbortSignal): Promise<RunResult> {
 	return new Promise((resolve) => {
 		const child = spawn(bin, args, { stdio: ["ignore", "pipe", "pipe"], windowsHide: true, signal: AbortSignal.any([AbortSignal.timeout(RUN_TIMEOUT_MS), ...(signal ? [signal] : [])]) });
 		let stdout = "";

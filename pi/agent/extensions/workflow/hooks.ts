@@ -28,16 +28,23 @@ export function planReviewAction(answer: unknown, stillCurrent: boolean): "appro
 	return "ignore";
 }
 
+/** The orchestrator's approval notes of a K10 answer, or "". */
+export function planReviewNotes(answer: unknown): string {
+	const n = typeof answer === "object" && answer !== null ? (answer as { notes?: unknown }).notes : undefined;
+	return typeof n === "string" ? n.trim() : "";
+}
+
 export const ACCEPTANCE_NO_ANSWER = "the acceptance check did not answer";
 
-/** The refusal text of a K11 answer, or null when the merge may go on. */
-export function acceptanceRefusal(answer: unknown): string | null {
+/** The refusal of a K11 answer, or null when the merge may go on. `pending`: an acceptance request waits for the orchestrator; `tree` is the tree it resolved. */
+export function acceptanceRefusal(answer: unknown): { text: string; pending: boolean; tree?: string } | null {
 	if (answer === null || answer === undefined) return null;
 	if (typeof answer === "object") {
-		const p = (answer as { problem?: unknown }).problem;
-		if (typeof p === "string" && p) return p;
+		const o = answer as { problem?: unknown; pending?: unknown; tree?: unknown };
+		const tree = typeof o.tree === "string" && o.tree ? o.tree : undefined;
+		if (typeof o.problem === "string" && o.problem) return { text: o.problem, pending: o.pending === true && !!tree, ...(tree ? { tree } : {}) };
 	}
-	return ACCEPTANCE_NO_ANSWER; // an error, or an answer outside the contract: refuse
+	return { text: ACCEPTANCE_NO_ANSWER, pending: false }; // an error, or an answer outside the contract: refuse
 }
 
 const SPECIAL = /[.*+?^$()|{}\[\]\\]/g;
@@ -98,4 +105,18 @@ export async function withEndFlow<T>(flag: { on: boolean }, how: "finished" | "s
 	} finally {
 		flag.on = false;
 	}
+}
+
+/** The K16 `flow:active` payload: who asks (`workflow` or `relay`) and the claim function the listener answers through. */
+export function parseFlowActive(data: unknown): { from: "workflow" | "relay"; claim?: (p: Promise<unknown>) => void } | { error: string } {
+	if (typeof data !== "object" || data === null) return { error: "flow:active needs an object payload" };
+	const o = data as { v?: unknown; from?: unknown; claim?: unknown };
+	if (o.v !== 1) return { error: "flow:active: unsupported version (v must be 1)" };
+	if (o.from !== "workflow" && o.from !== "relay") return { error: "flow:active: from must be \"workflow\" or \"relay\"" };
+	return { from: o.from, claim: typeof o.claim === "function" ? (o.claim as (p: Promise<unknown>) => void) : undefined };
+}
+
+/** True when the settled K16 answer says relay owns the session; null, `{ error }` (timeout) and anything else are no claim. */
+export function relayOwner(answer: unknown): boolean {
+	return typeof answer === "object" && answer !== null && (answer as { owner?: unknown }).owner === "relay";
 }

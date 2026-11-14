@@ -26,6 +26,8 @@ export interface Item {
 	/** ms of orchestrator idle time since it was posted. */
 	idleMs: number;
 	escalatedAt?: number;
+	/** The overdue notice was sent once (the timeouts no longer escalate). */
+	overdueNotified?: boolean;
 	/** The question shown to the user. */
 	escalation?: string;
 	/** What the user typed after the escalation. */
@@ -73,7 +75,8 @@ export interface Caps {
 	maxIdleAnswers: number;
 }
 
-export type Action = { type: "remind"; item: Item } | { type: "escalate"; item: Item; why: string };
+/** `step-back`: a limit was reached; the item stays open and the orchestrator re-plans instead of asking the user. `remind` with `overdue` is a late reminder plus a UI notice. */
+export type Action = { type: "remind"; item: Item; overdue?: string } | { type: "escalate"; item: Item; why: string } | { type: "step-back"; item: Item; why: string };
 
 /** These keys loop on the same problem: their count resets only when the stage changes. */
 export const LOOP_KEYS = ["judge-cap", "plan-flaw", "accept", "merge-early"];
@@ -192,7 +195,7 @@ export function openItem(file: ItemsFile, m: OpenMsg, caps: Caps, now: number): 
 		c.idleFp = c.fingerprint;
 		if (c.idleNoProgress > caps.maxIdleAnswers) why = `idle ${c.idleNoProgress} times without progress`;
 	}
-	return why ? [escalate(item, now, why)] : [];
+	return why ? (item.kind === "wait" ? [escalate(item, now, why)] : [{ type: "step-back", item, why }]) : [];
 }
 
 /** Why a wait that is not parked goes to the user. */
@@ -211,9 +214,13 @@ export function tick(file: ItemsFile, now: number, orchestratorIdle: boolean, el
 	for (const item of file.items) {
 		if (item.state !== "open" || item.parked) continue;
 		if (orchestratorIdle) item.idleMs += Math.max(0, elapsedMs);
-		if (item.idleMs >= ESCALATE_IDLE_MS) out.push(escalate(item, now, "the orchestrator did not answer for 15 minutes"));
-		else if (now - item.postedAt >= ESCALATE_CEILING_MS) out.push(escalate(item, now, "30 minutes without an answer"));
-		else if (item.reminders < REMIND_AT_MS.length && item.idleMs >= REMIND_AT_MS[item.reminders]) {
+		const overdue = item.idleMs >= ESCALATE_IDLE_MS ? "the orchestrator did not answer for 15 minutes" : now - item.postedAt >= ESCALATE_CEILING_MS ? "30 minutes without an answer" : "";
+		if (overdue) {
+			if (!item.overdueNotified) {
+				item.overdueNotified = true;
+				out.push({ type: "remind", item, overdue });
+			}
+		} else if (item.reminders < REMIND_AT_MS.length && item.idleMs >= REMIND_AT_MS[item.reminders]) {
 			item.reminders++;
 			item.lastReminderAt = now;
 			out.push({ type: "remind", item });

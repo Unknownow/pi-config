@@ -1,0 +1,42 @@
+[
+  {
+    "timestamp": "2026-11-14T08:09:07.644Z",
+    "version": "1.5.2",
+    "kind": "uncaught_exception",
+    "message": "UNKNOWN: unknown error, open 'D:\\works\\annamites\\city-bus-flow\\.git\\pi\\orchestra\\o11140302-one-gameplay-core-le\\cross-view\\inbox.read.24996.tmp'",
+    "stack": "Error: UNKNOWN: unknown error, open 'D:\\works\\annamites\\city-bus-flow\\.git\\pi\\orchestra\\o11140302-one-gameplay-core-le\\cross-view\\inbox.read.24996.tmp'\n    at Proxy.writeFileSync (node:fs:2482:20)\n    at writeAtomic (C:/Users/unkno/.pi/agent/extensions/orchestrate/store.ts:81:6)\n    at writeCursor (C:/Users/unkno/.pi/agent/extensions/orchestrate/store.ts:165:3)\n    at deliverInbox (C:/Users/unkno/.pi/agent/extensions/orchestrate/index.ts:527:83)\n    at Timeout._onTimeout (C:/Users/unkno/.pi/agent/extensions/orchestrate/index.ts:170:23)\n    at listOnTimeout (node:internal/timers:685:17)\n    at process.processTimers (node:internal/timers:618:7)",
+    "sessionFile": "C:\\Users\\unkno\\.pi\\agent\\sessions\\--D--works-annamites-wt-o11140302-cross-view-city-bus-flow--\\2026-11-14T07-48-03-384Z_01a1d907-18b7-7765-b437-5c5fa537be8b.jsonl",
+    "cwd": "D:\\works\\annamites\\wt\\o11140302-cross-view\\city-bus-flow",
+    "notified": true
+  },
+  {
+    "timestamp": "2026-11-14T08:13:15.558Z",
+    "version": "1.5.2",
+    "kind": "uncaught_exception",
+    "message": "UNKNOWN: unknown error, open 'D:\\works\\annamites\\city-bus-flow\\.git\\pi\\orchestra\\o11140302-one-gameplay-core-le\\motion\\inbox.read.23868.tmp'",
+    "stack": "Error: UNKNOWN: unknown error, open 'D:\\works\\annamites\\city-bus-flow\\.git\\pi\\orchestra\\o11140302-one-gameplay-core-le\\motion\\inbox.read.23868.tmp'\n    at Proxy.writeFileSync (node:fs:2482:20)\n    at writeAtomic (C:/Users/unkno/.pi/agent/extensions/orchestrate/store.ts:81:6)\n    at writeCursor (C:/Users/unkno/.pi/agent/extensions/orchestrate/store.ts:165:3)\n    at deliverInbox (C:/Users/unkno/.pi/agent/extensions/orchestrate/index.ts:527:83)\n    at Timeout._onTimeout (C:/Users/unkno/.pi/agent/extensions/orchestrate/index.ts:170:23)\n    at listOnTimeout (node:internal/timers:685:17)\n    at process.processTimers (node:internal/timers:618:7)",
+    "sessionFile": "C:\\Users\\unkno\\.pi\\agent\\sessions\\--D--works-annamites-wt-o11140302-motion-city-bus-flow--\\2026-11-14T07-48-11-799Z_01a1d907-3997-7765-b437-5c6094cb29ac.jsonl",
+    "cwd": "D:\\works\\annamites\\wt\\o11140302-motion\\city-bus-flow",
+    "notified": true
+  },
+  {
+    "timestamp": "2026-11-14T08:13:21.251Z",
+    "version": "1.5.2",
+    "kind": "uncaught_exception",
+    "message": "UNKNOWN: unknown error, open 'D:\\works\\annamites\\city-bus-flow\\.git\\pi\\orchestra\\o11140302-one-gameplay-core-le\\ui-gaps\\inbox.read.20928.tmp'",
+    "stack": "Error: UNKNOWN: unknown error, open 'D:\\works\\annamites\\city-bus-flow\\.git\\pi\\orchestra\\o11140302-one-gameplay-core-le\\ui-gaps\\inbox.read.20928.tmp'\n    at Proxy.writeFileSync (node:fs:2482:20)\n    at writeAtomic (C:/Users/unkno/.pi/agent/extensions/orchestrate/store.ts:81:6)\n    at writeCursor (C:/Users/unkno/.pi/agent/extensions/orchestrate/store.ts:165:3)\n    at deliverInbox (C:/Users/unkno/.pi/agent/extensions/orchestrate/index.ts:527:83)\n    at Timeout._onTimeout (C:/Users/unkno/.pi/agent/extensions/orchestrate/index.ts:170:23)\n    at listOnTimeout (node:internal/timers:685:17)\n    at process.processTimers (node:internal/timers:618:7)",
+    "sessionFile": "C:\\Users\\unkno\\.pi\\agent\\sessions\\--D--works-annamites-wt-o11140302-ui-gaps-city-bus-flow--\\2026-11-14T07-48-20-284Z_01a1d907-5abc-7765-b437-5c629ada0e36.jsonl",
+    "cwd": "D:\\works\\annamites\\wt\\o11140302-ui-gaps\\city-bus-flow",
+    "notified": true
+  },
+  {
+    "timestamp": "2026-11-14T08:14:29.944Z",
+    "version": "1.5.2",
+    "kind": "uncaught_exception",
+    "message": "UNKNOWN: unknown error, open 'D:\\works\\annamites\\city-bus-flow\\.git\\pi\\orchestra\\o11140302-one-gameplay-core-le\\level-tools\\inbox.read.32836.tmp'",
+    "stack": "Error: UNKNOWN: unknown error, open 'D:\\works\\annamites\\city-bus-flow\\.git\\pi\\orchestra\\o11140302-one-gameplay-core-le\\level-tools\\inbox.read.32836.tmp'\n    at Proxy.writeFileSync (node:fs:2482:20)\n    at writeAtomic (C:/Users/unkno/.pi/agent/extensions/orchestrate/store.ts:75:6)\n    at writeCursor (C:/Users/unkno/.pi/agent/extensions/orchestrate/store.ts:159:3)\n    at deliverInbox (C:/Users/unkno/.pi/agent/extensions/orchestrate/index.ts:451:83)\n    at Timeout._onTimeout (C:/Users/unkno/.pi/agent/extensions/orchestrate/index.ts:170:23)\n    at listOnTimeout (node:internal/timers:685:17)\n    at process.processTimers (node:internal/timers:618:7)",
+    "sessionFile": "C:\\Users\\unkno\\.pi\\agent\\sessions\\--D--works-annamites-wt-o11140302-level-tools-city-bus-flow--\\2026-11-14T03-34-18-620Z_01a1d81e-c8fc-7765-b437-5c54b5766e29.jsonl",
+    "cwd": "D:\\works\\annamites\\wt\\o11140302-level-tools\\city-bus-flow",
+    "notified": true
+  }
+]

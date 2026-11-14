@@ -1,6 +1,6 @@
 {
   "_comment": "Config for ~/.pi/agent/extensions/orchestrate. roles.orchestrator: model for the orchestrator session (switched on /orch start, restored on /orch off); roles.judge: model for the proposal judge. model is provider/model-id; thinking is off|minimal|low|medium|high|xhigh|max. autoJudgeProposal: off|auto; maxProposalJudgeRounds; judge: tools, timeoutMs, idleTimeoutMs, extensions. Synced by pi-config.",
-  "confirmPlans": true,
+  "confirmPlans": false,
   "roles": {
     "orchestrator": {
       "model": "claude-bridge/claude-opus-5-5",

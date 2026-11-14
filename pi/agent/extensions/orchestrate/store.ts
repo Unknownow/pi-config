@@ -30,6 +30,12 @@ export interface Status {
 	waiting?: boolean;
 	/** Set while the sub's workflow runs a judge gate. */
 	judging?: "discussion" | "plan";
+	/** Set while the sub's flow holds for the orchestrator's acceptance (K4 `acceptance`). */
+	acceptance?: { tree: string; since: string };
+	/** The sub's merge settings (K4 `delivery`): the orchestrator's merges use them. */
+	delivery?: { mergeMethod: string; deleteBranch: boolean };
+	/** Branches the sub worked on, newest last (at most 20): the orchestrator finds its pull requests by head branch. */
+	branches?: string[];
 	heartbeat: number;
 	pid: number;
 }
@@ -186,6 +192,9 @@ export interface MergeRecordFile {
 	tree: string;
 	kind: "merge" | "protected-push";
 	at: string;
+	pr?: number;
+	mergeCommit?: string;
+	forced?: boolean;
 }
 
 /** The merge-pass records the orchestrator saved for a sub (`merges.json`). */
@@ -270,4 +279,44 @@ export function withSpawnEntry(entries: SpawnEntry[], e: SpawnEntry): SpawnEntry
 /** Drops the entries of a run, or of one sub of it. Pure. */
 export function withoutSpawnEntries(entries: SpawnEntry[], runId: string, sub?: string): SpawnEntry[] {
 	return entries.filter((x) => !(x.runId === runId && (sub === undefined || x.sub === sub)));
+}
+
+export const charterPath = (common: string, runId: string): string => `${runDir(common, runId)}/charter.md`;
+export const decisionsPath = (common: string, runId: string): string => `${runDir(common, runId)}/decisions.md`;
+
+const DECISION_MAX = 600;
+
+/** One decision line (§4 format): `- <ISO> [<id>|run] <kind>: <text>`, with ` (ASSUMPTION; affects: <ids>)` for an assumption. Text is one line, up to 600 characters. */
+export function decisionLine(at: string, who: string, kind: string, text: string, opt: { assumption?: boolean; affects?: string[] } = {}): string {
+	const one = text.replace(/\s+/g, " ").trim().replace(/ \(ASSUMPTION; affects:[^)]*\)$/, "");
+	const clipped = one.length > DECISION_MAX ? `${one.slice(0, DECISION_MAX - 1)}…` : one;
+	const suffix = opt.assumption ? ` (ASSUMPTION; affects: ${(opt.affects?.length ? opt.affects : [who]).map((x) => x.replace(/[),\s]/g, "")).join(", ")})` : "";
+	return `- ${at} [${who}] ${kind}: ${clipped}${suffix}`;
+}
+
+/** Appends one line to decisions.md (best effort: the log never blocks a verdict). */
+export function appendDecision(common: string, runId: string, who: string, kind: string, text: string, opt: { assumption?: boolean; affects?: string[] } = {}): void {
+	try {
+		const file = decisionsPath(common, runId);
+		fs.mkdirSync(path.dirname(file), { recursive: true });
+		fs.appendFileSync(file, `${decisionLine(new Date().toISOString(), who, kind, text, opt)}\n`);
+	} catch {
+		// a failed log write is not worth failing the answer
+	}
+}
+
+/** The assumption lines of decisions.md with the packages each affects. */
+export function readAssumptions(common: string, runId: string): Array<{ line: string; affects: string[] }> {
+	let raw = "";
+	try {
+		raw = fs.readFileSync(decisionsPath(common, runId), "utf8");
+	} catch {
+		return [];
+	}
+	const out: Array<{ line: string; affects: string[] }> = [];
+	for (const line of raw.split(/\r?\n/)) {
+		const m = / \(ASSUMPTION; affects: ([^)]*)\)$/.exec(line);
+		if (m) out.push({ line, affects: m[1].split(",").map((s) => s.trim()).filter(Boolean) });
+	}
+	return out;
 }

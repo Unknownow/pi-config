@@ -8,7 +8,7 @@
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { parseCreate } from "./create-event.ts";
+import { parseAddRepo, parseCreate, parseRemove } from "./create-event.ts";
 import { CURRENT_SESSION_VERSION, getAgentDir, SessionManager, type ExtensionAPI, type ExtensionCommandContext, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_LINK, loadConfig, type WtConfig } from "./config.ts";
 import { isLink, unlinkLink } from "./files.ts";
@@ -19,14 +19,14 @@ import { latestSession, newSessionFile } from "./sessions.ts";
 import { sharedProblem } from "./shared-guard.ts";
 import { sendToVscode } from "./vscode-bridge.ts";
 import { mainRepoOf, preflight, withLockRetry, type Gh, type Git } from "./git-ops.ts";
-import { SWEEP_SCRIPT, classifySet, detectSession, listSets, listText, openPlan, parseEditors, quitReminder, removeWithConfirm, repoDirsIn, reposOf, sessionConfig, worktreePrompt, type WorkspaceEnv, type WtSession } from "./manage.ts";
+import { SWEEP_SCRIPT, classifySet, detectSession, listSets, listText, openPlan, parseEditors, quitReminder, removeForEvent, removeWithConfirm, repoDirsIn, reposOf, sessionConfig, worktreePrompt, type WorkspaceEnv, type WtSession } from "./manage.ts";
 import { cleanFlow, deleteRemotes, discoverMains, fetchAll, planClean, remoteCandidates } from "./clean.ts";
 import { guardProblem } from "./unity-guard.ts";
 import { renameSet } from "./rename.ts";
 import { reattach, updateSet, worthNotifying } from "./update.ts";
 import { execRunner } from "./exec.ts";
 import { Progress } from "./progress.ts";
-import { build, worktreeForFolder } from "./add-folder.ts";
+import { addRepoToSet, build, worktreeForFolder } from "./add-folder.ts";
 import { truncateToWidth } from "@earendil-works/pi-tui";
 import { branchOf, checkName, launchSpec, nextFreeName, rootProblem, setRootOf, vscodeTerminalSpec } from "./layout.ts";
 
@@ -76,8 +76,11 @@ async function launchCwdOf(git: Git, cfg: WtConfig, sessionCwd: string): Promise
 /** What creating a set uses of the context; a command context and a plain event context both have it. */
 type SetCtx = Pick<ExtensionContext, "cwd" | "ui" | "hasUI" | "sessionManager">;
 
+/** What the removal environment needs of a context: the cwd and the added folders. */
+type EnvCtx = Pick<ExtensionContext, "cwd" | "sessionManager">;
+
 /** The folders added to this session, from the workflow's public `session-folders` entry (absolute, forward slashes). */
-function addedFolders(ctx: SetCtx): string[] {
+function addedFolders(ctx: EnvCtx): string[] {
 	return foldersFromEntries(ctx.sessionManager.getBranch() as { type: string; customType?: string; data?: unknown }[]);
 }
 
@@ -199,7 +202,7 @@ async function suggestName(git: Git, cfg: WtConfig, repos: string[]): Promise<st
 }
 
 /** Create a set for the working repo and the added folders (no terminal, no session). Reports problems itself and returns null. */
-async function createSet(pi: ExtensionAPI, ctx: SetCtx, name: string, progress: Progress, only?: string[]): Promise<Created | null> {
+async function createSet(pi: ExtensionAPI, ctx: SetCtx, name: string, progress: Progress, only?: string[], bases?: Record<string, string>): Promise<Created | null> {
 	const fail = (m: string) => {
 		ctx.ui.notify(m, "error");
 		return null;
@@ -227,7 +230,7 @@ async function createSet(pi: ExtensionAPI, ctx: SetCtx, name: string, progress: 
 	const bad = checkName(name);
 	if (bad) return fail(bad);
 
-	const pre = await preflight(git, found.repos, cfg, name);
+	const pre = await preflight(git, found.repos, cfg, name, bases);
 	for (const w of pre.warnings) ctx.ui.notify(w, "warning");
 	if (pre.errors.length) return fail(`Nothing created:\n${pre.errors.join("\n")}`);
 
@@ -243,7 +246,7 @@ async function createSet(pi: ExtensionAPI, ctx: SetCtx, name: string, progress: 
 		v: 1,
 		created: new Date().toISOString(),
 		branch: branchOf(cfg, name),
-		repos: pre.plan.map((p) => ({ main: mains.get(p.info.top) ?? p.info.top, dir: path.basename(p.target) })),
+		repos: pre.plan.map((p) => ({ main: mains.get(p.info.top) ?? p.info.top, dir: path.basename(p.target), ...(p.info.based ? { base: p.info.baseRef } : {}) })),
 	});
 	const targetOf = (top: string) => pre.plan.find((p) => p.info.top === top)?.target ?? top;
 	const rel = path.relative(found.workingTop, ctx.cwd).replace(/\\/g, "/");
@@ -265,9 +268,14 @@ interface Launched {
 }
 
 /** Creates the set and opens its terminal; null when creating failed (createSet has reported why). */
-async function createAndLaunch(pi: ExtensionAPI, ctx: SetCtx, name: string, progress: Progress, only?: string[]): Promise<Launched | null> {
-	const c = await createSet(pi, ctx, name, progress, only);
+async function createAndLaunch(pi: ExtensionAPI, ctx: SetCtx, name: string, progress: Progress, only?: string[], bases?: Record<string, string>, opts?: { launch?: "none" }): Promise<Launched | null> {
+	const c = await createSet(pi, ctx, name, progress, only, bases);
 	if (!c) return null;
+	if (opts?.launch === "none") {
+		const branch = branchOf(c.cfg, c.name);
+		const text = "created, not launched";
+		return { name: c.name, repos: c.repos, branch, cwd: c.cwd, setRoot: c.setRoot, launched: false, text, report: [`Worktree set "${c.name}" (branch ${branch}) in ${c.setRoot}`, ...c.lines].join("\n"), warn: false };
+	}
 	progress.stage("opening terminal");
 	const git = makeGit(pi);
 	const l = await launch(c.cfg, c.name, await launchCwdOf(git, c.cfg, c.workingTop), c.cwd, c.folders, freshSessionFile(c.cwd));
@@ -380,7 +388,7 @@ const piRun = (pi: ExtensionAPI): Run => ({ git: makeGit(pi), gh: makeGh(pi) });
 const directRun = (): Run => ({ git: withLockRetry(execRunner("git", 60000)), gh: execRunner("gh", 20000) });
 
 /** What the removal engine needs in this session: who uses a set (also this session itself), and the open Unity Editors. */
-function workspaceEnv(gh: Gh, ctx: ExtensionCommandContext, cfg: WtConfig, git: Git, editors: string[] | null): WorkspaceEnv {
+function workspaceEnv(gh: Gh, ctx: EnvCtx, cfg: WtConfig, git: Git, editors: string[] | null): WorkspaceEnv {
 	const mine = [ctx.cwd, ...addedFolders(ctx)];
 	return {
 		git,
@@ -772,6 +780,8 @@ export default function worktree(pi: ExtensionAPI) {
 	let unsubStatus: (() => void) | undefined;
 	let unsubFolderAdd: (() => void) | undefined;
 	let unsubCreate: (() => void) | undefined;
+	let unsubRemove: (() => void) | undefined;
+	let unsubAddRepo: (() => void) | undefined;
 	let addFolderCfg: WtConfig | null = null;
 	const publishLive = () => {
 		const c = liveCtx;
@@ -904,9 +914,52 @@ export default function worktree(pi: ExtensionAPI) {
 						}),
 					};
 					try {
-						const r = await createAndLaunch(pi, quiet, req.name, progress, req.folders);
+						const r = await createAndLaunch(pi, quiet, req.name, progress, req.folders, req.bases, { launch: req.launch });
 						if (!r) return { error: errors.join("\n") || "worktree:create failed" };
 						return { name: r.name, branch: r.branch, cwd: r.cwd, setRoot: r.setRoot, launched: r.launched, text: r.text, repos: r.repos };
+					} catch (e) {
+						return { error: (e as Error).message };
+					} finally {
+						progress.done();
+					}
+				})(),
+			);
+		});
+		// W2: another extension removes a set it created; no dialog. Work that is not delivered needs `force` (and gets a backup).
+		unsubRemove?.();
+		unsubRemove = pi.events.on("worktree:remove", (d) => {
+			const claim = (d as { claim?: unknown } | null)?.claim;
+			if (typeof claim !== "function") return;
+			(claim as (p: Promise<unknown>) => void)(
+				(async () => {
+					const req = parseRemove(d);
+					if ("error" in req) return req;
+					try {
+						const git = makeGit(pi);
+						const { cfg } = await sessionConfig(git, getAgentDir(), ctx.cwd);
+						const editors = await unityEditors(pi);
+						const env = workspaceEnv(makeGh(pi), { cwd: ctx.cwd, sessionManager: ctx.sessionManager }, cfg, git, editors);
+						return await removeForEvent(env, req.name, req.force);
+					} catch (e) {
+						return { error: (e as Error).message };
+					}
+				})(),
+			);
+		});
+		// W3: another extension adds a repo to an existing set.
+		unsubAddRepo?.();
+		unsubAddRepo = pi.events.on("worktree:add-repo", (d) => {
+			const claim = (d as { claim?: unknown } | null)?.claim;
+			if (typeof claim !== "function") return;
+			(claim as (p: Promise<unknown>) => void)(
+				(async () => {
+					const req = parseAddRepo(d);
+					if ("error" in req) return req;
+					const progress = new Progress(ctx.hasUI ? ctx.ui : null, `worktree add-repo (${req.name})`, truncateToWidth);
+					try {
+						const git = progress.wrap(makeGit(pi));
+						const { cfg } = await sessionConfig(git, getAgentDir(), ctx.cwd);
+						return await addRepoToSet(git, { cfg, name: req.name, folder: req.folder, ...(req.base ? { base: req.base } : {}) }, progress);
 					} catch (e) {
 						return { error: (e as Error).message };
 					} finally {
@@ -942,6 +995,10 @@ export default function worktree(pi: ExtensionAPI) {
 		unsubFolderAdd = undefined;
 		unsubCreate?.();
 		unsubCreate = undefined;
+		unsubRemove?.();
+		unsubRemove = undefined;
+		unsubAddRepo?.();
+		unsubAddRepo = undefined;
 		try {
 			if (event.reason !== "quit" || !session || !ctx.hasUI || !process.stderr.isTTY) return;
 			if (!repoDirsIn(session.setRoot).length) return;

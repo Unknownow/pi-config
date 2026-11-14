@@ -5,6 +5,7 @@ import * as path from "node:path";
 import type { WtConfig } from "./config.ts";
 import { isLink, unlinkLink } from "./files.ts";
 import { baseName, branchOf, setRootOf, targetOf } from "./layout.ts";
+import { readMeta } from "./meta.ts";
 
 export interface GitResult {
 	code: number;
@@ -36,6 +37,8 @@ export interface RepoInfo {
 	baseRef: string;
 	mainRepo: string;
 	warning?: string;
+	/** The base was named by the caller (W1 `bases`), not found. */
+	based?: boolean;
 }
 
 export interface Planned {
@@ -46,7 +49,7 @@ export interface Planned {
 const slash = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "");
 const firstLine = (r: GitResult) => (r.stderr || r.stdout).trim().split(/\r?\n/)[0] ?? "";
 
-export async function repoInfo(git: Git, dir: string): Promise<RepoInfo | { error: string }> {
+export async function repoInfo(git: Git, dir: string, bases?: Record<string, string>): Promise<RepoInfo | { error: string }> {
 	const topR = await git(dir, ["rev-parse", "--show-toplevel"]);
 	if (topR.code !== 0) return { error: `${dir}: not a git repo` };
 	const top = slash(topR.stdout.trim());
@@ -55,11 +58,13 @@ export async function repoInfo(git: Git, dir: string): Promise<RepoInfo | { erro
 	if (!remote) return { error: `${top}: no git remote` };
 	const fetch = await git(top, ["fetch", remote, "--quiet"]);
 	const warning = fetch.code === 0 ? undefined : `${top}: fetch failed (${firstLine(fetch)}), using the last known ${remote}`;
-	const baseRef = await findBase(git, top, remote);
+	const wanted = bases ? Object.entries(bases).find(([k]) => slash(k).toLowerCase() === top.toLowerCase())?.[1] : undefined;
+	if (wanted && (await git(top, ["rev-parse", "--verify", "--quiet", `${wanted}^{commit}`])).code !== 0) return { error: `base ${wanted} not found in ${top}` };
+	const baseRef = wanted ?? (await findBase(git, top, remote));
 	if (!baseRef) return { error: `${top}: no ${remote}/HEAD, ${remote}/main or ${remote}/master` };
 	const common = await git(top, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
 	const mainRepo = common.code === 0 ? slash(path.dirname(common.stdout.trim())) : top;
-	return { top, remote, baseRef, mainRepo, warning };
+	return { top, remote, baseRef, mainRepo, warning, ...(wanted ? { based: true } : {}) };
 }
 
 async function findBase(git: Git, top: string, remote: string): Promise<string | null> {
@@ -79,14 +84,14 @@ export interface PreflightResult {
 }
 
 /** All checks before anything is created; returns every problem found, not only the first. */
-export async function preflight(git: Git, dirs: string[], cfg: WtConfig, name: string): Promise<PreflightResult> {
+export async function preflight(git: Git, dirs: string[], cfg: WtConfig, name: string, bases?: Record<string, string>): Promise<PreflightResult> {
 	const res: PreflightResult = { plan: [], errors: [], warnings: [] };
 	const branch = branchOf(cfg, name);
 	const names = new Map<string, string>();
 	const bad = await git(process.cwd(), ["check-ref-format", "--branch", branch]);
 	if (bad.code !== 0) res.errors.push(`"${branch}" is not a valid branch name`);
 	for (const dir of dirs) {
-		const info = await repoInfo(git, dir);
+		const info = await repoInfo(git, dir, bases);
 		if ("error" in info) {
 			res.errors.push(info.error);
 			continue;
@@ -188,6 +193,12 @@ const count = (r: GitResult) => (r.code === 0 ? Number.parseInt(r.stdout.trim(),
 export async function baseOf(git: Git, wt: string): Promise<{ remote: string; ref: string } | null> {
 	const remotes = (await git(wt, ["remote"])).stdout.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
 	const remote = remotes.includes("origin") ? "origin" : remotes[0];
+	// a set created from a named base (a run's target) compares against it, as long as it still resolves
+	const stored = readMeta(path.dirname(wt))?.repos.find((r) => r.dir === path.basename(wt))?.base;
+	if (stored && (await git(wt, ["rev-parse", "--verify", "--quiet", `${stored}^{commit}`])).code === 0) {
+		const own = [...remotes].filter((r) => stored.startsWith(`${r}/`)).sort((a, b) => b.length - a.length)[0];
+		if (own) return { remote: own, ref: stored };
+	}
 	const ref = remote ? await findBase(git, wt, remote) : null;
 	return remote && ref ? { remote, ref } : null;
 }

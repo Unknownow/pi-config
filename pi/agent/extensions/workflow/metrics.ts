@@ -12,6 +12,7 @@ type Tokens = { input: number; output: number; cacheRead: number; cacheWrite: nu
 export type MetricEvent =
 	| { kind: "subagent"; at: string; flowId?: string; role: string; label: string; stage: string; model: string; ms: number; bootMs?: number; turns: number; tools: number; tokens: Tokens; cost: number; ok: boolean; error?: string }
 	| { kind: "compaction"; at: string; flowId?: string; reason: "handover" | "guard"; tokensBefore: number | null; ms: number; ok: boolean; error?: string }
+	| { kind: "judge"; at: string; flowId?: string; gate: "code" | "plan" | "discussion"; round: number; verdict: string; blocker: number; major: number; minor: number; late: number }
 	| { kind: "flow"; at: string; flowId?: string; outcome: string; ok: boolean; started?: number; ended: number; stages: FlowUsage; profile?: "quick" };
 
 const MAX_QUEUED = 1000;
@@ -34,6 +35,18 @@ export function subagentMetric(role: string, label: string, stage: string, model
 		ok: r.ok,
 		error: r.error,
 	};
+}
+
+/** One judge verdict with its finding counts by severity; `late` counts the `[late]` findings (they are also counted by severity). */
+export function judgeMetric(gate: "code" | "plan" | "discussion", round: number, verdict: string, report: string): MetricEvent {
+	const n = { blocker: 0, major: 0, minor: 0, late: 0 };
+	for (const line of report.split(/\r?\n/)) {
+		const m = /(?:^|\s)-\s*(blocker|major|minor)\s*-/i.exec(line);
+		if (!m || /^\s{2,}/.test(line)) continue;
+		n[m[1].toLowerCase() as "blocker" | "major" | "minor"]++;
+		if (/\[late\]/i.test(line)) n.late++;
+	}
+	return { kind: "judge", at: new Date().toISOString(), gate, round, verdict, ...n };
 }
 
 /** Appends the events to `<folder>/metrics.jsonl`. Never creates the folder and never throws; false when nothing was written. */

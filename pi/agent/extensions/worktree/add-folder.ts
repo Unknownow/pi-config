@@ -8,7 +8,7 @@ import * as path from "node:path";
 import type { WtConfig } from "./config.ts";
 import { setupFiles } from "./files.ts";
 import { createAll, excludeLinks, mainRepoOf, preflight, rollback, type Git, type Planned } from "./git-ops.ts";
-import { branchOf } from "./layout.ts";
+import { branchOf, setRootOf } from "./layout.ts";
 import { readMeta, writeMeta } from "./meta.ts";
 import type { Progress } from "./progress.ts";
 
@@ -69,7 +69,7 @@ function recordRepo(setRoot: string, main: string, target: string): void {
 /** The worktree of `folder`'s repo in the set; null when `folder` is not a git folder or is already in the set. */
 export async function worktreeForFolder(
 	git: Git,
-	o: { cfg: WtConfig; setRoot: string; folder: string },
+	o: { cfg: WtConfig; setRoot: string; folder: string; base?: string },
 	progress: Progress,
 ): Promise<{ folder: string; lines: string[] } | { error: string } | null> {
 	const { cfg } = o;
@@ -94,7 +94,7 @@ export async function worktreeForFolder(
 	}
 
 	progress.stage("checking repo (fetching)");
-	const pre = await preflight(git, [main], cfg, name);
+	const pre = await preflight(git, [main], cfg, name, o.base ? { [main]: o.base } : undefined);
 	if (pre.errors.length) return { error: `Nothing created:\n${pre.errors.join("\n")}` };
 	const lines = [...pre.warnings];
 	try {
@@ -105,4 +105,27 @@ export async function worktreeForFolder(
 	const target = slash(pre.plan[0].target);
 	recordRepo(setRoot, main, target);
 	return { folder: within(target, rel), lines };
+}
+
+/** W3 (`worktree:add-repo`): add the repo of `folder` to the existing set `name`, optionally from `base`. A repo already in the set is an error (worktreeForFolder would reuse it). */
+export async function addRepoToSet(
+	git: Git,
+	o: { cfg: WtConfig; name: string; folder: string; base?: string },
+	progress: Progress,
+): Promise<{ path: string; branch: string } | { error: string }> {
+	const setRoot = setRootOf(o.cfg, o.name);
+	if (!readMeta(setRoot)) return { error: `unknown set "${o.name}"` };
+	const t = await git(o.folder, ["rev-parse", "--show-toplevel"]);
+	if (t.code !== 0) return { error: "not a git repo" };
+	const top = real(t.stdout.trim());
+	const main = (await mainRepoOf(git, top)) ?? top;
+	if ((readMeta(setRoot)?.repos ?? []).some((r) => fold(r.main) === fold(main))) return { error: "repo already in the set" };
+	const list = await git(main, ["worktree", "list", "--porcelain"]);
+	for (const l of list.code === 0 ? list.stdout.split(/\r?\n/) : []) {
+		if (l.startsWith("worktree ") && inside(real(l.slice("worktree ".length).trim()), setRoot)) return { error: "repo already in the set" };
+	}
+	const res = await worktreeForFolder(git, { cfg: o.cfg, setRoot, folder: o.folder, ...(o.base ? { base: o.base } : {}) }, progress);
+	if (res === null) return { error: "not a git repo or inside the set" };
+	if ("error" in res) return res;
+	return { path: res.folder, branch: branchOf(o.cfg, o.name) };
 }

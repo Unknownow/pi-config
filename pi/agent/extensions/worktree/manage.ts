@@ -224,6 +224,8 @@ export interface RemoveResult {
 	/** True when the set folder is gone or only empty folders are left for the sweeper. */
 	removed: boolean;
 	leftovers: string[];
+	/** Kept branches as `<repo dir>: <branch>`: ahead of HEAD, or `branch -D` failed. */
+	kept: string[];
 }
 
 /**
@@ -234,12 +236,13 @@ export interface RemoveResult {
 export async function removeWorkspace(env: { git: Git; cfg: WtConfig; inUse?: (setRoot: string) => string | null }, name: string, opts: { discard: boolean; heads?: Record<string, string> }): Promise<RemoveResult> {
 	const { git, cfg } = env;
 	const bad = checkName(name);
-	if (bad) return { text: bad, error: true, removed: false, leftovers: [] };
+	if (bad) return { text: bad, error: true, removed: false, leftovers: [], kept: [] };
 	const set = setRootOf(cfg, name);
 	const branch = branchOf(cfg, name);
 	const done: string[] = [];
 	const leftovers: string[] = [];
-	const stop = (text: string): RemoveResult => ({ text: `Stopped at ${text}\nRemoved: ${done.join(", ") || "nothing"}`, error: true, removed: false, leftovers });
+	const keptBranches: string[] = [];
+	const stop = (text: string): RemoveResult => ({ text: `Stopped at ${text}\nRemoved: ${done.join(", ") || "nothing"}`, error: true, removed: false, leftovers, kept: keptBranches });
 	const holder = env.inUse?.(set);
 	if (holder) return stop(`${set}: it is ${holder} now; nothing was removed`);
 	for (const wt of repoDirsIn(set)) {
@@ -270,9 +273,11 @@ export async function removeWorkspace(env: { git: Git; cfg: WtConfig; inUse?: (s
 					return stop(`${wt}: ${(rm.stderr || rm.stdout).trim()}${removedLinks.length ? ` (links already removed: ${removedLinks.join(", ")})` : ""}`);
 				}
 			}
+			if (ahead) keptBranches.push(`${baseName(wt)}: ${branch}`);
 			let kept = ahead ? ` (branch ${branch} kept: it has commits that were not in the worktree's HEAD)` : "";
 			if (!ahead && (await git(main, ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`])).code === 0) {
 				const br = await git(main, ["branch", "-D", branch]);
+				if (br.code !== 0) keptBranches.push(`${baseName(wt)}: ${branch}`);
 				if (br.code !== 0) kept = ` (branch ${branch} kept: ${(br.stderr || br.stdout).trim().split("\n")[0]})`;
 			}
 			done.push(`${wt}${inUse ? " (folder in use: deleted after pi exits)" : ""}${kept}`);
@@ -293,7 +298,7 @@ export async function removeWorkspace(env: { git: Git; cfg: WtConfig; inUse?: (s
 		leftovers.push(set);
 		done.push(`${set} (deleted after pi exits)`);
 	}
-	return { text: `Removed set "${name}":\n${done.join("\n") || "nothing left to remove"}`, error: false, removed: !fs.existsSync(set) || leftovers.includes(set), leftovers };
+	return { text: `Removed set "${name}":\n${done.join("\n") || "nothing left to remove"}`, error: false, removed: !fs.existsSync(set) || leftovers.includes(set), leftovers, kept: keptBranches };
 }
 
 /** Local time as yyyymmdd-hhmmss, the suffix of backup refs. */
@@ -415,6 +420,32 @@ export async function removeWithConfirm(env: FlowEnv, name: string): Promise<Rem
 	env.stage(`removing ${name}`);
 	const r = await removeWorkspace({ git, cfg, inUse: env.inUse }, name, { discard, heads: Object.fromEntries(st.repos.map((x) => [x.dir, x.head])) });
 	return { removed: r.removed && !r.error, error: r.error, text: [r.text, ...backups].join("\n"), leftovers: r.leftovers };
+}
+
+/**
+ * W2 (`worktree:remove`): the removal flow with no dialog. In-use and broken sets are refused even with `force`;
+ * a set with work needs `force` and gets a backup first. Never throws on a refusal: returns `{ error }`.
+ */
+export async function removeForEvent(env: WorkspaceEnv, name: string, force: boolean, now: () => Date = () => new Date()): Promise<{ removed: boolean; paths: string[]; backups: string[]; kept: string[]; warnings: string[] } | { error: string; reason?: string }> {
+	const { git, cfg } = env;
+	const bad = checkName(name);
+	if (bad) return { error: bad };
+	const set = setRootOf(cfg, name);
+	if (!fs.existsSync(set)) return { error: `No worktree set "${name}" in ${cfg.root}` };
+	for (const wt of repoDirsIn(set)) await git(wt, ["fetch", "--quiet"]);
+	const st = await classifySet(env, name);
+	if (st.kind === "in-use" || st.kind === "broken") return { error: `Nothing removed: ${name} is ${st.kind}: ${st.reason}` };
+	let backups: string[] = [];
+	if (st.kind === "has-work") {
+		if (!force) return { error: `Nothing removed: ${st.reason}`, reason: st.reason };
+		const b = await backupSet(git, name, st, stamp(now()));
+		if (b.error) return { error: `Nothing removed, backup failed: ${b.error}` };
+		backups = b.lines;
+	}
+	const heads = Object.fromEntries(st.repos.map((x) => [x.dir, x.head]));
+	const r = await removeWorkspace({ git, cfg, inUse: env.inUse }, name, { discard: st.kind === "has-work", heads });
+	if (r.error) return { error: r.text };
+	return { removed: r.removed, paths: [...new Set([set, ...r.leftovers])], backups, kept: r.kept, warnings: env.editors ? [] : ["Unity Editor state unknown"] };
 }
 
 /** Run as `node -e SWEEP_SCRIPT <tries> <intervalMs> <dir>...`. Only rmdirs empty folders; never deletes a file. */

@@ -48,6 +48,5 @@ export function checkDecision(item: Item | undefined, answer: Answer, counters: 
 	if (item.key === "plan-menu" && role === "discuss") return refuse("not available in an orchestrated sub-session: pick another option, or reject the plan with reasons");
 	if (role === "wait" && (item.key === "stage-empty" || item.key === "steps-open") && !(answer.text ?? "").trim()) return refuse("'Wait' needs text: what the sub-session should wait for or do meanwhile");
 	if (role === "stop" && !quote) return refuse(`stopping the flow ${NO_QUOTE}`, true);
-	if (role === "replan" && counters.replans >= caps.maxReplans && !quote) return refuse(`${counters.replans} replans were already used in this run (maxReplans ${caps.maxReplans}); another one ${NO_QUOTE}`, true);
-	return { ok: true, role, byUser: quote, outcome: role === "replan" ? "replan" : "choice" };
+		return { ok: true, role, byUser: quote, outcome: role === "replan" ? "replan" : "choice" };
 }

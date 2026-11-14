@@ -99,6 +99,14 @@ export async function forkBase(run: Runner, dir: string, upstream: string): Prom
 	return r.code === 0 && firstLine(r.stdout) ? firstLine(r.stdout) : null;
 }
 
+/** owner/name of the GitHub `origin` remote of `dir`, so `gh` never falls back to an `upstream` remote. Undefined when it cannot be read. */
+export async function originRepo(run: Runner, dir: string): Promise<string | undefined> {
+	const r = await run("git", ["remote", "get-url", "origin"], dir).catch(() => undefined);
+	if (!r || r.code !== 0) return undefined;
+	const m = /^(?:https?:\/\/(?:[^@/]+@)?github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/.exec(r.stdout.trim());
+	return m ? `${m[1]}/${m[2]}` : undefined;
+}
+
 /** A commit holding `tree` on top of HEAD, used as a review base: the diff from it to a worktree with that tree is empty. Null on failure. */
 export async function baseFromTree(run: Runner, dir: string, tree: string, parent = "HEAD"): Promise<string | null> {
 	const c = await run("git", ["-c", "user.name=pi-workflow", "-c", "user.email=workflow@pi.invalid", "commit-tree", tree, "-p", parent, "-m", "workflow review base"], dir);
@@ -128,9 +136,10 @@ export async function recordJudged(
 	const out = async (...args: string[]) => (await run("git", args, dir).catch(() => ({ code: 1, stdout: "", stderr: "" }))).stdout.trim();
 	const candidates = [opts.startBranch, ...[...opts.report.matchAll(/(?:\/pull\/|#)(\d+)/g)].map((m) => m[1])].filter((c, i, all) => c && c !== "HEAD" && all.indexOf(c) === i);
 	let pr = "no PR";
+	const slug = await originRepo(run, dir);
 	for (const cand of candidates) {
 		const fromBranch = cand === opts.startBranch;
-		const res = await run("gh", ["pr", "view", cand, "--json", "number,state,url,headRefOid"], dir).catch(() => undefined);
+		const res = await run("gh", ["pr", "view", cand, ...(slug ? ["-R", slug] : []), "--json", "number,state,url,headRefOid"], dir).catch(() => undefined);
 		if (res?.code !== 0) continue;
 		try {
 			const j = JSON.parse(res.stdout);
