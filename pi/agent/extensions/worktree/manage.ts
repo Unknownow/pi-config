@@ -224,7 +224,7 @@ export interface RemoveResult {
 	/** True when the set folder is gone or only empty folders are left for the sweeper. */
 	removed: boolean;
 	leftovers: string[];
-	/** Branches that were kept: ahead of HEAD, or `branch -D` failed. */
+	/** Kept branches as `<repo dir>: <branch>`: ahead of HEAD, or `branch -D` failed. */
 	kept: string[];
 }
 
@@ -273,11 +273,11 @@ export async function removeWorkspace(env: { git: Git; cfg: WtConfig; inUse?: (s
 					return stop(`${wt}: ${(rm.stderr || rm.stdout).trim()}${removedLinks.length ? ` (links already removed: ${removedLinks.join(", ")})` : ""}`);
 				}
 			}
-			if (ahead) keptBranches.push(branch);
+			if (ahead) keptBranches.push(`${baseName(wt)}: ${branch}`);
 			let kept = ahead ? ` (branch ${branch} kept: it has commits that were not in the worktree's HEAD)` : "";
 			if (!ahead && (await git(main, ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`])).code === 0) {
 				const br = await git(main, ["branch", "-D", branch]);
-				if (br.code !== 0) keptBranches.push(branch);
+				if (br.code !== 0) keptBranches.push(`${baseName(wt)}: ${branch}`);
 				if (br.code !== 0) kept = ` (branch ${branch} kept: ${(br.stderr || br.stdout).trim().split("\n")[0]})`;
 			}
 			done.push(`${wt}${inUse ? " (folder in use: deleted after pi exits)" : ""}${kept}`);
@@ -445,7 +445,7 @@ export async function removeForEvent(env: WorkspaceEnv, name: string, force: boo
 	const heads = Object.fromEntries(st.repos.map((x) => [x.dir, x.head]));
 	const r = await removeWorkspace({ git, cfg, inUse: env.inUse }, name, { discard: st.kind === "has-work", heads });
 	if (r.error) return { error: r.text };
-	return { removed: r.removed, paths: [set, ...r.leftovers], backups, kept: r.kept, warnings: env.editors ? [] : ["Unity Editor state unknown"] };
+	return { removed: r.removed, paths: [...new Set([set, ...r.leftovers])], backups, kept: r.kept, warnings: env.editors ? [] : ["Unity Editor state unknown"] };
 }
 
 /** Run as `node -e SWEEP_SCRIPT <tries> <intervalMs> <dir>...`. Only rmdirs empty folders; never deletes a file. */

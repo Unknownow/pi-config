@@ -466,10 +466,10 @@ test("RemoveResult.kept lists a branch ahead of HEAD and one that branch -D coul
 	const f = fixture();
 	commit(f);
 	run(f.wt, ["checkout", "--detach", "origin/main"]);
-	assert.deepEqual((await removeWorkspace(f.env, "s1", { discard: false })).kept, ["wt/s1"]);
+	assert.deepEqual((await removeWorkspace(f.env, "s1", { discard: false })).kept, ["repo: wt/s1"]);
 	const g = fixture();
 	const failing: Git = async (cwd, args) => (args[0] === "branch" && args[1] === "-D" ? { code: 1, stdout: "", stderr: "cannot delete" } : git(cwd, args));
-	assert.deepEqual((await removeWorkspace({ ...g.env, git: failing }, "s1", { discard: false })).kept, ["wt/s1"]);
+	assert.deepEqual((await removeWorkspace({ ...g.env, git: failing }, "s1", { discard: false })).kept, ["repo: wt/s1"]);
 	const h = fixture();
 	assert.deepEqual((await removeWorkspace(h.env, "s1", { discard: false })).kept, []);
 });
