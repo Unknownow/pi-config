@@ -34,6 +34,8 @@ export interface Approval {
 	category: string;
 	by: "brief" | "lead";
 	reason: string;
+	/** The follow-up (1, 2, ...) it was given in; unset for the original job. */
+	followup?: number;
 }
 
 export interface Job {
@@ -64,6 +66,14 @@ export interface Job {
 	doneSummary?: string;
 	/** Why a stopped or failed job ended. */
 	endReason?: string;
+	/** Set while the job is paused: where it came from and why (a pause, a crash, a stall, a re-plan wait, a judge that failed twice). */
+	paused?: { from: "working" | "judging"; why: string };
+	/** Automatic restarts of the worker since it last reported done (one is allowed). */
+	restarts?: number;
+	/** A follow-up waiting for its workspace (the "followup" step). */
+	followupPending?: { n: number; text: string };
+	/** What each follow-up asked for, by number (index n-1). */
+	followupTexts?: string[];
 	createdAt: number;
 }
 

@@ -112,6 +112,7 @@ test("in a job-set session: edit is never refused, go passes through, relay_disp
 	const res = await r.tools.get("relay_dispatch").execute("id", { brief: brief({ repo: set }) }, undefined, undefined, ctx);
 	assert.match(res.content[0].text, /job's worktree/);
 	assert.equal(r.lead.engine(), undefined);
+	assert.equal(r.lead.scans(), 0, "a job-set session never scans for jobs to adopt");
 	cleanup(root);
 });
 
@@ -157,4 +158,18 @@ test("a two-repo job's folder is created under the cwd repo's git folder, and W1
 	assert.match(stop.content[0].text, /stopped/);
 	await r.hooks.get("session_shutdown")!({}, ctx);
 	cleanup(a.dir, a.bare, b.dir, b.bare, base);
+});
+
+test("in lead mode the scan for unfinished jobs runs once, when lead mode turns on", async () => {
+	const { dir } = makeRepo();
+	try {
+		const r = relayOn(makeBus(), dir);
+		const ctx = fakeCtx(dir);
+		assert.equal(r.lead.scans(), 0, "nothing runs before lead mode is decided");
+		await input(r, "hello", ctx);
+		await input(r, "hello again", ctx);
+		assert.equal(r.lead.scans(), 1);
+	} finally {
+		cleanup(dir);
+	}
 });

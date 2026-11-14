@@ -152,3 +152,32 @@ export function briefTitle(text: string): string {
 	const l = goal.split(/\r?\n/).find((x) => x.trim()) ?? text.split(/\r?\n/).find((x) => x.trim()) ?? "job";
 	return l.replace(/^#+\s*/, "").trim().slice(0, 80);
 }
+
+/** The amendments of `text` that came after brief version `version` (an amendment N makes version N+1, so those with n >= version). */
+export function amendmentsSince(text: string, version: number): Amendment[] {
+	const p = parseBrief(text);
+	return "errors" in p ? [] : p.amendments.filter((a) => a.n >= version);
+}
+
+/** The brief without its `## Amendment` sections. */
+export function stripAmendments(text: string): string {
+	const out: string[] = [];
+	let skipping = false;
+	for (const l of text.split(/\r?\n/)) {
+		const h = /^##\s+(.+?)\s*$/.exec(l);
+		if (h) skipping = /^Amendment \d+ \(/i.test(h[1]);
+		if (!skipping) out.push(l);
+	}
+	return `${out.join("\n").trimEnd()}\n`;
+}
+
+/**
+ * A re-plan: the revised brief replaces the old one, but the old amendments (approvals among them) are kept, and a new
+ * amendment records the re-plan, so the version only goes up.
+ */
+export function replaceBrief(oldText: string, newText: string, note: string): string {
+	const old = parseBrief(oldText);
+	let out = stripAmendments(newText);
+	for (const a of "errors" in old ? [] : old.amendments) out += `\n## Amendment ${a.n} (${a.by}): ${a.text.trim()}\n`;
+	return appendAmendment(out, "lead", note);
+}

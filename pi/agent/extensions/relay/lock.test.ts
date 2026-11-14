@@ -160,3 +160,15 @@ test("a heartbeat after losing the lock returns lost", async () => {
 	a.release();
 	assert.equal(fs.existsSync(path.join(d, "owner.1.lock")), true, "a lead that lost the job does not delete the new owner's files");
 });
+
+test("attach: the same lead re-attaches to its generation after a reload; another lead does not", () => {
+	const d = tmp();
+	const mine = { pid: process.pid, sessionId: "s1", host: "h" };
+	const a = new JobLock(d, mine);
+	assert.equal(a.acquire(), true);
+	const again = new JobLock(d, mine);
+	assert.equal(again.attach(), true);
+	assert.equal(again.isOwner(), true);
+	assert.equal(new JobLock(d, me(2)).attach(), false);
+	assert.equal(new JobLock(tmp(), mine).attach(), false);
+});

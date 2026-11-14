@@ -7,7 +7,7 @@ import type { Job, RepoState } from "../job.ts";
 import { gateCheck } from "../merge-gate.ts";
 import { originRepo } from "../merge-gate.ts";
 import { type PushContext, pushProblem } from "../push-guard.ts";
-import { failRound } from "./loop.ts";
+import { backToWork, failRound, workAmendments } from "./loop.ts";
 import type { Step, StepCtx } from "../types.ts";
 
 const firstLine = (s: string) => s.trim().split(/\r?\n/)[0] ?? "";
@@ -32,7 +32,7 @@ export function mergeAllowed(authority: AuthorityItem | undefined, hasApproval: 
 	return policyMerge === "after-pass" && authority?.value !== "no";
 }
 
-type Outcome = { kind: "done" } | { kind: "stopped" } | { kind: "fix"; reason: string } | { kind: "error"; error: string } | { kind: "retry" };
+type Outcome = { kind: "amended" } | { kind: "done" } | { kind: "stopped" } | { kind: "fix"; reason: string } | { kind: "error"; error: string } | { kind: "retry" };
 
 async function accept(job: Job, repo: RepoState, ctx: StepCtx, verify: string): Promise<{ ok: true } | { ok: false; fix?: string; error?: string }> {
 	const git = (...args: string[]) => ctx.run("git", args, repo.worktree);
@@ -124,6 +124,7 @@ async function deliverOnce(job: Job, ctx: StepCtx, attempt: number): Promise<Out
 	const parsed = parseBrief(ctx.brief());
 	if ("errors" in parsed) return { kind: "error", error: `brief unreadable: ${parsed.errors.join("; ")}` };
 	const verify = parsed.sections.Verify ?? "";
+	if (workAmendments(job, ctx.brief()).length) return { kind: "amended" };
 	// 1-3: every repo is accepted before anything is pushed
 	for (const repo of job.repos) {
 		if (repo.merged) continue; // merged earlier in this delivery (a retry): its state is final
@@ -132,6 +133,7 @@ async function deliverOnce(job: Job, ctx: StepCtx, attempt: number): Promise<Out
 		if (!a.ok) return a.fix ? { kind: "fix", reason: a.fix } : { kind: "error", error: a.error ?? "delivery failed" };
 	}
 	if (ctx.stopped()) return { kind: "stopped" };
+	if (workAmendments(job, ctx.brief()).length) return { kind: "amended" };
 	// push each repo, then PRs
 	const slugs = new Map<string, string | undefined>();
 	for (const repo of job.repos) {
@@ -154,6 +156,8 @@ async function deliverOnce(job: Job, ctx: StepCtx, attempt: number): Promise<Out
 	const mergeApproved = job.approvals.some((a) => a.category === "merge");
 	for (const repo of job.repos) {
 		if (ctx.stopped()) return { kind: "stopped" };
+		// an amendment since the PASS holds the merge: nothing merges until the new brief version is judged
+		if (!repo.merged && workAmendments(job, ctx.brief()).length) return { kind: "amended" };
 		const pol = repoPolicy(ctx.cfg, repo.main);
 		if (repo.merged || !mergeAllowed(parsed.authority.merge, mergeApproved, pol.merge)) continue;
 		const slug = slugs.get(repo.key);
@@ -206,6 +210,7 @@ export const deliverStep: Step = {
 		for (let attempt = 1; out.kind === "retry"; attempt++) out = await deliverOnce(job, ctx, attempt);
 		if (out.kind === "done") return "report";
 		if (out.kind === "stopped") return "report";
+		if (out.kind === "amended") return backToWork(job, ctx, job.lastVerdict?.briefVersion ?? job.briefVersion);
 		if (out.kind === "fix") {
 			const next = await failRound(job, ctx, "Delivery needs a fix", out.reason);
 			return next;

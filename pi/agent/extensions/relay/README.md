@@ -12,17 +12,44 @@ An autonomous lead / worker / judge extension for hands-off work. Your session i
 | critic | One-shot, read-only (`reviewer.ts`). Reads the brief against the code: efficiency at the stated scale, a path for the named extensions, fit with the repo's patterns, no duplication, neither under- nor over-engineered, Authority covered. Up to 3 rounds per draft. |
 | worker | A `pi --mode rpc -ne -ns -np -e worker.ts` process (Sonnet by default, per-job size) in a worktree set. Never pushes, merges or publishes. |
 | judge | One-shot, read-only. Judges the diff against the **current brief version**. Any change Authority does not cover is a blocker. |
-| escalate | A stronger model that takes over the worker (stage 3). |
+| escalate | A stronger model that takes over the worker after the judge rounds. |
 
 ## The flow
 
 1. You discuss with the lead. When you say "go" (typed, or `/relay go`), the lead writes the brief, runs `relay_critic` (revising up to 3 rounds), and `relay_dispatch`es it.
 2. Dispatch: validate, assign a job id (`r` + 6 base36 characters), write `brief.md` and `job.json`, take the job lock, snapshot your uncommitted edits, create the set (W1 with `launch: "none"`), cherry-pick the snapshot as the job's first commit ("relay: lead edits"), revert your checkout, start the worker.
-3. The worker works, asks (`ask_lead`) when it must, and finishes with `report_done`. The judge reviews `base..HEAD`. FAIL: the worker gets the findings (one notice, the lead is not woken). PASS: the lead is woken and delivery starts. At the judge cap (`caps.judge`, 3) the job stops and is reported.
+3. The worker works, asks (`ask_lead`) when it must, and finishes with `report_done`. The judge reviews `base..HEAD`. FAIL: the worker gets the findings (one notice, the lead is not woken). PASS: the lead is woken and delivery starts. After `caps.judge` (3) failed rounds the worker is switched to the escalate model for `caps.escalate` (2) more; then the lead is woken to re-plan (`relay_replan`, up to `caps.replans`, 1); then the job stops and is reported.
 4. Delivery rebases onto `origin/<target>` per repo, pushes, opens the PR (with GitHub), and merges within Authority.
 5. `report.md` is written; the lead gets 3 lines and the path; `relay:job-end` is emitted; the worker exits; the set is removed if everything merged.
 
-The lead is woken (a turn starts) only for: a worker question or approval request, the judge cap, a `[plan]` finding, a worker crash, PASS, and the final report.
+The lead is woken (a turn starts) only for: a worker question or approval request, the judge cap or a re-plan wait, a `[plan]` finding, a worker crash or stall that restarting did not fix, PASS, and the final report.
+
+## Running jobs
+
+**Mid-run input (D9).** `relay_send {job, text, mode, reset?, from?}` always appends `## Amendment N (user|lead)` to the brief (the version goes up by one), then:
+- `steer`: a running worker gets an RPC `steer`; an idle one gets a `prompt`. If the steer is still queued when the worker settles (`get_state` shows a pending message), relay does `clear_queue` and sends it as a prompt.
+- `follow_up`: queued behind the worker's current turn.
+- `restart`: the critic first checks only the amendment (a blocker or major finding refuses the restart and changes nothing); then the worker is aborted and stopped, with `reset: "base"` the branch is reset to its base (the lead's edits are applied again) and a new session starts with the revised brief and "previous approach dropped: <text>".
+- A judge verdict is for the brief version it judged. An amendment since (other than an `approval`, which only widens Authority) discards it: the worker gets the amendment, and the judge runs again after its next `report_done`. No judge round is used.
+- An amendment while delivering, before a merge, sends the job back to `working`; nothing merges until the new version gets a PASS.
+- A job that is judging, delivering, paused or queued just holds the amendment; it is read when the step or worker continues.
+
+**Critic loop (D7).** `relay_critic` counts rounds per draft id (the first call returns it; pass it back). At `caps.critic` (3) it answers "cap reached; decide and log" without running. `relay_dispatch {draft, overrides}` copies the draft's rounds into the job and records the overrides, which the report lists right after Approvals.
+
+**Escalation and re-plan (D8).** Rounds 1..`caps.judge` go to the worker. The next `caps.escalate` rounds go to the escalate model (RPC `set_model`; a restart keeps it). Then the job pauses with reason `replan` and the lead is woken: `relay_replan {job, brief}` replaces the brief (same Targets; the old amendments, approvals included, are kept and a re-plan amendment is added), resets the round counters and starts a new session on the same worktree. After `caps.replans` the job stops.
+
+**Stall and tool timeouts.** The watcher tracks events and running tools. A stall (`stallMin`, 10, with no events and no tool running) or a tool past its timeout (bash `bashTimeoutMin`, 60; `toolTimeouts` patterns) aborts the worker and restarts it once with `-c` in the same session folder. The next failure, or a process crash after the restart, pauses the job and wakes the lead (`relay_resume` or `relay_stop`). A restart counter resets when the worker reports done.
+
+**Pause and takeover.** `/relay pause <job>` aborts and stops the worker and sets `paused`; work in the set with `/wt open <set>`, then `/relay resume <job>` (or `relay_resume`), which restarts the worker with `-c` (a job paused while judging runs the judge again).
+
+**Resume and adoption.** When lead mode turns on, and every 10 min, the lead scans `<git common dir>/pi/relay/*/job.json` for unfinished jobs. A job whose lock names this lead (a reload) is re-attached at once; a job with a stale lock (heartbeat older than 2 min, or a dead pid) is taken over (`takeOver`), a surviving worker pid is killed, and the worker restarts with `-c` (a judging job re-runs the judge, a delivering job re-delivers). One notice per job, no prompt. A job whose lock is fresh belongs to a live lead and is left alone. Job-set sessions never scan. The same scan does the **PR-only cleanup**: for a `done` job with a PR that is not merged, it asks `gh pr view <pr> --json state,mergeCommit`; when the PR is `MERGED` it sets `merged` and sends W2 without `force` (a refusal is reported in one notice; a `gh` error is retried on the next scan).
+
+**Follow-ups.** `relay_followup {job, text}` (`/relay followup <job> <text>`) continues a `done`, `stopped` or `failed` job, also one of an earlier session. It takes the lock (taking a stale one over), appends the amendment, has the critic check only the amendment, and then the `followup` step chooses the workspace:
+- not merged, set present: the set and branch are reused (`remoteBranch` and `remotePushed` stay, so the push updates the same PR);
+- not merged, set gone: a new set `<id>-f<N>` from `origin/<remoteBranch>` (or the local job branch); the push still goes to the same `remoteBranch` with the lease;
+- merged: a new set `<id>-f<N>` from `origin/<target>`, a new branch, no `remoteBranch`: delivery opens a new PR; the old set, if still there, gets W2 without `force` (a refusal is reported); the old remote branch is left alone. A job that merged only some of its repos is refused (start a new job).
+
+`followBase` is the worktree HEAD at the start, so the judge reviews `followBase..HEAD` only. The new worker session lives in `sessions/f<N>/`. Delivery and cleanup are the job's; the previous `report.md` is kept as `report.before-followup-<N>.md` and the new one has a `## Follow-up N` section with its own Approvals.
 
 ### Edit budget
 
@@ -81,7 +108,7 @@ The engine persists `job.state` before each step. `"wait"` parks the job until s
 
 ## The job lock (generation lock)
 
-Lock files `owner.<n>.lock` hold `{pid, sessionId, host, heartbeat}`. `acquire` creates `owner.1.lock` with `O_EXCL`. `takeOver` (adoption comes in stage 3) reads the highest generation, requires it to be stale (heartbeat older than 2 min, or the pid dead on this host; an unreadable file only by mtime), creates `owner.<n+1>.lock` through a hard link (so it fails on `EEXIST`), runs `isOwner()` again, and only then deletes lower generations; if the recheck fails it deletes its own file and reports failure. `isOwner()` needs the highest generation and the lead's `sessionId`, `pid` and `host`. The heartbeat (every 30 s) writes a temp file and renames it over the lock, with 5 retries on `EPERM`/`EBUSY`/`EACCES` (50 to 800 ms backoff); if all fail it counts as not written, and the lead loses the job only when a later `isOwner()` fails. File locks are reliable on one host only.
+Lock files `owner.<n>.lock` hold `{pid, sessionId, host, heartbeat}`. `acquire` creates `owner.1.lock` with `O_EXCL`. `takeOver` (adoption: see Running jobs) reads the highest generation, requires it to be stale (heartbeat older than 2 min, or the pid dead on this host; an unreadable file only by mtime), creates `owner.<n+1>.lock` through a hard link (so it fails on `EEXIST`), runs `isOwner()` again, and only then deletes lower generations; if the recheck fails it deletes its own file and reports failure. `isOwner()` needs the highest generation and the lead's `sessionId`, `pid` and `host`. The heartbeat (every 30 s) writes a temp file and renames it over the lock, with 5 retries on `EPERM`/`EBUSY`/`EACCES` (50 to 800 ms backoff); if all fail it counts as not written, and the lead loses the job only when a later `isOwner()` fails. File locks are reliable on one host only.
 
 ## Delivery and the push rule
 
@@ -90,7 +117,7 @@ Per repo, in Targets order: `git fetch`, then `git rebase origin/<target>`. A cl
 - **First push:** `git push origin HEAD:<remoteBranch>`; the branch must not exist on origin (otherwise delivery stops and the lead is woken). `remoteBranch` is set to the branch name at this push.
 - **Later pushes** (after a delivery rebase): `git push --force-with-lease=<remoteBranch>:<remotePushed> origin HEAD:<remoteBranch>`, only on the job's own branch, never the target or a protected branch. After each push `remotePushed` is the sha pushed. A lease failure means someone else pushed (for example you after `/wt open`): delivery stops, the lead is woken, nothing is overwritten.
 - `push-guard.ts` (copy) lets these pushes through only when the delivery step passes a `lease`; the worker guard refuses every push.
-- With GitHub (`gh repo view` works) a PR is created when none is open. **Merge** when Authority `merge` is yes (or approved), or when the repo's `merge` is `after-pass` and Authority is not `no`: `gateCheck` on the accepted tree, then `gh pr merge --squash --match-head-commit <sha>`; without GitHub a fast-forward `git push origin <sha>:<target>` (if the target moved, rebase again, up to 3 times). Otherwise (`pr-only`) the set is kept until the PR merges (the PR-only cleanup that removes it later is stage 3).
+- With GitHub (`gh repo view` works) a PR is created when none is open. **Merge** when Authority `merge` is yes (or approved), or when the repo's `merge` is `after-pass` and Authority is not `no`: `gateCheck` on the accepted tree, then `gh pr merge --squash --match-head-commit <sha>`; without GitHub a fast-forward `git push origin <sha>:<target>` (if the target moved, rebase again, up to 3 times). Otherwise (`pr-only`) the set is kept until the PR merges; the PR-only cleanup (below) removes it later.
 - After all merges the `Publish` commands run, only with `publish: yes`.
 
 ## Config: `relay.json`
@@ -134,7 +161,7 @@ The numbers are starting values, to be tuned after first use.
 
 ## Tools and commands
 
-`relay_critic {brief, draft?}`, `relay_dispatch {brief, size?, draft?, overrides?}`, `relay_status {job?}`, `relay_approve {job, askId, approve, reason}`, `relay_stop {job}`, `relay_deliver {job}`. Commands: `/relay` (status), `/relay on|off` (off is refused while this lead owns running jobs), `/relay go`, `/relay stop <job>`, `/relay model <role> <spec>`.
+`relay_critic {brief, draft?}`, `relay_dispatch {brief, size?, draft?, overrides?}`, `relay_status {job?}`, `relay_approve {job, askId, approve, reason}`, `relay_stop {job}`, `relay_deliver {job}`, `relay_send {job, text, mode, reset?, from?}`, `relay_replan {job, brief}`, `relay_resume {job}`, `relay_followup {job, text}`. Commands: `/relay` (status), `/relay on|off` (off is refused while this lead owns running jobs), `/relay go`, `/relay stop <job>`, `/relay pause <job>`, `/relay resume <job>`, `/relay followup <job> <text>`, `/relay model <role> <spec>`.
 
 ## Copies from workflow
 
@@ -142,11 +169,13 @@ The numbers are starting values, to be tuned after first use.
 
 ## Tests
 
-`node --experimental-strip-types --test *.test.ts` in this folder (about 35 s). The engine tests use `RELAY_PI_BIN=test/fake-pi.mjs`, one scripted file that serves the RPC worker and the json-mode critic and judge (it switches on `--mode`), with real git repos and bare remotes. `e2e/live.mjs` runs the whole thing with real models (15-25 min): `node pi/agent/extensions/relay/e2e/live.mjs`.
+`node --experimental-strip-types --test *.test.ts` in this folder (about 2 min; `running.test.ts` covers the stage 3 behaviour with a fake clock where time matters). The engine tests use `RELAY_PI_BIN=test/fake-pi.mjs`, one scripted file that serves the RPC worker and the json-mode critic and judge (it switches on `--mode`), with real git repos and bare remotes. `e2e/live.mjs` runs the whole thing with real models (15-25 min): `node pi/agent/extensions/relay/e2e/live.mjs`.
 
 ## Limits
 
 - The judge rechecks the whole diff each round (plus the previous findings), not only the delta.
-- A worker crash or stall fails the job in this stage (the restart with `-c`, stall detection, adoption of a job after a lead restart, mid-run input, follow-ups, parallel and stacked jobs, add-repo and the widget come in later stages). Closing the lead session kills its workers; the jobs stay on disk.
+- Closing the lead session kills its workers; the jobs stay on disk and the next lead session adopts them (after 2 min if the pid is alive, at once if the pid is dead or the session is the same). Killing a surviving worker by pid assumes the pid was not reused. Parallel and stacked jobs, add-repo and the widget come in a later stage.
+- A restart or follow-up critic check costs one model run; a critic failure twice refuses the change rather than skipping the check.
+- Escalation switches the model with `set_model`; the thinking level of the escalate role is not applied to a running worker.
 - File locks are reliable on one host only; about 10 workers at once at roughly 300 MB per process; a diff larger than `judge.maxDiffChars` gives the judge the file list plus the diffs that fit.
 - Bash is not blocked against the edit budget up front.

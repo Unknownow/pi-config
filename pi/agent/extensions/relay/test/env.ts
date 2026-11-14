@@ -18,14 +18,18 @@ export interface World {
 	sets: string;
 	jobRoot: string;
 	script: string;
-	wtCalls: { create: any[]; remove: any[] };
+	wtCalls: { create: any[]; remove: any[]; refuse: number };
 	wakes: string[];
 	notices: string[];
 	events: { name: string; payload: any }[];
 	wt: Wt;
 	cfg: RelayConfig;
 	engine: Engine;
+	/** Another engine on the same repo, set factory and sinks (a second lead). */
+	mk(over?: Partial<EngineDeps>): Engine;
 	calls(): any[];
+	/** The RPC commands the fake worker received (prompt, steer, clear_queue, set_model, ...). */
+	cmds(): any[];
 	write(script: object): void;
 	end(): void;
 }
@@ -72,7 +76,7 @@ export async function waitFor(cond: () => boolean, ms = 30_000, what = "conditio
 	}
 }
 
-export function makeWt(sets: string, repo: string, wtCalls: { create: any[]; remove: any[] }): Wt {
+export function makeWt(sets: string, repo: string, wtCalls: { create: any[]; remove: any[]; refuse: number }): Wt {
 	return {
 		async create(req) {
 			wtCalls.create.push(req);
@@ -92,6 +96,11 @@ export function makeWt(sets: string, repo: string, wtCalls: { create: any[]; rem
 		},
 		async remove(req) {
 			wtCalls.remove.push(req);
+			// a test can make the next W2 calls refuse, as a set in use would
+			if (wtCalls.refuse > 0) {
+				wtCalls.refuse--;
+				return { error: "in use by this session" };
+			}
 			const wtDir = path.join(sets, req.name);
 			if (!fs.existsSync(wtDir)) return { error: "unknown set" };
 			const gitDir = fs.existsSync(path.join(wtDir, ".git")) ? wtDir : undefined;
@@ -109,7 +118,7 @@ export function world(cfgRaw: object = {}, files?: Record<string, string>, over:
 	fs.mkdirSync(sets, { recursive: true });
 	const script = path.join(base, "script.json");
 	const jobRoot = path.join(repo, ".git", "pi", "relay");
-	const wtCalls = { create: [] as any[], remove: [] as any[] };
+	const wtCalls = { create: [] as any[], remove: [] as any[], refuse: 0 };
 	const wt = makeWt(sets, repo, wtCalls);
 	const cfg = parseConfig({ stallMin: 10, ...cfgRaw }).config;
 	const w: World = {
@@ -125,6 +134,8 @@ export function world(cfgRaw: object = {}, files?: Record<string, string>, over:
 		wt,
 		cfg,
 		engine: undefined as unknown as Engine,
+		cmds: () => (fs.existsSync(`${script}.cmds.jsonl`) ? fs.readFileSync(`${script}.cmds.jsonl`, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)) : []),
+		mk: () => undefined as unknown as Engine,
 		calls: () => (fs.existsSync(`${script}.calls.jsonl`) ? fs.readFileSync(`${script}.calls.jsonl`, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)) : []),
 		write: (s) => fs.writeFileSync(script, JSON.stringify(s)),
 		end: () => {
@@ -134,7 +145,7 @@ export function world(cfgRaw: object = {}, files?: Record<string, string>, over:
 	};
 	process.env.RELAY_PI_BIN = FAKE_PI;
 	process.env.FAKE_PI_SCRIPT = script;
-	w.engine = new Engine({
+	const deps = (): EngineDeps => ({
 		cfg: () => w.cfg,
 		run,
 		root: jobRoot,
@@ -149,6 +160,8 @@ export function world(cfgRaw: object = {}, files?: Record<string, string>, over:
 		heartbeatMs: 100_000,
 		...over,
 	});
+	w.mk = (o = {}) => new Engine({ ...deps(), ...o });
+	w.engine = w.mk();
 	w.engine.start();
 	return w;
 }

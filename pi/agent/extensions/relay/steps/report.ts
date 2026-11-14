@@ -33,7 +33,7 @@ export function buildReport(job: Job, brief: string, dir: string): string {
 
 	out.push("## Approvals");
 	if (job.approvals.length === 0) out.push("None: no sensitive action was approved.");
-	for (const a of job.approvals) out.push(`- [${a.category}] ${a.item} - by ${a.by} (${a.reason}) at ${a.at}`);
+	for (const a of job.approvals.filter((x) => !x.followup)) out.push(`- [${a.category}] ${a.item} - by ${a.by} (${a.reason}) at ${a.at}`);
 	out.push("");
 
 	out.push("## Overrides");
@@ -65,6 +65,13 @@ export function buildReport(job: Job, brief: string, dir: string): string {
 		out.push(`- ${bits.join(", ")}`);
 	}
 	if (!job.repos.length) out.push("- no repos (the job ended before its set was created)");
+	for (let n = 1; n <= (job.followups ?? 0); n++) {
+		out.push("", `## Follow-up ${n}`, job.followupTexts?.[n - 1] ?? "(no text recorded)", "", "Approvals:");
+		const own = job.approvals.filter((a) => a.followup === n);
+		if (!own.length) out.push("None.");
+		for (const a of own) out.push(`- [${a.category}] ${a.item} - by ${a.by} (${a.reason}) at ${a.at}`);
+		if (n === job.followups) out.push("", v ? `Result: judge ${v.verdict} in round ${v.round} (judge/round-${v.round}.md)` : "Result: no judge verdict for this follow-up.");
+	}
 	return `${out.join("\n")}\n`;
 }
 

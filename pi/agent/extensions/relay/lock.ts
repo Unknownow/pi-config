@@ -154,6 +154,16 @@ export class JobLock {
 		return true;
 	}
 
+	/** Re-attaches to the highest generation when its file already names this lead (a reload of the same session). */
+	attach(): boolean {
+		const g = this.generations()[0];
+		if (g === undefined) return false;
+		const f = this.read(g);
+		if (f === undefined || f === "unreadable" || f.sessionId !== this.me.sessionId || f.pid !== this.me.pid || f.host !== this.me.host) return false;
+		this.gen = g;
+		return true;
+	}
+
 	/** Whether this lead's generation is the highest and its file still names this lead. */
 	isOwner(): boolean {
 		if (this.gen === undefined) return false;

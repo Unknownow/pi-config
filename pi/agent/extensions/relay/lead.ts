@@ -34,6 +34,8 @@ export interface LeadDeps {
 	/** Test seams, passed to the engine. */
 	engine?: Partial<EngineDeps>;
 	timeoutMs?: number;
+	/** The interval of the adoption scan (default 10 min). */
+	scanMs?: number;
 }
 
 const text = (t: string, details: object = {}) => ({ content: [{ type: "text" as const, text: t }], details });
@@ -50,6 +52,8 @@ export function createLead(pi: ExtensionAPI, d: LeadDeps) {
 	let engine: Engine | undefined;
 	let lastCtx: any;
 	let overBudgetNoted = false;
+	let scanTimer: ReturnType<typeof setInterval> | undefined;
+	let scans = 0;
 
 	// K16: registered at load, answers only for relay.
 	const unsubK16 = pi.events.on("flow:active", (data: unknown) => {
@@ -76,8 +80,27 @@ export function createLead(pi: ExtensionAPI, d: LeadDeps) {
 			warned = true;
 			for (const w of loaded.warnings) ctx.ui?.notify?.(`relay: ${w}`, "warning");
 		}
+		if (on && !scanTimer) {
+			// resume and adoption (S27): once lead mode is on, then every 10 min
+			scanTimer = setInterval(() => void scan(lastCtx ?? ctx), d.scanMs ?? 10 * 60_000);
+			scanTimer.unref?.();
+			void scan(ctx);
+		}
 		if (was === "undecided" && !on && act.reason && !/relay json|worker or reviewer/.test(act.reason)) ctx.ui?.notify?.(act.reason.startsWith("relay") ? act.reason : `relay: ${act.reason}`, "info");
 		return on;
+	}
+
+	/** Jobs of dead leads are adopted, and PR-only jobs whose pull request merged lose their kept set. */
+	async function scan(ctx: any): Promise<void> {
+		scans++;
+		try {
+			const eng = await engineFor(ctx);
+			if ("error" in eng) return;
+			await eng.adopt();
+			await eng.prCleanup();
+		} catch (e) {
+			ctx.ui?.notify?.(`relay: scan of unfinished jobs failed: ${(e as Error).message}`, "warning");
+		}
 	}
 
 	const off = () => text(`relay: lead mode is off (${act.reason || "not decided"}); /relay on asks again.`);
@@ -195,6 +218,7 @@ export function createLead(pi: ExtensionAPI, d: LeadDeps) {
 
 	pi.on("session_shutdown", async () => {
 		unsubK16?.();
+		if (scanTimer) clearInterval(scanTimer);
 		await engine?.shutdown();
 	});
 
@@ -319,10 +343,80 @@ export function createLead(pi: ExtensionAPI, d: LeadDeps) {
 		},
 	});
 
+	pi.registerTool({
+		name: "relay_send",
+		label: "Relay send",
+		description: "Send input to a running job. It is always recorded as an amendment of the brief. mode steer: reaches a running worker at its next step (a prompt when it is idle). follow_up: queued behind its current turn. restart: the worker's approach is dropped (the critic checks the amendment first); reset base also resets the branch to its base. An amendment after PASS holds delivery until the new brief version is judged. For a finished job use relay_followup.",
+		promptSnippet: "relay_send: amend or redirect a running job (steer | follow_up | restart)",
+		parameters: T.Object({
+			job: T.String(),
+			text: T.String({ description: "What changes, as an instruction to the worker" }),
+			mode: T.String({ description: "steer | follow_up | restart" }),
+			reset: T.Optional(T.String({ description: "restart only: base | keep (default keep)" })),
+			from: T.Optional(T.String({ description: "user (default: the user's words) | lead (your own change)" })),
+		}),
+		async execute(_id: string, p: any, _s: any, _u: any, ctx: any) {
+			const refuse = await needsLead(ctx);
+			if (refuse) return refuse;
+			if (!engine) return text("relay_send: no jobs in this session");
+			if (!["steer", "follow_up", "restart"].includes(p.mode)) return text('relay_send: mode must be "steer", "follow_up" or "restart"');
+			if (p.reset !== undefined && !["base", "keep"].includes(p.reset)) return text('relay_send: reset must be "base" or "keep"');
+			const r = await engine.send(p.job, p.text, p.mode, { reset: p.reset, by: p.from === "lead" ? "lead" : "user" });
+			return text("error" in r ? `relay_send: ${r.error}` : `amendment recorded (brief version ${r.version}): ${r.how}`);
+		},
+	});
+
+	pi.registerTool({
+		name: "relay_replan",
+		label: "Relay re-plan",
+		description: "After the worker failed the judge and escalated rounds, relay woke you: give the revised full brief (same Targets). A new worker session starts on the same worktree. Up to caps.replans per job.",
+		promptSnippet: "relay_replan: revised brief for a job that ran out of rounds",
+		parameters: T.Object({ job: T.String(), brief: T.String({ description: "The revised, complete brief" }) }),
+		async execute(_id: string, p: any, _s: any, _u: any, ctx: any) {
+			const refuse = await needsLead(ctx);
+			if (refuse) return refuse;
+			if (!engine) return text("relay_replan: no jobs in this session");
+			const r = await engine.replan(p.job, p.brief);
+			return text("error" in r ? `relay_replan: ${r.error}` : `job ${p.job} re-planned (brief version ${r.version}); a new worker session started.`);
+		},
+	});
+
+	pi.registerTool({
+		name: "relay_resume",
+		label: "Relay resume",
+		description: "Continue a paused job (after /relay pause, or a worker that crashed or stalled twice): the worker is restarted with its session, or the judge runs again.",
+		promptSnippet: "relay_resume: continue a paused job",
+		parameters: T.Object({ job: T.String() }),
+		async execute(_id: string, p: any, _s: any, _u: any, ctx: any) {
+			const refuse = await needsLead(ctx);
+			if (refuse) return refuse;
+			if (!engine) return text("relay_resume: no jobs in this session");
+			const r = await engine.resume(p.job);
+			return text("error" in r ? `relay_resume: ${r.error}` : `job ${p.job} is ${r.state}`);
+		},
+	});
+
+	pi.registerTool({
+		name: "relay_followup",
+		label: "Relay follow-up",
+		description: "A follow-up on a finished job (done, stopped or failed): an amendment of the same job, worked in the same set (or a new one when the old is gone or the job merged), judged on its own diff, delivered and reported like the job. Also works for jobs of an earlier session.",
+		promptSnippet: "relay_followup: continue a finished job with a change",
+		parameters: T.Object({ job: T.String(), text: T.String({ description: "What the follow-up asks for" }) }),
+		async execute(_id: string, p: any, _s: any, _u: any, ctx: any) {
+			const refuse = await needsLead(ctx);
+			if (refuse) return refuse;
+			if (act.jobSet) return text("relay_followup: this session is inside a job's worktree.");
+			const eng = await engineFor(ctx);
+			if ("error" in eng) return text(`relay_followup: ${eng.error}`);
+			const r = await eng.followup(p.job, p.text);
+			return text("error" in r ? `relay_followup: ${r.error}` : `follow-up ${r.n} of job ${p.job} ${r.queued ? "queued" : "started"}. relay reports when it is done.`);
+		},
+	});
+
 	// ----------------------------------------------------------------------------------------- commands
 
 	pi.registerCommand("relay", {
-		description: "relay: status | on | off | go | stop <job> | model <role> <provider/id[:thinking]>",
+		description: "relay: status | on | off | go | stop <job> | pause <job> | resume <job> | followup <job> <text> | model <role> <provider/id[:thinking]>",
 		handler: async (args: string, ctx: any) => {
 			lastCtx = ctx;
 			const [sub = "status", ...rest] = args.trim().split(/\s+/);
@@ -346,6 +440,22 @@ export function createLead(pi: ExtensionAPI, d: LeadDeps) {
 					const r = engine ? await engine.stop(rest[0]) : { error: "no jobs in this session" };
 					note("error" in r ? `relay: ${r.error}` : `relay: job ${rest[0]} stopped`, "error" in r ? "warning" : "info");
 				}
+			} else if (sub === "pause" || sub === "resume") {
+				if (!rest[0]) note(`usage: /relay ${sub} <job>`, "warning");
+				else {
+					const r = engine ? await (sub === "pause" ? engine.pause(rest[0]) : engine.resume(rest[0])) : { error: "no jobs in this session" };
+					const set = engine?.get(rest[0])?.job.set ?? rest[0];
+					note("error" in r ? `relay: ${r.error}` : sub === "pause" ? `relay: job ${rest[0]} paused; work in its set with /wt open ${set}, then /relay resume ${rest[0]}` : `relay: job ${rest[0]} resumed`, "error" in r ? "warning" : "info");
+				}
+			} else if (sub === "followup") {
+				const [job, ...words] = rest;
+				if (!job || !words.length) note("usage: /relay followup <job> <text>", "warning");
+				else if (!(await leadOn(ctx))) note(`relay: lead mode is off (${act.reason})`, "warning");
+				else {
+					const eng = await engineFor(ctx);
+					const r = "error" in eng ? eng : await eng.followup(job, words.join(" "));
+					note("error" in r ? `relay: ${r.error}` : `relay: follow-up ${r.n} of ${job} ${r.queued ? "queued" : "started"}`, "error" in r ? "warning" : "info");
+				}
 			} else if (sub === "model") {
 				const [role, spec] = rest;
 				const roles = ["critic", "judge", "escalate", "worker.small", "worker.normal", "worker.large"];
@@ -364,5 +474,5 @@ export function createLead(pi: ExtensionAPI, d: LeadDeps) {
 		},
 	});
 
-	return { act, leadOn, engineFor, config: () => cfg, engine: () => engine };
+	return { act, leadOn, engineFor, config: () => cfg, engine: () => engine, scans: () => scans };
 }

@@ -3,7 +3,9 @@
 //
 // FAKE_PI_SCRIPT points to a JSON file:
 //   { "worker": [ turn, ... ], "judge": [ text | {text, delayMs}, ... ], "critic": [ text | {text, delayMs}, ... ] }
-// A turn: { "write": [{file, content}], "ask": {question} | {approval:{category,item,why}}, "done": "summary", "crash": true, "hang": true }
+// A turn: { "write": [{file, content}], "ask": {question} | {approval:{category,item,why}}, "done": "summary", "crash": true, "hang": true,
+//           "delayMs": n (a pause before the writes), "tool": {name, args, hang: true} (a tool that starts and never ends) }
+// Every RPC command is logged to <script>.cmds.jsonl; a steer or follow_up that arrives during a turn stays queued (get_state shows it, clear_queue empties it).
 // Each prompt consumes the next turn (the last one repeats). Judge and critic runs consume the next text the same way.
 // State (counters) lives in <script>.state.json; every start is logged to <script>.calls.jsonl.
 import { execFileSync } from "node:child_process";
@@ -68,11 +70,17 @@ const jobRepos = () => {
 };
 
 let busy = false;
+let queue = [];
 async function turn(message) {
 	busy = true;
 	const t = next("worker", script.worker) ?? { done: "ok" };
 	if (t.crash) process.exit(1);
 	if (t.hang) await new Promise(() => {});
+	if (t.tool) {
+		out({ type: "tool_execution_start", toolCallId: "tool1", toolName: t.tool.name, args: t.tool.args ?? {} });
+		if (t.tool.hang) await new Promise(() => {});
+	}
+	if (t.delayMs) await new Promise((r) => setTimeout(r, t.delayMs));
 	let n = 0;
 	for (const w of t.write ?? []) {
 		const id = `t${++n}`;
@@ -121,13 +129,21 @@ process.stdin.on("data", (d) => {
 		buf = buf.subarray(i + 1);
 		if (!line.trim()) continue;
 		const cmd = JSON.parse(line);
+		if (cmd.type !== "get_state" && scriptFile) fs.appendFileSync(`${scriptFile}.cmds.jsonl`, `${JSON.stringify({ type: cmd.type, message: cmd.message, provider: cmd.provider, modelId: cmd.modelId, resumed: argv.includes("-c") })}
+`);
 		const reply = (data) => out({ id: cmd.id, type: "response", command: cmd.type, success: true, ...(data ? { data } : {}) });
 		if (cmd.type === "prompt") {
 			reply({ disposition: busy ? "queued" : "started" });
 			void turn(cmd.message);
-		} else if (cmd.type === "steer" || cmd.type === "follow_up") reply({ disposition: "queued" });
-		else if (cmd.type === "get_state") reply({ isStreaming: busy, model: { id: "fake" } });
-		else if (cmd.type === "clear_queue") reply({ steering: [], followUp: [] });
+		} else if (cmd.type === "steer" || cmd.type === "follow_up") {
+			queue.push(cmd.message);
+			reply({ disposition: "queued" });
+		} else if (cmd.type === "get_state") reply({ isStreaming: busy, model: { id: "fake" }, pendingMessageCount: queue.length });
+		else if (cmd.type === "clear_queue") {
+			const q = queue;
+			queue = [];
+			reply({ steering: q, followUp: [] });
+		}
 		else reply();
 	}
 });

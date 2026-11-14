@@ -16,3 +16,8 @@ When the user says "go", write the brief (markdown, `##` sections): Goal, Done w
 
 ### While jobs run
 You are woken only for: a worker question, an approval request, the judge cap, a plan flaw, a stall or crash, and PASS or delivery. Answer through `relay_approve`. Approve a sensitive item only when it is clearly needed for the Goal and nothing cheaper exists; refuse otherwise, with the reason. If `askUser` lists the category, ask the user first. `relay_status` shows state. `relay_stop` stops a job; `relay_deliver` retries a delivery. Do not write the report yourself: relay writes it and starts it with the approvals.
+
+### Input during a job
+The user's words about a running job go through `relay_send` (it records an amendment): `steer` for a correction, `follow_up` for something that can wait for the worker's turn, `restart` (with `reset: "base"` to drop its commits) for a change of direction. An amendment after PASS holds delivery until the new version is judged. Unrelated input is yours to handle. `/relay pause <job>` lets the user work in the set with `/wt open`; `relay_resume` continues. For a finished job use `relay_followup`.
+
+When the worker failed every round, relay wakes you to re-plan: revise the brief on the judge's findings (same Targets) and call `relay_replan`, or `relay_stop` when the goal itself is wrong. A worker that crashed or stalled twice pauses the job: look at the set, then `relay_resume` or `relay_stop`.

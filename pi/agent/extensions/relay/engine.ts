@@ -1,22 +1,25 @@
 /** The engine: runs the step modules of each job, the queue and the concurrency limit (D12). The lead's tools and the watcher call into it. */
 
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { countTokens } from "../shared/tokens.ts";
 import { APPROVAL, approvalPayload } from "./events.ts";
-import { appendAmendment, checkBrief, parseBrief } from "./brief.ts";
-import { budgetState, longToolWall } from "./budget.ts";
+import { appendAmendment, checkBrief, parseBrief, replaceBrief } from "./brief.ts";
+import { parseFindings } from "../shared/findings.ts";
+import { budgetState, longToolWall, toolTimeoutMs } from "./budget.ts";
 import { CATEGORIES, type Category, type RelayConfig, type Size } from "./config.ts";
-import { type Job, type JobState, appendLog, draftDir, emptyJob, FINISHED, jobDir, newId, readJob, readLog, writeJob } from "./job.ts";
-import { JobLock, type Me } from "./lock.ts";
+import { type Job, type JobState, appendLog, draftDir, emptyJob, FINISHED, jobDir, listJobs, newId, readJob, readLog, writeJob } from "./job.ts";
+import { JobLock, type Me, pidAlive } from "./lock.ts";
 import { append, inboxPath, outboxPath, takeNew, type OutMsg } from "./mailbox.ts";
 import { forwardedServers, roleTools } from "./knowledge.ts";
 import { type RpcCallbacks, type RpcWorker, startWorker as realStartWorker, type WorkerOpts } from "./rpc.ts";
 import type { Run } from "./sh.ts";
 import { runSubagent, type RunOptions, type RunResult } from "./subagent.ts";
-import { dispatchStep } from "./steps/dispatch.ts";
+import { applySnapshot } from "./snapshot.ts";
+import { dispatchStep, workerPrompt } from "./steps/dispatch.ts";
+import { followupStep } from "./steps/followup.ts";
 import { deliverStep } from "./steps/deliver.ts";
 import { judgeStep, workStep } from "./steps/loop.ts";
 import { cleanupStep, reportStep } from "./steps/report.ts";
@@ -27,6 +30,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 /** The steps, by name. A new step is one module plus one entry here. */
 export const STEPS: Record<StepName, Step> = {
 	dispatch: dispatchStep,
+	followup: followupStep,
 	work: workStep,
 	judge: judgeStep,
 	deliver: deliverStep,
@@ -46,6 +50,23 @@ export const defaultShell: Shell = (cmd, cwd, timeoutMs = 30 * 60_000) =>
 		p.on("close", (code) => (clearTimeout(t), resolve({ code: code ?? 1, out })));
 		p.on("error", (e) => (clearTimeout(t), resolve({ code: 1, out: String(e.message) })));
 	});
+
+/** The version the next amendment gets (1 plus the amendments so far). */
+function parseBriefVersion(text: string, fallback: number): number {
+	const p = parseBrief(text);
+	return "errors" in p ? fallback : p.version;
+}
+
+/** Kills a worker the dead lead left behind (same host; a pid that is gone is ignored). */
+function killSurvivor(pid: number): void {
+	if (pid <= 0 || pid === process.pid || !pidAlive(pid)) return;
+	try {
+		if (process.platform === "win32") spawnSync("taskkill", ["/pid", String(pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
+		else process.kill(pid, "SIGKILL");
+	} catch {
+		// it exited meanwhile
+	}
+}
 
 export interface EngineDeps {
 	cfg: () => RelayConfig;
@@ -85,6 +106,14 @@ class JobRun {
 	lastTick = 0;
 	lastBeat = 0;
 	graceNotified = false;
+	/** Bumped whenever the worker process is replaced or dropped: events of an older process are ignored. */
+	gen = 0;
+	lastActivity = 0;
+	tools = new Map<string, { name: string; startedAt: number; timeoutMs: number }>();
+	/** A steer sent to the running worker; if it is still queued when the worker settles it is sent as a prompt. */
+	pendingSteer?: string;
+	/** A restart, a pause or a recovery is in progress: nothing else may start or prompt a worker. */
+	recovering = false;
 	/** Set by stop() and the budget: a running step must wind down, whatever state it sets. */
 	stopRequested = false;
 	abort = new AbortController();
@@ -128,7 +157,10 @@ export class Engine {
 	async shutdown(): Promise<void> {
 		if (this.timer) clearInterval(this.timer);
 		this.timer = undefined;
-		for (const jr of this.jobs.values()) jr.worker?.kill();
+		for (const jr of this.jobs.values()) {
+			jr.gen++; // the lead is going away: the exits of its workers are not crashes
+			jr.worker?.kill();
+		}
 	}
 
 	/** Jobs that hold a slot: started and not finished. */
@@ -201,12 +233,13 @@ export class Engine {
 	private initialStep(jr: JobRun): StepName | undefined {
 		switch (jr.job.state) {
 			case "queued":
-				return "dispatch";
+				return jr.job.followupPending ? "followup" : "dispatch";
 			case "working":
 				return "work";
 			case "judging":
-			case "paused":
 				return "judge";
+			case "paused":
+				return undefined; // parked until relay_resume, relay_replan or relay_deliver
 			case "delivering":
 				return "deliver";
 			case "done":
@@ -299,7 +332,19 @@ export class Engine {
 			wt: d.wt,
 			worker: jr.ws,
 			startWorker: (job, o) => this.startWorker(jr, o),
+			setWorkerModel: async (model) => {
+				const at = model.indexOf("/");
+				if (at < 0 || !jr.worker) return false;
+				const r = await jr.worker.setModel(model.slice(0, at), model.slice(at + 1));
+				return r.success;
+			},
 			prompt: async (text) => {
+				if (jr.recovering) return;
+				// a worker that is not running is restarted (-c) with this prompt
+				if (!jr.worker || jr.ws.exited) {
+					await this.startWorker(jr, { prompt: text, resume: true });
+					return;
+				}
 				// a prompt to a worker that is still streaming must say how to queue
 				for (let i = 0; i < 300 && !jr.ws.settled && !jr.ws.exited; i++) await new Promise((r) => setTimeout(r, 100));
 				const wasSettled = jr.ws.settled;
@@ -322,30 +367,45 @@ export class Engine {
 
 	private async startWorker(jr: JobRun, o: { prompt: string; resume?: boolean }): Promise<void> {
 		const cfg = this.cfg;
-		const spec = cfg.roles.worker[jr.job.size];
-		const sessionDir = path.join(jr.dir, "sessions");
+		const job = jr.job;
+		// an escalated job keeps its stronger model across a restart
+		const spec = job.escalated > 0 ? cfg.roles.escalate : cfg.roles.worker[job.size];
+		const sessionDir = path.join(jr.dir, "sessions", ...(job.followups ? [`f${job.followups}`] : []));
 		fs.mkdirSync(sessionDir, { recursive: true });
 		const k = this.knowledgeMcp("worker");
+		const gen = ++jr.gen;
+		const live = () => jr.gen === gen;
 		const cb: RpcCallbacks = {
 			onUsage: (u) => {
-				jr.job.used.tokens += countTokens(u, cfg.tokenWeights).cost;
+				if (live()) job.used.tokens += countTokens(u, cfg.tokenWeights).cost;
+			},
+			onActivity: () => {
+				if (live()) jr.lastActivity = this.now();
+			},
+			onToolStart: (id, name, args) => {
+				if (live()) jr.tools.set(id, { name, startedAt: this.now(), timeoutMs: toolTimeoutMs(cfg, name, args) });
+			},
+			onToolEnd: (id) => {
+				if (live()) jr.tools.delete(id);
 			},
 			onSettled: () => {
-				jr.ws.settled = true;
-				if (jr.job.state === "working") void this.drive(jr);
+				if (live()) void this.settled(jr);
 			},
 			onExit: () => {
+				if (!live()) return;
 				jr.ws.exited = true;
 				jr.ws.alive = false;
-				if (!jr.ended && jr.job.state === "working") void this.drive(jr);
+				if (!jr.ended && !jr.stopRequested && job.state === "working") void this.recover(jr, "its process exited");
 			},
 		};
 		const start = this.d.startWorker ?? realStartWorker;
 		jr.ws.exited = false;
 		jr.ws.settled = false;
+		jr.lastActivity = this.now();
+		jr.tools.clear();
 		jr.worker = start(
 			{
-				cwd: jr.job.cwd ?? jr.job.repos[0].worktree,
+				cwd: job.cwd ?? job.repos[0].worktree,
 				model: spec.model,
 				thinking: spec.thinking,
 				sessionDir,
@@ -353,15 +413,88 @@ export class Engine {
 				trusted: this.d.trusted?.(),
 				extensions: cfg.worker.extensions,
 				mcp: k?.servers,
-				env: { RELAY_JOB: jr.job.id, RELAY_JOB_DIR: jr.dir },
+				env: { RELAY_JOB: job.id, RELAY_JOB_DIR: jr.dir },
 			},
 			cb,
 		);
 		jr.ws.alive = true;
-		jr.job.worker = { pid: jr.worker.pid ?? 0, model: spec.model, sessionDir };
+		job.worker = { pid: jr.worker.pid ?? 0, model: spec.model, sessionDir };
 		this.save(jr);
 		const r = await jr.worker.prompt(o.prompt);
 		if (!r.success) throw new Error(`the worker did not accept its first prompt: ${r.error ?? "no response"}`);
+	}
+
+	/** `agent_settled`: a steer that is still queued becomes a prompt; otherwise the work step looks at the job. */
+	private async settled(jr: JobRun): Promise<void> {
+		const steer = jr.pendingSteer;
+		if (steer && jr.worker && jr.job.state === "working" && !jr.recovering) {
+			jr.pendingSteer = undefined;
+			const st = await jr.worker.getState();
+			if (st.success && Number(st.data?.pendingMessageCount ?? 0) > 0) {
+				await jr.worker.clearQueue();
+				// what the worker said before this settle is stale: it will answer the steer
+				this.pump(jr);
+				jr.ws.done = undefined;
+				jr.ws.settled = false;
+				appendLog(jr.dir, { kind: "steer", text: "still queued when the worker settled; sent as a prompt" });
+				const r = await jr.worker.prompt(steer);
+				if (!r.success) appendLog(jr.dir, { kind: "prompt-error", text: r.error ?? "prompt failed" });
+				return;
+			}
+		}
+		jr.ws.settled = true;
+		if (jr.job.state === "working") void this.drive(jr);
+	}
+
+	/** Drops the worker process; events of the old process are ignored from here on. */
+	private dropWorker(jr: JobRun): void {
+		jr.gen++;
+		jr.worker?.kill();
+		jr.ws.alive = false;
+		jr.ws.settled = false;
+		jr.ws.done = undefined;
+		jr.ws.nudges = 0;
+		jr.ws.openAsks = [];
+		jr.asks.clear();
+		jr.tools.clear();
+		jr.pendingSteer = undefined;
+	}
+
+	private pauseJob(jr: JobRun, from: "working" | "judging", why: string): void {
+		jr.job.state = "paused";
+		jr.job.paused = { from, why };
+		this.save(jr);
+		appendLog(jr.dir, { kind: "paused", text: why });
+	}
+
+	/** The worker crashed, stalled or ran a tool past its timeout: one restart with `-c`, then the lead is woken and the job pauses. */
+	async recover(jr: JobRun, why: string): Promise<void> {
+		if (jr.recovering || jr.ended || jr.stopRequested || jr.job.state !== "working") return;
+		this.pump(jr);
+		if (jr.ws.done !== undefined) {
+			// it reported before it went down: the result counts
+			void this.drive(jr);
+			return;
+		}
+		jr.recovering = true;
+		try {
+			appendLog(jr.dir, { kind: "recover", text: why });
+			this.dropWorker(jr);
+			if ((jr.job.restarts ?? 0) >= 1) {
+				this.pauseJob(jr, "working", `the worker ${why}; it was restarted once already`);
+				this.d.wake(`relay job ${jr.job.id}: the worker ${why} again after a restart. The job is paused (the set is kept; /wt open ${jr.job.set} to look). relay_resume ${jr.job.id} restarts it, or relay_stop.`);
+				return;
+			}
+			jr.job.restarts = 1;
+			this.save(jr);
+			this.d.notify(`relay job ${jr.job.id}: the worker ${why}; restarting it`);
+			await this.startWorker(jr, { resume: true, prompt: `Your session was restarted because ${why}. Continue the job where you stopped: check git status and git log in the worktree first. If the work is finished, call report_done.` });
+		} catch (e) {
+			this.pauseJob(jr, "working", `restart failed: ${(e as Error).message}`);
+			this.d.wake(`relay job ${jr.job.id}: the worker ${why} and could not be restarted (${(e as Error).message}). The job is paused; relay_resume or relay_stop.`);
+		} finally {
+			jr.recovering = false;
+		}
 	}
 
 	private knowledgeMcp(role: string): { servers: Record<string, Record<string, unknown>>; tools: string[] } | undefined {
@@ -429,6 +562,12 @@ export class Engine {
 				continue;
 			}
 			this.save(jr);
+			if (jr.job.state === "working" && jr.ws.alive && !jr.recovering && !jr.stopRequested) {
+				// a tool past its timeout counts as a crash; a stall is no events for stallMin with no tool running
+				const late = [...jr.tools.values()].find((t) => t.timeoutMs > 0 && now - t.startedAt > t.timeoutMs);
+				if (late) void this.recover(jr, `ran the tool "${late.name}" past its ${Math.round(late.timeoutMs / 60_000)} min timeout`);
+				else if (!jr.ws.settled && jr.tools.size === 0 && now - jr.lastActivity >= this.cfg.stallMin * 60_000) void this.recover(jr, `stalled (no events for ${this.cfg.stallMin} min)`);
+			}
 			if (jr.job.state === "working" && !jr.driving) void this.drive(jr);
 		}
 	}
@@ -489,7 +628,7 @@ export class Engine {
 		}
 		const briefFile = path.join(jr.dir, "brief.md");
 		fs.writeFileSync(briefFile, appendAmendment(fs.readFileSync(briefFile, "utf8"), "approval", `[${ask.category}] ${ask.item} approved: ${reason}`));
-		jr.job.approvals.push({ at: new Date(this.now()).toISOString(), item: ask.item, category: ask.category, by: "lead", reason });
+		jr.job.approvals.push({ at: new Date(this.now()).toISOString(), item: ask.item, category: ask.category, by: "lead", reason, ...(jr.job.followups ? { followup: jr.job.followups } : {}) });
 		const p = parseBrief(fs.readFileSync(briefFile, "utf8"));
 		if (!("errors" in p)) jr.job.briefVersion = p.version;
 		this.save(jr);
@@ -521,10 +660,333 @@ export class Engine {
 		const jr = this.find(id);
 		if ("error" in jr) return jr;
 		if (jr.ended || !["delivering", "paused", "judging"].includes(jr.job.state)) return { error: `job ${id} is ${jr.job.state}: only a job that passed (delivering), is paused or is judging can be delivered` };
-		if (jr.job.state === "paused") jr.job.state = "judging";
+		if (jr.job.state === "paused") {
+			if (jr.job.paused && jr.job.paused.from !== "judging") return { error: `job ${id} is paused (${jr.job.paused.why}): ${jr.job.paused.why === "replan" ? "relay_replan" : "relay_resume"} continues it` };
+			jr.job.state = "judging";
+			delete jr.job.paused;
+		}
 		this.save(jr);
 		await this.drive(jr);
 		return { ok: true, state: jr.job.state };
+	}
+
+	// ------------------------------------------------------------------------------------------------ mid-run input (D9)
+
+	private setBrief(jr: JobRun, text: string): void {
+		fs.writeFileSync(path.join(jr.dir, "brief.md"), text);
+		const p = parseBrief(text);
+		if (!("errors" in p)) jr.job.briefVersion = p.version;
+	}
+
+	/** The critic reads only an amendment (a restart, a follow-up): `{ok}` unless it finds a blocker or major problem. */
+	private async checkAmendment(dir: string, proposed: string, amendment: string, label: string): Promise<{ ok: true } | { error: string }> {
+		const task = `Review only this amendment to a brief that is already running (do not re-review the rest of the brief).\n\n## Amendment\n\n${amendment}\n\n## The brief with the amendment\n\n${proposed}\n\nEnd with a VERDICT line.`;
+		let res = await this.review("critic", task, this.d.leadCwd);
+		if (!res.ok) res = await this.review("critic", task, this.d.leadCwd);
+		if (!res.ok) return { error: `the critic failed twice (${res.error ?? "no output"}); nothing was changed` };
+		fs.mkdirSync(path.join(dir, "critic"), { recursive: true });
+		fs.writeFileSync(path.join(dir, "critic", `${label}.md`), `${res.text}\n`);
+		const hard = parseFindings(res.text).filter((f) => f.severity === "blocker" || f.severity === "major");
+		if (hard.length) return { error: `the critic found ${hard.length} blocker/major problem(s) in the amendment; nothing was changed. Revise the text and send it again:\n${hard.map((f) => `- ${f.head}`).join("\n")}` };
+		return { ok: true };
+	}
+
+	/**
+	 * An amendment to a running job: `steer` reaches a running worker (a prompt when it is idle; a steer still queued when it
+	 * settles is sent as a prompt), `follow_up` is queued behind its current turn, `restart` drops the worker's approach.
+	 */
+	async send(id: string, text: string, mode: "steer" | "follow_up" | "restart", o: { reset?: "base" | "keep"; by?: "user" | "lead" } = {}): Promise<{ ok: true; version: number; how: string } | { error: string }> {
+		const jr = this.find(id);
+		if ("error" in jr) return jr;
+		if (jr.ended || FINISHED.includes(jr.job.state)) return { error: `job ${id} is ${jr.job.state}: relay_followup continues a finished job` };
+		if (!text.trim()) return { error: "the text is empty" };
+		if (mode === "restart") return this.restart(jr, text, o);
+		const by = o.by ?? "user";
+		const briefFile = path.join(jr.dir, "brief.md");
+		const n = parseBriefVersion(fs.readFileSync(briefFile, "utf8"), jr.job.briefVersion);
+		this.setBrief(jr, appendAmendment(fs.readFileSync(briefFile, "utf8"), by, text));
+		this.save(jr);
+		appendLog(jr.dir, { kind: "amendment", text: `${by} (${mode}): ${text.slice(0, 200)}` });
+		const msg = `Amendment ${n} (${by}) to the brief: ${text}\nApply it, then finish with report_done.`;
+		const state = jr.job.state;
+		if (state !== "working") {
+			// judging and delivering notice the new version themselves; a paused or queued job reads it when it (re)starts
+			if ((state === "judging" || state === "delivering") && !jr.driving) void this.drive(jr);
+			return { ok: true, version: jr.job.briefVersion, how: state === "paused" || state === "queued" ? "held until the job continues" : "held: the verdict on the old version is discarded and the worker is sent back" };
+		}
+		this.pump(jr);
+		if (jr.ws.done !== undefined) return { ok: true, version: jr.job.briefVersion, how: "held: the worker had just reported done; the judge's verdict on the old version is discarded and the worker is sent back" };
+		if (!jr.worker || jr.ws.exited || !jr.ws.alive) {
+			await this.ctxFor(jr).prompt(msg);
+			return { ok: true, version: jr.job.briefVersion, how: "sent to a restarted worker" };
+		}
+		if (jr.ws.settled) {
+			await this.ctxFor(jr).prompt(msg);
+			return { ok: true, version: jr.job.briefVersion, how: "sent as a prompt (the worker was idle)" };
+		}
+		if (mode === "steer") {
+			const r = await jr.worker.steer(msg);
+			if (!r.success) return { error: `the worker did not accept the steer: ${r.error ?? "no response"}` };
+			jr.pendingSteer = jr.pendingSteer ? `${jr.pendingSteer}\n\n${msg}` : msg;
+			return { ok: true, version: jr.job.briefVersion, how: "steered (reaches the worker at its next step)" };
+		}
+		const r = await jr.worker.followUp(msg);
+		if (!r.success) return { error: `the worker did not accept the follow-up: ${r.error ?? "no response"}` };
+		return { ok: true, version: jr.job.briefVersion, how: "queued behind the worker's current turn" };
+	}
+
+	private async restart(jr: JobRun, text: string, o: { reset?: "base" | "keep"; by?: "user" | "lead" }): Promise<{ ok: true; version: number; how: string } | { error: string }> {
+		const job = jr.job;
+		if (job.state !== "working" && job.state !== "paused") return { error: `job ${job.id} is ${job.state}: a restart needs a working or paused job (send a steer instead, or relay_stop)` };
+		if (jr.recovering) return { error: `job ${job.id} is being restarted already` };
+		const reset = o.reset ?? "keep";
+		const briefFile = path.join(jr.dir, "brief.md");
+		const old = fs.readFileSync(briefFile, "utf8");
+		const body = `${text}\n(restart: the previous approach is dropped${reset === "base" ? ", the branch is reset to its base" : ""})`;
+		const proposed = appendAmendment(old, o.by ?? "user", body);
+		const n = parseBriefVersion(old, job.briefVersion);
+		jr.recovering = true;
+		try {
+			const checked = await this.checkAmendment(jr.dir, proposed, body, `amendment-${n}`);
+			if ("error" in checked) return checked;
+			this.dropWorker(jr);
+			if (reset === "base") {
+				for (const r of job.repos) {
+					await this.d.run("git", ["rebase", "--abort"], r.worktree);
+					await this.d.run("git", ["reset", "-q", "--hard", r.base], r.worktree);
+					await this.d.run("git", ["clean", "-fdq"], r.worktree);
+					// the lead's edits are part of the job's base: they come back
+					if (r.leadEdits) {
+						const ap = await applySnapshot(this.d.run, r.worktree, r.leadEdits.sha);
+						if (!ap.ok) job.notes.push(`restart: the lead's edits did not re-apply in ${r.key} (${ap.conflicts.join(", ") || ap.error})`);
+					}
+				}
+			}
+			this.setBrief(jr, proposed);
+			job.round = 0;
+			job.escalated = 0;
+			job.restarts = 0;
+			delete job.paused;
+			job.state = "working";
+			this.save(jr);
+			appendLog(jr.dir, { kind: "restart", text: `${o.by ?? "user"}: ${text.slice(0, 200)} (reset ${reset})` });
+			this.d.notify(`relay job ${job.id}: restarted on amendment ${n}`);
+			await this.startWorker(jr, { prompt: workerPrompt(this.ctxFor(jr), job, `Restart: the previous approach is dropped. ${text}\n${reset === "base" ? "The branch was reset to its base (the lead's edits are applied again)." : "Your earlier commits are still on the branch: keep what still fits."}`) });
+			return { ok: true, version: job.briefVersion, how: `restarted (${reset})` };
+		} catch (e) {
+			return { error: `restart failed: ${(e as Error).message}` };
+		} finally {
+			jr.recovering = false;
+			if (jr.job.state === "working" && !jr.driving) void this.drive(jr);
+		}
+	}
+
+	/** Pauses a working job: the worker is aborted and stopped, the set is the user's (`/wt open`). */
+	async pause(id: string): Promise<{ ok: true } | { error: string }> {
+		const jr = this.find(id);
+		if ("error" in jr) return jr;
+		if (jr.job.state !== "working") return { error: `job ${id} is ${jr.job.state}: only a working job can be paused` };
+		if (jr.recovering) return { error: `job ${id} is being restarted; try again in a moment` };
+		jr.recovering = true;
+		try {
+			const w = jr.worker;
+			await w?.abort();
+			this.dropWorker(jr);
+			await w?.stop(5000);
+			this.pauseJob(jr, "working", "paused by the lead");
+			return { ok: true };
+		} finally {
+			jr.recovering = false;
+		}
+	}
+
+	/** Continues a paused job: a worker is restarted with `-c`, or the judge runs again. */
+	async resume(id: string): Promise<{ ok: true; state: JobState } | { error: string }> {
+		const jr = this.find(id);
+		if ("error" in jr) return jr;
+		const job = jr.job;
+		if (jr.ended || job.state !== "paused") return { error: `job ${id} is ${job.state}, not paused` };
+		const p = job.paused ?? { from: "judging" as const, why: "" };
+		if (p.why === "replan") return { error: `job ${id} waits for a re-plan: relay_replan {job, brief}, or relay_stop` };
+		delete job.paused;
+		if (p.from === "judging") {
+			job.state = "judging";
+			this.save(jr);
+			await this.drive(jr);
+			return { ok: true, state: job.state };
+		}
+		job.state = "working";
+		job.restarts = 0;
+		this.save(jr);
+		appendLog(jr.dir, { kind: "resume", text: p.why });
+		try {
+			this.dropWorker(jr);
+			await this.startWorker(jr, { resume: true, prompt: workerPrompt(this.ctxFor(jr), job, "The job was paused and is resumed; your session continues. Check git status and git log first, and read the brief again: it may have been amended while paused.") });
+		} catch (e) {
+			this.pauseJob(jr, "working", `resume failed: ${(e as Error).message}`);
+			return { error: `could not restart the worker: ${(e as Error).message}` };
+		}
+		return { ok: true, state: job.state };
+	}
+
+	/** A re-plan after the judge and escalated rounds ran out: a revised brief, a new session on the same worktree. */
+	async replan(id: string, newBrief: string): Promise<{ ok: true; version: number } | { error: string }> {
+		const jr = this.find(id);
+		if ("error" in jr) return jr;
+		const job = jr.job;
+		if (jr.ended || job.state !== "paused" || job.paused?.why !== "replan") return { error: `job ${id} is not waiting for a re-plan` };
+		if (job.replans >= this.cfg.caps.replans) return { error: `job ${id} used its ${this.cfg.caps.replans} re-plan(s)` };
+		const checked = checkBrief(newBrief);
+		if ("errors" in checked) return { error: `the brief is not complete:\n- ${checked.errors.join("\n- ")}` };
+		const briefFile = path.join(jr.dir, "brief.md");
+		const old = fs.readFileSync(briefFile, "utf8");
+		const was = parseBrief(old);
+		const key = (t: { repo: string; branch: string }[]) => t.map((x) => `${x.repo}:${x.branch}`).join("|");
+		if (!("errors" in was) && key(was.targets) !== key(checked.brief.targets)) return { error: "the Targets of a job cannot change in a re-plan (dispatch a new job for other repos)" };
+		fs.writeFileSync(path.join(jr.dir, `brief.before-replan-${job.replans + 1}.md`), old);
+		this.setBrief(jr, replaceBrief(old, newBrief, `re-plan ${job.replans + 1}: the brief was revised after ${job.round} failed rounds`));
+		for (const c of CATEGORIES) {
+			const a = checked.brief.authority[c];
+			if (a?.value === "yes" && !job.approvals.some((x) => x.category === c && x.item === (a.specifics ?? "*"))) job.approvals.push({ at: new Date(this.now()).toISOString(), item: a.specifics ?? "*", category: c, by: "lead", reason: "Authority in the re-planned brief", ...(job.followups ? { followup: job.followups } : {}) });
+		}
+		job.replans++;
+		job.round = 0;
+		job.escalated = 0;
+		job.restarts = 0;
+		delete job.paused;
+		job.state = "working";
+		this.save(jr);
+		appendLog(jr.dir, { kind: "replan", text: `re-plan ${job.replans}` });
+		this.d.notify(`relay job ${job.id}: re-planned (${job.replans}/${this.cfg.caps.replans}); a new worker session starts on the same worktree`);
+		this.dropWorker(jr);
+		try {
+			await this.startWorker(jr, { prompt: workerPrompt(this.ctxFor(jr), job, `Re-plan: the previous approach failed the judge repeatedly. The worktree holds the last attempt; rework it as the revised brief says. The judge's last findings are in ${path.join(jr.dir, "judge")}.`) });
+		} catch (e) {
+			this.pauseJob(jr, "working", `re-plan start failed: ${(e as Error).message}`);
+			return { error: `could not start the worker: ${(e as Error).message}` };
+		}
+		return { ok: true, version: job.briefVersion };
+	}
+
+	// ------------------------------------------------------------------------------------------------ follow-ups (S29)
+
+	/** A follow-up on a done, stopped or failed job: an amendment of the same job, with a workspace chosen by the followup step. */
+	async followup(id: string, text: string): Promise<{ ok: true; n: number; queued: boolean } | { error: string }> {
+		const known = this.jobs.get(id);
+		const dir = jobDir(this.d.root, id);
+		const job = known?.job ?? readJob(dir);
+		if (!job) return { error: `unknown job "${id}"` };
+		if (!FINISHED.includes(job.state)) return { error: `job ${id} is ${job.state}: relay_send amends a running job` };
+		if (known && !known.ended) return { error: `job ${id} is still finishing; try again in a moment` };
+		if (!text.trim()) return { error: "the text is empty" };
+		if (job.repos.some((r) => r.merged) && !job.repos.every((r) => r.merged)) return { error: `job ${id} merged only some of its repos; start a new job for the follow-up` };
+		const lock = new JobLock(dir, this.d.me);
+		if (!(lock.acquire() || (await lock.takeOver()))) return { error: `job ${id} is driven by another lead` };
+		const briefFile = path.join(dir, "brief.md");
+		const old = fs.readFileSync(briefFile, "utf8");
+		const n = (job.followups ?? 0) + 1;
+		const proposed = appendAmendment(old, "user", text);
+		const checked = await this.checkAmendment(dir, proposed, text, `followup-${n}`);
+		if ("error" in checked) {
+			lock.release();
+			return checked;
+		}
+		fs.writeFileSync(briefFile, proposed);
+		const p = parseBrief(proposed);
+		if (!("errors" in p)) job.briefVersion = p.version;
+		const report = path.join(dir, "report.md");
+		if (fs.existsSync(report)) fs.renameSync(report, path.join(dir, `report.before-followup-${n}.md`));
+		job.followupPending = { n, text };
+		job.followupTexts = [...(job.followupTexts ?? [])];
+		job.followupTexts[n - 1] = text;
+		job.state = "queued";
+		const jr = new JobRun(dir, job, lock);
+		this.jobs.set(id, jr);
+		this.save(jr);
+		appendLog(dir, { kind: "followup", text: `follow-up ${n}: ${text.slice(0, 200)}` });
+		if (this.runningCount() >= this.cfg.maxJobs) return { ok: true, n, queued: true };
+		void this.drive(jr);
+		return { ok: true, n, queued: false };
+	}
+
+	// ------------------------------------------------------------------------------------------------ resume, adoption, PR-only cleanup (S27)
+
+	/** Unfinished jobs under the root that no live lead drives: re-attached (same session) or taken over (stale lock), then continued. */
+	async adopt(): Promise<string[]> {
+		const adopted: string[] = [];
+		for (const { dir, job } of listJobs(this.root)) {
+			if (FINISHED.includes(job.state) || this.jobs.has(job.id)) continue;
+			const lock = new JobLock(dir, this.d.me);
+			let how: string;
+			if (lock.attach()) how = "re-attached";
+			else if (await lock.takeOver()) how = "taken over";
+			else continue; // a live lead owns it
+			const jr = new JobRun(dir, job, lock);
+			this.jobs.set(job.id, jr);
+			const was = job.state;
+			if (how === "taken over" && job.worker?.pid) killSurvivor(job.worker.pid);
+			job.restarts = 0;
+			appendLog(dir, { kind: "adopted", text: `${how}; was ${was}` });
+			try {
+				if (was === "working") {
+					this.pump(jr);
+					if (jr.ws.done !== undefined) void this.drive(jr);
+					else await this.startWorker(jr, { resume: true, prompt: workerPrompt(this.ctxFor(jr), job, "The lead was restarted and took this job over; your session continues. Check git status and git log first. If the work is finished, call report_done (again).") });
+				} else if (was === "queued" && !job.followupPending && (job.repos.length > 0 || job.cwd)) {
+					job.endReason = "the lead went away while the job was being set up";
+					job.state = "failed";
+					this.save(jr);
+					void this.drive(jr);
+				} else if (was !== "paused") void this.drive(jr);
+				this.d.notify(`relay job ${job.id}: ${how} after the lead went away (was ${was}); ${was === "paused" ? "still paused" : "continuing"}`);
+				adopted.push(job.id);
+			} catch (e) {
+				this.pauseJob(jr, "working", `adoption failed: ${(e as Error).message}`);
+				this.d.wake(`relay job ${job.id}: ${how}, but its worker could not be restarted (${(e as Error).message}). The job is paused; relay_resume or relay_stop.`);
+			}
+		}
+		return adopted;
+	}
+
+	/** Done PR-only jobs whose pull request has merged since: mark them merged and remove their kept set (W2, no force). */
+	async prCleanup(): Promise<string[]> {
+		const out: string[] = [];
+		for (const { dir, job: onDisk } of listJobs(this.root)) {
+			const jr = this.jobs.get(onDisk.id);
+			if (jr && !jr.ended) continue;
+			const job = jr?.job ?? onDisk;
+			if (job.state !== "done" || job.repos.every((r) => r.merged || !r.pr) || !job.repos.some((r) => r.pr && !r.merged)) continue;
+			let changed = false;
+			for (const r of job.repos) {
+				if (!r.pr || r.merged) continue;
+				const v = await this.d.run("gh", ["pr", "view", r.pr, "--json", "state,mergeCommit"], r.main);
+				if (v.code !== 0) {
+					appendLog(dir, { kind: "pr-check", text: `gh pr view failed in ${r.key}: ${v.stderr.trim().split("\n")[0]}` });
+					continue;
+				}
+				let state = "";
+				try {
+					state = String(JSON.parse(v.stdout).state ?? "");
+				} catch {
+					// not JSON: try again next tick
+				}
+				if (state !== "MERGED") continue;
+				r.merged = true;
+				changed = true;
+				appendLog(dir, { kind: "pr-merged", text: `${r.key}: ${r.pr}` });
+			}
+			if (!changed) continue;
+			if (job.repos.every((r) => r.merged || !r.pr)) {
+				const rm = await this.d.wt.remove({ name: job.set });
+				const msg = "error" in rm ? `set ${job.set} kept: ${rm.error}` : rm.kept.length ? `set ${job.set} removed, branches kept: ${rm.kept.join(", ")}` : `set ${job.set} removed (the PR merged)`;
+				job.notes.push(msg);
+				appendLog(dir, { kind: "cleanup", text: msg });
+				if ("error" in rm || rm.kept.length) this.d.notify(`relay job ${job.id}: ${msg}`);
+			}
+			writeJob(dir, job);
+			out.push(job.id);
+		}
+		return out;
 	}
 
 	status(id?: string): string {
@@ -537,7 +999,8 @@ export class Engine {
 				const budget = `${Math.round(j.used.wallMs / 60_000)}/${Math.round(j.budget.wallMs / 60_000)} min, ${j.used.tokens}/${j.budget.tokens} tokens`;
 				const v = j.lastVerdict ? `${j.lastVerdict.verdict} (round ${j.lastVerdict.round}: ${j.lastVerdict.blockers}b ${j.lastVerdict.majors}m ${j.lastVerdict.minors}n)` : "none yet";
 				const lines = readLog(jr.dir, 5).map((l) => `    ${l.kind}: ${l.text}`).join("\n");
-				return `${j.id} [${j.state}] ${j.title}\n  repos: ${files || "-"}\n  round ${j.round + 1}, last verdict: ${v}\n  budget: ${budget}${j.endReason ? `\n  ended: ${j.endReason}` : ""}${j.notes.length ? `\n  notes: ${j.notes.slice(-3).join("; ")}` : ""}\n  log:\n${lines || "    -"}`;
+				return `${j.id} [${j.state}] ${j.title}\n  repos: ${files || "-"}\n  round ${j.round + 1}, last verdict: ${v}\n  budget: ${budget}${j.paused ? `
+  paused: ${j.paused.why}` : ""}${j.endReason ? `\n  ended: ${j.endReason}` : ""}${j.notes.length ? `\n  notes: ${j.notes.slice(-3).join("; ")}` : ""}\n  log:\n${lines || "    -"}`;
 			})
 			.join("\n\n");
 	}

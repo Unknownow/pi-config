@@ -5,7 +5,7 @@ import type { Job } from "./job.ts";
 import type { Run } from "./sh.ts";
 import type { RunOptions, RunResult } from "./subagent.ts";
 
-export type StepName = "dispatch" | "work" | "judge" | "deliver" | "report" | "cleanup";
+export type StepName = "dispatch" | "followup" | "work" | "judge" | "deliver" | "report" | "cleanup";
 
 export interface Step {
 	name: StepName;
@@ -73,8 +73,10 @@ export interface StepCtx {
 	wt: Wt;
 	worker: WorkerState;
 	startWorker(job: Job, o: { prompt: string; resume?: boolean }): Promise<void>;
-	/** Sends a prompt to the running worker and clears `settled`. */
+	/** Sends a prompt to the running worker and clears `settled`; a worker that is not running is restarted (`-c`) with it. */
 	prompt(text: string): Promise<void>;
+	/** Switches the running worker to another model ("provider/id"); false when it could not. */
+	setWorkerModel(model: string): Promise<boolean>;
 	stopWorker(): Promise<void>;
 	review(role: "critic" | "judge", task: string, cwd: string): Promise<RunResult>;
 	emit(name: string, payload: object): void;

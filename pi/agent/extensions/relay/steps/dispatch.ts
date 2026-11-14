@@ -7,7 +7,7 @@ import { JOB_START, jobStartPayload } from "../events.ts";
 import { repoPolicy } from "../config.ts";
 import { gitOut } from "../sh.ts";
 import { applySnapshot, dropSnapshotBranch, revertSnapshotted, snapshotEdits } from "../snapshot.ts";
-import type { RepoState } from "../job.ts";
+import type { Job, RepoState } from "../job.ts";
 import type { Step, StepCtx } from "../types.ts";
 
 const fwd = (p: string) => p.split("\\").join("/").replace(/\/+$/, "");
@@ -22,6 +22,22 @@ export async function resolveRepo(ctx: Pick<StepCtx, "run" | "leadCwd" | "folder
 		if (top.code === 0 && top.stdout.trim()) return fwd(top.stdout.trim());
 	}
 	return undefined;
+}
+
+/** The first prompt of a worker session: its rules, the job, the current brief; `extra` says why the session is new (a restart, a re-plan, a follow-up). */
+export function workerPrompt(ctx: Pick<StepCtx, "relayDir" | "brief">, job: Job, extra?: string): string {
+	const rules = fs.readFileSync(path.join(ctx.relayDir, "prompts", "worker.md"), "utf8");
+	const p = parseBrief(ctx.brief());
+	const version = "errors" in p ? job.briefVersion : p.version;
+	return `${rules}
+
+# Your job (brief version ${version})
+
+Work in ${job.cwd}. Finish with report_done.
+${extra ? `
+${extra}
+` : ""}
+${ctx.brief()}`;
 }
 
 /** The lead's added folders that are Targets (W1 `folders`), and the repos' own mains. */
@@ -103,8 +119,7 @@ export const dispatchStep: Step = {
 		// 9: the worker
 		job.state = "working";
 		ctx.save(job);
-		const rules = fs.readFileSync(path.join(ctx.relayDir, "prompts", "worker.md"), "utf8");
-		await ctx.startWorker(job, { prompt: `${rules}\n\n# Your job (brief version ${parsed.version})\n\nWork in ${job.cwd}. Finish with report_done.\n\n${ctx.brief()}` });
+		await ctx.startWorker(job, { prompt: workerPrompt(ctx, job) });
 		ctx.emit(JOB_START, jobStartPayload(job.id, job.title, repos.map((r) => r.key)));
 		ctx.log("dispatch", `set ${job.set}, ${repos.length} repo(s), worker started`);
 		return "work";

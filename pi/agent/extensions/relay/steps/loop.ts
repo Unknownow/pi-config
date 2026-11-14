@@ -2,7 +2,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { parseBrief } from "../brief.ts";
+import { amendmentsSince, parseBrief } from "../brief.ts";
 import { countTokens } from "../../shared/tokens.ts";
 import { judgeVerdict, parseFindings, type Finding } from "../../shared/findings.ts";
 import { collectRepoDiff } from "../repo-diff.ts";
@@ -20,6 +20,7 @@ export const workStep: Step = {
 			ctx.log("done", w.done.slice(0, 300));
 			job.doneSummary = w.done;
 			w.done = undefined;
+			job.restarts = 0;
 			job.state = "judging";
 			ctx.save(job);
 			return "judge";
@@ -105,22 +106,70 @@ export function verdictOf(text: string): Verdict {
 
 const count = (f: Finding[], s: Finding["severity"]) => f.filter((x) => x.severity === s).length;
 
-/** The treatment of a FAIL: prompt the worker with the findings, or stop at the cap. Shared with delivery's fix rounds. */
-export async function failRound(job: Job, ctx: StepCtx, why: string, body: string): Promise<"work" | "report"> {
+/**
+ * The treatment of a FAIL (D8): rounds 1..caps.judge go to the worker; the next caps.escalate go to the escalate model;
+ * then the lead is woken to re-plan (up to caps.replans); then the job stops. Shared with delivery's fix rounds.
+ */
+export async function failRound(job: Job, ctx: StepCtx, why: string, body: string): Promise<"work" | "report" | "wait"> {
 	job.round++;
-	if (job.round >= ctx.cfg.caps.judge) {
-		job.endReason = `judge cap reached (${job.round} failed rounds): ${why}`;
+	job.restarts = 0;
+	const { judge, escalate, replans } = ctx.cfg.caps;
+	if (job.round >= judge + escalate) {
+		if (job.replans < replans) {
+			job.state = "paused";
+			job.paused = { from: "working", why: "replan" };
+			ctx.save(job);
+			ctx.log("replan-wait", `${job.round} failed rounds (${judge} + ${escalate} escalated)`);
+			ctx.wake(`relay job ${job.id}: the worker failed ${job.round} rounds (${judge} + ${escalate} escalated). ${why}. Re-plan: relay_replan {job: "${job.id}", brief: <the revised brief>} (the worktree keeps the last attempt; ${replans - job.replans} re-plan(s) left), or relay_stop.`);
+			return "wait";
+		}
+		job.endReason = `judge cap reached (${job.round} failed rounds, ${job.replans} re-plan(s)): ${why}`;
 		job.state = "stopped";
 		ctx.save(job);
 		ctx.wake(`relay job ${job.id}: stopped at the judge cap (${job.round} rounds). ${why}. The set is kept; /wt open ${job.set} to look at it.`);
 		return "report";
 	}
+	if (job.round >= judge) {
+		job.escalated = job.round - judge + 1;
+		if (job.escalated === 1) {
+			const model = ctx.cfg.roles.escalate.model;
+			const ok = await ctx.setWorkerModel(model);
+			ctx.log("escalate", ok ? `worker switched to ${model}` : `could not switch to ${model}; the worker keeps its model`);
+			ctx.notify(`relay job ${job.id}: ${judge} failed rounds; ${ok ? `escalating to ${model}` : "escalation failed, same model"}`);
+		}
+	}
 	job.state = "working";
+	delete job.paused;
 	ctx.save(job);
 	ctx.worker.done = undefined;
 	ctx.worker.nudges = 0;
-	ctx.notify(`relay job ${job.id}: ${why}; round ${job.round + 1}`);
-	await ctx.prompt(`${why}\n\n${body}\n\nFix every blocker and major finding, run Verify again, then call report_done.`);
+	ctx.notify(`relay job ${job.id}: ${why}; round ${job.round + 1}${job.escalated ? " (escalated)" : ""}`);
+	await ctx.prompt(`${why}
+
+${body}
+
+Fix every blocker and major finding, run Verify again, then call report_done.`);
+	return "work";
+}
+
+/** The amendments since the verdict's brief version that the worker has to act on (an approval only widens Authority). */
+export function workAmendments(job: Job, brief: string) {
+	const v = job.lastVerdict?.briefVersion ?? job.briefVersion;
+	return amendmentsSince(brief, v).filter((a) => a.by !== "approval");
+}
+
+/** Sends the job back to the worker with the amendments it has not seen. No round is used: an amendment is not a failure. */
+export async function backToWork(job: Job, ctx: StepCtx, since: number): Promise<"work"> {
+	const list = amendmentsSince(ctx.brief(), since).filter((a) => a.by !== "approval");
+	job.state = "working";
+	delete job.paused;
+	ctx.save(job);
+	ctx.worker.done = undefined;
+	ctx.worker.nudges = 0;
+	ctx.log("amended", `back to the worker: ${list.map((a) => `amendment ${a.n}`).join(", ")}`);
+	ctx.notify(`relay job ${job.id}: amended; the worker continues`);
+	const items = list.map((a) => `Amendment ${a.n} (${a.by}): ${a.text}`).join(`\n\n`);
+	await ctx.prompt(`The brief was amended while the job was being reviewed:\n\n${items}\n\nApply it, run Verify again, then call report_done.`);
 	return "work";
 }
 
@@ -161,8 +210,9 @@ export const judgeStep: Step = {
 		if (ctx.stopped()) return "report";
 		if (!res.ok) {
 			job.state = "paused";
+			job.paused = { from: "judging", why: "the judge failed twice" };
 			ctx.save(job);
-			ctx.wake(`relay job ${job.id}: the judge failed twice (${res.error ?? "no output"}). The job is paused, never passed by default; relay_deliver ${job.id} runs the judge again.`);
+			ctx.wake(`relay job ${job.id}: the judge failed twice (${res.error ?? "no output"}). The job is paused, never passed by default; relay_deliver ${job.id} (or relay_resume) runs the judge again.`);
 			return "wait";
 		}
 		// a verdict is for the brief version it judged; an amendment since makes it stale
@@ -172,6 +222,8 @@ export const judgeStep: Step = {
 		})();
 		if (nowVersion !== briefVersion) {
 			ctx.log("stale", `verdict on brief version ${briefVersion} discarded (now ${nowVersion})`);
+			// an amendment that changes the work goes to the worker first; the judge runs again after its next report_done
+			if (amendmentsSince(ctx.brief(), briefVersion).some((a) => a.by !== "approval")) return backToWork(job, ctx, briefVersion);
 			return "judge";
 		}
 		const after = await Promise.all(job.repos.map(treeOf));

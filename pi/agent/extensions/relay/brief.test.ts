@@ -1,7 +1,7 @@
 // node --experimental-strip-types --test brief.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { appendAmendment, briefTitle, checkBrief, parseBrief, validateBrief } from "./brief.ts";
+import { amendmentsSince, appendAmendment, briefTitle, checkBrief, parseBrief, replaceBrief, stripAmendments, validateBrief } from "./brief.ts";
 
 export const GOOD = `# Fix the thing
 
@@ -105,5 +105,30 @@ test("an amendment raises the version; the amendments are read back", () => {
 	assert.equal(p.version, 3);
 	assert.deepEqual(p.amendments.map((a) => [a.n, a.by]), [[1, "user"], [2, "approval"]]);
 	assert.match(p.amendments[0].text, /empty input/);
+	assert.equal(validateBrief(p).length, 0);
+});
+
+test("amendmentsSince lists what came after a version; stripAmendments drops them", () => {
+	const a = appendAmendment(appendAmendment(GOOD, "user", "one"), "approval", "two");
+	assert.deepEqual(amendmentsSince(a, 1).map((x) => x.n), [1, 2]);
+	assert.deepEqual(amendmentsSince(a, 2).map((x) => x.n), [2]);
+	assert.deepEqual(amendmentsSince(a, 3), []);
+	const s = stripAmendments(a);
+	assert.ok(!/Amendment/.test(s));
+	const p = parseBrief(s);
+	assert.ok("version" in p && p.version === 1);
+});
+
+test("a re-plan keeps the old amendments and only raises the version", () => {
+	const old = appendAmendment(appendAmendment(GOOD, "user", "one"), "approval", "deps: package.json approved");
+	const revised = GOOD.replace("Goal", "Goal").concat("\n## Amendment 1 (user): stale copy that must not be duplicated\n");
+	const out = replaceBrief(old, revised, "re-plan 1: revised");
+	const p = parseBrief(out);
+	assert.ok("version" in p);
+	if (!("version" in p)) return;
+	assert.equal(p.version, 4);
+	assert.deepEqual(p.amendments.map((a) => [a.n, a.by]), [[1, "user"], [2, "approval"], [3, "lead"]]);
+	assert.ok(!/stale copy/.test(out));
+	assert.match(p.amendments[1].text, /package\.json approved/);
 	assert.equal(validateBrief(p).length, 0);
 });

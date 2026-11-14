@@ -155,7 +155,7 @@ test("askUser: publish is refused by relay_approve (ask the user first), other c
 });
 
 test("the judge cap stops the job and wakes the lead; [plan] and crash each start a turn", async () => {
-	const w = world();
+	const w = world({ caps: { judge: 3, escalate: 0, replans: 0 } });
 	try {
 		w.write({ worker: [{ write: [{ file: "greeting.txt", content: "x\n" }], done: "try" }], judge: [FAIL(), FAIL("- major - [plan] `brief` the Design contradicts a locked decision fix: user\n  Why: x\n  Fix: y"), FAIL()] });
 		const r = await w.engine.dispatch({ brief: brief({ repo: w.repo }) });
@@ -178,9 +178,13 @@ test("the judge cap stops the job and wakes the lead; [plan] and crash each star
 		const r = await c.engine.dispatch({ brief: brief({ repo: c.repo }) });
 		assert.ok("id" in r);
 		if (!("id" in r)) return;
-		const jr = await finish(c, r.id);
-		assert.equal(jr.job.state, "failed");
-		assert.ok(c.wakes.some((x) => /worker exited/.test(x)));
+		// a crash is restarted once (-c); the second one pauses the job and wakes the lead
+		const jr = c.engine.get(r.id)!;
+		await waitFor(() => jr.job.state === "paused", 30_000, "the job to pause after two crashes");
+		assert.match(jr.job.paused?.why ?? "", /restarted once already/);
+		assert.ok(c.wakes.some((x) => /again after a restart/.test(x)));
+		assert.equal(c.calls().filter((x) => x.mode === "rpc").length, 2);
+		assert.ok(c.calls().filter((x) => x.mode === "rpc")[1].args.includes("-c"));
 		assert.equal(c.wtCalls.remove.length, 0);
 	} finally {
 		c.end();
