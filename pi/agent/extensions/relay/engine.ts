@@ -394,6 +394,7 @@ export class Engine {
 		jr.stopRequested = true;
 		jr.abort.abort();
 		jr.ended = true;
+		this.jobs.delete(jr.job.id); // a later scan may adopt it again; restack and prCleanup read the job from disk
 		jr.gen++;
 		jr.worker?.kill();
 	}
@@ -429,13 +430,14 @@ export class Engine {
 			worker: jr.ws,
 			startWorker: (job, o) => this.startWorker(jr, o),
 			setWorkerModel: async (model) => {
+				if (jr.lost) return false;
 				const at = model.indexOf("/");
 				if (at < 0 || !jr.worker) return false;
 				const r = await jr.worker.setModel(model.slice(0, at), model.slice(at + 1));
 				return r.success;
 			},
 			prompt: async (text) => {
-				if (jr.recovering) return;
+				if (jr.recovering || jr.lost) return;
 				// a worker that is not running is restarted (-c) with this prompt
 				if (!jr.worker || jr.ws.exited) {
 					await this.startWorker(jr, { prompt: text, resume: true });
@@ -462,6 +464,7 @@ export class Engine {
 	}
 
 	private async startWorker(jr: JobRun, o: { prompt: string; resume?: boolean }): Promise<void> {
+		if (jr.lost) throw new Error("this lead no longer owns the job");
 		const cfg = this.cfg;
 		const job = jr.job;
 		// an escalated job keeps its stronger model across a restart
