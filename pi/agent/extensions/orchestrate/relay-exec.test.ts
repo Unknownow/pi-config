@@ -239,12 +239,23 @@ test("run cap: every unfinished job is stopped, undispatched packages blocked, t
 	assert.equal(h.st("c").state, "blocked");
 	assert.equal(h.st("c").reason, "run cap");
 	assert.ok(h.told.some((t) => /run cap reached: 1,100 of 1,000/.test(t)));
+	// relay is still finishing the stops: another progress event or poll stops nothing and tells nothing again
+	h.relay.byPkg("a").state = "working";
+	h.relay.progress("a", 700);
+	await h.settle();
+	await h.ex.tick();
+	assert.equal(h.relay.controls.length, 2);
+	assert.equal(h.told.filter((t) => /run cap reached/.test(t)).length, 1);
+	// a fresh executor (restart) does not stop them again either
+	const ex2 = new RelayExec({ emit: h.bus.emit, read: () => h.run(), mutate: (fn) => Promise.resolve(fn(h.run())), dir: h.dir, runTokens: () => 1000, tell: (t) => h.told.push(t), ended: () => {} });
+	await ex2.checkCap();
+	assert.equal(h.relay.controls.length, 2);
 	h.relay.end("a", "stopped", { reason: "stopped by the lead" });
 	h.relay.end("b", "stopped", { reason: "stopped by the lead" });
 	await h.settle();
 	assert.equal(h.st("a").state, "failed", "no retry after the orchestrator's stop");
 	assert.equal(h.run().state, "ended");
-	assert.match(fs.readFileSync(path.join(h.dir, "report.md"), "utf8"), /1,100 weighted tokens used of 1,000/);
+	assert.match(fs.readFileSync(path.join(h.dir, "report.md"), "utf8"), /1,200 weighted tokens used of 1,000/);
 });
 
 test("a duplicate job-end is ignored; a job-end of another run too", async () => {

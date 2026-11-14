@@ -342,7 +342,7 @@ export function retryAllowed(sub: Pick<Sub, "retries" | "stoppedBy">, reason: st
 
 /** The text of the follow-up that retries a package. */
 export const retryText = (sub: Pick<Sub, "reason" | "report">): string =>
-	`Retry: the job ended with "${sub.reason ?? "no reason given"}". The report is at ${sub.report ?? "(no report)"}. Read it, fix what made the job end, then run Verify and report_done again.`;
+	`Retry: the job ended with "${sub.reason ?? "no reason given"}". ${sub.report ? `Its report was ${sub.report}; relay keeps it as report.before-followup-<n>.md (report.before-followup-*.md) in the same folder when the follow-up starts.` : "There is no report of that run."} Read it, fix what made the job end, then run Verify and report_done again.`;
 
 /** Marks the package failed and every transitive dependent blocked (in `run`, which the caller writes). Returns the blocked ids. */
 function failIn(run: Run, id: string, reason: string): string[] {
@@ -423,6 +423,8 @@ export class RelayExec {
 	private readonly dispatching = new Set<string>();
 	/** A query or dispatch met "no session context": index retries at the first turn. */
 	needsContext = false;
+	/** The run cap was acted on in this session. */
+	private capped = false;
 
 	constructor(d: ExecDeps) {
 		this.d = d;
@@ -667,7 +669,9 @@ export class RelayExec {
 		if (!run || run.state === "ended") return;
 		const sum = sumTokens(run);
 		const cap = this.d.runTokens();
-		if (sum < cap || !run.subs.some((s) => s.state === "planned" || UNFINISHED_PKG.includes(s.state))) return;
+		// once capped (in memory, or every unfinished job already stopped by the orchestrator) nothing is stopped or told again
+		if (sum < cap || this.capped || !run.subs.some((s) => s.state === "planned" || (UNFINISHED_PKG.includes(s.state) && s.stoppedBy !== "orchestrator"))) return;
+		this.capped = true;
 		const blocked = await this.d.mutate((r) => {
 			const out: string[] = [];
 			for (const s of r.subs) if (s.state === "planned") {

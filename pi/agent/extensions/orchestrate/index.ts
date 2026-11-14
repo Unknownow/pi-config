@@ -751,14 +751,13 @@ export default function (pi: ExtensionAPI): void {
 			const done: Sub["state"][] = executor === "relay" ? ["merged", "stopped", "failed", "blocked"] : ["merged", "stopped"];
 			if (live && live.state !== "ended" && live.subs.some((s) => !done.includes(s.state))) return { block: true, reason: executor === "relay" ? RELAY_MERGE_HINT : "merges in a run go through /orch merge <id> (user) or orch_merge" };
 		}
-		// the orchestrator stops a job itself: no retry for it
+		const why = mode === "off" && !(owned && executor === "relay") ? null : toolRefusal(mode, event.toolName, (event.input ?? {}) as Record<string, unknown>, executor);
+		if (why) return { block: true, reason: why };
+		// the orchestrator stops a job itself (the stop passed the guard): no retry for it
 		if (event.toolName === "relay_stop" && relayExec) {
 			const job = (event.input as { job?: unknown } | undefined)?.job;
 			if (typeof job === "string") await relayExec.markOwnStop(job);
 		}
-		if (mode === "off" && !(owned && executor === "relay")) return;
-		const why = toolRefusal(mode, event.toolName, (event.input ?? {}) as Record<string, unknown>, executor);
-		if (why) return { block: true, reason: why };
 	});
 
 	pi.on("input", async (event, ctx) => {
@@ -1853,11 +1852,26 @@ ${list.map((a) => `${a.line} → affects ${a.affects.join(", ") || "?"}`).join("
 
 	// relay's tagged job events: only the watched relay run's jobs count (relay-exec checks the tag)
 	const relayFail = (e: unknown) => say(`relay event: ${(e as Error).message}`, "warning");
-	const relayUnsubs: Array<() => void> = [
-		pi.events.on("relay:job-end", (d: unknown) => void relayExec?.onJobEnd(d).catch(relayFail)),
-		pi.events.on("relay:job-progress", (d: unknown) => void relayExec?.onProgress(d).catch(relayFail)),
-		pi.events.on("relay:approval", (d: unknown) => relayExec?.onApproval(d)),
-	];
+	let relayUnsubs: Array<() => void> = [];
+	const unregisterRelayBus = (): void => {
+		for (const u of relayUnsubs.splice(0)) {
+			try {
+				u();
+			} catch {
+				// already gone
+			}
+		}
+	};
+	/** Subscribes the relay events once (at load and at every session_start; unsubscribed at session_shutdown). */
+	function registerRelayBus(): void {
+		unregisterRelayBus();
+		relayUnsubs = [
+			pi.events.on("relay:job-end", (d: unknown) => void relayExec?.onJobEnd(d).catch(relayFail)),
+			pi.events.on("relay:job-progress", (d: unknown) => void relayExec?.onProgress(d).catch(relayFail)),
+			pi.events.on("relay:approval", (d: unknown) => relayExec?.onApproval(d)),
+		];
+	}
+	registerRelayBus();
 
 	async function table(): Promise<string> {
 		if (relayExec && owned) {
@@ -2009,6 +2023,8 @@ ${list.map((a) => `${a.line} → affects ${a.affects.join(", ") || "?"}`).join("
 					}
 				}
 				if (relay && !targets[k]) throw new Error(`no target branch for ${label(k)}: pass targets (${k ? `"${k}:<branch>"` : '"<branch>"'})`);
+				// relay works on origin/<target>: an upstream on another remote would name a wrong branch
+				if (relay && !targets[k].startsWith("origin/")) throw new Error(`the target of ${label(k)} is ${targets[k]}, not on origin; relay jobs work on origin/<branch>: pass targets (${k ? `"${k}:<branch>"` : '"<branch>"'}) with a branch of origin`);
 				targetLines.push(targets[k] ? `Diff target (${label(k)}): ${targets[k]} (${src}); new worktrees start there` : `No diff target for ${label(k)}: drift is measured against the default branch`);
 			}
 			// a package that names another base than the run's target: the person decides before anything is written
@@ -2537,6 +2553,7 @@ ${assumed}` : ""}`, "info");
 	pi.on("session_start", async (_event, ctx) => {
 		uiCtx = ctx;
 		stopTimers();
+		registerRelayBus();
 		owned = null;
 		relayExec = undefined;
 		hosted = undefined;
@@ -2643,13 +2660,7 @@ ${assumed}` : ""}`, "info");
 
 	pi.on("session_shutdown", async () => {
 		stopTimers();
-		for (const u of relayUnsubs.splice(0)) {
-			try {
-				u();
-			} catch {
-				// already gone
-			}
-		}
+		unregisterRelayBus();
 		try {
 			uiCtx?.ui.setStatus("orchestrate", undefined);
 		} catch {
