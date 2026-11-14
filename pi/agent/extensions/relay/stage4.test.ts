@@ -339,3 +339,31 @@ test("relay_add_repo answering an approval ask grants nothing", async () => {
 		cleanup(second.dir, second.bare);
 	}
 });
+
+test("adoption leaves a stacked job queued until its predecessor has passed", async () => {
+	const w = world();
+	try {
+		w.write({ worker: [{ hang: true }, { hang: true }] });
+		const a = await start(w);
+		await running(w, a);
+		const r = await w.engine.dispatch({ brief: brief({ repo: w.repo, extra: nl + "## Depends on" + nl + a + nl }) });
+		const b = (r as { id: string }).id;
+		await w.engine.shutdown(); // the lead goes away
+		const e2 = w.mk();
+		e2.start();
+		const adopted = await e2.adopt();
+		assert.deepEqual(adopted.sort(), [a, b].sort());
+		await new Promise((res) => setTimeout(res, 400));
+		assert.equal(e2.get(b)!.job.state, "queued", "still waiting for the predecessor");
+		assert.equal(w.wtCalls.create.length, 1, "no set was created for the dependent");
+		await e2.stop(a);
+		await e2.shutdown();
+	} finally {
+		w.end();
+	}
+});
+
+test("stackState: a follow-up that cleared the predecessor's merged flag still counts as merged", () => {
+	const repo: any = { main: "/r", stackedOn: { job: "rp", branch: "wt/rp", head: "abc" } };
+	assert.equal(stackState(repo, { repos: [{ main: "/r", mergedBefore: true }] } as unknown as Job), "merged");
+});

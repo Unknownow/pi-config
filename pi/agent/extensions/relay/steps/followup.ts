@@ -64,6 +64,7 @@ export const followupStep: Step = {
 					delete r.remoteBranch;
 					delete r.remotePushed;
 					delete r.pr;
+					r.mergedBefore = true;
 					delete r.merged;
 				}
 			}

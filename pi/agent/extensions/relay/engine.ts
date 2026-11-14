@@ -1036,6 +1036,8 @@ export class Engine {
 					job.state = "failed";
 					this.save(jr);
 					void this.drive(jr);
+				} else if (was === "queued") {
+					// startQueued decides: it honours maxJobs and a predecessor that has not passed (D17)
 				} else if (was !== "paused") void this.drive(jr);
 				this.d.notify(`relay job ${job.id}: ${how} after the lead went away (was ${was}); ${was === "paused" ? "still paused" : "continuing"}`);
 				adopted.push(job.id);
@@ -1044,6 +1046,7 @@ export class Engine {
 				this.d.wake(`relay job ${job.id}: ${how}, but its worker could not be restarted (${(e as Error).message}). The job is paused; relay_resume or relay_stop.`);
 			}
 		}
+		this.startQueued();
 		return adopted;
 	}
 

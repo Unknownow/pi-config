@@ -66,10 +66,13 @@ export const dispatchStep: Step = {
 		if (job.dependsOn && !pred) return fail(`Depends on: job ${job.dependsOn} was not found`);
 		for (const t of tops) {
 			const pr = pred?.repos.find((x) => same(x.main, t.main));
-			if (!pred || !pr || pr.merged || !pr.remoteBranch || !pr.remotePushed) continue;
+			if (!pred || !pr || pr.merged || pr.mergedBefore) continue;
+			// never a quiet plain start: the dependent would not sit on its predecessor's work
+			if (!pr.remoteBranch || !pr.remotePushed) return fail(`Depends on: predecessor ${pred.id} has not pushed its branch for ${t.key}`);
 			await ctx.run("git", ["fetch", "origin"], t.main);
 			const head = await gitOut(ctx.run, t.main, ["rev-parse", `origin/${pr.remoteBranch}`]).catch(() => "");
-			if (head) stacked.set(t.main, { job: pred.id, branch: pr.remoteBranch, head });
+			if (!head) return fail(`Depends on: origin/${pr.remoteBranch} of predecessor ${pred.id} was not found in ${t.key}`);
+			stacked.set(t.main, { job: pred.id, branch: pr.remoteBranch, head });
 		}
 
 		// 4: snapshot the lead's edits in each Target repo

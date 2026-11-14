@@ -30,13 +30,15 @@ export interface RepoState {
 	stackedOn?: { job: string; branch: string; head: string };
 	/** Set after the restack onto the target: the PR has to be retargeted before the next push. */
 	retarget?: boolean;
+	/** The repo had merged before a follow-up started a new PR for it (the follow-up clears `merged`); stacked jobs still count it as merged. */
+	mergedBefore?: boolean;
 }
 
 /** Where a stacked repo stands: `none` (not stacked, or restacked already), `open` (the predecessor has not merged) or `merged` (the restack onto the target is due). */
 export function stackState(repo: RepoState, pred: Job | undefined): "none" | "open" | "merged" {
 	if (!repo.stackedOn) return "none";
 	const pr = pred?.repos.find((x) => x.main.toLowerCase() === repo.main.toLowerCase());
-	return pr?.merged ? "merged" : "open";
+	return pr?.merged || pr?.mergedBefore ? "merged" : "open";
 }
 
 export interface Approval {
