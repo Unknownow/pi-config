@@ -35,6 +35,8 @@ test("dispatch -> FAIL -> fix -> PASS -> delivery to the bare remote -> report.m
 		assert.equal(job.state, "done");
 		assert.equal(job.lastVerdict?.verdict, "PASS");
 		assert.equal(job.lastVerdict?.round, 2);
+		// worker and judge usage both count against the budget: two worker turns and two judge runs, 350 weighted tokens each
+		assert.ok(job.used.tokens >= 4 * 350, String(job.used.tokens));
 		// the bare remote's main has the job's files, including the lead's edits
 		const check = path.join(path.dirname(w.script), "check");
 		git(path.dirname(w.script), "clone", "-q", w.bare, check);
@@ -199,6 +201,28 @@ test("relay_stop aborts the worker, sets stopped and writes report.md", async ()
 		assert.match(fs.readFileSync(path.join(jr.dir, "report.md"), "utf8"), /stopped/);
 		assert.equal(jr.worker?.exited, true);
 		assert.ok("error" in (await w.engine.stop(r.id)));
+	} finally {
+		w.end();
+	}
+});
+
+test("relay_stop while the judge runs: no push, no merge, state stopped, the report says so", async () => {
+	const w = world();
+	try {
+		w.write({ worker: [{ write: [{ file: "greeting.txt", content: "hello\n" }], done: "ok" }], judge: [{ text: PASS, delayMs: 20_000 }] });
+		const r = await w.engine.dispatch({ brief: brief({ repo: w.repo, authority: { merge: "yes (ff)" } }) });
+		assert.ok("id" in r);
+		if (!("id" in r)) return;
+		const jr = w.engine.get(r.id)!;
+		await waitFor(() => jr.job.state === "judging" && jr.driving && w.calls().some((c) => c.mode === "json"), 30_000, "the judge to start");
+		assert.deepEqual(await w.engine.stop(r.id), { ok: true });
+		assert.equal(jr.driving, false);
+		const job = readJob(jr.dir)!;
+		assert.equal(job.state, "stopped");
+		assert.equal(git(w.bare, "log", "--oneline", "main").split("\n").length, 1, "nothing merged");
+		assert.equal(git(w.bare, "branch", "--list", `wt/${r.id}`), "", "nothing pushed");
+		assert.match(fs.readFileSync(path.join(jr.dir, "report.md"), "utf8"), /stopped/);
+		assert.ok(jr.ended);
 	} finally {
 		w.end();
 	}

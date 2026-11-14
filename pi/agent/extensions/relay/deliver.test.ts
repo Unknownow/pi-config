@@ -16,6 +16,8 @@ import { brief } from "./test/env.ts";
 
 const fwd = (p: string) => p.split("\\").join("/");
 
+const stopped = { value: false };
+
 interface Scenario {
 	job: Job;
 	ctx: StepCtx;
@@ -61,6 +63,7 @@ function scenario(n: number, briefOver: Parameters<typeof brief>[0] = {}, cfgRaw
 		notify() {},
 		wake: (t) => wakes.push(t),
 		isOwner: () => true,
+		stopped: () => stopped.value,
 		wt: { create: async () => ({ error: "x" }), remove: async () => ({ error: "x" }) },
 		worker: { alive: true, settled: true, exited: false, nudges: 0, openAsks: [] },
 		startWorker: async () => {},
@@ -162,6 +165,46 @@ test("an overlap, a conflict and a failed Verify each give a fix round, and noth
 		} finally {
 			s.clean();
 		}
+	}
+});
+
+test("a branch that changed after the judge is not accepted even when upstream did not move", async () => {
+	const s = scenario(1, MERGE);
+	try {
+		s.job.repos[0].judgedTree = "not-the-head-tree";
+		assert.equal(await deliverStep.run(s.job, s.ctx), "work");
+		assert.match(s.prompts.join("\n"), /changed after the judge reviewed it/);
+		assert.equal(s.job.repos[0].acceptedTree, undefined);
+		assert.equal(s.job.repos[0].merged, undefined);
+		assert.equal(git(s.repos[0].bare, "branch", "--list", "wt/r1"), "");
+	} finally {
+		s.clean();
+	}
+});
+
+test("a stop while delivery runs means no push and no merge", async () => {
+	const s = scenario(1, MERGE);
+	try {
+		stopped.value = true;
+		assert.equal(await deliverStep.run(s.job, s.ctx), "report");
+		assert.equal(git(s.repos[0].bare, "branch", "--list", "wt/r1"), "");
+		assert.equal(s.job.repos[0].merged, undefined);
+		assert.equal(git(s.repos[0].bare, "log", "--oneline", "main").split("\n").length, 1);
+	} finally {
+		stopped.value = false;
+		s.clean();
+	}
+});
+
+test("a rejected first push is reported as a plain push failure, not as a lease failure", async () => {
+	const s = scenario(1, MERGE);
+	try {
+		fs.mkdirSync(path.join(s.repos[0].bare, "hooks"), { recursive: true });
+		fs.writeFileSync(path.join(s.repos[0].bare, "hooks", "pre-receive"), "#!/bin/sh\necho 'branch protection says no' >&2\nexit 1\n", { mode: 0o755 });
+		const res = await pushJobBranch(s.ctx, s.job.repos[0], ["main"]);
+		assert.ok(!res.ok && /git push failed/.test(res.error) && !/lease/.test(res.error), JSON.stringify(res));
+	} finally {
+		s.clean();
 	}
 });
 

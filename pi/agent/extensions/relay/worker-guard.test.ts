@@ -27,6 +27,23 @@ test("always refused: git push, gh writes, publish, branch deletion, moving to a
 	assert.match(bad("git checkout -b new") ?? "", /creating a branch/);
 });
 
+test("a shell -c is checked by its inner text", () => {
+	assert.match(bad('bash -c "git push origin HEAD:x"') ?? "", /git push/);
+	assert.match(bad("sh -c 'gh pr create --title x'") ?? "", /gh pr/);
+	assert.match(bad('pwsh -Command "git push origin x"') ?? "", /git push/);
+	assert.match(bad("bash -c") ?? "", /without a command text/);
+	assert.match(bad('bash -lc "npm install left-pad"') ?? "", /needs the lead's approval/);
+	assert.equal(bad('bash -c "git status && npm test"'), undefined);
+});
+
+test("in a multi-repo set a sensitive glob is matched inside the repo that holds the file", () => {
+	const set = path.resolve("/w/set");
+	const f = facts({ worktrees: [path.join(set, "repoA"), path.join(set, "repoB")] });
+	assert.match(workerPathProblem("repoB/.github/workflows/ci.yml", set, f) ?? "", /\.github\/workflows\/ci\.yml is a sensitive path \(formats\)/);
+	assert.match(workerPathProblem(path.join(set, "repoA", "package.json"), set, f) ?? "", /package\.json is a sensitive path \(deps\)/);
+	assert.equal(workerPathProblem("repoA/src/a.ts", set, f), undefined);
+});
+
 test("allowed: reads, commits, the job branch and base, file restores", () => {
 	for (const c of ["git status", "git commit -am x", "git log --oneline", "gh pr view 3", "gh pr checks", "gh api repos/a/b/pulls/1", "git checkout wt/r1", "git checkout abcdef12", "git reset --hard HEAD~1", "git reset", "git checkout -- a.txt", "git checkout HEAD -- a.txt", "npm test", "node build.js", "rm -rf build"]) assert.equal(bad(c), undefined, c);
 });

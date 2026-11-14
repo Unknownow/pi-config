@@ -32,7 +32,7 @@ export function mergeAllowed(authority: AuthorityItem | undefined, hasApproval: 
 	return policyMerge === "after-pass" && authority?.value !== "no";
 }
 
-type Outcome = { kind: "done" } | { kind: "fix"; reason: string } | { kind: "error"; error: string } | { kind: "retry" };
+type Outcome = { kind: "done" } | { kind: "stopped" } | { kind: "fix"; reason: string } | { kind: "error"; error: string } | { kind: "retry" };
 
 async function accept(job: Job, repo: RepoState, ctx: StepCtx, verify: string): Promise<{ ok: true } | { ok: false; fix?: string; error?: string }> {
 	const git = (...args: string[]) => ctx.run("git", args, repo.worktree);
@@ -42,9 +42,10 @@ async function accept(job: Job, repo: RepoState, ctx: StepCtx, verify: string): 
 	if (!upstream) return { ok: false, error: `origin/${repo.target} not found in ${repo.key}` };
 	const headTree = firstLine((await git("rev-parse", "HEAD^{tree}")).stdout);
 	if (upstream === repo.base) {
-		// nothing new upstream: the judged tree is the tree to deliver
+		// nothing new upstream: the judged tree is the tree to deliver, and only that
+		if (headTree !== repo.judgedTree) return { ok: false, fix: `The branch of ${repo.key} changed after the judge reviewed it. Report_done again so the current tree is judged.` };
 		repo.acceptedTree = headTree;
-		if (headTree === repo.judgedTree) delete repo.passedViaRebase;
+		delete repo.passedViaRebase;
 		return { ok: true };
 	}
 	const jobFiles = (await git("diff", "--name-only", `${repo.base}..HEAD`)).stdout.split(/\r?\n/).filter(Boolean);
@@ -86,7 +87,7 @@ export async function pushJobBranch(ctx: StepCtx, repo: RepoState, protectedBran
 	if (problem) return { ok: false, error: `push refused: ${problem}` };
 	const r = await ctx.run("git", args, repo.worktree);
 	if (r.code !== 0) {
-		const stale = /stale info|rejected|fetch first|non-fast-forward/i.test(r.stderr);
+		const stale = !first && /stale info/i.test(r.stderr);
 		return { ok: false, error: stale ? `the lease failed: ${rb} on origin was changed by someone else since relay's last push (${repo.remotePushed?.slice(0, 10)}); relay does not overwrite it` : `git push failed: ${firstLine(r.stderr)}` };
 	}
 	repo.remoteBranch = rb;
@@ -127,9 +128,11 @@ async function deliverOnce(job: Job, ctx: StepCtx, attempt: number): Promise<Out
 		ctx.save(job);
 		if (!a.ok) return a.fix ? { kind: "fix", reason: a.fix } : { kind: "error", error: a.error ?? "delivery failed" };
 	}
+	if (ctx.stopped()) return { kind: "stopped" };
 	// push each repo, then PRs
 	const slugs = new Map<string, string | undefined>();
 	for (const repo of job.repos) {
+		if (ctx.stopped()) return { kind: "stopped" };
 		const pol = repoPolicy(ctx.cfg, repo.main);
 		const p = await pushJobBranch(ctx, repo, pol.protectedBranches);
 		ctx.save(job);
@@ -146,6 +149,7 @@ async function deliverOnce(job: Job, ctx: StepCtx, attempt: number): Promise<Out
 	// merge, in Targets order, only when every repo is accepted and pushed (they are)
 	const mergeApproved = job.approvals.some((a) => a.category === "merge");
 	for (const repo of job.repos) {
+		if (ctx.stopped()) return { kind: "stopped" };
 		const pol = repoPolicy(ctx.cfg, repo.main);
 		if (repo.merged || !mergeAllowed(parsed.authority.merge, mergeApproved, pol.merge)) continue;
 		const slug = slugs.get(repo.key);
@@ -198,6 +202,7 @@ export const deliverStep: Step = {
 		let out: Outcome = { kind: "retry" };
 		for (let attempt = 1; out.kind === "retry"; attempt++) out = await deliverOnce(job, ctx, attempt);
 		if (out.kind === "done") return "report";
+		if (out.kind === "stopped") return "report";
 		if (out.kind === "fix") {
 			const next = await failRound(job, ctx, "Delivery needs a fix", out.reason);
 			return next;

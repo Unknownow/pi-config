@@ -3,6 +3,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { parseBrief } from "../brief.ts";
+import { countTokens } from "../../shared/tokens.ts";
 import { judgeVerdict, parseFindings, type Finding } from "../../shared/findings.ts";
 import { collectRepoDiff } from "../repo-diff.ts";
 import type { Job } from "../job.ts";
@@ -143,12 +144,20 @@ export const judgeStep: Step = {
 			return "errors" in p ? job.briefVersion : p.version;
 		})();
 		job.briefVersion = briefVersion;
+		// the tree the judge sees is recorded before it reviews, and checked again after
+		const treeOf = async (r: Job["repos"][number]) => (await ctx.run("git", ["rev-parse", "HEAD^{tree}"], r.worktree)).stdout.trim();
+		const seen = await Promise.all(job.repos.map(treeOf));
 		const task = await judgeTask(job, ctx);
-		let res = await ctx.review("judge", task, job.cwd ?? job.repos[0].worktree);
-		if (!res.ok) {
+		const cwd = job.cwd ?? job.repos[0].worktree;
+		const count = (u: unknown) => void (job.used.tokens += countTokens(u as Parameters<typeof countTokens>[0], ctx.cfg.tokenWeights).cost);
+		let res = await ctx.review("judge", task, cwd);
+		count(res.usage);
+		if (!res.ok && !ctx.stopped()) {
 			ctx.log("judge-error", res.error ?? "no output");
-			res = await ctx.review("judge", task, job.cwd ?? job.repos[0].worktree);
+			res = await ctx.review("judge", task, cwd);
+			count(res.usage);
 		}
+		if (ctx.stopped()) return "report";
 		if (!res.ok) {
 			job.state = "paused";
 			ctx.save(job);
@@ -164,15 +173,19 @@ export const judgeStep: Step = {
 			ctx.log("stale", `verdict on brief version ${briefVersion} discarded (now ${nowVersion})`);
 			return "judge";
 		}
+		const after = await Promise.all(job.repos.map(treeOf));
+		if (after.some((t, i) => t !== seen[i])) {
+			ctx.log("moved", "the branch changed while the judge ran; judging again");
+			return "judge";
+		}
 		const v = verdictOf(res.text);
 		fs.mkdirSync(path.join(ctx.dir, "judge"), { recursive: true });
 		fs.writeFileSync(path.join(ctx.dir, "judge", `round-${job.round + 1}.md`), `${res.text}\n`);
-		for (const r of job.repos) {
-			const tree = await ctx.run("git", ["rev-parse", "HEAD^{tree}"], r.worktree);
-			r.judgedTree = tree.stdout.trim();
+		job.repos.forEach((r, i) => {
+			r.judgedTree = seen[i];
 			delete r.acceptedTree;
 			delete r.passedViaRebase;
-		}
+		});
 		job.lastVerdict = { round: job.round + 1, briefVersion, verdict: v.verdict, blockers: count(v.findings, "blocker"), majors: count(v.findings, "major"), minors: count(v.findings, "minor") };
 		ctx.log("verdict", `${v.verdict} round ${job.round + 1}: ${job.lastVerdict.blockers} blocker, ${job.lastVerdict.majors} major, ${job.lastVerdict.minors} minor`);
 		const plan = v.findings.filter((f) => /\[plan\]/i.test(f.head));

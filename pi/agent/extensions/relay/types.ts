@@ -68,6 +68,8 @@ export interface StepCtx {
 	/** Starts a turn of the lead (a question, an approval, the cap, a plan flaw, a crash, PASS or delivery). */
 	wake(text: string): void;
 	isOwner(): boolean;
+	/** The lead stopped the job (or its budget ended) while a step ran: the step must not push, merge or change state. */
+	stopped(): boolean;
 	wt: Wt;
 	worker: WorkerState;
 	startWorker(job: Job, o: { prompt: string; resume?: boolean }): Promise<void>;

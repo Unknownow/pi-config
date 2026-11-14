@@ -85,6 +85,9 @@ class JobRun {
 	lastTick = 0;
 	lastBeat = 0;
 	graceNotified = false;
+	/** Set by stop() and the budget: a running step must wind down, whatever state it sets. */
+	stopRequested = false;
+	abort = new AbortController();
 	constructor(dir: string, job: Job, lock: JobLock) {
 		this.dir = dir;
 		this.job = job;
@@ -250,6 +253,11 @@ export class Engine {
 							next = "report";
 						}
 					}
+					// a stop that arrived while the step ran wins over whatever state the step set
+					if (jr.stopRequested && step !== "report" && step !== "cleanup") {
+						if (!FINISHED.includes(jr.job.state) || jr.job.state === "done") jr.job.state = "stopped";
+						next = "report";
+					}
 					this.save(jr);
 					if (next === "wait") break;
 					if (next === "end") {
@@ -287,6 +295,7 @@ export class Engine {
 			notify: (line) => d.notify(line),
 			wake: (text) => d.wake(text),
 			isOwner: () => jr.lock.isOwner(),
+			stopped: () => jr.stopRequested,
 			wt: d.wt,
 			worker: jr.ws,
 			startWorker: (job, o) => this.startWorker(jr, o),
@@ -302,7 +311,7 @@ export class Engine {
 				await jr.worker?.stop(10_000);
 				jr.ws.alive = false;
 			},
-			review: (role, task, cwd) => this.review(role, task, cwd),
+			review: (role, task, cwd) => this.review(role, task, cwd, jr.abort.signal),
 			emit: (n, p) => d.emit(n, p),
 			now: () => this.now(),
 			relayDir: this.relayDir,
@@ -363,7 +372,7 @@ export class Engine {
 		return { servers, tools: roleTools(role, k) };
 	}
 
-	async review(role: "critic" | "judge", task: string, cwd: string): Promise<RunResult> {
+	async review(role: "critic" | "judge", task: string, cwd: string, signal?: AbortSignal): Promise<RunResult> {
 		const spec = this.cfg.roles[role];
 		const file = path.isAbsolute(spec.prompt) ? spec.prompt : path.join(this.relayDir, spec.prompt);
 		const k = this.knowledgeMcp(role);
@@ -380,6 +389,7 @@ export class Engine {
 			mcp: k ? { servers: k.servers, extension: path.join(this.relayDir, "mcp-forward.ts") } : undefined,
 			env: k?.tools.length ? { RELAY_REVIEW_ALLOW: k.tools.join(",") } : undefined,
 			trusted: this.d.trusted?.(),
+			signal,
 		});
 	}
 
@@ -410,6 +420,8 @@ export class Engine {
 			} else if (b.state === "over" && jr.job.state !== "delivering") {
 				jr.job.endReason = `budget: ${b.why}`;
 				jr.job.state = "stopped";
+				jr.stopRequested = true;
+				jr.abort.abort();
 				await jr.worker?.abort();
 				this.save(jr);
 				this.d.wake(`relay job ${jr.job.id}: stopped, ${b.why}. The set is kept.`);
@@ -492,11 +504,15 @@ export class Engine {
 		const jr = this.find(id);
 		if ("error" in jr) return jr;
 		if (jr.ended || FINISHED.includes(jr.job.state)) return { error: `job ${id} is already ${jr.job.state}` };
-		await jr.worker?.abort();
+		jr.stopRequested = true;
 		jr.job.endReason = "stopped by the lead";
 		jr.job.state = "stopped";
 		this.save(jr);
+		jr.abort.abort();
+		await jr.worker?.abort();
 		await this.drive(jr);
+		// a step that was running winds down and writes the report before stop returns
+		while (jr.driving) await new Promise((r) => setTimeout(r, 20));
 		return { ok: true };
 	}
 

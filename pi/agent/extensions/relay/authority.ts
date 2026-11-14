@@ -47,6 +47,11 @@ export function classifyCommand(command: string, ctx: CommandCtx): Classified[] 
 		if (!words.length) continue;
 		const name = baseName(words[0]);
 		const args = words.slice(1);
+		if (["bash", "sh", "zsh", "dash", "ksh", "pwsh", "powershell"].includes(name)) {
+			const at = args.findIndex((x) => /^-[a-zA-Z]*c[a-zA-Z]*$/.test(x) || /^-command$/i.test(x));
+			if (at >= 0 && args[at + 1] !== undefined) for (const c of classifyCommand(args[at + 1], ctx)) add(c.category, c.item);
+			continue;
+		}
 		if (name === "git") {
 			const g = gitSubcommand(args);
 			if (!g) continue;

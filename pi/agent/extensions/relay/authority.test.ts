@@ -26,6 +26,8 @@ test("commands map to the six categories", () => {
 	assert.deepEqual(cats("pnpm add x"), ["deps"]);
 	assert.deepEqual(cats("dotnet add MyApp package Foo"), ["deps"]);
 	assert.deepEqual(cats("git status && npm test"), []);
+	assert.deepEqual(cats('bash -c "git branch -D old"'), ["delete"]);
+	assert.deepEqual(cats("sh -c 'npm install x'"), ["deps"]);
 });
 
 test("paths: manifests are deps, other sensitive paths formats", () => {

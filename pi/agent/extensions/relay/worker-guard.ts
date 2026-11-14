@@ -16,6 +16,8 @@ export interface GuardFacts {
 	branches: string[];
 	/** The job's base shas. */
 	bases: string[];
+	/** The job's worktrees: a sensitive-path glob is matched against the path inside the worktree that holds it. */
+	worktrees?: string[];
 	sensitivePaths: string[];
 	authority: Partial<Record<Category, AuthorityItem>>;
 	approvals: Approval[];
@@ -23,6 +25,7 @@ export interface GuardFacts {
 
 const HINT = " Use ask_lead (with `approval` when you need a sensitive action approved); relay does outward actions itself.";
 const baseName = (w: string) => w.replace(/^.*[\\/]/, "").replace(/\.exe$/i, "");
+const SHELLS = new Set(["bash", "sh", "zsh", "dash", "ksh", "pwsh", "powershell"]);
 const GH_READ = new Set(["view", "list", "status", "checks", "diff"]);
 
 const refOk = (ref: string, f: GuardFacts): boolean => {
@@ -38,6 +41,15 @@ export function workerCommandProblem(command: string, f: GuardFacts): string | u
 		if (!words.length) continue;
 		const name = baseName(words[0]);
 		const args = words.slice(1);
+		// bash -c "..." and friends: the inner text is checked as a command of its own
+		if (SHELLS.has(name) && args.some((a) => /^-[a-zA-Z]*c[a-zA-Z]*$/.test(a) || /^-command$/i.test(a))) {
+			const at = args.findIndex((a) => /^-[a-zA-Z]*c[a-zA-Z]*$/.test(a) || /^-command$/i.test(a));
+			const inner = args[at + 1];
+			if (inner === undefined) return `${name} -c without a command text is not allowed.${HINT}`;
+			const why = workerCommandProblem(inner, f);
+			if (why) return why;
+			continue;
+		}
 		if (name === "git") {
 			const g = gitSubcommand(args);
 			if (!g) continue;
@@ -78,7 +90,10 @@ export function workerCommandProblem(command: string, f: GuardFacts): string | u
 
 /** Why an edit or write of `file` (relative to the worker's cwd) is refused, or undefined. */
 export function workerPathProblem(file: string, cwd: string, f: GuardFacts): string | undefined {
-	const rel = normPath(path.isAbsolute(file) ? path.relative(cwd, file) : file);
+	const abs = path.resolve(cwd, file);
+	// in a multi-repo set the glob is matched inside the repo that holds the file (".github/workflows/**" has no repo folder in front)
+	const home = (f.worktrees ?? []).map((w) => path.resolve(w)).filter((w) => abs.toLowerCase().startsWith(`${w.toLowerCase()}${path.sep}`)).sort((a, b) => b.length - a.length)[0];
+	const rel = normPath(path.relative(home ?? cwd, abs));
 	if (rel.startsWith("../")) return undefined;
 	const cat = pathCategory(rel, f.sensitivePaths);
 	if (!cat) return undefined;
@@ -102,7 +117,7 @@ export function loadFacts(dir: string): GuardFacts {
 	} catch {
 		// no brief: nothing is authorised
 	}
-	return { branches: job?.repos.map((r) => r.branch) ?? [], bases: job?.repos.map((r) => r.base) ?? [], sensitivePaths: sensitive, authority, approvals: job?.approvals ?? [] };
+	return { branches: job?.repos.map((r) => r.branch) ?? [], bases: job?.repos.map((r) => r.base) ?? [], worktrees: job?.repos.map((r) => r.worktree) ?? [], sensitivePaths: sensitive, authority, approvals: job?.approvals ?? [] };
 }
 
 

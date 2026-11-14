@@ -2,7 +2,7 @@
 // json-mode critic and judge (--mode json), switching on --mode.
 //
 // FAKE_PI_SCRIPT points to a JSON file:
-//   { "worker": [ turn, ... ], "judge": [ text, ... ], "critic": [ text, ... ] }
+//   { "worker": [ turn, ... ], "judge": [ text | {text, delayMs}, ... ], "critic": [ text | {text, delayMs}, ... ] }
 // A turn: { "write": [{file, content}], "ask": {question} | {approval:{category,item,why}}, "done": "summary", "crash": true, "hang": true }
 // Each prompt consumes the next turn (the last one repeats). Judge and critic runs consume the next text the same way.
 // State (counters) lives in <script>.state.json; every start is logged to <script>.calls.jsonl.
@@ -39,7 +39,9 @@ const usage = { input: 100, output: 50, cacheRead: 0, cacheWrite: 0, totalTokens
 const out = (o) => process.stdout.write(`${JSON.stringify(o)}\n`);
 
 if (mode === "json") {
-	const text = next(role, script[role]) ?? "VERDICT: PASS";
+	const item = next(role, script[role]) ?? "VERDICT: PASS";
+	const text = typeof item === "string" ? item : item.text;
+	if (item.delayMs) await new Promise((r) => setTimeout(r, item.delayMs));
 	out({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text }], usage, model: "fake", stopReason: "stop" } });
 	process.exit(0);
 }
