@@ -26,7 +26,12 @@ const countLines = (file: string): number => {
 export async function measureEdits(run: Run, repoDirs: string[]): Promise<Measure> {
 	let lines = 0;
 	const files = new Set<string>();
+	const tops = new Set<string>();
 	for (const dir of repoDirs) {
+		const top = await run("git", ["rev-parse", "--show-toplevel"], dir);
+		if (top.code === 0 && top.stdout.trim()) tops.add(path.resolve(top.stdout.trim()));
+	}
+	for (const dir of tops) {
 		const stat = await run("git", ["diff", "--numstat", "--no-renames", "-z", "HEAD"], dir);
 		if (stat.code === 0) {
 			for (const rec of stat.stdout.split("\0").filter(Boolean)) {

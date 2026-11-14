@@ -120,3 +120,35 @@ test("baseArgs: -ne -ns -np, trust follows the lead", () => {
 	assert.ok(baseArgs({ ...o, trusted: false }).includes("-na"));
 	assert.ok(!a.includes("--no-extensions"));
 });
+
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { fileURLToPath } from "node:url";
+import { runSubagent } from "./subagent.ts";
+
+test("with RELAY_PI_BIN=fake-pi.mjs the judge returns the fake's scripted verdict, and the spawn args carry -ne -ns -np and the reviewer extension", async () => {
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "relay-sub-"));
+	const script = path.join(dir, "script.json");
+	fs.writeFileSync(script, JSON.stringify({ judge: ["- major - [bug] `x.ts:1` broken fix: auto\n  Why: a\n  Fix: b\nVERDICT: FAIL", "VERDICT: PASS"] }));
+	const prev = { bin: process.env.RELAY_PI_BIN, script: process.env.FAKE_PI_SCRIPT };
+	process.env.RELAY_PI_BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), "test", "fake-pi.mjs");
+	process.env.FAKE_PI_SCRIPT = script;
+	try {
+		const run = () => runSubagent({ role: { model: "p/m", thinking: "high" }, systemPrompts: ["<!-- relay-role: judge -->\nrules"], tools: ["read", "grep"], task: "judge it", cwd: dir, extensions: ["/x/reviewer.ts"], timeoutMs: 30_000, trusted: false });
+		const a = await run();
+		assert.ok(a.ok && /VERDICT: FAIL/.test(a.text));
+		const b = await run();
+		assert.ok(b.ok && /VERDICT: PASS/.test(b.text));
+		const calls = fs.readFileSync(`${script}.calls.jsonl`, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
+		assert.equal(calls[0].role, "judge");
+		for (const f of ["-ne", "-ns", "-np", "-na", "--no-session"]) assert.ok(calls[0].args.includes(f), f);
+		assert.deepEqual(calls[0].args.slice(calls[0].args.indexOf("-e"), calls[0].args.indexOf("-e") + 2), ["-e", "/x/reviewer.ts"]);
+	} finally {
+		if (prev.bin === undefined) delete process.env.RELAY_PI_BIN;
+		else process.env.RELAY_PI_BIN = prev.bin;
+		if (prev.script === undefined) delete process.env.FAKE_PI_SCRIPT;
+		else process.env.FAKE_PI_SCRIPT = prev.script;
+		fs.rmSync(dir, { recursive: true, force: true });
+	}
+});

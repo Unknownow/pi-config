@@ -43,6 +43,8 @@ export interface Job {
 	state: JobState;
 	briefVersion: number;
 	set: string;
+	/** The worker's working folder (the set root for a multi-repo job). */
+	cwd?: string;
 	repos: RepoState[];
 	dependsOn?: string;
 	size: Size;
@@ -58,6 +60,8 @@ export interface Job {
 	overrides: { decision: string; finding: string; reason: string }[];
 	notes: string[];
 	lastVerdict?: { round: number; briefVersion: number; verdict: "PASS" | "FAIL"; blockers: number; majors: number; minors: number };
+	/** The worker's last report_done summary. */
+	doneSummary?: string;
 	/** Why a stopped or failed job ended. */
 	endReason?: string;
 	createdAt: number;
