@@ -1,10 +1,10 @@
 {
   "v": 1,
   "flowId": "20261114-1246-fix-the-orchestrator-s-merge-bugs-then-m-fd35",
-  "rev": 4,
-  "updated": "2026-11-14T06:16:48.939Z",
+  "rev": 5,
+  "updated": "2026-11-14T06:22:15.796Z",
   "title": "Fix the orchestrator's merge bugs, then make the judges, the orchestrator and autopilot run without the user",
-  "stage": 4,
+  "stage": 5,
   "done": [
     "S1",
     "S2",
@@ -28,10 +28,15 @@
     "S20",
     "S21",
     "S22",
-    "S23"
+    "S23",
+    "S24",
+    "S25",
+    "S26",
+    "S27",
+    "S28"
   ],
   "reviewBase": {
-    "d:/works/pi-config": "cc5b1b24c40b8bf90cca2513269e3d2a34ce30ce"
+    "d:/works/pi-config": "ba34ce2c659445e3a18905024c0c00b51758a73e"
   },
   "passedTrees": {
     "d:/works/pi-config": [
@@ -40,7 +45,8 @@
       "f6ea2ea9c77e79d8e8bf99b5a0268a5238d6d91f",
       "a384b2b37ecaa1a766c2d5d86ef8cd4cd94e1257",
       "62a128763c8a558adac84cd64c5db91014b36323",
-      "d8a6f61d4d9d2bbaa811aaae2ba4aa1be8721654"
+      "d8a6f61d4d9d2bbaa811aaae2ba4aa1be8721654",
+      "6c79881f3c098bea53f344b8e362b97ad129535a"
     ]
   },
   "repos": [

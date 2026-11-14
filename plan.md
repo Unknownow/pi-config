@@ -601,11 +601,11 @@ The rest of S2 is unchanged.
 - [x] S21 Stale-list fix. Before any discussion review (`index.ts:3842-3870`, and the manual `/flow judge` path in `discussion-rev
 - [x] S22 Metrics. Add `judgeMetric` to `metrics.ts`, modelled on `:19`. Write a `judge` event where the code (`:2051`), plan (`~:
 - [x] S23 Docs and backlog: README gate rules (`workflow/README.md:148-161`), plus these rows, each Done:
-- [ ] S24 The run charter.
-- [ ] S25 The decision log.
-- [ ] S26 Step back instead of escalating.
-- [ ] S27 Prompts.
-- [ ] S28 Docs and backlog: README, plus row A51 Done. The measure is escalations per run, which should be only reserved ones.
+- [x] S24 The run charter.
+- [x] S25 The decision log.
+- [x] S26 Step back instead of escalating.
+- [x] S27 Prompts.
+- [x] S28 Docs and backlog: README, plus row A51 Done. The measure is escalations per run, which should be only reserved ones.
 - [ ] S29 Judge cap on autopilot (`:4040-4058`).
 - [ ] S30 Error retries. On autopilot, the first judge-error (`:4009`) or executor-error (`:3464`) in a row is retried automatical
 - [ ] S31 Plan-judge `fix: user` findings. On autopilot, blocking `fix: user` findings go to the planner (`:3768-3781`) with `PLAN
