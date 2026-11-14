@@ -271,6 +271,34 @@ test("two repos: R1's target moves after R0 merged: the retry skips R0 and deliv
 	}
 });
 
+test("two repos both rebased, then R0's target moves before its merge: R1 stays accepted, no fix round", async () => {
+	const s = scenario(2, MERGE);
+	try {
+		s.push(0, "b.txt", "u0" + String.fromCharCode(10));
+		s.push(1, "b.txt", "u1" + String.fromCharCode(10));
+		const orig = s.ctx.run;
+		let fired = false;
+		let fetches = 0;
+		s.ctx.run = async (c, a, d, o) => {
+			// R0's second fetch is the one before its fast-forward check: move its origin/main just before it, once
+			if (!fired && c === "git" && a[0] === "fetch" && d === s.repos[0].wt && ++fetches === 2) {
+				fired = true;
+				s.push(0, "a.txt", "late" + String.fromCharCode(10));
+			}
+			return orig(c, a, d, o);
+		};
+		assert.equal(await deliverStep.run(s.job, s.ctx), "report", s.wakes.join(" | "));
+		assert.equal(fired, true);
+		assert.equal(s.job.round, 0);
+		assert.deepEqual(s.prompts, []);
+		assert.ok(s.job.repos.every((r) => r.merged && r.passedViaRebase));
+		for (const r of s.repos) assert.equal(git(r.bare, "show", "main:greeting.txt"), "hello");
+		assert.equal(git(s.repos[0].bare, "show", "main:a.txt"), "late");
+	} finally {
+		s.clean();
+	}
+});
+
 test("pushes: the first creates the branch, a later delivery rebases and pushes with force-with-lease, someone else's push makes the lease fail", async () => {
 	const s = scenario(1, { authority: { merge: "no" } });
 	try {

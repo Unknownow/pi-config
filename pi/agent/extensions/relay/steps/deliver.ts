@@ -172,7 +172,6 @@ async function deliverOnce(job: Job, ctx: StepCtx, attempt: number): Promise<Out
 			const ff = await ctx.run("git", ["merge-base", "--is-ancestor", `origin/${repo.target}`, sha], repo.worktree);
 			if (ff.code !== 0) {
 				if (attempt >= 3) return { kind: "error", error: `origin/${repo.target} keeps moving in ${repo.key}; gave up after ${attempt} rebases` };
-				for (const r of job.repos) if (!r.merged) delete r.acceptedTree;
 				return { kind: "retry" };
 			}
 			const gate = await gateCheck((c, a, d) => ctx.run(c, a, d), "protected-push", repo.worktree, sha, { passedTrees: [tree], noMerge: false });
