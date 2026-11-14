@@ -1086,12 +1086,12 @@ The rest of S15 stays: prompt, typed "go", edit budget including the bash re-mea
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 W1 launch per request.
-- [ ] S2 W2 `worktree:remove`. Add a parser in `create-event.ts` and a listener next to W1.
-- [ ] S3 W3 `worktree:add-repo`.
-- [ ] S4 `read_pdf`. New file `sandbox/read-pdf.ts`, registered next to `video_frames` and modelled on `video-frames.ts`.
-- [ ] S5 K16 in workflow.
-- [ ] S6 Run the Stage 1 tests.
+- [x] S1 W1 launch per request.
+- [x] S2 W2 `worktree:remove`. Add a parser in `create-event.ts` and a listener next to W1.
+- [x] S3 W3 `worktree:add-repo`.
+- [x] S4 `read_pdf`. New file `sandbox/read-pdf.ts`, registered next to `video_frames` and modelled on `video-frames.ts`.
+- [x] S5 K16 in workflow.
+- [x] S6 Run the Stage 1 tests.
 - [ ] S7 Scaffold and config.
 - [ ] S8 Copy the guards and runners.
 - [ ] S9 `brief.ts`.

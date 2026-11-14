@@ -1,13 +1,27 @@
 {
   "v": 1,
   "flowId": "20261114-1511-relay-an-autonomous-lead-worker-judge-ex-ef67",
-  "rev": 1,
-  "updated": "2026-11-14T08:21:19.873Z",
+  "rev": 2,
+  "updated": "2026-11-14T08:33:37.893Z",
   "title": "`relay`, an autonomous lead/worker/judge extension",
-  "stage": 1,
-  "done": [],
+  "stage": 2,
+  "done": [
+    "S1",
+    "S2",
+    "S3",
+    "S4",
+    "S5",
+    "S6"
+  ],
   "reviewBase": {
-    "d:/works/pi-config": "64902720d2503a3f7f679ec09b315047b27e2953"
+    "d:/works/pi-config": "e40e545ea71243916aee2cf93d69a39c05ee0982"
+  },
+  "passedTrees": {
+    "d:/works/pi-config": [
+      "f173eb3c216160b2d29fa3cda76bc4448cb968c3",
+      "3e01fd4d93c5954236a9ff0328bec98808d7d5de",
+      "7bd42bcc8d407a209449b41151c71130b72437d5"
+    ]
   },
   "repos": [
     {
