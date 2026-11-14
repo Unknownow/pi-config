@@ -65,6 +65,8 @@ export interface Job {
 	cwd?: string;
 	repos: RepoState[];
 	dependsOn?: string;
+	/** Set by an orchestrator through relay:dispatch; echoed in the job events and the wake prefix. */
+	tag?: { run: string; package: string };
 	size: Size;
 	round: number;
 	escalated: number;

@@ -3,7 +3,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { emitClaims } from "../shared/claims.ts";
-import { JOB_ID } from "./job.ts";
+import { JOB_ID, type Job } from "./job.ts";
 
 // ----------------------------------------------------------------------------------------------- K16
 
@@ -119,8 +119,93 @@ export class Activation {
 
 export const JOB_START = "relay:job-start";
 export const JOB_END = "relay:job-end";
+export const JOB_PROGRESS = "relay:job-progress";
 export const APPROVAL = "relay:approval";
 
-export const jobStartPayload = (job: string, title: string, repos: string[]) => ({ v: 1, job, title, repos });
-export const jobEndPayload = (job: string, how: "delivered" | "stopped" | "failed", report: string) => ({ v: 1, job, how, report });
-export const approvalPayload = (job: string, category: string, item: string, by: "brief" | "lead", reason: string) => ({ v: 1, job, category, item, by, reason });
+/** Who a job belongs to for an orchestrator: echoed in the job events, wake prefix `[<package>] `. */
+export interface Tag {
+	run: string;
+	package: string;
+}
+export interface Used {
+	tokens: number;
+	wallMs: number;
+}
+export interface RepoOut {
+	key: string;
+	pr?: string;
+	merged: boolean;
+}
+
+export const reposOf = (j: Job): RepoOut[] => j.repos.map((r) => ({ key: r.key, ...(r.pr ? { pr: r.pr } : {}), merged: !!r.merged }));
+const tagPart = (tag?: Tag) => (tag ? { tag } : {});
+export const jobStartPayload = (job: string, title: string, repos: string[], tag?: Tag) => ({ v: 1, job, title, repos, ...tagPart(tag) });
+export const jobEndPayload = (job: string, how: "delivered" | "stopped" | "failed", report: string, tag?: Tag, used?: Used, repos?: RepoOut[], reason?: string) => ({ v: 1, job, how, report, ...tagPart(tag), ...(used ? { used } : {}), ...(repos ? { repos } : {}), ...(reason ? { reason } : {}) });
+export const approvalPayload = (job: string, category: string, item: string, by: "brief" | "lead", reason: string, tag?: Tag) => ({ v: 1, job, category, item, by, reason, ...tagPart(tag) });
+export const jobProgressPayload = (job: string, state: string, round: number, used: Used, tag?: Tag) => ({ v: 1, job, ...tagPart(tag), state, round, used });
+
+// ------------------------------------------------------------------------------------- contract parsers
+
+type Claim = (answer: unknown) => void;
+const isObj = (d: unknown): d is Record<string, unknown> => typeof d === "object" && d !== null;
+const claimOf = (o: Record<string, unknown>): Claim | undefined => (typeof o.claim === "function" ? (o.claim as Claim) : undefined);
+
+export function parseTag(raw: unknown): Tag | undefined | { error: string } {
+	if (raw === undefined) return undefined;
+	if (!isObj(raw) || typeof raw.run !== "string" || !raw.run || typeof raw.package !== "string" || !raw.package) return { error: "tag must be {run, package} (non-empty strings)" };
+	return { run: raw.run, package: raw.package };
+}
+
+export interface DispatchReq {
+	brief: string;
+	size?: "small" | "normal" | "large";
+	tag?: Tag;
+	claim?: Claim;
+}
+/** `relay:dispatch {v:1, brief, size?, tag?, claim}` */
+export function parseDispatch(data: unknown): DispatchReq | { error: string; claim?: Claim } {
+	if (!isObj(data)) return { error: "relay:dispatch needs an object payload" };
+	const claim = claimOf(data);
+	const bad = (error: string) => ({ error: `relay:dispatch: ${error}`, claim });
+	if (data.v !== 1) return bad("unsupported version (v must be 1)");
+	if (typeof data.brief !== "string" || !data.brief.trim()) return bad("brief must be a non-empty string");
+	if (data.size !== undefined && data.size !== "small" && data.size !== "normal" && data.size !== "large") return bad('size must be "small", "normal" or "large"');
+	const tag = parseTag(data.tag);
+	if (tag && "error" in tag) return bad(tag.error);
+	return { brief: data.brief, size: data.size as DispatchReq["size"], tag: tag as Tag | undefined, claim };
+}
+
+export interface ControlReq {
+	job: string;
+	action: "stop" | "followup";
+	text?: string;
+	claim?: Claim;
+}
+/** `relay:control {v:1, job, action, text?, claim}` */
+export function parseControl(data: unknown): ControlReq | { error: string; claim?: Claim } {
+	if (!isObj(data)) return { error: "relay:control needs an object payload" };
+	const claim = claimOf(data);
+	const bad = (error: string) => ({ error: `relay:control: ${error}`, claim });
+	if (data.v !== 1) return bad("unsupported version (v must be 1)");
+	if (typeof data.job !== "string" || !JOB_ID.test(data.job)) return bad("job must be a job id");
+	if (data.action !== "stop" && data.action !== "followup") return bad('action must be "stop" or "followup"');
+	if (data.action === "followup" && (typeof data.text !== "string" || !data.text.trim())) return bad("followup needs text");
+	return { job: data.job, action: data.action, text: typeof data.text === "string" ? data.text : undefined, claim };
+}
+
+/** `relay:job-query {v:1, ids, claim}` */
+export function parseJobQuery(data: unknown): { ids: string[]; claim?: Claim } | { error: string; claim?: Claim } {
+	if (!isObj(data)) return { error: "relay:job-query needs an object payload" };
+	const claim = claimOf(data);
+	if (data.v !== 1) return { error: "relay:job-query: unsupported version (v must be 1)", claim };
+	if (!Array.isArray(data.ids) || !data.ids.every((x) => typeof x === "string")) return { error: "relay:job-query: ids must be a list of strings", claim };
+	return { ids: data.ids as string[], claim };
+}
+
+/** `relay:hosted {v:1, on, claim?}` */
+export function parseHosted(data: unknown): { on: boolean; claim?: Claim } | { error: string } {
+	if (!isObj(data)) return { error: "relay:hosted needs an object payload" };
+	if (data.v !== 1) return { error: "relay:hosted: unsupported version (v must be 1)" };
+	if (typeof data.on !== "boolean") return { error: "relay:hosted: on must be a boolean" };
+	return { on: data.on, claim: claimOf(data) };
+}

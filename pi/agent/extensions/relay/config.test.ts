@@ -11,7 +11,7 @@ test("no file or no object gives the defaults", () => {
 	assert.equal(parseConfig(5).warnings.length, 1);
 	assert.equal(DEFAULTS.editBudget.lines, 40);
 	assert.equal(DEFAULTS.maxJobs, 3);
-	assert.equal(DEFAULTS.defaultMerge, "pr-only");
+	assert.equal(DEFAULTS.defaultMerge, "after-pass");
 	assert.deepEqual(DEFAULTS.askUser, []);
 });
 
@@ -28,7 +28,7 @@ test("invalid keys fall back with a warning", () => {
 	assert.equal(r.config.roles.escalate.model, DEFAULTS.roles.escalate.model);
 	assert.deepEqual(r.config.roles.worker.small, { model: "p/m", thinking: "low" });
 	assert.deepEqual(r.config.askUser, []);
-	assert.equal(r.config.defaultMerge, "pr-only");
+	assert.equal(r.config.defaultMerge, "after-pass");
 	assert.ok(r.warnings.length >= 5, r.warnings.join("|"));
 });
 
@@ -46,7 +46,7 @@ test("repoPolicy: exact path, glob, owner/name suffix, defaults", () => {
 	assert.deepEqual(repoPolicy(c, "D:/work/foo").protectedBranches, ["release"]);
 	assert.deepEqual(repoPolicy(c, "/home/u/acme/app").sensitivePaths, ["x/**"]);
 	const d = repoPolicy(c, "/else");
-	assert.equal(d.merge, "pr-only");
+	assert.equal(d.merge, "after-pass");
 	assert.deepEqual(d.protectedBranches, ["main", "master"]);
 	assert.ok(d.sensitivePaths.includes("**/package.json") && d.sensitivePaths.includes(".github/workflows/**"));
 });

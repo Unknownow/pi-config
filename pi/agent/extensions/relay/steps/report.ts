@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { parseBrief } from "../brief.ts";
 import { parseFindings } from "../../shared/findings.ts";
-import { JOB_END, jobEndPayload } from "../events.ts";
+import { JOB_END, jobEndPayload, reposOf } from "../events.ts";
 import type { Job } from "../job.ts";
 import type { Step, StepCtx } from "../types.ts";
 
@@ -86,7 +86,7 @@ export const reportStep: Step = {
 		const how = howEnded(job);
 		const merged = job.repos.filter((r) => r.merged).length;
 		ctx.wake(`relay job ${job.id} ${how}: ${job.title}\n${job.endReason ?? `${merged}/${job.repos.length} repo(s) merged${job.repos.some((r) => r.pr) ? ", PR " + job.repos.filter((r) => r.pr).map((r) => r.pr).join(", ") : ""}`}\nReport: ${file}`);
-		ctx.emit(JOB_END, jobEndPayload(job.id, how, file));
+		ctx.emit(JOB_END, jobEndPayload(job.id, how, file, job.tag, { tokens: job.used.tokens, wallMs: job.used.wallMs }, reposOf(job), job.endReason));
 		return "cleanup";
 	},
 };

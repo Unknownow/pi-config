@@ -63,8 +63,8 @@ test("dispatch -> FAIL -> fix -> PASS -> delivery to the bare remote -> report.m
 		assert.ok(!w.wakes.some((x) => /FAIL/.test(x)));
 		assert.ok(w.wakes.some((x) => /judge PASS/.test(x)));
 		assert.ok(w.wakes.some((x) => /delivered/.test(x)));
-		assert.deepEqual(w.events.map((e) => e.name), ["relay:approval", "relay:job-start", "relay:job-end"]);
-		assert.equal(w.events[2].payload.how, "delivered");
+		assert.deepEqual(w.events.map((e) => e.name).filter((n) => n !== "relay:job-progress"), ["relay:approval", "relay:job-start", "relay:job-end"]);
+		assert.equal(w.events.find((e) => e.name === "relay:job-end")!.payload.how, "delivered");
 		// the worker was spawned with the contract's arguments
 		const rpc = w.calls().find((c) => c.mode === "rpc")!;
 		for (const f of ["-ne", "-ns", "-np", "--session-dir"]) assert.ok(rpc.args.includes(f), f);

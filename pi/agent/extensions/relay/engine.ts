@@ -5,7 +5,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { countTokens } from "../shared/tokens.ts";
-import { APPROVAL, approvalPayload } from "./events.ts";
+import { APPROVAL, approvalPayload, JOB_PROGRESS, JOB_START, jobProgressPayload, reposOf, type RepoOut, type Tag, type Used } from "./events.ts";
 import { type Brief, appendAmendment, briefFiles, checkBrief, parseBrief, replaceBrief } from "./brief.ts";
 import { filesOverlap } from "./glob.ts";
 import { parseFindings } from "../shared/findings.ts";
@@ -94,6 +94,19 @@ export interface EngineDeps {
 	heartbeatMs?: number;
 }
 
+export interface QueryJob {
+	id: string;
+	state: JobState | "unknown";
+	tag?: Tag;
+	used: Used;
+	repos: RepoOut[];
+	report?: string;
+	/** The job's endReason, when it has one. */
+	reason?: string;
+}
+
+const usedOf = (j: Job): Used => ({ tokens: j.used.tokens, wallMs: j.used.wallMs });
+
 class JobRun {
 	dir: string;
 	job: Job;
@@ -121,6 +134,10 @@ class JobRun {
 	recovering = false;
 	/** Set by stop() and the budget: a running step must wind down, whatever state it sets. */
 	stopRequested = false;
+	/** job-start was emitted for this run; job-progress follows it (never precedes). */
+	startedEmitted = false;
+	/** `state:round` of the last job-progress emitted. */
+	lastProgress = "";
 	abort = new AbortController();
 	constructor(dir: string, job: Job, lock: JobLock) {
 		this.dir = dir;
@@ -190,11 +207,21 @@ export class Engine {
 	private save(jr: JobRun) {
 		if (jr.lost) return;
 		writeJob(jr.dir, jr.job);
+		if (!jr.startedEmitted) return;
+		const key = `${jr.job.state}:${jr.job.round}`;
+		if (key === jr.lastProgress) return;
+		jr.lastProgress = key;
+		this.d.emit(JOB_PROGRESS, jobProgressPayload(jr.job.id, jr.job.state, jr.job.round, usedOf(jr.job), jr.job.tag));
+	}
+
+	/** Every wake of a tagged job starts with `[<package>] `. */
+	private wakeJob(job: Job, text: string) {
+		this.d.wake(job.tag ? `[${job.tag.package}] ${text}` : text);
 	}
 
 	// ------------------------------------------------------------------------------------------------ dispatch
 
-	async dispatch(input: { brief: string; size?: Size; overrides?: Job["overrides"]; draft?: string }): Promise<{ id: string; state: JobState; queued: boolean } | { error: string }> {
+	async dispatch(input: { brief: string; size?: Size; overrides?: Job["overrides"]; draft?: string; tag?: Tag }): Promise<{ id: string; state: JobState; queued: boolean } | { error: string }> {
 		const checked = checkBrief(input.brief);
 		if ("errors" in checked) return { error: `the brief is not complete:\n- ${checked.errors.join("\n- ")}` };
 		const brief = checked.brief;
@@ -215,6 +242,7 @@ export class Engine {
 		const job = emptyJob(id, title, id, input.size ?? brief.budget?.size ?? "normal", { wallMs: (brief.budget?.wallMin ?? cfg.budget.wallMin) * 60_000, tokens: brief.budget?.tokens ?? cfg.budget.tokens });
 		job.briefVersion = brief.version;
 		job.overrides = input.overrides ?? [];
+		if (input.tag) job.tag = input.tag;
 		for (const c of CATEGORIES) {
 			const a = brief.authority[c];
 			if (a?.value === "yes") job.approvals.push({ at: new Date(this.now()).toISOString(), item: a.specifics ?? "*", category: c, by: "brief", reason: "Authority in the brief" });
@@ -234,7 +262,7 @@ export class Engine {
 		}
 		const jr = new JobRun(dir, job, lock);
 		this.jobs.set(id, jr);
-		for (const a of job.approvals) this.d.emit(APPROVAL, approvalPayload(id, a.category, a.item, "brief", a.reason));
+		for (const a of job.approvals) this.d.emit(APPROVAL, approvalPayload(id, a.category, a.item, "brief", a.reason, job.tag));
 		this.noteOverlaps(jr, brief);
 		const waiting = brief.dependsOn && this.depState(brief.dependsOn) === "wait";
 		if (waiting || this.runningCount() >= cfg.maxJobs) {
@@ -365,7 +393,7 @@ export class Engine {
 						else {
 							jr.job.endReason = `${step} step failed: ${(e as Error).message}`;
 							jr.job.state = "failed";
-							this.d.wake(`relay job ${jr.job.id}: the ${step} step failed: ${(e as Error).message}. The job is failed; its set is kept.`);
+							this.wakeJob(jr.job, `relay job ${jr.job.id}: the ${step} step failed: ${(e as Error).message}. The job is failed; its set is kept.`);
 							next = "report";
 						}
 					}
@@ -423,7 +451,7 @@ export class Engine {
 			save: () => this.save(jr),
 			log: (kind, text) => appendLog(jr.dir, { kind, text }),
 			notify: (line) => d.notify(line),
-			wake: (text) => d.wake(text),
+			wake: (text) => this.wakeJob(jr.job, text),
 			isOwner: () => jr.lock.isOwner(),
 			stopped: () => jr.stopRequested || jr.lost,
 			wt: d.wt,
@@ -456,7 +484,13 @@ export class Engine {
 				jr.ws.alive = false;
 			},
 			review: (role, task, cwd) => this.review(role, task, cwd, jr.abort.signal),
-			emit: (n, p) => d.emit(n, p),
+			emit: (n, p) => {
+				d.emit(n, p);
+				if (n === JOB_START) {
+					jr.startedEmitted = true;
+					jr.lastProgress = `${jr.job.state}:${jr.job.round}`;
+				}
+			},
 			now: () => this.now(),
 			relayDir: this.relayDir,
 			leadCwd: d.leadCwd,
@@ -594,7 +628,7 @@ export class Engine {
 			this.dropWorker(jr);
 			if ((jr.job.restarts ?? 0) >= 1) {
 				this.pauseJob(jr, "working", `the worker ${why}; it was restarted once already`);
-				this.d.wake(`relay job ${jr.job.id}: the worker ${why} again after a restart. The job is paused (the set is kept; /wt open ${jr.job.set} to look). relay_resume ${jr.job.id} restarts it, or relay_stop.`);
+				this.wakeJob(jr.job, `relay job ${jr.job.id}: the worker ${why} again after a restart. The job is paused (the set is kept; /wt open ${jr.job.set} to look). relay_resume ${jr.job.id} restarts it, or relay_stop.`);
 				return;
 			}
 			jr.job.restarts = 1;
@@ -604,7 +638,7 @@ export class Engine {
 		} catch (e) {
 			if (jr.lost) return;
 			this.pauseJob(jr, "working", `restart failed: ${(e as Error).message}`);
-			this.d.wake(`relay job ${jr.job.id}: the worker ${why} and could not be restarted (${(e as Error).message}). The job is paused; relay_resume or relay_stop.`);
+			this.wakeJob(jr.job, `relay job ${jr.job.id}: the worker ${why} and could not be restarted (${(e as Error).message}). The job is paused; relay_resume or relay_stop.`);
 		} finally {
 			jr.recovering = false;
 			if (!jr.driving && !jr.ended) void this.drive(jr);
@@ -676,7 +710,7 @@ export class Engine {
 				jr.abort.abort();
 				await jr.worker?.abort();
 				this.save(jr);
-				this.d.wake(`relay job ${jr.job.id}: stopped, ${b.why}. The set is kept.`);
+				this.wakeJob(jr.job, `relay job ${jr.job.id}: stopped, ${b.why}. The set is kept.`);
 				void this.drive(jr);
 				continue;
 			}
@@ -700,11 +734,11 @@ export class Engine {
 			else if (m.type === "ask") {
 				jr.asks.set(m.id, m);
 				jr.ws.openAsks.push(m.id);
-				this.d.wake(`relay job ${jr.job.id}: the worker asks (${m.id}): ${m.question}\nAnswer with relay_approve {job: "${jr.job.id}", askId: "${m.id}", approve: true, reason: "<your answer>"}.`);
+				this.wakeJob(jr.job, `relay job ${jr.job.id}: the worker asks (${m.id}): ${m.question}\nAnswer with relay_approve {job: "${jr.job.id}", askId: "${m.id}", approve: true, reason: "<your answer>"}.`);
 			} else if (m.type === "approval") {
 				jr.asks.set(m.id, m);
 				jr.ws.openAsks.push(m.id);
-				this.d.wake(`relay job ${jr.job.id}: the worker asks approval (${m.id}) for [${m.category}] ${m.item}: ${m.why}\nrelay_approve {job: "${jr.job.id}", askId: "${m.id}", approve: true|false, reason}.`);
+				this.wakeJob(jr.job, `relay job ${jr.job.id}: the worker asks approval (${m.id}) for [${m.category}] ${m.item}: ${m.why}\nrelay_approve {job: "${jr.job.id}", askId: "${m.id}", approve: true|false, reason}.`);
 			}
 		}
 		if (msgs.length && jr.job.state === "working" && !jr.driving && jr.ws.done !== undefined) void this.drive(jr);
@@ -753,7 +787,7 @@ export class Engine {
 		this.save(jr);
 		append(inbox, { type: "approve", replyTo: askId, reason });
 		open();
-		this.d.emit(APPROVAL, approvalPayload(id, ask.category, ask.item, "lead", reason));
+		this.d.emit(APPROVAL, approvalPayload(id, ask.category, ask.item, "lead", reason, jr.job.tag));
 		appendLog(jr.dir, { kind: "approval", text: `[${ask.category}] ${ask.item}: ${reason}` });
 		return { ok: true, text: "approved" };
 	}
@@ -1075,7 +1109,7 @@ export class Engine {
 			} catch (e) {
 				if (jr.lost) continue;
 				this.pauseJob(jr, "working", `adoption failed: ${(e as Error).message}`);
-				this.d.wake(`relay job ${job.id}: ${how}, but its worker could not be restarted (${(e as Error).message}). The job is paused; relay_resume or relay_stop.`);
+				this.wakeJob(job, `relay job ${job.id}: ${how}, but its worker could not be restarted (${(e as Error).message}). The job is paused; relay_resume or relay_stop.`);
 			}
 		}
 		this.startQueued();
@@ -1212,6 +1246,16 @@ export class Engine {
 				const wall = Math.round(j.used.wallMs / 60_000);
 				return `relay ${j.id} ${j.state} r${j.round + 1}${j.escalated ? "e" : ""} ${wall}/${Math.round(j.budget.wallMs / 60_000)}m ${Math.round((j.used.tokens / j.budget.tokens) * 100)}% tok${j.dependsOn ? ` <- ${j.dependsOn}` : ""}`;
 			});
+	}
+
+	/** Structured state of jobs by id: this lead's own, or read from job.json (earlier sessions, adopted jobs). */
+	query(ids: string[]): QueryJob[] {
+		return ids.map((id) => {
+			const j = this.peek(id);
+			if (!j) return { id, state: "unknown", used: { tokens: 0, wallMs: 0 }, repos: [] };
+			const report = path.join(jobDir(this.d.root, id), "report.md");
+			return { id, state: j.state, ...(j.tag ? { tag: j.tag } : {}), used: usedOf(j), repos: reposOf(j), ...(fs.existsSync(report) ? { report } : {}), ...(j.endReason ? { reason: j.endReason } : {}) };
+		});
 	}
 
 	status(id?: string): string {

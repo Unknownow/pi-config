@@ -13,12 +13,13 @@ import { classifyCommand } from "./authority.ts";
 import { editBudgetProblem, measureEdits } from "./budget.ts";
 import { type RelayConfig, configPath, loadConfig, repoPolicy, saveRole } from "./config.ts";
 import { Engine } from "./engine.ts";
-import { Activation, parseFlowActive } from "./events.ts";
+import { Activation, parseControl, parseDispatch, parseFlowActive, parseHosted, parseJobQuery, type Tag } from "./events.ts";
 import { foldersFromEntries } from "./folders.ts";
 import { jobRoot } from "./job.ts";
 import { type Run, run as realRun } from "./sh.ts";
 import { runCritic } from "./steps/critic.ts";
 import type { EngineDeps } from "./engine.ts";
+import type { Size } from "./config.ts";
 import type { Wt } from "./types.ts";
 
 export const KICKOFF = "Go. Write the brief now (all sections, Authority with all six categories), run relay_critic on it, revise on its findings (up to 3 rounds, passing the draft id back), then relay_dispatch it. After that, tell me the job id and stop; relay reports when it is done.";
@@ -52,6 +53,8 @@ export function createLead(pi: ExtensionAPI, d: LeadDeps) {
 	const act = new Activation({ active: () => cfg.active, cwd: d.cwd, role: env.RELAY_ROLE, emit: (data) => pi.events.emit("flow:active", data), timeoutMs: d.timeoutMs });
 	let engine: Engine | undefined;
 	let lastCtx: any;
+	/** relay:hosted: an orchestrator hosts this session; lead mode is decided at once, no prompt section, no "go" hook. */
+	let hosted = false;
 	let overBudgetNoted = false;
 	let scanTimer: ReturnType<typeof setInterval> | undefined;
 	let scans = 0;
@@ -193,12 +196,13 @@ export function createLead(pi: ExtensionAPI, d: LeadDeps) {
 
 	pi.on("before_agent_start", async (event: any, ctx: any) => {
 		if (!(await leadOn(ctx))) return;
+		if (hosted) return;
 		const sections = event?.systemPromptOptions?.sections;
 		if (sections) sections.relay = fs.readFileSync(path.join(d.relayDir, "prompts", "lead.md"), "utf8");
 	});
 
 	pi.on("input", async (event: any, ctx: any) => {
-		if (event.source === "extension") return { action: "continue" };
+		if (event.source === "extension" || hosted) return { action: "continue" };
 		const typed = String(event.text ?? "").trim();
 		if (!typed || typed.startsWith("/")) return { action: "continue" };
 		if (!(await leadOn(ctx))) return { action: "continue" };
@@ -239,6 +243,7 @@ export function createLead(pi: ExtensionAPI, d: LeadDeps) {
 
 	pi.on("session_shutdown", async () => {
 		unsubK16?.();
+		unsubBus();
 		if (scanTimer) clearInterval(scanTimer);
 		if (widgetTimer) clearInterval(widgetTimer);
 		await engine?.shutdown();
@@ -264,6 +269,32 @@ export function createLead(pi: ExtensionAPI, d: LeadDeps) {
 
 	const T = d.Type;
 	const needsLead = async (ctx: any) => ((await leadOn(ctx)) ? undefined : off());
+	const offMsg = () => `relay: lead mode is off (${act.reason || "not decided"}); /relay on asks again.`;
+	/** Tool text of an action error: the tool name in front, except for messages that already start with "relay:". */
+	const fmt = (tool: string, e: string) => text(e.startsWith("relay:") ? e : `${tool}: ${e}`);
+
+	// One implementation per action, shared by the tools and the relay:* listeners.
+	async function doDispatch(ctx: any, p: { brief: string; size?: string; draft?: string; overrides?: any; tag?: Tag }): Promise<{ id: string; queued: boolean } | { error: string }> {
+		if (!(await leadOn(ctx))) return { error: offMsg() };
+		if (act.jobSet) return { error: "this session is inside a job's worktree; it cannot dispatch jobs." };
+		const eng = await engineFor(ctx);
+		if ("error" in eng) return { error: eng.error };
+		if (p.size !== undefined && !["small", "normal", "large"].includes(p.size)) return { error: 'size must be "small", "normal" or "large"' };
+		const r = await eng.dispatch({ brief: p.brief, size: p.size as Size | undefined, draft: p.draft, overrides: p.overrides, tag: p.tag });
+		return "error" in r ? { error: r.error } : { id: r.id, queued: r.queued };
+	}
+	async function doStop(ctx: any, id: string): Promise<{ ok: true } | { error: string }> {
+		if (!(await leadOn(ctx))) return { error: offMsg() };
+		if (!engine) return { error: "no jobs in this session" };
+		return engine.stop(id);
+	}
+	async function doFollowup(ctx: any, id: string, words: string): Promise<{ ok: true; n: number; queued: boolean } | { error: string }> {
+		if (!(await leadOn(ctx))) return { error: offMsg() };
+		if (act.jobSet) return { error: "this session is inside a job's worktree." };
+		const eng = await engineFor(ctx);
+		if ("error" in eng) return { error: eng.error };
+		return eng.followup(id, words);
+	}
 
 	pi.registerTool({
 		name: "relay_critic",
@@ -295,14 +326,8 @@ export function createLead(pi: ExtensionAPI, d: LeadDeps) {
 			overrides: T.Optional(T.Array(T.Object({ decision: T.String(), finding: T.String(), reason: T.String() }), { description: "Locked decisions you overrode, with the finding and the reason" })),
 		}),
 		async execute(_id: string, p: any, _s: any, _u: any, ctx: any) {
-			const refuse = await needsLead(ctx);
-			if (refuse) return refuse;
-			if (act.jobSet) return text("relay_dispatch: this session is inside a job's worktree; it cannot dispatch jobs.");
-			const eng = await engineFor(ctx);
-			if ("error" in eng) return text(`relay_dispatch: ${eng.error}`);
-			if (p.size !== undefined && !["small", "normal", "large"].includes(p.size)) return text('relay_dispatch: size must be "small", "normal" or "large"');
-			const r = await eng.dispatch({ brief: p.brief, size: p.size, draft: p.draft, overrides: p.overrides });
-			if ("error" in r) return text(`relay_dispatch: ${r.error}`);
+			const r = await doDispatch(ctx, p);
+			if ("error" in r) return fmt("relay_dispatch", r.error);
 			return text(`job ${r.id} ${r.queued ? `queued (${cfg.maxJobs} jobs are running)` : "started"}. relay reports when it is done; relay_status ${r.id} shows progress.`, { id: r.id });
 		},
 	});
@@ -342,11 +367,8 @@ export function createLead(pi: ExtensionAPI, d: LeadDeps) {
 		promptSnippet: "relay_stop: stop a job",
 		parameters: T.Object({ job: T.String() }),
 		async execute(_id: string, p: any, _s: any, _u: any, ctx: any) {
-			const refuse = await needsLead(ctx);
-			if (refuse) return refuse;
-			if (!engine) return text("relay_stop: no jobs in this session");
-			const r = await engine.stop(p.job);
-			return text("error" in r ? `relay_stop: ${r.error}` : `job ${p.job} stopped; report written.`);
+			const r = await doStop(ctx, p.job);
+			return "error" in r ? fmt("relay_stop", r.error) : text(`job ${p.job} stopped; report written.`);
 		},
 	});
 
@@ -440,14 +462,77 @@ export function createLead(pi: ExtensionAPI, d: LeadDeps) {
 		promptSnippet: "relay_followup: continue a finished job with a change",
 		parameters: T.Object({ job: T.String(), text: T.String({ description: "What the follow-up asks for" }) }),
 		async execute(_id: string, p: any, _s: any, _u: any, ctx: any) {
-			const refuse = await needsLead(ctx);
-			if (refuse) return refuse;
-			if (act.jobSet) return text("relay_followup: this session is inside a job's worktree.");
-			const eng = await engineFor(ctx);
-			if ("error" in eng) return text(`relay_followup: ${eng.error}`);
-			const r = await eng.followup(p.job, p.text);
-			return text("error" in r ? `relay_followup: ${r.error}` : `follow-up ${r.n} of job ${p.job} ${r.queued ? "queued" : "started"}. relay reports when it is done.`);
+			const r = await doFollowup(ctx, p.job, p.text);
+			return "error" in r ? fmt("relay_followup", r.error) : text(`follow-up ${r.n} of job ${p.job} ${r.queued ? "queued" : "started"}. relay reports when it is done.`);
 		},
+	});
+
+	// ----------------------------------------------------------------------------------------- bus contracts
+
+	type Claim = ((answer: unknown) => void) | undefined;
+	/** Answers a claim with the result of `work` (the claim is made synchronously, as the claim pattern needs). */
+	const answerWith = (claim: Claim, work: () => Promise<unknown>) => claim?.(work().catch((e: Error) => ({ error: String(e?.message ?? e) })));
+
+	function onDispatch(data: unknown) {
+		const p = parseDispatch(data);
+		if ("error" in p) return p.claim?.({ error: p.error });
+		answerWith(p.claim, async () => {
+			if (!lastCtx) return { error: "relay:dispatch: no session context yet" };
+			const r = await doDispatch(lastCtx, { brief: p.brief, size: p.size, tag: p.tag });
+			return "error" in r ? { error: r.error } : { id: r.id, queued: r.queued };
+		});
+	}
+	function onControl(data: unknown) {
+		const p = parseControl(data);
+		if ("error" in p) return p.claim?.({ error: p.error });
+		answerWith(p.claim, async () => {
+			if (!lastCtx) return { error: "relay:control: no session context yet" };
+			if (p.action === "stop") {
+				const r = await doStop(lastCtx, p.job);
+				return "error" in r ? { error: r.error } : { ok: true, job: p.job };
+			}
+			const r = await doFollowup(lastCtx, p.job, p.text!);
+			return "error" in r ? { error: r.error } : { ok: true, job: p.job, n: r.n, queued: r.queued };
+		});
+	}
+	function onJobQuery(data: unknown) {
+		const p = parseJobQuery(data);
+		if ("error" in p) return p.claim?.({ error: p.error });
+		answerWith(p.claim, async () => {
+			if (!lastCtx) return { error: "relay:job-query: no session context yet" };
+			const eng = await engineFor(lastCtx);
+			if ("error" in eng) return { error: eng.error };
+			return { jobs: eng.query(p.ids) };
+		});
+	}
+	function onHosted(data: unknown) {
+		const p = parseHosted(data);
+		if ("error" in p) return;
+		hosted = p.on;
+		answerWith(p.claim, async () => {
+			if (!lastCtx) return { on: p.on, mode: "off", reason: "no session context" };
+			const on = p.on ? await leadOn(lastCtx) : act.mode === "on";
+			return { on: p.on, mode: on ? "on" : "off", ...(on || !act.reason ? {} : { reason: act.reason }) };
+		});
+		// hosted without a claim still decides lead mode at once
+		if (!p.claim && p.on && lastCtx) void leadOn(lastCtx);
+	}
+
+	let unsubBus = () => {};
+	function registerBus() {
+		unsubBus();
+		const subs = [pi.events.on("relay:dispatch", onDispatch), pi.events.on("relay:control", onControl), pi.events.on("relay:job-query", onJobQuery), pi.events.on("relay:hosted", onHosted)];
+		unsubBus = () => {
+			for (const u of subs) (u as unknown as (() => void) | undefined)?.();
+			unsubBus = () => {};
+		};
+	}
+	registerBus();
+
+	pi.on("session_start", async (_event: any, ctx: any) => {
+		lastCtx = ctx;
+		registerBus();
+		if (hosted) await leadOn(ctx);
 	});
 
 	// ----------------------------------------------------------------------------------------- commands

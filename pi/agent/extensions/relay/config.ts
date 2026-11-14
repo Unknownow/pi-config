@@ -84,7 +84,7 @@ export const DEFAULTS: RelayConfig = {
 	worker: { extensions: [] },
 	reviewer: { extensions: [] },
 	repos: {},
-	defaultMerge: "pr-only",
+	defaultMerge: "after-pass",
 	askUser: [],
 	knowledge: {
 		server: "knowledge",
@@ -211,7 +211,7 @@ export function parseConfig(raw: unknown): Loaded {
 		}
 	}
 	if (raw.defaultMerge === "after-pass" || raw.defaultMerge === "pr-only") c.defaultMerge = raw.defaultMerge;
-	else if (raw.defaultMerge !== undefined) warn('defaultMerge: expected "after-pass" or "pr-only"; using "pr-only"');
+	else if (raw.defaultMerge !== undefined) warn(`defaultMerge: expected "after-pass" or "pr-only"; using "${DEFAULTS.defaultMerge}"`);
 	if (raw.askUser !== undefined) {
 		if (isStrings(raw.askUser) && raw.askUser.every((x) => (CATEGORIES as readonly string[]).includes(x))) c.askUser = raw.askUser as Category[];
 		else warn(`askUser: expected a list of ${CATEGORIES.join(", ")}; using none`);

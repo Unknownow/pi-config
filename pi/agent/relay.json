@@ -21,6 +21,6 @@
   "worker": { "extensions": ["~/.pi/agent/npm/node_modules/pi-claude-bridge/src/index.ts"] },
   "reviewer": { "extensions": ["~/.pi/agent/npm/node_modules/pi-claude-bridge/src/index.ts"] },
   "repos": {},
-  "defaultMerge": "pr-only",
+  "defaultMerge": "after-pass",
   "askUser": []
 }

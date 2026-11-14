@@ -117,7 +117,7 @@ Per repo, in Targets order: `git fetch`, then `git rebase origin/<target>`. A cl
 - **First push:** `git push origin HEAD:<remoteBranch>`; the branch must not exist on origin (otherwise delivery stops and the lead is woken). `remoteBranch` is set to the branch name at this push.
 - **Later pushes** (after a delivery rebase): `git push --force-with-lease=<remoteBranch>:<remotePushed> origin HEAD:<remoteBranch>`, only on the job's own branch, never the target or a protected branch. After each push `remotePushed` is the sha pushed. A lease failure means someone else pushed (for example you after `/wt open`): delivery stops, the lead is woken, nothing is overwritten.
 - `push-guard.ts` (copy) lets these pushes through only when the delivery step passes a `lease`; the worker guard refuses every push.
-- With GitHub (`gh repo view` works) a PR is created when none is open. **Merge** when Authority `merge` is yes (or approved), or when the repo's `merge` is `after-pass` and Authority is not `no`: `gateCheck` on the accepted tree, then `gh pr merge --squash --match-head-commit <sha>`; without GitHub a fast-forward `git push origin <sha>:<target>` (if the target moved, rebase again, up to 3 times). Otherwise (`pr-only`) the set is kept until the PR merges; the PR-only cleanup (below) removes it later.
+- With GitHub (`gh repo view` works) a PR is created when none is open. **Merge** when Authority `merge` is yes (or approved), or when the repo's `merge` is `after-pass` and Authority is not `no`: `gateCheck` on the accepted tree, then `gh pr merge --squash --match-head-commit <sha>`; without GitHub a fast-forward `git push origin <sha>:<target>` (if the target moved, rebase again, up to 3 times). Merging after PASS is the default (`defaultMerge` is `after-pass`), also for `merge: n/a`. To opt out put `merge: no` in a brief, or `pr-only` for the repo in relay.json `repos`. Otherwise (`pr-only`, or Authority `no`) the set is kept until the PR merges; the PR-only cleanup (below) removes it later.
 - After all merges the `Publish` commands run, only with `publish: yes`.
 
 ## Config: `relay.json`
@@ -137,7 +137,7 @@ The path is `RELAY_CONFIG`, or else `<agent dir>/relay.json`. Invalid keys fall 
 | `reviewer.extensions` | `[]`; the critic and judge load these next to `reviewer.ts` (normally the model provider, e.g. `~/.pi/agent/npm/node_modules/pi-claude-bridge/src/index.ts`) |
 | `worker.extensions` | `[]` (the worker's `-e` list is `worker.ts` plus these, plus `builtin:mcp` and `mcp-forward.ts` only when the knowledge server is registered) |
 | `repos` | `{"<path glob or owner/name>": {merge: "after-pass"\|"pr-only", protectedBranches, sensitivePaths}}` |
-| `defaultMerge` | `"pr-only"` |
+| `defaultMerge` | `"after-pass"` (`"pr-only"` opts out for all repos; a brief with `merge: no` opts out for one job) |
 | `askUser` | `[]` (categories the lead must ask you about before approving) |
 | `knowledge` | as in `workflow.json` |
 | `judge.maxDiffChars` | `400000` |
@@ -167,7 +167,23 @@ The numbers are starting values, to be tuned after first use.
 
 ## Events
 
-`v: 1` on all: `relay:job-start {v, job, title, repos}`, `relay:job-end {v, job, how: "delivered"|"stopped"|"failed", report}`, `relay:approval {v, job, category, item, by: "brief"|"lead", reason}`.
+All payloads are `v: 1`. Fields marked optional are additive.
+
+**Emitted**
+
+- `relay:job-start {v, job, title, repos, tag?}`
+- `relay:job-progress {v, job, tag?, state, round, used: {tokens, wallMs}}`: emitted whenever a job is saved with a `(state, round)` different from the last one emitted for it, never before that job's `relay:job-start`. Order per job: `job-start` -> `job-progress`* -> `job-end`.
+- `relay:job-end {v, job, how: "delivered"|"stopped"|"failed", report, tag?, used?: {tokens, wallMs}, repos?: [{key, pr?, merged}], reason?}`: `used.tokens` is weighted, as in job.json; `reason` is the job's `endReason` (e.g. `budget: ...`, `stopped by the lead`) when it has one.
+- `relay:approval {v, job, category, item, by: "brief"|"lead", reason, tag?}`
+
+**The tag.** `tag: {run, package}` is given at `relay:dispatch`, stored in job.json and echoed in the events above. Every wake text of a tagged job starts with `[<package>] `.
+
+**Contracts relay answers** (claim pattern, `shared/claims.ts`: the listener calls `claim(promise)` synchronously; the answer is `{error}` on refusal). Relay unsubscribes them at `session_shutdown`.
+
+- `relay:dispatch {v:1, brief, size?, tag?: {run, package}, claim}` -> `{id, queued}` or `{error}`. Dispatches exactly like `relay_dispatch`. Answers `{error}` in a job-set session, in a relay worker/reviewer, outside a git repo, when lead mode is refused (K16) and before the first `session_start` (no session context).
+- `relay:control {v:1, job, action: "stop"|"followup", text?, claim}` -> `{ok: true, job, n?, queued?}` or `{error}`. Runs the same code as `relay_stop` / `relay_followup`; `n` and `queued` come with a follow-up (the job id stays the same); `followup` requires `text`.
+- `relay:job-query {v:1, ids: string[], claim}` -> `{jobs: [{id, state, tag?, used: {tokens, wallMs}, repos: [{key, pr?, merged}], report?, reason?}]}` or `{error}` (no session context, or not a git repo). Jobs are found in memory or in their job.json (earlier sessions and adopted jobs included); an id neither knows has `state: "unknown"`. `report` is the report.md path when it exists (the same value as `relay:job-end.report`); `reason` is the job's `endReason`. Lead mode is not needed; an engine is started if there is none.
+- `relay:hosted {v:1, on: boolean, claim?}`: hosted mode for a session an orchestrator drives. While on, relay decides lead mode at once (engine, wakes and K16 ready), the typed "go" hook passes input through and the lead prompt section is not added; tools, engine, wakes, adoption and the edit budget keep working. Off restores the prompt section and the "go" hook. With a `claim` the answer is `{on, mode: "on"|"off", reason?}` (e.g. workflow owns the session). Before the first `session_start` the flag is set, the answer is `{on, mode: "off", reason: "no session context"}` and lead mode is decided at `session_start`.
 
 ## Tools and commands
 
