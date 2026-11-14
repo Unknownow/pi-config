@@ -1115,8 +1115,10 @@ The rest of S15 stays: prompt, typed "go", edit budget including the bash re-mea
 - [x] S27 Resume and adoption. In `leadOn(ctx)`, after lead mode turns on:
 - [x] S28 Pause and takeover.
 - [x] S29 Follow-up on a finished job: `relay_followup {job, text}` (`steps/followup.ts`). For a job in `done`, `stopped` or `fail
-- [ ] S30 Queue and overlap.
-- [ ] S31 Stacked jobs (D17).
-- [ ] S32 `relay_add_repo {job, folder, target}`. Emits W3. On success it adds the repo, with `base` = `origin/<target>` and the r
-- [ ] S33 Widget and log.
-- [ ] S34 Docs.
+- [x] S30 Queue and overlap.
+- [x] S31 Stacked jobs (D17).
+- [x] S32 `relay_add_repo {job, folder, target}`. Emits W3. On success it adds the repo, with `base` = `origin/<target>` and the r
+- [x] S33 Widget and log.
+- [x] S34 Docs.
+## Outcome
+2026-11-14T12:21:44.883Z — ok: stage 1: flow/merge-fixes-and-autonomy, 7 commits since the review base; stage 2: flow/merge-fixes-and-autonomy, 10 commits since the review base; stage 3: flow/merge-fixes-and-autonomy, 5 commits since the review base; stage 4: master, 1 commit since the review base, PR #43 MERGED https://github.com/Unknownow/pi-config/pull/43

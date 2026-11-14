@@ -1,10 +1,9 @@
 {
   "v": 1,
   "flowId": "20261114-1511-relay-an-autonomous-lead-worker-judge-ex-ef67",
-  "rev": 4,
-  "updated": "2026-11-14T11:26:37.500Z",
+  "rev": 5,
+  "updated": "2026-11-14T12:21:45.009Z",
   "title": "`relay`, an autonomous lead/worker/judge extension",
-  "stage": 4,
   "done": [
     "S1",
     "S2",
@@ -34,10 +33,20 @@
     "S26",
     "S27",
     "S28",
-    "S29"
+    "S29",
+    "S30",
+    "S31",
+    "S32",
+    "S33",
+    "S34"
   ],
+  "finished": {
+    "at": "2026-11-14T12:21:44.883Z",
+    "ok": true,
+    "text": "stage 1: flow/merge-fixes-and-autonomy, 7 commits since the review base; stage 2: flow/merge-fixes-and-autonomy, 10 commits since the review base; stage 3: flow/merge-fixes-and-autonomy, 5 commits since the review base; stage 4: master, 1 commit since the review base, PR #43 MERGED https://github.com/Unknownow/pi-config/pull/43"
+  },
   "reviewBase": {
-    "d:/works/pi-config": "e1df1aa8789f1cc99d76c029b2faf3099fe77249"
+    "d:/works/pi-config": "16c15359f730e1e7f187e67e6822d66ca0c11a21"
   },
   "passedTrees": {
     "d:/works/pi-config": [
@@ -47,12 +56,24 @@
       "05b80603d268c656c153aece4ce49351ecf0c789",
       "40550df76c6d4a35f7299b5f1ec58b7d520a45ae",
       "fd2ffd0770a118f5b1f0ae4c6cee8d0bee96dc55",
-      "2eca7956354d7e030372ae79af74110d767283e8"
+      "2eca7956354d7e030372ae79af74110d767283e8",
+      "56bfae9ab82f521542c064ba6c5db1ca8d36429c",
+      "1151c292c9fd4d988af2c55002c942dfee29e589",
+      "b8786be8325ee2ea0e136bf63f435436d313a364",
+      "3a2f0aa13a89e7a9698507e80a25aa767d1668a9",
+      "4053ee32db6507a280965176b643a85956125cb9"
     ]
+  },
+  "judgedMerges": {
+    "d:/works/pi-config": {
+      "pr": "43",
+      "tree": "4053ee32db6507a280965176b643a85956125cb9",
+      "stage": 4
+    }
   },
   "repos": [
     {
-      "branch": "flow/merge-fixes-and-autonomy",
+      "branch": "master",
       "remote": "github.com/Unknownow/pi-config",
       "primary": true
     }
