@@ -27,7 +27,7 @@ export function wtCompletions(prefix: string, sets: () => string[]): Autocomplet
 			const found = sets().filter((n) => n.startsWith(m[2])).map((n) => ({ value: `${sub} ${n}`, label: n, description: `worktree set (${sub})` }));
 			return found.length ? found : null;
 		}
-		if (/\s/.test(prefix.trim())) return null;
+		if (/\s/.test(prefix.trimStart())) return null;
 		return subcommandCompletions(WT_SUBS, prefix);
 	});
 }
