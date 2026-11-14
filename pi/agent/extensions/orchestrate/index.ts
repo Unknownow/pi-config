@@ -184,6 +184,8 @@ export default function (pi: ExtensionAPI): void {
 	const myBranches: string[] = [];
 	/** Verdicts already handed to the model (no wait was set then): the replay must not send them again. */
 	const toldModel = new Set<string>();
+	/** Directives and info that arrived while the plan was under review (sent after the verdict). */
+	const heldDuringReview: { type: string; text: string; data?: Record<string, unknown> }[] = [];
 	const acceptanceOf = (k: Record<string, unknown> | undefined): { tree: string; since: string } | undefined => {
 		const a = k?.acceptance as { tree?: unknown; since?: unknown } | undefined;
 		return a && typeof a.tree === "string" && a.tree && typeof a.since === "string" ? { tree: a.tree, since: a.since } : undefined;
@@ -476,13 +478,18 @@ export default function (pi: ExtensionAPI): void {
 		const cur = f(me, "inbox.read");
 		const r = readNew(file, readCursor(cur));
 		for (const m of r.msgs) {
+			// no directive or info reaches the executor while its plan is under review: hold it until the verdict
+			if (k10 && (m.type === "directive" || m.type === "info")) {
+				heldDuringReview.push(m);
+				continue;
+			}
 			const pending = m.replyTo ? pendingAsk.get(m.replyTo) : undefined;
 			if (m.type === "answer" && pending) {
 				pending(m);
 			} else if (m.type === "plan-verdict") {
 				const approve = m.data?.approve === true;
 				if (k10 && verdictMatches(k10.n, m)) {
-					k10.resolve(approve ? { approve: true } : { reject: m.text || "the orchestrator rejected the plan" });
+					k10.resolve(approve ? { approve: true, ...(typeof m.data?.notes === "string" && m.data.notes ? { notes: m.data.notes } : {}) } : { reject: m.text || "the orchestrator rejected the plan" });
 					k10 = null;
 					say(approve ? "plan approved by the orchestrator" : `plan rejected: ${m.text}`);
 				} else {
@@ -513,6 +520,10 @@ export default function (pi: ExtensionAPI): void {
 				sendToModel("orchestrate-message", `Orchestrator${m.type === "accept-verdict" ? ` (acceptance ${m.data?.accept === true ? "granted" : "refused"})` : ""}: ${m.text}`);
 			}
 		}
+		// after the workflow has acted on the verdict (its continuation runs as a microtask)
+		if (!k10 && heldDuringReview.length) setTimeout(() => {
+			if (!k10) for (const m of heldDuringReview.splice(0)) sendToModel("orchestrate-message", `Orchestrator ${m.type === "directive" ? "directive" : "info"}: ${m.text}`, m.data?.urgent === true ? "steer" : "followUp");
+		}, 0);
 		if (r.cursor !== readCursor(cur) || r.bad) writeCursor(cur, r.cursor);
 		if (r.bad) say(`${r.bad} unreadable line(s) in the inbox were skipped`, "warning");
 		updateSubStatus();
@@ -2017,6 +2028,7 @@ export default function (pi: ExtensionAPI): void {
 			if (answered && answered.kind !== "question" && answered.kind !== "idle") throw new Error(`${params.replyTo} is a ${answered.kind} item: answer it with ${answered.kind === "menu" || answered.kind === "wait" ? "orch_decide" : answered.kind === "plan-review" ? "orch_review_plan" : "orch_accept"}, not orch_send`);
 			if (answered?.kind === "question" && params.type !== "answer") throw new Error(`${params.replyTo} is a question: answer it with type "answer" (a ${params.type} would leave the sub-session waiting)`);
 			// an escalated idle report is answered by the user: any message to that package needs their quote
+			if ((params.type === "directive" || params.type === "info") && liveItems(itemsFile, params.id).some((i) => i.kind === "plan-review")) throw new Error(`${params.id} has a plan under review: use orch_review_plan notes or reasons, not a ${params.type}`);
 			const idleEsc = params.replyTo ? undefined : liveItems(itemsFile, params.id).find((i) => i.kind === "idle" && i.state === "escalated");
 			const subject = answered ?? idleEsc;
 			const bad = subject ? checkItemAnswer(subject, params.userQuote) : null;
@@ -2034,7 +2046,7 @@ export default function (pi: ExtensionAPI): void {
 	pi.registerTool({
 		name: "orch_review_plan",
 		label: "Orchestrate: review plan",
-		description: "Give the verdict on a sub-session's plan after reading it. Refuse a plan that does not cover every stage the brief asks for. With confirmPlans on, the user confirms an approval from your summary. Give reasons when rejecting. If the plan file ends in `## Open judge findings`, weigh them: reject with instructions for the ones to fix and settle the \"needs a decision\" ones in the reject text, or approve.",
+		description: "Give the verdict on a sub-session's plan after reading it. Refuse a plan that does not cover every stage the brief asks for. With confirmPlans on, the user confirms an approval from your summary. Approve with notes (the notes parameter) for anything extra the executor should apply; reject only for a blocker or major problem; never send a directive to change an approved plan. Give reasons when rejecting. If the plan file ends in `## Open judge findings`, weigh them: reject with instructions for the ones to fix and settle the \"needs a decision\" ones in the reject text, or approve.",
 		promptSnippet: "orch_review_plan: approve or reject a sub-session's plan",
 		parameters: Type.Object({
 			id: Type.String(),
@@ -2042,6 +2054,7 @@ export default function (pi: ExtensionAPI): void {
 			approve: Type.Boolean(),
 			summary: Type.String({ description: "One line: what the plan does and why it fits the brief" }),
 			reasons: Type.Optional(Type.String({ description: "Required when rejecting: what to change" })),
+			notes: Type.Optional(Type.String({ description: "Approve only: extra instructions appended to the approved plan as `## Orchestrator notes`; the executor applies them without a new plan" })),
 			userQuote: Type.Optional(Type.String({ description: "A plan review that was escalated to the user: an exact piece of a message they typed after the escalation" })),
 		}),
 		async execute(_id, params, _s, _u, ctx) {
@@ -2063,7 +2076,7 @@ export default function (pi: ExtensionAPI): void {
 				}
 			}
 			if (!approve && !reasons) throw new Error("reasons are required when rejecting a plan");
-			appendMessage(sf(o, params.id, "inbox.jsonl"), "orch", { type: "plan-verdict", text: approve ? "approved" : reasons, data: { approve, n: params.n } });
+			appendMessage(sf(o, params.id, "inbox.jsonl"), "orch", { type: "plan-verdict", text: approve ? "approved" : reasons, data: { approve, n: params.n, ...(approve && params.notes?.trim() ? { notes: params.notes.trim() } : {}) } });
 			if (planItem) closeItem(params.id, planItem.ref, "answered", quoteOk(planItem, params.userQuote), approve ? "approved" : "rejected");
 			return text(approve ? `plan ${params.n} of ${params.id} approved` : `plan ${params.n} of ${params.id} rejected: ${reasons}`);
 		},

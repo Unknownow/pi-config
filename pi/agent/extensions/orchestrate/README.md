@@ -144,3 +144,7 @@ Each worktree is its own Unity project; its first open imports every asset (slow
 - **Lookup.** Merged PRs are found by head branch (accept requests, `status.json` `branches`, spawn branch) on any base; a `merges.json` record with `pr` counts.
 - **Guard.** `gh pr merge` and `gh api .../merge` in the orchestrator's bash are refused while the run has an unmerged package, also after `/orch off`.
 - **Targets.** `orch_run` reports each target and its source (given, or upstream of the checkout) and asks when a package's `base` differs. The spawn sends the targets as W1 `bases`, so worktrees start at the target.
+
+### Plan review
+
+`orch_review_plan` approves with optional `notes` (appended to the plan as `## Orchestrator notes`, so an approved plan is not re-planned); reject only for a blocker or major problem. While a package's plan is under review `orch_send` refuses `directive` and `info` (use notes or reasons); a message that arrives anyway is held by the sub-session and delivered after the verdict. Answers stay allowed.

@@ -72,7 +72,7 @@ import { pushArgs, tagDecision } from "./tags.ts";
 import { type CheckVerdict, autopilotAmendment, autopilotReply, checkTitle, checkVerdict, cleanCheck, waitCheckProblem, type HumanCheck, humanChecks, parseVerifyStep, parseWaitStep, pollDecision, waitLimitMs, waitKindProblem, autopilotSkipsWait, replaceWait, resumePrefix, verifyAmendment, waitAmendment } from "./waits.ts";
 import { nextStage, parseStages, planWaitProblems, stageLine, stageNote, stageStart, stagesOutcome } from "./stages.ts";
 import { planToolProblem, planToolRefused, phaseToolRefusal } from "../shared/readonly-tools.ts";
-import { acceptanceRefusal, exactToolRegexes, flowEndKind, flowEndPayload, k11Payload, keepExtraTools, withEndFlow, type K11Site, parseStartPlan, planReviewAction, planReviewRoute, START_PLAN_PREFACE } from "./hooks.ts";
+import { acceptanceRefusal, exactToolRegexes, flowEndKind, flowEndPayload, k11Payload, keepExtraTools, withEndFlow, type K11Site, parseStartPlan, planReviewAction, planReviewNotes, planReviewRoute, START_PLAN_PREFACE } from "./hooks.ts";
 import { emitClaims, gatherClaims } from "../shared/claims.ts";
 import { type CheckStatus, MAX_REASKS, PLAN_ARBITER, PLAN_APPROVE, PLAN_BACK, PLAN_FULL, type AskKey, type AskRole, type OpenAsk, askAnswer, askMenu, idleDue, idleNoticeAllowed, idlePayload, bumpAskId, planMenuRequest, waitDonePayload, restoreAsks, resumeContent, waitPayload, waitResumeOutcome } from "./asks.ts";
 import { refilterPlanTools, hiddenInPhase, syncFlowOnlyTools } from "./plan-tools.ts";
@@ -799,14 +799,14 @@ export default function workflow(pi: ExtensionAPI) {
 		return hint ? ` ${hint}` : "";
 	}
 
-	async function approve(ctx: ExtensionContext, arbiterOnFlaw = false): Promise<void> {
+	async function approve(ctx: ExtensionContext, arbiterOnFlaw = false, notes = ""): Promise<void> {
 		const blocked = approvalBlock(planDraft, planWaitNow);
 		if (blocked) {
 			ctx.ui.notify(`workflow: can't approve: ${blocked}.`, "warning");
 			return;
 		}
 		state.planFlaw = arbiterOnFlaw ? "auto" : undefined;
-		const plan = composePlan(planDraft);
+		const plan = [composePlan(planDraft), notes ? `## Orchestrator notes\n${notes}` : ""].filter(Boolean).join("\n\n");
 		await setPhase(ctx, "execute");
 		const extra = startExecution(ctx, plan);
 		persist();
@@ -3681,8 +3681,9 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 					const current = state.phase === "plan" && planReady && composePlan(planDraft) === emitted;
 					const action = planReviewAction(answer, current);
 					if (action === "approve") {
+						const notes = planReviewNotes(answer);
 						ctx.ui.notify(`workflow: plan approved, executing on ${describeRole(cfg.roles.execute)}`, "info");
-						await approve(lastCtx ?? ctx);
+						await approve(lastCtx ?? ctx, false, notes);
 					} else if (action === "reject") {
 						// The orchestrator's rejection starts a new judge budget; the findings stay for the recheck.
 						state.planGate = planGateReset(state.planGate, "rejected");

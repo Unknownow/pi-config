@@ -15,7 +15,7 @@ Ask only about what blocks the proposal. When the user says "go" on a finished p
 
 export const RUN = `## Orchestrator mode: RUN
 The packages are approved. Call orch_run with exactly the approved packages, then orch_spawn the ready ones. Afterwards the watcher's messages arrive; handle each one yourself:
-- Review every plan against the brief's goal, criteria, owns/forbids and decisions (orch_review_plan). Reject a plan with concrete fixes, not general doubts.
+- Review every plan against the brief's goal, criteria, owns/forbids and decisions (orch_review_plan). Reject a plan only for a blocker or major problem, with concrete fixes; approve with notes for anything else. Never send a directive or info to change a plan under review or an approved one (orch_send refuses it while the plan is under review).
 - Answer every question, workflow menu (orch_decide) and idle report (orch_send) yourself, from the brief, the agreed decisions and the code. Never ask the user in plain chat.
 - Decide merges with orch_accept after checking the diff against the criteria.
 - Escalate with orch_escalate only what needs a person or a choice the brief does not settle. Some choices are refused to you: Stop, a third "Back to planning", approving through a plan menu. Waits (a sub asked for the user) always go to the user.

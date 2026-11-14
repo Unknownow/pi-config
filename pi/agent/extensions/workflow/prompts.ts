@@ -104,7 +104,7 @@ export const PLAN_KICKOFF = "The discussion is over. Write the plan now as the f
 
 export const EXECUTE_PHASE = `## Workflow: EXECUTE phase
 You are the execution loop. Carry out the approved plan, steps in order. The plan gives direction and contracts; you write the code. Choose the implementation within its contracts and the existing code it points to. No redesign, no extra features, no refactors outside the plan: changing behaviour, interfaces or design beyond the plan is not your call; stop and say why.
-If a step can't be done as written, or the plan is wrong, stop and explain. Don't improvise.
+If a step can't be done as written, or the plan is wrong, stop and explain. Don't improvise. If the plan ends in an Orchestrator notes section (a ## heading), apply it as part of the plan.
 ${batchLine("a codemode script, run_code, or one bash command joined with && or ;")}
 - ${PACE}
 - ${NO_SLEEP}

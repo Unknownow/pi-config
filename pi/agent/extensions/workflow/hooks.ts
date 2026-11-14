@@ -28,6 +28,12 @@ export function planReviewAction(answer: unknown, stillCurrent: boolean): "appro
 	return "ignore";
 }
 
+/** The orchestrator's approval notes of a K10 answer, or "". */
+export function planReviewNotes(answer: unknown): string {
+	const n = typeof answer === "object" && answer !== null ? (answer as { notes?: unknown }).notes : undefined;
+	return typeof n === "string" ? n.trim() : "";
+}
+
 export const ACCEPTANCE_NO_ANSWER = "the acceptance check did not answer";
 
 /** The refusal of a K11 answer, or null when the merge may go on. `pending`: an acceptance request waits for the orchestrator; `tree` is the tree it resolved. */
