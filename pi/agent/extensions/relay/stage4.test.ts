@@ -5,7 +5,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { test } from "node:test";
 import { briefFiles, parseBrief } from "./brief.ts";
-import { toolSummary } from "./engine.ts";
+import { awaitingPred, toolSummary } from "./engine.ts";
 import { filesOverlap } from "./glob.ts";
 import { appendLog, type Job, readJob, stackState } from "./job.ts";
 import { run } from "./sh.ts";
@@ -46,6 +46,7 @@ test("briefFiles: the Files section, else the paths named in Design; filesOverla
 	assert.equal(filesOverlap(["src/**"], ["src/x.ts"]), true);
 	assert.equal(filesOverlap(["src/*.ts"], ["lib/*.ts"]), false);
 	assert.equal(filesOverlap(["src/**"], ["src/ui/**"]), true);
+	assert.equal(filesOverlap(["**/x.ts"], ["src/**"]), true);
 	assert.equal(filesOverlap(["*.md"], ["src/*.ts"]), false);
 	assert.equal(filesOverlap(["**/package.json"], ["**/package.json"]), true);
 });
@@ -348,10 +349,12 @@ test("adoption leaves a stacked job queued until its predecessor has passed", as
 		w.write({ worker: [{ hang: true }, { hang: true }] });
 		const a = await start(w);
 		await running(w, a);
+		const lf = path.join(w.engine.get(a)!.dir, "log.jsonl");
+		await waitFor(() => fs.existsSync(lf) && /"kind":"dispatch"/.test(fs.readFileSync(lf, "utf8")), 10_000, "the dispatch step to finish");
 		const r = await w.engine.dispatch({ brief: brief({ repo: w.repo, extra: nl + "## Depends on" + nl + a + nl }) });
 		const b = (r as { id: string }).id;
 		await w.engine.shutdown(); // the lead goes away
-		const e2 = w.mk();
+				const e2 = w.mk();
 		e2.start();
 		const adopted = await e2.adopt();
 		assert.deepEqual(adopted.sort(), [a, b].sort());
@@ -394,4 +397,11 @@ test("a queued job keeps its lock fresh, and a lead that lost the lock does not 
 	} finally {
 		w.end();
 	}
+});
+
+test("the dependency gate applies only before the dependent first starts", () => {
+	assert.equal(awaitingPred({ dependsOn: "rp", repos: [] } as unknown as Job), true);
+	assert.equal(awaitingPred({ dependsOn: "rp", repos: [{}] } as unknown as Job), false, "already built on the predecessor");
+	assert.equal(awaitingPred({ dependsOn: "rp", repos: [], followupPending: { n: 1, text: "x" } } as unknown as Job), false);
+	assert.equal(awaitingPred({ repos: [] } as unknown as Job), false);
 });

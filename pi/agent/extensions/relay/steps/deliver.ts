@@ -155,6 +155,7 @@ async function deliverOnce(job: Job, ctx: StepCtx, attempt: number): Promise<Out
 		slugs.set(repo.key, slug);
 		// the predecessor merged and this repo was restacked: the PR follows to the target before the push (D17)
 		if (repo.retarget) {
+			if (repo.pr && !slug) return { kind: "error", error: `could not reach GitHub to retarget the PR of ${repo.key} to ${repo.target}; relay_deliver retries` };
 			if (slug && repo.pr) {
 				const ed = await ctx.run("gh", ["pr", "edit", repo.pr, "-R", slug, "--base", repo.target], repo.worktree);
 				if (ed.code !== 0) return { kind: "error", error: `gh pr edit --base ${repo.target} failed in ${repo.key}: ${firstLine(ed.stderr)}` };

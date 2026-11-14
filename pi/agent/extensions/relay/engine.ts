@@ -127,6 +127,9 @@ class JobRun {
 	}
 }
 
+/** The dependency gate applies only before the dependent first starts: after that it is built on the predecessor's pushed work. */
+export const awaitingPred = (job: Job): boolean => !!job.dependsOn && job.repos.length === 0 && !job.followupPending;
+
 /** A tool call as one short log line: the name and its first argument, shortened. */
 export function toolSummary(name: string, args: unknown): string {
 	const a = (args ?? {}) as Record<string, unknown>;
@@ -248,7 +251,7 @@ export class Engine {
 		for (const jr of [...this.jobs.values()].sort((a, b) => a.job.createdAt - b.job.createdAt)) {
 			if (this.runningCount() >= this.cfg.maxJobs) return;
 			if (jr.job.state !== "queued" || jr.ended || jr.driving) continue;
-			if (jr.job.dependsOn && this.depState(jr.job.dependsOn) !== "go") continue;
+			if (awaitingPred(jr.job) && this.depState(jr.job.dependsOn!) !== "go") continue;
 			void this.drive(jr);
 		}
 	}
@@ -271,8 +274,8 @@ export class Engine {
 	/** A job whose predecessor stopped or failed stops too, with the reason (D17). */
 	private async cascade(): Promise<void> {
 		for (const jr of [...this.jobs.values()]) {
-			if (jr.ended || FINISHED.includes(jr.job.state) || !jr.job.dependsOn) continue;
-			const d = this.depState(jr.job.dependsOn);
+			if (jr.ended || FINISHED.includes(jr.job.state) || !awaitingPred(jr.job)) continue;
+			const d = this.depState(jr.job.dependsOn!);
 			if (typeof d !== "object") continue;
 			const r = await this.stop(jr.job.id, d.stop);
 			if ("ok" in r) this.d.notify(`relay job ${jr.job.id}: stopped, ${d.stop}`);
@@ -340,6 +343,7 @@ export class Engine {
 					// ownership is checked before every action that drives the job
 					if (step !== "report" && step !== "cleanup" && !jr.lock.isOwner()) {
 						appendLog(jr.dir, { kind: "lost", text: "this lead no longer owns the job" });
+						this.letGo(jr);
 						break;
 					}
 					// a worker's last message may not be read yet when its settle arrives
@@ -377,6 +381,13 @@ export class Engine {
 		} finally {
 			jr.driving = false;
 		}
+	}
+
+	/** Another lead owns the job now: this one stops touching it (no save, no lock release) and kills its worker. */
+	private letGo(jr: JobRun): void {
+		jr.ended = true;
+		jr.gen++;
+		jr.worker?.kill();
 	}
 
 	private finish(jr: JobRun) {
@@ -630,6 +641,7 @@ export class Engine {
 				jr.lastBeat = now;
 				if ((await jr.lock.heartbeat()) === "lost") {
 					appendLog(jr.dir, { kind: "lost", text: "heartbeat: this lead no longer owns the job" });
+					this.letGo(jr);
 					continue;
 				}
 			}

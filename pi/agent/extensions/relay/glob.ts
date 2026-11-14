@@ -60,6 +60,12 @@ export function filesOverlap(a: string[], b: string[]): boolean {
 				const dx = dirOf(x);
 				const dy = dirOf(y);
 				if (dx && dy && (dx.startsWith(dy) || dy.startsWith(dx))) return true;
+				// a leading wildcard (`**/x.ts`) can sit in any directory: the file name parts decide
+				if (!dx || !dy) {
+					const bx = x.split("/").pop() ?? x;
+					const by = y.split("/").pop() ?? y;
+					if (globToRegExp(bx).test(by) || globToRegExp(by).test(bx)) return true;
+				}
 			}
 		}
 	}
