@@ -578,17 +578,17 @@ The rest of S2 is unchanged.
 
 <!-- pi-workflow:status -->
 ## Checklist
-- [ ] S1 Make the merge gate report a pending acceptance. In `orchestrate/index.ts:386-401` (`handleMergeGate`):
-- [ ] S2 Hold the flow while acceptance is pending (workflow).
-- [ ] S3 Add the K15 listener (workflow). It acts only when `state.waiting?.waitKind === "acceptance"` and the tree matches. It c
-- [ ] S4 Emit K15 and write the new status fields (orchestrate, in the sub-session).
-- [ ] S5 Merge from the orchestrator (`orchestrate/index.ts`). Add `mergePackage(id, { force, auto, repo? })`.
-- [ ] S6 Find merged PRs by head branch. In `checkSub` (`:1246-1290`):
-- [ ] S7 Refuse `gh pr merge` in the orchestrator session. In the tool_call hook (`index.ts:631`), before the `mode === "off"` re
-- [ ] S8 Worktree bases.
-- [ ] S9 Targets in the orchestrator.
-- [ ] S10 Name the repo in the workflow's gh calls. `gh pr view` at `workflow/index.ts:2555, 4235, 4309` passes `-R <owner/name>`,
-- [ ] S11 Docs and backlog.
+- [x] S1 Make the merge gate report a pending acceptance. In `orchestrate/index.ts:386-401` (`handleMergeGate`):
+- [x] S2 Hold the flow while acceptance is pending (workflow).
+- [x] S3 Add the K15 listener (workflow). It acts only when `state.waiting?.waitKind === "acceptance"` and the tree matches. It c
+- [x] S4 Emit K15 and write the new status fields (orchestrate, in the sub-session).
+- [x] S5 Merge from the orchestrator (`orchestrate/index.ts`). Add `mergePackage(id, { force, auto, repo? })`.
+- [x] S6 Find merged PRs by head branch. In `checkSub` (`:1246-1290`):
+- [x] S7 Refuse `gh pr merge` in the orchestrator session. In the tool_call hook (`index.ts:631`), before the `mode === "off"` re
+- [x] S8 Worktree bases.
+- [x] S9 Targets in the orchestrator.
+- [x] S10 Name the repo in the workflow's gh calls. `gh pr view` at `workflow/index.ts:2555, 4235, 4309` passes `-R <owner/name>`,
+- [x] S11 Docs and backlog.
 - [ ] S12 Add approval notes to `orch_review_plan` (`orchestrate/index.ts:1778-1810`).
 - [ ] S13 Append the notes to the plan (workflow K10). In `hooks.ts:23-29`, `index.ts:3637-3640` and `approve` (`:800`): when ther
 - [ ] S14 Hold messages during review.

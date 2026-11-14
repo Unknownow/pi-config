@@ -1,17 +1,35 @@
 {
   "v": 1,
   "flowId": "20261114-1246-fix-the-orchestrator-s-merge-bugs-then-m-fd35",
-  "rev": 1,
-  "updated": "2026-11-14T05:46:56.489Z",
+  "rev": 2,
+  "updated": "2026-11-14T06:02:36.974Z",
   "title": "Fix the orchestrator's merge bugs, then make the judges, the orchestrator and autopilot run without the user",
-  "stage": 1,
-  "done": [],
+  "stage": 2,
+  "done": [
+    "S1",
+    "S2",
+    "S3",
+    "S4",
+    "S5",
+    "S6",
+    "S7",
+    "S8",
+    "S9",
+    "S10",
+    "S11"
+  ],
   "reviewBase": {
-    "d:/works/pi-config": "edcb31f1aa8574d88cd75bfea2b842c506522a86"
+    "d:/works/pi-config": "48aff76be9e3296ee822e1a9872f27972331ad03"
+  },
+  "passedTrees": {
+    "d:/works/pi-config": [
+      "c02c0e7efab679bf2005c4b1956a48df3629a037",
+      "e991e2f252173d9f95531537b028c84a92bfe037"
+    ]
   },
   "repos": [
     {
-      "branch": "master",
+      "branch": "flow/merge-fixes-and-autonomy",
       "remote": "github.com/Unknownow/pi-config",
       "primary": true
     }
