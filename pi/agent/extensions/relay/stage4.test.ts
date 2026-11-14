@@ -405,3 +405,25 @@ test("the dependency gate applies only before the dependent first starts", () =>
 	assert.equal(awaitingPred({ dependsOn: "rp", repos: [], followupPending: { n: 1, text: "x" } } as unknown as Job), false);
 	assert.equal(awaitingPred({ repos: [] } as unknown as Job), false);
 });
+
+test("a lead that lost a job stops it: no save, no report, nothing delivered, and it leaves the widget", async () => {
+	const w = world({}, undefined, { heartbeatMs: 50 });
+	try {
+		w.write({ worker: [{ hang: true }] });
+		const a = await start(w);
+		const jr = await running(w, a);
+		const stateBefore = fs.readFileSync(path.join(jr.dir, "job.json"), "utf8");
+		jr.lock.heartbeat = async () => "lost";
+		await waitFor(() => jr.ended, 5000, "the job to be let go");
+		assert.equal(jr.lost, true);
+		assert.equal(jr.abort.signal.aborted, true);
+		assert.equal(w.engine.widgetLines().length, 0);
+		assert.ok(!fs.existsSync(path.join(jr.dir, "report.md")), "no report from a lead that lost the job");
+		jr.job.state = "stopped";
+		jr.job.endReason = "x";
+		w.engine["save"](jr);
+		assert.equal(fs.readFileSync(path.join(jr.dir, "job.json"), "utf8"), stateBefore, "job.json is not written any more");
+	} finally {
+		w.end();
+	}
+});

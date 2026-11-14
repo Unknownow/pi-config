@@ -113,6 +113,8 @@ class JobRun {
 	tools = new Map<string, { name: string; startedAt: number; timeoutMs: number }>();
 	/** A steer sent to the running worker; if it is still queued when the worker settles it is sent as a prompt. */
 	pendingSteer?: string;
+	/** Another lead owns the job now: nothing of this lead may write, push or merge for it. */
+	lost = false;
 	/** The brief version of the pending steer; it becomes the worker's version only once the worker has taken it. */
 	steerVersion?: number;
 	/** A restart, a pause or a recovery is in progress: nothing else may start or prompt a worker. */
@@ -186,6 +188,7 @@ export class Engine {
 	}
 
 	private save(jr: JobRun) {
+		if (jr.lost) return;
 		writeJob(jr.dir, jr.job);
 	}
 
@@ -350,6 +353,7 @@ export class Engine {
 					if (step === "work") this.pump(jr);
 					const s = STATE_OF[step];
 					if (s && jr.job.state !== s) jr.job.state = s;
+					if (jr.lost) break;
 					this.save(jr);
 					let next: StepName | "wait" | "end";
 					try {
@@ -364,6 +368,7 @@ export class Engine {
 							next = "report";
 						}
 					}
+					if (jr.lost) break; // never report, clean up or finish a job another lead owns
 					// a stop that arrived while the step ran wins over whatever state the step set
 					if (jr.stopRequested && step !== "report" && step !== "cleanup") {
 						if (!FINISHED.includes(jr.job.state) || jr.job.state === "done") jr.job.state = "stopped";
@@ -385,6 +390,9 @@ export class Engine {
 
 	/** Another lead owns the job now: this one stops touching it (no save, no lock release) and kills its worker. */
 	private letGo(jr: JobRun): void {
+		jr.lost = true;
+		jr.stopRequested = true;
+		jr.abort.abort();
 		jr.ended = true;
 		jr.gen++;
 		jr.worker?.kill();
@@ -415,7 +423,7 @@ export class Engine {
 			notify: (line) => d.notify(line),
 			wake: (text) => d.wake(text),
 			isOwner: () => jr.lock.isOwner(),
-			stopped: () => jr.stopRequested,
+			stopped: () => jr.stopRequested || jr.lost,
 			wt: d.wt,
 			job: (id) => this.peek(id),
 			worker: jr.ws,
@@ -1189,7 +1197,7 @@ export class Engine {
 	/** One line per job of this session that is not finished: id, state, round and budget used. */
 	widgetLines(): string[] {
 		return [...this.jobs.values()]
-			.filter((j) => !j.ended || !FINISHED.includes(j.job.state))
+			.filter((j) => !j.ended && !FINISHED.includes(j.job.state))
 			.map((jr) => {
 				const j = jr.job;
 				const wall = Math.round(j.used.wallMs / 60_000);

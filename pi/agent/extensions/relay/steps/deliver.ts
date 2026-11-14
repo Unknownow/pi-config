@@ -149,7 +149,7 @@ async function deliverOnce(job: Job, ctx: StepCtx, attempt: number): Promise<Out
 	const slugs = new Map<string, string | undefined>();
 	for (const repo of job.repos) {
 		if (repo.merged) continue;
-		if (ctx.stopped()) return { kind: "stopped" };
+		if (ctx.stopped() || !ctx.isOwner()) return { kind: "stopped" };
 		const pol = repoPolicy(ctx.cfg, repo.main);
 		const slug = await github(ctx, repo);
 		slugs.set(repo.key, slug);
@@ -176,7 +176,7 @@ async function deliverOnce(job: Job, ctx: StepCtx, attempt: number): Promise<Out
 	// merge, in Targets order, only when every repo is accepted and pushed (they are)
 	const mergeApproved = job.approvals.some((a) => a.category === "merge");
 	for (const repo of job.repos) {
-		if (ctx.stopped()) return { kind: "stopped" };
+		if (ctx.stopped() || !ctx.isOwner()) return { kind: "stopped" };
 		// an amendment since the PASS holds the merge: nothing merges until the new brief version is judged
 		if (!repo.merged && workAmendments(job, ctx.brief()).length) return { kind: "amended" };
 		const pol = repoPolicy(ctx.cfg, repo.main);
@@ -216,6 +216,7 @@ async function deliverOnce(job: Job, ctx: StepCtx, attempt: number): Promise<Out
 	// publish, only with `publish: yes`, only after every merge
 	if (parsed.publish?.length && parsed.authority.publish?.value === "yes" && job.repos.every((r) => r.merged || !mergeAllowed(parsed.authority.merge, mergeApproved, repoPolicy(ctx.cfg, r.main).merge))) {
 		for (const cmd of parsed.publish) {
+			if (ctx.stopped() || !ctx.isOwner()) return { kind: "stopped" };
 			const r = await ctx.shell(cmd, job.repos[0].worktree);
 			ctx.log("publish", `${cmd} -> ${r.code}`);
 			if (r.code !== 0) return { kind: "error", error: `publish command failed (${r.code}): ${cmd}\n${r.out.slice(-1000)}` };
@@ -235,7 +236,7 @@ export const deliverStep: Step = {
 		let out: Outcome = { kind: "retry" };
 		for (let attempt = 1; out.kind === "retry"; attempt++) out = await deliverOnce(job, ctx, attempt);
 		if (out.kind === "done") return "report";
-		if (out.kind === "stopped") return "report";
+		if (out.kind === "stopped") return ctx.isOwner() ? "report" : "wait"; // a lead that lost the job writes nothing
 		if (out.kind === "amended") return backToWork(job, ctx, job.lastVerdict?.briefVersion ?? job.briefVersion);
 		if (out.kind === "fix") {
 			const next = await failRound(job, ctx, "Delivery needs a fix", out.reason);
