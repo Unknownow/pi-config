@@ -126,3 +126,23 @@ test("the lead attaches the dock at session_start only with a UI, and releases i
 		cleanup(dir);
 	}
 });
+
+test("the footer shows `relay lead` while lead mode is on and clears it on /relay off and at shutdown", async () => {
+	const { dir } = makeRepo();
+	try {
+		const r = relayOn(makeBus(), dir);
+		const status = new Map<string, string>();
+		const ctx: any = fakeCtx(dir);
+		ctx.ui.setStatus = (k: string, v: string | undefined) => (v === undefined ? status.delete(k) : status.set(k, v));
+		assert.equal(await r.lead.leadOn(ctx), true);
+		assert.equal(status.get("relay"), "relay lead");
+		await r.commands.get("relay")!.handler("off", ctx);
+		assert.equal(status.has("relay"), false);
+		await r.commands.get("relay")!.handler("on", ctx);
+		assert.equal(status.get("relay"), "relay lead");
+		await r.hooks.get("session_shutdown")!({}, ctx);
+		assert.equal(status.has("relay"), false);
+	} finally {
+		cleanup(dir);
+	}
+});

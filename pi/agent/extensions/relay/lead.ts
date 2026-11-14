@@ -69,11 +69,23 @@ export function createLead(pi: ExtensionAPI, d: LeadDeps) {
 
 	/** The dock's right column (S33): the unfinished jobs of this session with their live tool stream; published every 2 s. */
 	function paintWidget(): void {
+		paintStatus();
 		if (!engine) return;
 		const lines = engine.dockLines(Date.now());
 		if (!lines.length && !widgetShown) return;
 		widgetShown = lines.length > 0;
 		publishDock(pi, "relay", "right", lines);
+	}
+
+	/** Footer status while lead mode is on: `relay lead`, plus the jobs this lead owns that have not finished. */
+	function paintStatus(): void {
+		if (!lastCtx?.hasUI) return;
+		const n = act.mode === "on" ? (engine?.ownedRunning() ?? 0) : 0;
+		try {
+			lastCtx.ui.setStatus("relay", act.mode === "on" ? `relay lead${n ? ` · ${n} job${n === 1 ? "" : "s"}` : ""}` : undefined);
+		} catch {
+			// a stale UI is fine
+		}
 	}
 
 	// K16: registered at load, answers only for relay.
@@ -109,6 +121,7 @@ export function createLead(pi: ExtensionAPI, d: LeadDeps) {
 			widgetTimer.unref?.();
 			void scan(ctx);
 		}
+		paintStatus();
 		if (was === "undecided" && !on && act.reason && !/relay json|worker or reviewer/.test(act.reason)) ctx.ui?.notify?.(act.reason.startsWith("relay") ? act.reason : `relay: ${act.reason}`, "info");
 		return on;
 	}
@@ -259,6 +272,11 @@ export function createLead(pi: ExtensionAPI, d: LeadDeps) {
 		releaseDock?.();
 		releaseDock = undefined;
 		unpublishDock(pi, "relay");
+		try {
+			lastCtx?.ui?.setStatus?.("relay", undefined);
+		} catch {
+			// a stale UI is fine
+		}
 		await engine?.shutdown();
 	});
 
@@ -568,11 +586,13 @@ export function createLead(pi: ExtensionAPI, d: LeadDeps) {
 			if (sub === "on") {
 				const r = await act.turnOn();
 				note(r.ok ? "relay: lead mode on" : `relay: not turned on: ${r.why}`, r.ok ? "info" : "warning");
+				paintStatus();
 			} else if (sub === "off") {
 				const running = engine?.ownedRunning() ?? 0;
 				if (running > 0) note(`relay: not turned off: this lead owns ${running} running job(s); relay_stop them first`, "warning");
 				else {
 					act.turnOff();
+					paintStatus();
 					note("relay: lead mode off");
 				}
 			} else if (sub === "go") {

@@ -1148,6 +1148,14 @@ export default function (pi: ExtensionAPI): void {
 	function updateWidget(): void {
 		const ui = uiCtx?.ui;
 		if (!ui || !uiCtx?.hasUI) return;
+		// footer status of the orchestrator (a sub-session writes its own `orch <run>/<sub>` under the same key)
+		if (!me) {
+			try {
+				ui.setStatus("orchestrate", mode !== "off" ? `orch ${mode}` : owned ? "orch watching" : undefined);
+			} catch {
+				/* no status support */
+			}
+		}
 		if (mode === "off" && !owned) {
 			if (widgetMounted) ui.setWidget("orchestrate", undefined);
 			widgetMounted = false;
