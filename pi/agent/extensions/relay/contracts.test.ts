@@ -159,7 +159,22 @@ test("relay:control stops a job and follows one up; relay:job-query reads memory
 		assert.equal(f.job, a.id);
 		assert.equal(f.n, 1);
 		assert.equal(typeof f.queued, "boolean");
+		await waitFor(() => s.events.filter((e) => e.name === "relay:job-start").length === 2, 30_000, "follow-up job-start");
 		await ask(s.bus, "relay:control", { job: a.id, action: "stop" });
+		await waitFor(() => s.events.filter((e) => e.name === "relay:job-end").length === 2, 30_000, "follow-up job-end");
+		// the follow-up is its own cycle: job-start, job-progress*, job-end
+		const names = s.events.map((e) => e.name);
+		const firstEnd = names.indexOf("relay:job-end");
+		const cycle = names.slice(firstEnd + 1).filter((n) => n !== "relay:approval");
+		assert.equal(cycle[0], "relay:job-start", cycle.join(","));
+		assert.equal(cycle[cycle.length - 1], "relay:job-end");
+		assert.ok(cycle.includes("relay:job-progress"), cycle.join(","));
+		assert.ok(cycle.slice(1, -1).every((n) => n === "relay:job-progress"));
+		// ids that are not job ids are unknown, never read from disk
+		const bad = await ask(s.bus, "relay:job-query", { ids: ["../../x"] });
+		assert.equal(bad.jobs[0].state, "unknown");
+		// a malformed hosted request is answered
+		assert.match((await ask(s.bus, "relay:hosted", { on: "yes" })).error, /boolean/);
 	} finally {
 		await other?.hooks.get("session_shutdown")!({}, s.ctx);
 		await s.r.hooks.get("session_shutdown")!({}, s.ctx);

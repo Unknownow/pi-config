@@ -9,6 +9,7 @@
  */
 
 import * as fs from "node:fs";
+import { JOB_START, jobStartPayload } from "../events.ts";
 import { gitOut } from "../sh.ts";
 import type { Job } from "../job.ts";
 import type { Step, StepCtx } from "../types.ts";
@@ -98,6 +99,7 @@ export const followupStep: Step = {
 		job.state = "working";
 		ctx.save(job);
 		await ctx.startWorker(job, { prompt: workerPrompt(ctx, job, `Follow-up ${n} on a finished job: ${text}\n\nThe earlier work is in this worktree already. Do only what the follow-up asks (it is the last amendment); the judge reviews only your new commits.`) });
+		ctx.emit(JOB_START, jobStartPayload(job.id, job.title, job.repos.map((r) => r.key), job.tag));
 		ctx.log("followup", `follow-up ${n} started in set ${job.set}`);
 		ctx.notify(`relay job ${job.id}: follow-up ${n} started`);
 		return "work";

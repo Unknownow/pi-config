@@ -172,7 +172,7 @@ All payloads are `v: 1`. Fields marked optional are additive.
 **Emitted**
 
 - `relay:job-start {v, job, title, repos, tag?}`
-- `relay:job-progress {v, job, tag?, state, round, used: {tokens, wallMs}}`: emitted whenever a job is saved with a `(state, round)` different from the last one emitted for it, never before that job's `relay:job-start`. Order per job: `job-start` -> `job-progress`* -> `job-end`.
+- `relay:job-progress {v, job, tag?, state, round, used: {tokens, wallMs}}`: emitted whenever a job is saved with a `(state, round)` different from the last one emitted for it, never before that job's `relay:job-start`. Order per job: `job-start` -> `job-progress`* -> `job-end`. A follow-up is its own cycle: it emits `job-start` again when its worker starts, then progress, then `job-end`. A job adopted or restacked by a new lead already had its `job-start`, so it emits progress and `job-end` only.
 - `relay:job-end {v, job, how: "delivered"|"stopped"|"failed", report, tag?, used?: {tokens, wallMs}, repos?: [{key, pr?, merged}], reason?}`: `used.tokens` is weighted, as in job.json; `reason` is the job's `endReason` (e.g. `budget: ...`, `stopped by the lead`) when it has one.
 - `relay:approval {v, job, category, item, by: "brief"|"lead", reason, tag?}`
 

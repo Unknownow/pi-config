@@ -203,9 +203,10 @@ export function parseJobQuery(data: unknown): { ids: string[]; claim?: Claim } |
 }
 
 /** `relay:hosted {v:1, on, claim?}` */
-export function parseHosted(data: unknown): { on: boolean; claim?: Claim } | { error: string } {
+export function parseHosted(data: unknown): { on: boolean; claim?: Claim } | { error: string; claim?: Claim } {
 	if (!isObj(data)) return { error: "relay:hosted needs an object payload" };
-	if (data.v !== 1) return { error: "relay:hosted: unsupported version (v must be 1)" };
-	if (typeof data.on !== "boolean") return { error: "relay:hosted: on must be a boolean" };
-	return { on: data.on, claim: claimOf(data) };
+	const claim = claimOf(data);
+	if (data.v !== 1) return { error: "relay:hosted: unsupported version (v must be 1)", claim };
+	if (typeof data.on !== "boolean") return { error: "relay:hosted: on must be a boolean", claim };
+	return { on: data.on, claim };
 }

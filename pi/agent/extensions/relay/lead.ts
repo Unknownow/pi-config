@@ -126,7 +126,8 @@ export function createLead(pi: ExtensionAPI, d: LeadDeps) {
 		}
 	}
 
-	const off = () => text(`relay: lead mode is off (${act.reason || "not decided"}); /relay on asks again.`);
+	const offMsg = () => `relay: lead mode is off (${act.reason || "not decided"}); /relay on asks again.`;
+	const off = () => text(offMsg());
 
 	const claimWt = async (event: string, payload: object, timeoutMs: number): Promise<any> => {
 		const c = emitClaims((data) => pi.events.emit(event, data), { v: 1, ...payload }, timeoutMs);
@@ -269,7 +270,6 @@ export function createLead(pi: ExtensionAPI, d: LeadDeps) {
 
 	const T = d.Type;
 	const needsLead = async (ctx: any) => ((await leadOn(ctx)) ? undefined : off());
-	const offMsg = () => `relay: lead mode is off (${act.reason || "not decided"}); /relay on asks again.`;
 	/** Tool text of an action error: the tool name in front, except for messages that already start with "relay:". */
 	const fmt = (tool: string, e: string) => text(e.startsWith("relay:") ? e : `${tool}: ${e}`);
 
@@ -507,7 +507,7 @@ export function createLead(pi: ExtensionAPI, d: LeadDeps) {
 	}
 	function onHosted(data: unknown) {
 		const p = parseHosted(data);
-		if ("error" in p) return;
+		if ("error" in p) return p.claim?.({ error: p.error });
 		hosted = p.on;
 		answerWith(p.claim, async () => {
 			if (!lastCtx) return { on: p.on, mode: "off", reason: "no session context" };

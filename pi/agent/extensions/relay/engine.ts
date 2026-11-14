@@ -11,7 +11,7 @@ import { filesOverlap } from "./glob.ts";
 import { parseFindings } from "../shared/findings.ts";
 import { budgetState, longToolWall, toolTimeoutMs } from "./budget.ts";
 import { CATEGORIES, type Category, type RelayConfig, repoPolicy, type Size } from "./config.ts";
-import { type Job, type JobState, type RepoState, stackState, appendLog, draftDir, emptyJob, FINISHED, jobDir, listJobs, newId, readJob, readLog, writeJob } from "./job.ts";
+import { JOB_ID, type Job, type JobState, type RepoState, stackState, appendLog, draftDir, emptyJob, FINISHED, jobDir, listJobs, newId, readJob, readLog, writeJob } from "./job.ts";
 import { JobLock, type Me, pidAlive } from "./lock.ts";
 import { append, inboxPath, outboxPath, takeNew, type OutMsg } from "./mailbox.ts";
 import { forwardedServers, roleTools } from "./knowledge.ts";
@@ -212,6 +212,13 @@ export class Engine {
 		if (key === jr.lastProgress) return;
 		jr.lastProgress = key;
 		this.d.emit(JOB_PROGRESS, jobProgressPayload(jr.job.id, jr.job.state, jr.job.round, usedOf(jr.job), jr.job.tag));
+	}
+
+	/** An adopted or restacked job already had its job-start (a never-started queued one has not). */
+	private markStarted(jr: JobRun) {
+		if (jr.job.state === "queued" || jr.job.state === "draft") return;
+		jr.startedEmitted = true;
+		jr.lastProgress = `${jr.job.state}:${jr.job.round}`;
 	}
 
 	/** Every wake of a tagged job starts with `[<package>] `. */
@@ -1086,6 +1093,7 @@ export class Engine {
 			else if (await lock.takeOver()) how = "taken over";
 			else continue; // a live lead owns it
 			const jr = new JobRun(dir, job, lock);
+			this.markStarted(jr);
 			this.jobs.set(job.id, jr);
 			const was = job.state;
 			if (how === "taken over" && job.worker?.pid && lock.previous && lock.previous !== "unreadable" && lock.previous.host === this.d.me.host) killSurvivor(job.worker.pid);
@@ -1174,6 +1182,7 @@ export class Engine {
 			cur.state = "delivering";
 			cur.notes.push("the predecessor merged: restacking onto the target");
 			const jr = new JobRun(dir, cur, lock);
+			this.markStarted(jr);
 			this.jobs.set(cur.id, jr);
 			this.save(jr);
 			appendLog(dir, { kind: "restack", text: "the predecessor merged: rebase --onto the target, retarget the PR, push with the lease" });
@@ -1251,7 +1260,7 @@ export class Engine {
 	/** Structured state of jobs by id: this lead's own, or read from job.json (earlier sessions, adopted jobs). */
 	query(ids: string[]): QueryJob[] {
 		return ids.map((id) => {
-			const j = this.peek(id);
+			const j = JOB_ID.test(id) ? this.peek(id) : undefined;
 			if (!j) return { id, state: "unknown", used: { tokens: 0, wallMs: 0 }, repos: [] };
 			const report = path.join(jobDir(this.d.root, id), "report.md");
 			return { id, state: j.state, ...(j.tag ? { tag: j.tag } : {}), used: usedOf(j), repos: reposOf(j), ...(fs.existsSync(report) ? { report } : {}), ...(j.endReason ? { reason: j.endReason } : {}) };
