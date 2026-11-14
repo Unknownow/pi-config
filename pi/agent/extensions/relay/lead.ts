@@ -13,6 +13,7 @@ import { attachDock, publishDock, unpublishDock, type DockFns } from "../shared/
 import { classifyCommand } from "./authority.ts";
 import { editBudgetProblem, measureEdits } from "./budget.ts";
 import { type RelayConfig, configPath, loadConfig, repoPolicy, saveRole } from "./config.ts";
+import { RELAY_ROLES, relayCompletions, relayDescription } from "./commands.ts";
 import { Engine } from "./engine.ts";
 import { Activation, parseControl, parseDispatch, parseFlowActive, parseHosted, parseJobQuery, type Tag } from "./events.ts";
 import { foldersFromEntries } from "./folders.ts";
@@ -553,7 +554,13 @@ export function createLead(pi: ExtensionAPI, d: LeadDeps) {
 	// ----------------------------------------------------------------------------------------- commands
 
 	pi.registerCommand("relay", {
-		description: "relay: status | on | off | go | stop <job> | pause <job> | resume <job> | followup <job> <text> | log <job> [n] | model <role> <provider/id[:thinking]>",
+		description: relayDescription(),
+		getArgumentCompletions: (prefix: string) =>
+			relayCompletions(prefix, {
+				jobs: () => engine?.jobList() ?? [],
+				specOf: (role) => (role.startsWith("worker.") ? cfg.roles.worker[role.slice(7) as Size] : cfg.roles[role as "critic" | "judge" | "escalate"]),
+				models: () => lastCtx?.modelRegistry?.getAvailable() ?? [],
+			}),
 		handler: async (args: string, ctx: any) => {
 			lastCtx = ctx;
 			const [sub = "status", ...rest] = args.trim().split(/\s+/);
@@ -601,7 +608,7 @@ export function createLead(pi: ExtensionAPI, d: LeadDeps) {
 				}
 			} else if (sub === "model") {
 				const [role, spec] = rest;
-				const roles = ["critic", "judge", "escalate", "worker.small", "worker.normal", "worker.large"];
+				const roles: readonly string[] = RELAY_ROLES;
 				const parsed = spec ? parseRoleSpec(spec) : "usage: /relay model <role> <provider/id[:thinking]>";
 				if (!role || !roles.includes(role) || typeof parsed === "string") note(typeof parsed === "string" ? parsed : `roles: ${roles.join(", ")}`, "warning");
 				else {

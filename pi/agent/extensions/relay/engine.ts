@@ -224,6 +224,10 @@ export class Engine {
 	runningCount(): number {
 		return [...this.jobs.values()].filter((j) => !j.ended && ((j.job.state !== "queued" && j.job.state !== "draft") || j.driving)).length;
 	}
+	/** This session's jobs (memory only), for completions. */
+	jobList(): { id: string; state: string }[] {
+		return [...this.jobs.values()].map((j) => ({ id: j.job.id, state: j.job.state }));
+	}
 	ownedRunning(): number {
 		return [...this.jobs.values()].filter((j) => !j.ended && !FINISHED.includes(j.job.state)).length;
 	}
