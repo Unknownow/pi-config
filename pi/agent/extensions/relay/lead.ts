@@ -52,6 +52,7 @@ export function createLead(pi: ExtensionAPI, d: LeadDeps) {
 	let warned = false;
 	const act = new Activation({ active: () => cfg.active, cwd: d.cwd, role: env.RELAY_ROLE, emit: (data) => pi.events.emit("flow:active", data), timeoutMs: d.timeoutMs });
 	let engine: Engine | undefined;
+	let pendingEngine: Promise<Engine | { error: string }> | undefined;
 	let lastCtx: any;
 	/** relay:hosted: an orchestrator hosts this session; lead mode is decided at once, no prompt section, no "go" hook. */
 	let hosted = false;
@@ -152,6 +153,14 @@ export function createLead(pi: ExtensionAPI, d: LeadDeps) {
 	/** The engine of this session; undefined with a reason outside a git repo. */
 	async function engineFor(ctx: any): Promise<Engine | { error: string }> {
 		if (engine) return engine;
+		// one engine per session: concurrent callers (the scan and a dispatch) share the one being built
+		pendingEngine ??= buildEngine(ctx).finally(() => {
+			pendingEngine = undefined;
+		});
+		return pendingEngine;
+	}
+
+	async function buildEngine(ctx: any): Promise<Engine | { error: string }> {
 		const root = await jobRoot(run, ctx.cwd);
 		if (!root) return { error: "relay_dispatch needs the working folder to be inside a git repo (jobs are stored in its git folder)" };
 		const sid = (() => {
