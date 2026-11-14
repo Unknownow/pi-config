@@ -282,6 +282,34 @@ test("pushes: the first creates the branch, a later delivery rebases and pushes 
 	}
 });
 
+test("retrying delivery after it stopped past a rebase does not start a fix round", async () => {
+	const s = scenario(1, { authority: { merge: "no" } });
+	try {
+		const r = s.job.repos[0];
+		s.push(0, "b.txt", "moved\n");
+		assert.equal(await deliverStep.run(s.job, s.ctx), "report");
+		assert.ok(r.passedViaRebase);
+		const pushed = r.remotePushed!;
+		// someone else adds a commit to the job branch, and the lease fails on the next delivery (after origin/main moves)
+		const other = path.join(s.ctx.dir, "intruder");
+		git(s.ctx.dir, "clone", "-q", "-b", "wt/r1", s.repos[0].bare, other);
+		fs.writeFileSync(path.join(other, "x.txt"), "x\n");
+		git(other, "add", "-A");
+		git(other, "commit", "-q", "-m", "intruder");
+		git(other, "push", "-q", "origin", "wt/r1");
+		// a retry with nothing moved: the lease fails again (the branch is not what relay pushed), and delivery waits
+		assert.equal(await deliverStep.run(s.job, s.ctx), "wait");
+		assert.equal(s.job.round, 0);
+		// the branch is put back to what relay pushed; the retry delivers, with no fix round and no prompt
+		git(s.repos[0].bare, "update-ref", "refs/heads/wt/r1", pushed);
+		assert.equal(await deliverStep.run(s.job, s.ctx), "report");
+		assert.equal(s.job.round, 0);
+		assert.deepEqual(s.prompts, []);
+	} finally {
+		s.clean();
+	}
+});
+
 test("the first push refuses a branch that already exists on origin, and never the target or a protected branch", async () => {
 	const s = scenario(1, MERGE);
 	try {

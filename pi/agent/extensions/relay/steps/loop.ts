@@ -118,6 +118,7 @@ export async function failRound(job: Job, ctx: StepCtx, why: string, body: strin
 	job.state = "working";
 	ctx.save(job);
 	ctx.worker.done = undefined;
+	ctx.worker.nudges = 0;
 	ctx.notify(`relay job ${job.id}: ${why}; round ${job.round + 1}`);
 	await ctx.prompt(`${why}\n\n${body}\n\nFix every blocker and major finding, run Verify again, then call report_done.`);
 	return "work";

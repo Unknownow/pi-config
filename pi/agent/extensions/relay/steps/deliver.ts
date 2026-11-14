@@ -43,6 +43,8 @@ async function accept(job: Job, repo: RepoState, ctx: StepCtx, verify: string): 
 	const headTree = firstLine((await git("rev-parse", "HEAD^{tree}")).stdout);
 	if (upstream === repo.base) {
 		// nothing new upstream: the judged tree is the tree to deliver, and only that
+		// (a retry after delivery stopped past a rebase: HEAD is the tree relay accepted then)
+		if (repo.passedViaRebase && headTree === repo.acceptedTree && headTree !== repo.judgedTree) return { ok: true };
 		if (headTree !== repo.judgedTree) return { ok: false, fix: `The branch of ${repo.key} changed after the judge reviewed it. Report_done again so the current tree is judged.` };
 		repo.acceptedTree = headTree;
 		delete repo.passedViaRebase;

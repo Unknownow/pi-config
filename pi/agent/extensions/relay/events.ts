@@ -98,10 +98,9 @@ export class Activation {
 		if (this.d.role) return { ok: false, why: "relay workers do not run a lead" };
 		if (this.jobSet) return { ok: false, why: "this is a job's worktree" };
 		if (!this.d.active()) return { ok: false, why: "relay.json active is false" };
-		const prev = this.mode;
-		this.mode = "off"; // our own listener must not answer for us while we ask
+		// relay's listener ignores from:"relay", so it cannot answer its own question; the mode stays as it is while we ask
 		if (!(await this.ask())) {
-			this.mode = prev === "undecided" ? "off" : prev;
+			if (this.mode === "undecided") this.mode = "off";
 			this.reason = "relay: workflow owns this session; lead mode off";
 			return { ok: false, why: "workflow owns this session" };
 		}
