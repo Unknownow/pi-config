@@ -9,6 +9,7 @@ import { defaults } from "./config.ts";
 import { setupFiles } from "./files.ts";
 import type { Gh, Git } from "./git-ops.ts";
 import { writeMeta } from "./meta.ts";
+import { removeForEvent } from "./manage.ts";
 import { SWEEP_SCRIPT, backupSet, classifySet, detectSession, discardPreview, listText, openPlan, parseEditors, quitReminder, removeWithConfirm, removeWorkspace, repoDirsIn, stamp, type FlowEnv, type WorkspaceEnv } from "./manage.ts";
 
 const git: Git = async (cwd, args) => {
@@ -459,4 +460,43 @@ test("a removal that stopped partway leaves a set that can be removed again", as
 	const second = await removeWorkspace(f.env, "s1", { discard: false });
 	assert.equal(second.error, false, second.text);
 	assert.ok(!fs.existsSync(set));
+});
+
+test("RemoveResult.kept lists a branch ahead of HEAD and one that branch -D could not delete", async () => {
+	const f = fixture();
+	commit(f);
+	run(f.wt, ["checkout", "--detach", "origin/main"]);
+	assert.deepEqual((await removeWorkspace(f.env, "s1", { discard: false })).kept, ["wt/s1"]);
+	const g = fixture();
+	const failing: Git = async (cwd, args) => (args[0] === "branch" && args[1] === "-D" ? { code: 1, stdout: "", stderr: "cannot delete" } : git(cwd, args));
+	assert.deepEqual((await removeWorkspace({ ...g.env, git: failing }, "s1", { discard: false })).kept, ["wt/s1"]);
+	const h = fixture();
+	assert.deepEqual((await removeWorkspace(h.env, "s1", { discard: false })).kept, []);
+});
+
+test("W2: in-use is refused even with force; dirty needs force and makes a backup; clean removes and deletes the branch", async () => {
+	const f = fixture();
+	const busy = await removeForEvent({ ...f.env, inUse: () => "in use by this session" }, "s1", true);
+	assert.ok("error" in busy);
+	assert.match(busy.error, /in-use/);
+	fs.appendFileSync(`${f.wt}/.gitignore`, "dirty\n");
+	assert.ok("error" in (await removeForEvent(f.env, "s1", false)));
+	assert.ok(fs.existsSync(f.wt));
+	const forced = await removeForEvent(f.env, "s1", true);
+	assert.ok("removed" in forced, JSON.stringify(forced));
+	assert.equal(forced.removed, true);
+	assert.ok(run(`${f.d}/repo`, ["for-each-ref", "refs/wt-backup/"]).includes("wt-backup/s1"));
+	const g = fixture();
+	const ok = await removeForEvent(g.env, "s1", false);
+	assert.ok("removed" in ok, JSON.stringify(ok));
+	assert.equal(run(`${g.d}/repo`, ["branch", "--list", "wt/s1"]).trim(), "");
+	assert.deepEqual(ok.kept, []);
+});
+
+test("W2: unknown editors give a warning but still remove a delivered set; an unknown set is an error", async () => {
+	const f = fixture();
+	const r = await removeForEvent({ ...f.env, editors: null }, "s1", false);
+	assert.ok("removed" in r, JSON.stringify(r));
+	assert.deepEqual(r.warnings, ["Unity Editor state unknown"]);
+	assert.ok("error" in (await removeForEvent(f.env, "nope", false)));
 });
