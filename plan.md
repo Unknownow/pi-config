@@ -1092,22 +1092,22 @@ The rest of S15 stays: prompt, typed "go", edit budget including the bash re-mea
 - [x] S4 `read_pdf`. New file `sandbox/read-pdf.ts`, registered next to `video_frames` and modelled on `video-frames.ts`.
 - [x] S5 K16 in workflow.
 - [x] S6 Run the Stage 1 tests.
-- [ ] S7 Scaffold and config.
-- [ ] S8 Copy the guards and runners.
-- [ ] S9 `brief.ts`.
-- [ ] S10 `job.ts`, `mailbox.ts`, `lock.ts`.
-- [ ] S11 `authority.ts`.
-- [ ] S12 `worker.ts`.
-- [ ] S13 `rpc.ts`.
-- [ ] S14 `snapshot.ts` (D5).
-- [ ] S15 Lead `index.ts`, part 1.
-- [ ] S16 Lead tools, part 1.
-- [ ] S17 `steps/critic.ts`.
-- [ ] S18 `steps/loop.ts`.
-- [ ] S19 `steps/deliver.ts` (D14).
-- [ ] S20 `steps/report.ts` and `steps/cleanup.ts`.
-- [ ] S21 Commands, part 1: `/relay`, `/relay on|off`, `/relay go`, `/relay stop <job>`, `/relay model <role> <provider/id[:thinki
-- [ ] S22 `relay/README.md` for the core: roles, brief, Authority, files, config (including `RELAY_CONFIG`), the push rule, the ed
+- [x] S7 Scaffold and config.
+- [x] S8 Copy the guards and runners.
+- [x] S9 `brief.ts`.
+- [x] S10 `job.ts`, `mailbox.ts`, `lock.ts`.
+- [x] S11 `authority.ts`.
+- [x] S12 `worker.ts`.
+- [x] S13 `rpc.ts`.
+- [x] S14 `snapshot.ts` (D5).
+- [x] S15 Lead `index.ts`, part 1.
+- [x] S16 Lead tools, part 1.
+- [x] S17 `steps/critic.ts`.
+- [x] S18 `steps/loop.ts`.
+- [x] S19 `steps/deliver.ts` (D14).
+- [x] S20 `steps/report.ts` and `steps/cleanup.ts`.
+- [x] S21 Commands, part 1: `/relay`, `/relay on|off`, `/relay go`, `/relay stop <job>`, `/relay model <role> <provider/id[:thinki
+- [x] S22 `relay/README.md` for the core: roles, brief, Authority, files, config (including `RELAY_CONFIG`), the push rule, the ed
 - [ ] S23 `relay_send {job, text, mode: "steer"|"follow_up"|"restart", reset?: "base"|"keep"}` (D9).
 - [ ] S24 Critic loop (D7).
 - [ ] S25 Escalation and re-plan (D8).
