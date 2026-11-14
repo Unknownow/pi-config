@@ -1108,13 +1108,13 @@ The rest of S15 stays: prompt, typed "go", edit budget including the bash re-mea
 - [x] S20 `steps/report.ts` and `steps/cleanup.ts`.
 - [x] S21 Commands, part 1: `/relay`, `/relay on|off`, `/relay go`, `/relay stop <job>`, `/relay model <role> <provider/id[:thinki
 - [x] S22 `relay/README.md` for the core: roles, brief, Authority, files, config (including `RELAY_CONFIG`), the push rule, the ed
-- [ ] S23 `relay_send {job, text, mode: "steer"|"follow_up"|"restart", reset?: "base"|"keep"}` (D9).
-- [ ] S24 Critic loop (D7).
-- [ ] S25 Escalation and re-plan (D8).
-- [ ] S26 Stall and tool timeouts.
-- [ ] S27 Resume and adoption. In `leadOn(ctx)`, after lead mode turns on:
-- [ ] S28 Pause and takeover.
-- [ ] S29 Follow-up on a finished job: `relay_followup {job, text}` (`steps/followup.ts`). For a job in `done`, `stopped` or `fail
+- [x] S23 `relay_send {job, text, mode: "steer"|"follow_up"|"restart", reset?: "base"|"keep"}` (D9).
+- [x] S24 Critic loop (D7).
+- [x] S25 Escalation and re-plan (D8).
+- [x] S26 Stall and tool timeouts.
+- [x] S27 Resume and adoption. In `leadOn(ctx)`, after lead mode turns on:
+- [x] S28 Pause and takeover.
+- [x] S29 Follow-up on a finished job: `relay_followup {job, text}` (`steps/followup.ts`). For a job in `done`, `stopped` or `fail
 - [ ] S30 Queue and overlap.
 - [ ] S31 Stacked jobs (D17).
 - [ ] S32 `relay_add_repo {job, folder, target}`. Emits W3. On success it adds the repo, with `base` = `origin/<target>` and the r
