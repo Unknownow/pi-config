@@ -146,3 +146,28 @@ test("the footer shows `relay lead` while lead mode is on and clears it on /rela
 		cleanup(dir);
 	}
 });
+
+test("idle: `relay ready` before lead mode is decided, then an idle dock line while lead mode is on with no jobs", async () => {
+	const { dir } = makeRepo();
+	try {
+		const bus = makeBus();
+		const got: any[] = [];
+		bus.on("dock:lines", (d) => got.push(d));
+		const fns = { visibleWidth: (s: string) => s.length, truncate: (s: string, n: number) => s.slice(0, n) };
+		const r = relayOn(bus, dir, { dock: fns, widgetMs: 20 });
+		const status = new Map<string, string>();
+		const ctx: any = fakeCtx(dir);
+		ctx.ui.setStatus = (k: string, v: string | undefined) => (v === undefined ? status.delete(k) : status.set(k, v));
+		ctx.ui.setWidget = () => {};
+		await r.hooks.get("session_start")!({}, ctx);
+		assert.equal(status.get("relay"), "relay ready");
+		assert.equal(await r.lead.leadOn(ctx), true);
+		assert.deepEqual(got.at(-1)?.lines, ["relay lead · no jobs running"]);
+		await r.commands.get("relay")!.handler("off", ctx);
+		assert.deepEqual(got.at(-1)?.lines, []);
+		assert.equal(status.has("relay"), false);
+		await r.hooks.get("session_shutdown")!({}, ctx);
+	} finally {
+		cleanup(dir);
+	}
+});

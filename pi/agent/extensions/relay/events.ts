@@ -61,6 +61,11 @@ export class Activation {
 		return inJobSet(this.d.cwd);
 	}
 
+	/** Lead mode can still come on: not a worker or reviewer, relay.json active, not a job's worktree (workflow is asked later). */
+	eligible(): boolean {
+		return !this.d.role && this.d.active() && !this.jobSet;
+	}
+
 	/** What relay's K16 listener claims: undefined, or `{ owner: "relay" }`. */
 	claim(from: "workflow" | "relay"): { owner: "relay" } | undefined {
 		if (from === "relay" || this.d.role || this.jobSet) return undefined;

@@ -70,8 +70,9 @@ export function createLead(pi: ExtensionAPI, d: LeadDeps) {
 	/** The dock's right column (S33): the unfinished jobs of this session with their live tool stream; published every 2 s. */
 	function paintWidget(): void {
 		paintStatus();
-		if (!engine) return;
-		const lines = engine.dockLines(Date.now());
+		let lines = engine?.dockLines(Date.now()) ?? [];
+		// lead mode on and nothing running: one idle line, so the dock shows that relay is on
+		if (!lines.length && act.mode === "on") lines = ["relay lead · no jobs running"];
 		if (!lines.length && !widgetShown) return;
 		widgetShown = lines.length > 0;
 		publishDock(pi, "relay", "right", lines);
@@ -82,7 +83,8 @@ export function createLead(pi: ExtensionAPI, d: LeadDeps) {
 		if (!lastCtx?.hasUI) return;
 		const n = act.mode === "on" ? (engine?.ownedRunning() ?? 0) : 0;
 		try {
-			lastCtx.ui.setStatus("relay", act.mode === "on" ? `relay lead${n ? ` · ${n} job${n === 1 ? "" : "s"}` : ""}` : undefined);
+			const text = act.mode === "on" ? `relay lead${n ? ` · ${n} job${n === 1 ? "" : "s"}` : ""}` : act.mode === "undecided" && act.eligible() ? "relay ready" : undefined;
+			lastCtx.ui.setStatus("relay", text);
 		} catch {
 			// a stale UI is fine
 		}
@@ -121,7 +123,7 @@ export function createLead(pi: ExtensionAPI, d: LeadDeps) {
 			widgetTimer.unref?.();
 			void scan(ctx);
 		}
-		paintStatus();
+		paintWidget();
 		if (was === "undecided" && !on && act.reason && !/relay json|worker or reviewer/.test(act.reason)) ctx.ui?.notify?.(act.reason.startsWith("relay") ? act.reason : `relay: ${act.reason}`, "info");
 		return on;
 	}
@@ -567,6 +569,7 @@ export function createLead(pi: ExtensionAPI, d: LeadDeps) {
 		}
 		registerBus();
 		if (hosted) await leadOn(ctx);
+		else paintStatus();
 	});
 
 	// ----------------------------------------------------------------------------------------- commands
@@ -586,13 +589,14 @@ export function createLead(pi: ExtensionAPI, d: LeadDeps) {
 			if (sub === "on") {
 				const r = await act.turnOn();
 				note(r.ok ? "relay: lead mode on" : `relay: not turned on: ${r.why}`, r.ok ? "info" : "warning");
-				paintStatus();
+				if (r.ok) await leadOn(ctx);
+				paintWidget();
 			} else if (sub === "off") {
 				const running = engine?.ownedRunning() ?? 0;
 				if (running > 0) note(`relay: not turned off: this lead owns ${running} running job(s); relay_stop them first`, "warning");
 				else {
 					act.turnOff();
-					paintStatus();
+					paintWidget();
 					note("relay: lead mode off");
 				}
 			} else if (sub === "go") {
