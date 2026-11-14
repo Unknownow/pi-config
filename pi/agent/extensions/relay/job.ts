@@ -44,6 +44,8 @@ export interface Job {
 	title: string;
 	state: JobState;
 	briefVersion: number;
+	/** The brief version the worker was last given (its prompt or an amendment); the judge never reviews work done for an older one. */
+	workerVersion?: number;
 	set: string;
 	/** The worker's working folder (the set root for a multi-repo job). */
 	cwd?: string;

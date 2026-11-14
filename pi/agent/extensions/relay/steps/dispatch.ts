@@ -29,6 +29,7 @@ export function workerPrompt(ctx: Pick<StepCtx, "relayDir" | "brief">, job: Job,
 	const rules = fs.readFileSync(path.join(ctx.relayDir, "prompts", "worker.md"), "utf8");
 	const p = parseBrief(ctx.brief());
 	const version = "errors" in p ? job.briefVersion : p.version;
+	job.workerVersion = version;
 	return `${rules}
 
 # Your job (brief version ${version})

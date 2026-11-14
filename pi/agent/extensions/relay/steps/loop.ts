@@ -161,6 +161,8 @@ export function workAmendments(job: Job, brief: string) {
 /** Sends the job back to the worker with the amendments it has not seen. No round is used: an amendment is not a failure. */
 export async function backToWork(job: Job, ctx: StepCtx, since: number): Promise<"work"> {
 	const list = amendmentsSince(ctx.brief(), since).filter((a) => a.by !== "approval");
+	const p = parseBrief(ctx.brief());
+	job.workerVersion = "errors" in p ? job.briefVersion : p.version;
 	job.state = "working";
 	delete job.paused;
 	ctx.save(job);
@@ -181,6 +183,8 @@ export const judgeStep: Step = {
 			ctx.log("lost", "this lead no longer owns the job; not judging");
 			return "wait";
 		}
+		// an amendment the worker has not seen (it came after its last report_done) goes to the worker first
+		if (job.workerVersion !== undefined && amendmentsSince(ctx.brief(), job.workerVersion).some((a) => a.by !== "approval")) return backToWork(job, ctx, job.workerVersion);
 		// anything the worker left uncommitted is committed so the judged tree is the delivered tree
 		for (const r of job.repos) {
 			const st = await ctx.run("git", ["status", "--porcelain"], r.worktree);

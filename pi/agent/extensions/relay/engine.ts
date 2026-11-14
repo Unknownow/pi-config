@@ -112,6 +112,8 @@ class JobRun {
 	tools = new Map<string, { name: string; startedAt: number; timeoutMs: number }>();
 	/** A steer sent to the running worker; if it is still queued when the worker settles it is sent as a prompt. */
 	pendingSteer?: string;
+	/** The brief version of the pending steer; it becomes the worker's version only once the worker has taken it. */
+	steerVersion?: number;
 	/** A restart, a pause or a recovery is in progress: nothing else may start or prompt a worker. */
 	recovering = false;
 	/** Set by stop() and the budget: a running step must wind down, whatever state it sets. */
@@ -428,6 +430,11 @@ export class Engine {
 	/** `agent_settled`: a steer that is still queued becomes a prompt; otherwise the work step looks at the job. */
 	private async settled(jr: JobRun): Promise<void> {
 		const steer = jr.pendingSteer;
+		if (steer && jr.worker && jr.job.state !== "working") {
+			// the job moved on (the judge runs): the steer is dropped; the judge sends the worker back with the amendment
+			jr.pendingSteer = undefined;
+			await jr.worker.clearQueue();
+		}
 		if (steer && jr.worker && jr.job.state === "working" && !jr.recovering) {
 			jr.pendingSteer = undefined;
 			const st = await jr.worker.getState();
@@ -438,10 +445,13 @@ export class Engine {
 				jr.ws.done = undefined;
 				jr.ws.settled = false;
 				appendLog(jr.dir, { kind: "steer", text: "still queued when the worker settled; sent as a prompt" });
+				jr.job.workerVersion = jr.steerVersion ?? jr.job.workerVersion;
 				const r = await jr.worker.prompt(steer);
 				if (!r.success) appendLog(jr.dir, { kind: "prompt-error", text: r.error ?? "prompt failed" });
 				return;
 			}
+			// the worker took the steer itself
+			jr.job.workerVersion = jr.steerVersion ?? jr.job.workerVersion;
 		}
 		jr.ws.settled = true;
 		if (jr.job.state === "working") void this.drive(jr);
@@ -711,6 +721,7 @@ export class Engine {
 		this.save(jr);
 		appendLog(jr.dir, { kind: "amendment", text: `${by} (${mode}): ${text.slice(0, 200)}` });
 		const msg = `Amendment ${n} (${by}) to the brief: ${text}\nApply it, then finish with report_done.`;
+		const gave = jr.job.briefVersion;
 		const state = jr.job.state;
 		if (state !== "working") {
 			// judging and delivering notice the new version themselves; a paused or queued job reads it when it (re)starts
@@ -721,20 +732,24 @@ export class Engine {
 		if (jr.ws.done !== undefined) return { ok: true, version: jr.job.briefVersion, how: "held: the worker had just reported done; the judge's verdict on the old version is discarded and the worker is sent back" };
 		if (!jr.worker || jr.ws.exited || !jr.ws.alive) {
 			await this.ctxFor(jr).prompt(msg);
+			jr.job.workerVersion = gave;
 			return { ok: true, version: jr.job.briefVersion, how: "sent to a restarted worker" };
 		}
 		if (jr.ws.settled) {
 			await this.ctxFor(jr).prompt(msg);
+			jr.job.workerVersion = gave;
 			return { ok: true, version: jr.job.briefVersion, how: "sent as a prompt (the worker was idle)" };
 		}
 		if (mode === "steer") {
 			const r = await jr.worker.steer(msg);
 			if (!r.success) return { error: `the worker did not accept the steer: ${r.error ?? "no response"}` };
 			jr.pendingSteer = jr.pendingSteer ? `${jr.pendingSteer}\n\n${msg}` : msg;
+			jr.steerVersion = gave;
 			return { ok: true, version: jr.job.briefVersion, how: "steered (reaches the worker at its next step)" };
 		}
 		const r = await jr.worker.followUp(msg);
 		if (!r.success) return { error: `the worker did not accept the follow-up: ${r.error ?? "no response"}` };
+		jr.job.workerVersion = gave;
 		return { ok: true, version: jr.job.briefVersion, how: "queued behind the worker's current turn" };
 	}
 

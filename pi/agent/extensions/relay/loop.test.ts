@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { test } from "node:test";
+import { appendAmendment } from "./brief.ts";
 import { parseConfig } from "./config.ts";
 import { emptyJob } from "./job.ts";
 import { run } from "./sh.ts";
@@ -91,6 +92,29 @@ test("a commit made while the judge runs is not recorded as judged: the judge ru
 		assert.equal(await judgeStep.run(s.job, s.ctx), "deliver");
 		assert.equal(s.job.repos[0].judgedTree, git(s.dir, "rev-parse", "HEAD^{tree}"));
 		assert.equal(s.reviews.length, 2);
+	} finally {
+		cleanup(s.dir);
+	}
+});
+
+test("an amendment the worker has not seen goes to the worker before the judge runs; an approval alone does not", async () => {
+	const s = setup();
+	try {
+		const prompts: string[] = [];
+		s.ctx.prompt = async (p) => void prompts.push(p);
+		s.job.workerVersion = 1;
+		s.ctx.brief = () => appendAmendment(brief({ repo: s.dir }), "user", "also say goodbye");
+		assert.equal(await judgeStep.run(s.job, s.ctx), "work");
+		assert.equal(s.reviews.length, 0, "the judge did not run");
+		assert.match(prompts[0], /also say goodbye/);
+		assert.equal(s.job.workerVersion, 2);
+		assert.equal(s.job.state, "working");
+		// an approval only widens Authority: the judge runs
+		s.job.state = "judging";
+		s.ctx.brief = () => appendAmendment(brief({ repo: s.dir }), "approval", "[deps] x approved");
+		s.job.workerVersion = 1;
+		assert.equal(await judgeStep.run(s.job, s.ctx), "deliver");
+		assert.equal(s.reviews.length, 1);
 	} finally {
 		cleanup(s.dir);
 	}
