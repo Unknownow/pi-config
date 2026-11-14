@@ -9,6 +9,7 @@ import * as path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { parseRoleSpec } from "../shared/roles.ts";
 import { emitClaims } from "../shared/claims.ts";
+import { attachDock, publishDock, unpublishDock, type DockFns } from "../shared/dock.ts";
 import { classifyCommand } from "./authority.ts";
 import { editBudgetProblem, measureEdits } from "./budget.ts";
 import { type RelayConfig, configPath, loadConfig, repoPolicy, saveRole } from "./config.ts";
@@ -38,6 +39,8 @@ export interface LeadDeps {
 	/** The interval of the adoption scan (default 10 min). */
 	scanMs?: number;
 	widgetMs?: number;
+	/** pi-tui's `visibleWidth` and `truncateToWidth` (the dock draws the relay column when this session has a UI). */
+	dock?: DockFns;
 }
 
 const text = (t: string, details: object = {}) => ({ content: [{ type: "text" as const, text: t }], details });
@@ -61,19 +64,15 @@ export function createLead(pi: ExtensionAPI, d: LeadDeps) {
 	let scans = 0;
 	let widgetTimer: ReturnType<typeof setInterval> | undefined;
 	let widgetShown = false;
+	let releaseDock: (() => void) | undefined;
 
-	/** The status widget: one line per unfinished job of this session (S33). */
+	/** The dock's right column (S33): the unfinished jobs of this session with their live tool stream; published every 2 s. */
 	function paintWidget(): void {
-		const ui = lastCtx?.ui;
-		if (!ui?.setWidget || !engine) return;
-		const lines = engine.widgetLines();
+		if (!engine) return;
+		const lines = engine.dockLines(Date.now());
 		if (!lines.length && !widgetShown) return;
 		widgetShown = lines.length > 0;
-		try {
-			ui.setWidget("relay", lines.length ? lines : undefined, { placement: "belowEditor" });
-		} catch {
-			// a missing UI is fine
-		}
+		publishDock(pi, "relay", "right", lines);
 	}
 
 	// K16: registered at load, answers only for relay.
@@ -256,6 +255,9 @@ export function createLead(pi: ExtensionAPI, d: LeadDeps) {
 		unsubBus();
 		if (scanTimer) clearInterval(scanTimer);
 		if (widgetTimer) clearInterval(widgetTimer);
+		releaseDock?.();
+		releaseDock = undefined;
+		unpublishDock(pi, "relay");
 		await engine?.shutdown();
 	});
 
@@ -540,6 +542,10 @@ export function createLead(pi: ExtensionAPI, d: LeadDeps) {
 
 	pi.on("session_start", async (_event: any, ctx: any) => {
 		lastCtx = ctx;
+		if (ctx.hasUI && d.dock) {
+			releaseDock?.();
+			releaseDock = attachDock(pi, ctx.ui, d.dock);
+		}
 		registerBus();
 		if (hosted) await leadOn(ctx);
 	});

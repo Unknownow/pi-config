@@ -73,7 +73,7 @@ Unity's `Library/` is never touched: a worktree session does not get one.
 
 ## Running sessions and workspaces
 
-Every interactive pi session with this extension writes `<agentDir>/live/<pid>.json` (cwd, added folders, set root, busy, the workflow's phase and stage from its `workflow:status` event), every 30 s and on each change, and deletes it on exit. A file counts when it is under 120 s old and its pid is alive; readers delete files of dead pids. The widget `wt-sessions`, below the editor, lists the other live sessions one per line as `label: state` (at most 8; the last line is `+N more` when there are more).
+Every interactive pi session with this extension writes `<agentDir>/live/<pid>.json` (cwd, added folders, set root, busy, the workflow's phase and stage from its `workflow:status` event), every 30 s and on each change, and deletes it on exit. A file counts when it is under 120 s old and its pid is alive; readers delete files of dead pids. The session list is the left side of the shared dock below the editor (`../shared/dock.ts`): worktree publishes `dock:lines {v:1, key:"wt-sessions", side:"left", lines}` and the dock owner draws it, next to relay's job column when relay is loaded (layout rule in `../shared/README.md`; alone, the list uses the full width as before). It lists the other live sessions one per line as `label: state` (at most 8; the last line is `+N more` when there are more).
 
 `/wt new` writes `<set>/.pi-set.json` (`{ v, created, branch, repos: [{ main, dir }] }`). Sets made by older versions have none and work as before.
 

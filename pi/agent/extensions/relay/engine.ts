@@ -124,6 +124,12 @@ class JobRun {
 	gen = 0;
 	lastActivity = 0;
 	tools = new Map<string, { name: string; startedAt: number; timeoutMs: number }>();
+	/** The last 3 worker tool calls (oldest first), for the dock. */
+	ring: { id: string; name: string; arg: string; startedAt: number; endedAt?: number }[] = [];
+	/** When the engine saw the latest verdict (0: none seen); the dock shows it until a newer tool call. */
+	verdictAt = 0;
+	seenVerdict = "";
+	seenState = "";
 	/** A steer sent to the running worker; if it is still queued when the worker settles it is sent as a prompt. */
 	pendingSteer?: string;
 	/** Another lead owns the job now: nothing of this lead may write, push or merge for it. */
@@ -143,18 +149,36 @@ class JobRun {
 		this.dir = dir;
 		this.job = job;
 		this.lock = lock;
+		this.seenVerdict = verdictKey(job);
+		this.seenState = job.state;
 	}
 }
+
+const verdictKey = (j: Job): string => (j.lastVerdict ? `${j.lastVerdict.round}:${j.lastVerdict.verdict}:${j.lastVerdict.blockers}:${j.lastVerdict.majors}:${j.lastVerdict.minors}` : "");
 
 /** The dependency gate applies only before the dependent first starts: after that it is built on the predecessor's pushed work. */
 export const awaitingPred = (job: Job): boolean => !!job.dependsOn && job.repos.length === 0 && !job.followupPending;
 
 /** A tool call as one short log line: the name and its first argument, shortened. */
 export function toolSummary(name: string, args: unknown): string {
+	const s = toolArg(args);
+	return s ? `${name}: ${s}` : name;
+}
+
+/** The first argument of a tool call as one line, shortened to `max` characters (`Infinity`: whole). */
+export function toolArg(args: unknown, max = 80): string {
 	const a = (args ?? {}) as Record<string, unknown>;
 	const v = a.command ?? a.path ?? a.file_path ?? a.pattern ?? a.query ?? Object.values(a).find((x) => typeof x === "string");
 	const s = typeof v === "string" ? v.replace(/\s+/g, " ").trim() : "";
-	return s ? `${name}: ${s.length > 80 ? `${s.slice(0, 77)}...` : s}` : name;
+	return s.length > max ? `${s.slice(0, max - 3)}...` : s;
+}
+
+/** `45s`, `6m12s`, `1h03m`. */
+export function fmtElapsed(ms: number): string {
+	const s = Math.max(0, Math.floor(ms / 1000));
+	if (s < 60) return `${s}s`;
+	if (s < 3600) return `${Math.floor(s / 60)}m${String(s % 60).padStart(2, "0")}s`;
+	return `${Math.floor(s / 3600)}h${String(Math.floor((s % 3600) / 60)).padStart(2, "0")}m`;
 }
 
 export class Engine {
@@ -207,6 +231,10 @@ export class Engine {
 	private save(jr: JobRun) {
 		if (jr.lost) return;
 		writeJob(jr.dir, jr.job);
+		const vk = verdictKey(jr.job);
+		if (vk && (vk !== jr.seenVerdict || (jr.seenState === "judging" && jr.job.state !== "judging"))) jr.verdictAt = this.now();
+		jr.seenVerdict = vk;
+		jr.seenState = jr.job.state;
 		if (!jr.startedEmitted) return;
 		const key = `${jr.job.state}:${jr.job.round}`;
 		if (key === jr.lastProgress) return;
@@ -526,10 +554,15 @@ export class Engine {
 			onToolStart: (id, name, args) => {
 				if (!live()) return;
 				jr.tools.set(id, { name, startedAt: this.now(), timeoutMs: toolTimeoutMs(cfg, name, args) });
+				jr.ring.push({ id, name, arg: toolArg(args, Infinity), startedAt: this.now() });
+				if (jr.ring.length > 3) jr.ring.shift();
 				appendLog(jr.dir, { kind: "tool", text: toolSummary(name, args) });
 			},
 			onToolEnd: (id) => {
-				if (live()) jr.tools.delete(id);
+				if (!live()) return;
+				jr.tools.delete(id);
+				const r = jr.ring.find((x) => x.id === id);
+				if (r) r.endedAt = this.now();
 			},
 			onSettled: () => {
 				if (live()) void this.settled(jr);
@@ -546,6 +579,7 @@ export class Engine {
 		jr.ws.settled = false;
 		jr.lastActivity = this.now();
 		jr.tools.clear();
+		for (const t of jr.ring) t.endedAt ??= this.now();
 		jr.worker = start(
 			{
 				cwd: job.cwd ?? job.repos[0].worktree,
@@ -609,6 +643,7 @@ export class Engine {
 		jr.ws.openAsks = [];
 		jr.asks.clear();
 		jr.tools.clear();
+		for (const t of jr.ring) t.endedAt ??= this.now();
 		jr.pendingSteer = undefined;
 	}
 
@@ -1255,6 +1290,29 @@ export class Engine {
 				const wall = Math.round(j.used.wallMs / 60_000);
 				return `relay ${j.id} ${j.state} r${j.round + 1}${j.escalated ? "e" : ""} ${wall}/${Math.round(j.budget.wallMs / 60_000)}m ${Math.round((j.used.tokens / j.budget.tokens) * 100)}% tok${j.dependsOn ? ` <- ${j.dependsOn}` : ""}`;
 			});
+	}
+
+	/**
+	 * The dock's right column: per unfinished job a header and, while working, the judge's latest verdict and the last 3 tool calls;
+	 * judging shows one line; more than 2 unfinished jobs collapse to headers. Full lines: the dock truncates.
+	 */
+	dockLines(now: number): string[] {
+		const runs = [...this.jobs.values()].filter((j) => !j.ended && !FINISHED.includes(j.job.state));
+		const head = this.widgetLines().map((l) => l.replace(/^relay /, ""));
+		const out: string[] = [];
+		runs.forEach((jr, i) => {
+			out.push(head[i]);
+			if (runs.length > 2) return;
+			const j = jr.job;
+			if (j.state === "judging") out.push(`judge reviewing round ${j.round + 1}`);
+			else if (j.state === "working") {
+				const v = j.lastVerdict;
+				const last = jr.ring.reduce((m, t) => Math.max(m, t.startedAt, t.endedAt ?? 0), 0);
+				if (v && jr.verdictAt > 0 && jr.verdictAt > last) out.push(`judge round ${v.round}: ${v.verdict} (${v.blockers + v.majors + v.minors} findings)`);
+				for (const t of [...jr.ring].reverse()) out.push(t.endedAt === undefined ? `▸ ${t.name} ${t.arg} ${fmtElapsed(now - t.startedAt)}` : `· ${t.name} ${t.arg}`);
+			}
+		});
+		return out;
 	}
 
 	/** Structured state of jobs by id: this lead's own, or read from job.json (earlier sessions, adopted jobs). */

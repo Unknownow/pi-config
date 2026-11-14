@@ -27,7 +27,8 @@ import { reattach, updateSet, worthNotifying } from "./update.ts";
 import { execRunner } from "./exec.ts";
 import { Progress } from "./progress.ts";
 import { addRepoToSet, build, worktreeForFolder } from "./add-folder.ts";
-import { truncateToWidth } from "@earendil-works/pi-tui";
+import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { attachDock, publishDock, unpublishDock } from "../shared/dock.ts";
 import { branchOf, checkName, launchSpec, nextFreeName, rootProblem, setRootOf, vscodeTerminalSpec } from "./layout.ts";
 
 const SUBCOMMANDS = ["new", "open", "use", "list", "update", "remove", "rename", "clean", "done", "unlink"];
@@ -802,10 +803,11 @@ export default function worktree(pi: ExtensionAPI) {
 			});
 		} catch {}
 	};
+	let releaseDock: (() => void) | undefined;
 	const pollFooter = () => {
 		try {
 			const lines = sessionLines(sessionsInUse(), process.pid);
-			liveCtx?.ui.setWidget("wt-sessions", lines.length ? lines : undefined, { placement: "belowEditor" });
+			if (liveCtx) publishDock(pi, "wt-sessions", "left", lines);
 		} catch {}
 	};
 	const stopLive = () => {
@@ -814,6 +816,9 @@ export default function worktree(pi: ExtensionAPI) {
 		unsubStatus?.();
 		unsubStatus = undefined;
 		liveCtx = null;
+		releaseDock?.();
+		releaseDock = undefined;
+		unpublishDock(pi, "wt-sessions");
 		removeLive(liveDir(), process.pid);
 	};
 	const startLive = (ctx: ExtensionContext) => {
@@ -822,6 +827,8 @@ export default function worktree(pi: ExtensionAPI) {
 		unsubStatus?.();
 		liveCtx = ctx;
 		busy = false;
+		releaseDock?.();
+		releaseDock = attachDock(pi, ctx.ui, { visibleWidth, truncate: truncateToWidth });
 		try {
 			ctx.ui.setStatus("wt-sessions", undefined);
 		} catch {}
