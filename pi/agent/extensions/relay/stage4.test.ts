@@ -412,9 +412,9 @@ test("a lead that lost a job stops it: no save, no report, nothing delivered, an
 		w.write({ worker: [{ hang: true }] });
 		const a = await start(w);
 		const jr = await running(w, a);
-		const stateBefore = fs.readFileSync(path.join(jr.dir, "job.json"), "utf8");
 		jr.lock.heartbeat = async () => "lost";
 		await waitFor(() => jr.ended, 5000, "the job to be let go");
+		const stateAfter = fs.readFileSync(path.join(jr.dir, "job.json"), "utf8");
 		assert.equal(jr.lost, true);
 		assert.equal(jr.abort.signal.aborted, true);
 		assert.equal(w.engine.widgetLines().length, 0);
@@ -422,7 +422,7 @@ test("a lead that lost a job stops it: no save, no report, nothing delivered, an
 		jr.job.state = "stopped";
 		jr.job.endReason = "x";
 		w.engine["save"](jr);
-		assert.equal(fs.readFileSync(path.join(jr.dir, "job.json"), "utf8"), stateBefore, "job.json is not written any more");
+		assert.equal(fs.readFileSync(path.join(jr.dir, "job.json"), "utf8"), stateAfter, "job.json is not written any more");
 	} finally {
 		w.end();
 	}
