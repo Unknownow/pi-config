@@ -55,7 +55,7 @@ export interface Run {
 }
 
 /** The input of one package, before names and states are assigned. */
-export type PackageInput = Pick<Sub, "id" | "goal"> & Partial<Pick<Sub, "criteria" | "owns" | "forbids" | "dependsOn" | "decisions" | "notes">> & { repos?: string[] };
+export type PackageInput = Pick<Sub, "id" | "goal"> & Partial<Pick<Sub, "criteria" | "owns" | "forbids" | "dependsOn" | "decisions" | "notes">> & { repos?: string[]; /** The branch the package starts from and merges into, as the proposal names it. */ base?: string };
 
 export const SUB_ID_RE = /^[a-z0-9][a-z0-9-]{0,15}$/;
 /** Copy of BRANCH_RE in worktree/layout.ts:7 (orchestrate never imports worktree). */

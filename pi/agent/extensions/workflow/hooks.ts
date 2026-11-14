@@ -30,14 +30,15 @@ export function planReviewAction(answer: unknown, stillCurrent: boolean): "appro
 
 export const ACCEPTANCE_NO_ANSWER = "the acceptance check did not answer";
 
-/** The refusal text of a K11 answer, or null when the merge may go on. */
-export function acceptanceRefusal(answer: unknown): string | null {
+/** The refusal of a K11 answer, or null when the merge may go on. `pending`: an acceptance request waits for the orchestrator; `tree` is the tree it resolved. */
+export function acceptanceRefusal(answer: unknown): { text: string; pending: boolean; tree?: string } | null {
 	if (answer === null || answer === undefined) return null;
 	if (typeof answer === "object") {
-		const p = (answer as { problem?: unknown }).problem;
-		if (typeof p === "string" && p) return p;
+		const o = answer as { problem?: unknown; pending?: unknown; tree?: unknown };
+		const tree = typeof o.tree === "string" && o.tree ? o.tree : undefined;
+		if (typeof o.problem === "string" && o.problem) return { text: o.problem, pending: o.pending === true && !!tree, ...(tree ? { tree } : {}) };
 	}
-	return ACCEPTANCE_NO_ANSWER; // an error, or an answer outside the contract: refuse
+	return { text: ACCEPTANCE_NO_ANSWER, pending: false }; // an error, or an answer outside the contract: refuse
 }
 
 const SPECIAL = /[.*+?^$()|{}\[\]\\]/g;

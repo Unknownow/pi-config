@@ -36,7 +36,12 @@ export function isProposalReady(text: string, stoppedNormally: boolean): boolean
 	return /^#+\s*Packages\b/m.test(t) && !ENDS_IN_QUESTION.test(t);
 }
 
-const ALWAYS = /^(orch_status|orch_send|orch_review_plan|orch_accept|orch_decide|orch_escalate|ask_orchestrator)$/;
+const ALWAYS = /^(orch_status|orch_send|orch_review_plan|orch_accept|orch_decide|orch_escalate|orch_merge|ask_orchestrator)$/;
+
+/** A shell command that merges a pull request (`gh pr merge`, `gh api .../merge`). */
+export function mergesPullRequest(command: string): boolean {
+	return /\bgh\b[^\n;|&]*\bpr\s+merge\b/.test(command) || /\bgh\b[^\n;|&]*\bapi\b[^\n;|&]*\/merge\b/.test(command);
+}
 const ALLOWED = PLAN_TOOLS.map((p) => new RegExp(p));
 
 /** Why the tool may not run in this mode, or null. */

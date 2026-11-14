@@ -57,7 +57,7 @@ import { pathCompletions } from "./pickers.ts";
 import { ghCandidates, withPathDir } from "./gh-path.ts";
 import { citeNames, collectRepoDiff as collectRepoDiffImpl, needsFinalFullReview, shouldSkipRepeatFullReview, type RepoDiff } from "./repo-diff.ts";
 import { GIT_GUARD_ENV, type GitGuardSpec } from "./git-guard.ts";
-import { forkBase, midFlowMergeProblem, unpushedReason, mergedInStage, baseFromTree, defaultRunner, recordJudged, gateCheck, mergedBase, noMerge } from "./merge-gate.ts";
+import { forkBase, midFlowMergeProblem, unpushedReason, mergedInStage, baseFromTree, defaultRunner, recordJudged, gateCheck, originRepo, mergedBase, noMerge } from "./merge-gate.ts";
 import { combineRepoTexts, followFolders, parseAddDir, parseWorktreeList, repoKey, uniqueRoots } from "../shared/repos.ts";
 import { askFolderAdd } from "./folder-add.ts";
 import { codePublishProblem, registryPublishCodeProblem, registryPublishProblem, shellProblem } from "./push-guard.ts";
@@ -174,7 +174,7 @@ interface FlowState {
 	/** Git roots edited in this flow that are neither the working folder's repo nor an added folder's repo. */
 	touchedRepos?: string[];
 	/** The flow waits for a person (and maybe a check) before it continues; no judge, delivery or stage advance meanwhile. */
-	waiting?: { askId?: string; manual?: boolean; waitKind?: "external"; reason: string; check?: string; step?: string; stage?: number; since: string; planned: boolean; atStageStart?: boolean; checkPassed?: boolean; held?: string };
+	waiting?: { askId?: string; manual?: boolean; waitKind?: "external" | "acceptance"; accept?: { tree: string; root: string; kind: "merge" | "protected-push" | "publish" }; reason: string; check?: string; step?: string; stage?: number; since: string; planned: boolean; atStageStart?: boolean; checkPassed?: boolean; held?: string };
 	/** Counter of the K12 asks this flow sent; the next ask id is derived from it. */
 	askSeq?: number;
 	/** The K12 menu ask that waits for an answer; a restart withdraws it. */
@@ -573,6 +573,8 @@ export default function workflow(pi: ExtensionAPI) {
 			...(cl?.length ? { done: cl.filter((i) => i.done).length, total: cl.length } : {}),
 			...(cl && state.waiting ? { waiting: true } : {}),
 			...(gateRun ? { judging: gateRun.kind } : {}),
+			...(state.waiting?.waitKind === "acceptance" && state.waiting.accept ? { acceptance: { tree: state.waiting.accept.tree, repoRoot: state.waiting.accept.root, kind: state.waiting.accept.kind, since: state.waiting.since } } : {}),
+			delivery: { mergeMethod: cfg.delivery.mergeMethod, deleteBranch: cfg.delivery.deleteBranch },
 		};
 		const json = JSON.stringify(payload);
 		if (json === lastStatusEvent) return;
@@ -1612,7 +1614,7 @@ export default function workflow(pi: ExtensionAPI) {
 	function waitSnapshot(): Pick<PlanSnap, "waiting" | "checkpoints" | "reviewBase" | "passedTrees" | "judgedMerges"> {
 		const w = state.waiting;
 		return {
-			...(w ? { waiting: { reason: w.reason, ...(w.check ? { check: w.check } : {}), ...(w.waitKind ? { waitKind: w.waitKind } : {}), since: w.since, planned: w.planned, ...(w.atStageStart ? { atStageStart: true } : {}), ...(w.held ? { held: w.held } : {}) } } : {}),
+			...(w && w.waitKind !== "acceptance" ? { waiting: { reason: w.reason, ...(w.check ? { check: w.check } : {}), ...(w.waitKind ? { waitKind: w.waitKind } : {}), since: w.since, planned: w.planned, ...(w.atStageStart ? { atStageStart: true } : {}), ...(w.held ? { held: w.held } : {}) } } : {}),
 			...(state.checkpoints?.length ? { checkpoints: state.checkpoints.map((c) => ({ ...(c.step ? { step: c.step } : {}), ...(c.stage ? { stage: c.stage } : {}), text: c.text, ok: c.ok })) } : {}),
 			...(state.reviewBase && Object.keys(state.reviewBase).length ? { reviewBase: { ...state.reviewBase } } : {}),
 			...(state.passedTrees && Object.keys(state.passedTrees).length ? { passedTrees: { ...state.passedTrees } } : {}),
@@ -2198,7 +2200,8 @@ export default function workflow(pi: ExtensionAPI) {
 	/** The wait is over because a person typed, or a listener resumed it: clears it and returns the message that resumes the executor. */
 	function finishWait(ctx: ExtensionContext, w: NonNullable<FlowState["waiting"]>, how: "passed" | "forced" | "plain", text: string | undefined): string {
 		clearWait(ctx);
-		return resumeContent(resumePrefix(w.reason, how), w.held, text);
+		const note = w.waitKind === "acceptance" ? "\n\n(The orchestrator's acceptance is still pending: a merge stays refused until it answers or the user runs /orch merge.)" : "";
+		return resumeContent(resumePrefix(w.reason, how), w.held, text) + note;
 	}
 
 	/** A listener resumed the wait: a check that does not pass sends a new ask with the check result; otherwise the wait ends like a typed message ends it. */
@@ -2227,7 +2230,7 @@ export default function workflow(pi: ExtensionAPI) {
 	async function waitTick(): Promise<void> {
 		const w = state.waiting;
 		const ctx = lastCtx;
-		if (!w || !ctx || waitChecking || state.phase !== "execute") return;
+		if (!w || !ctx || waitChecking || state.phase !== "execute" || w.waitKind === "acceptance") return;
 		const elapsedMs = Date.now() - waitTimerStart;
 		const limit = waitLimitMs(waitClaimed(w), cfg.wait);
 		const idle = ctx.isIdle() && (!ctx.hasUI || ctx.ui.getEditorText().trim() === "");
@@ -2425,7 +2428,10 @@ export default function workflow(pi: ExtensionAPI) {
 			if (!repo) return reply("No repo of this flow has scripts/update-packages.mjs (add the unity-packages folder to the flow). Nothing published.");
 			const root = repo.root;
 			const accepted = await acceptanceProblem("publish", root, null);
-			if (accepted) return reply(`${accepted}. Nothing published.`);
+			if (accepted) {
+				if (accepted.pending && accepted.tree) setAcceptanceWait("publish", accepted.tree, root, `Call publish_packages again with step ${step}.`);
+				return reply(`${accepted.text}. Nothing published.`);
+			}
 			const wait = (why: string, check: string): ToolReply => {
 				const since = waitSince(publishWaitSince.get(step), new Date().toISOString());
 				publishWaitSince.set(step, since);
@@ -2475,7 +2481,7 @@ export default function workflow(pi: ExtensionAPI) {
 			const cwd = params.repo ? path.resolve(ctx.cwd, params.repo) : ctx.cwd;
 			if (!fs.existsSync(cwd)) return reply(`git_task failed: ${cwd} does not exist.`);
 			const multi = (state.folders?.length ?? 0) > 0 || (state.touchedRepos?.length ?? 0) > 0;
-			const acceptance = allowed.ungated ? null : await acceptanceProblem("git-task", cwd, null);
+			const acceptance = allowed.ungated ? null : (await acceptanceProblem("git-task", cwd, null))?.text ?? null;
 			const spec: GitGuardSpec = {
 				roots: multi ? repos.map((r) => r.root) : [],
 				protectedBranches: cfg.protectedBranches,
@@ -2552,7 +2558,8 @@ export default function workflow(pi: ExtensionAPI) {
 		if (!jm) return { error: NO_JUDGED_MERGE };
 		await git(root, "fetch", "--quiet", "origin");
 		if (jm.pr) {
-			const view = await defaultRunner("gh", ["pr", "view", jm.pr, "--json", "state,mergeCommit"], root);
+			const slug = await originRepo(defaultRunner, root);
+			const view = await defaultRunner("gh", ["pr", "view", jm.pr, ...(slug ? ["-R", slug] : []), "--json", "state,mergeCommit"], root);
 			if (view.code !== 0) return { error: `Cannot read pull request ${jm.pr} (${view.stderr.trim().split(/\r?\n/)[0] || "gh failed"}). Nothing published.` };
 			try {
 				const j = JSON.parse(view.stdout) as { state?: unknown; mergeCommit?: { oid?: unknown } | null };
@@ -3013,10 +3020,13 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 				if (kind === "merge") await ensureGh(ctx).catch(() => false);
 				const early = noMerge(state.approvedPlan ?? "") ? null : midFlowMergeRefusal();
 				if (early) return early;
-				const res = await gateCheck(defaultRunner, kind, dir, target, { passedTrees: state.passedTrees?.[key] ?? [], noMerge: noMerge(state.approvedPlan ?? ""), repo });
+				const res = await gateCheck(defaultRunner, kind, dir, target, { passedTrees: state.passedTrees?.[key] ?? [], noMerge: noMerge(state.approvedPlan ?? ""), repo: repo ?? (await originRepo(defaultRunner, dir)) });
 				if (res.problem) return res.problem;
 				const accepted = await acceptanceProblem(kind, dir, res.tree ?? null);
-				if (accepted) return accepted;
+				if (accepted) {
+					if (accepted.pending && accepted.tree) setAcceptanceWait(kind, accepted.tree, dir);
+					return accepted.text;
+				}
 				if (res.tree) {
 					const stage = state.stage;
 					const record = kind === "merge" ? { pr: target ?? (await branchOf(dir)), tree: res.tree, ...(stage ? { stage } : {}) } : res.commit ? { commit: res.commit, tree: res.tree, ...(stage ? { stage } : {}) } : undefined;
@@ -3055,9 +3065,44 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 	}
 
 	/** K11: asks the listeners of `workflow:merge-gate` (after the judge gate passed) whether the merge, protected push or publish may go on; a refusal text or null. */
-	async function acceptanceProblem(site: K11Site, cwd: string, tree: string | null): Promise<string | null> {
+	async function acceptanceProblem(site: K11Site, cwd: string, tree: string | null): Promise<{ text: string; pending: boolean; tree?: string } | null> {
 		return acceptanceRefusal(await gatherClaims((d) => pi.events.emit("workflow:merge-gate", d), k11Payload(site, cwd, tree), 30_000));
 	}
+
+	/** An acceptance request is pending: the flow holds (no ask, no timer) until the orchestrator answers (K15), the person types, or /orch merge merges. */
+	function setAcceptanceWait(kind: "merge" | "protected-push" | "publish", tree: string, root: string, held?: string): void {
+		if (state.phase !== "execute") return;
+		const ctx = lastCtx;
+		const w = state.waiting;
+		if (w?.waitKind === "acceptance" && w.accept?.tree === tree && w.accept.root === root && w.accept.kind === kind) return;
+		const what = kind === "merge" ? "merge" : kind === "publish" ? "publish" : "push to a protected branch";
+		setWaiting({ reason: `the orchestrator's acceptance of the ${what} (tree ${tree.slice(0, 8)})`, waitKind: "acceptance", accept: { tree, root, kind }, ...(state.stage ? { stage: state.stage } : {}), since: new Date().toISOString(), planned: false, ...(held ? { held } : {}) });
+		persist();
+		if (ctx) {
+			updateStatus(ctx);
+			planMilestone(ctx);
+		}
+	}
+
+	/** K15: the orchestrator answered an acceptance request (or merged the pull request itself). */
+	pi.events.on("workflow:acceptance", (data: unknown) => {
+		const d = data as { tree?: unknown; accept?: unknown; merged?: { pr?: unknown } | null; text?: unknown };
+		const w = state.waiting;
+		const ctx = lastCtx;
+		if (!ctx || !w || w.waitKind !== "acceptance" || !w.accept || state.phase !== "execute" || d?.tree !== w.accept.tree) return;
+		const text = typeof d.text === "string" ? d.text : "";
+		const a = w.accept;
+		let content: string;
+		if (d.merged && d.merged.pr !== undefined) {
+			state.judgedMerges = { ...(state.judgedMerges ?? {}), [repoKey(a.root)]: { pr: String(d.merged.pr), tree: a.tree, ...(state.stage ? { stage: state.stage } : {}) } };
+			content = `The orchestrator merged PR #${String(d.merged.pr)} (its branch may be deleted). If plan steps remain, fetch, start a new branch from the updated target and continue; otherwise tick the Deliver step and end your turn.`;
+		} else if (d.accept === true) {
+			const retry = a.kind === "publish" ? (w.held ? w.held.replace(/\.$/, "").replace(/^C/, "c") : "call publish_packages again") : `retry the ${a.kind === "merge" ? "merge" : "push"}, as its own command`;
+			content = `Accepted: ${retry} now.${text ? ` (${text})` : ""}`;
+		} else content = `The orchestrator refused: ${text || "no reason given"}\n\nFix it, rerun the judge, then retry.`;
+		clearWait(ctx);
+		pi.sendMessage({ customType: "workflow-wait", content, display: true }, { triggerTurn: true, deliverAs: "followUp" });
+	});
 
 	function planAllowedTools(): RegExp[] {
 		const own = cfg.planAllowedTools.flatMap((p) => {
@@ -4228,7 +4273,8 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 				let text = `${branch}${n === undefined ? "" : `, ${n} commit${n === 1 ? "" : "s"} since the review base`}`;
 				const jm = state.judgedMerges?.[repoKey(ref.root)];
 				const merged = mergedInStage(jm, state.stage) ? jm?.pr : undefined;
-				const pr = await defaultRunner("gh", ["pr", "view", ...(merged ? [merged] : []), "--json", "number,state,url"], ref.dir);
+				const slug = await originRepo(defaultRunner, ref.dir);
+				const pr = await defaultRunner("gh", ["pr", "view", ...(merged ? [merged] : []), ...(slug ? ["-R", slug] : []), "--json", "number,state,url"], ref.dir);
 				if (pr.code === 0) {
 					try {
 						const j = JSON.parse(pr.stdout) as { number?: unknown; state?: unknown; url?: unknown };
@@ -4310,7 +4356,8 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 			if (mergedInStage(jm, state.stage)) {
 				// The gate records a merge before the command runs; it counts only once the pull request is MERGED (gh unreadable: believe it).
 				if (!jm?.pr) continue;
-				const view = await defaultRunner("gh", ["pr", "view", jm.pr, "--json", "state"], ref.dir);
+				const slug = await originRepo(defaultRunner, ref.dir);
+				const view = await defaultRunner("gh", ["pr", "view", jm.pr, ...(slug ? ["-R", slug] : []), "--json", "state"], ref.dir);
 				let state2 = "MERGED";
 				try {
 					if (view.code === 0) state2 = String(JSON.parse(view.stdout).state);

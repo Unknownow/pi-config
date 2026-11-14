@@ -121,7 +121,7 @@ test("deliveryMerged: the last delivery is not merged", () => {
 	const r = dm({ prTrees: new Map([[T2, 4]]) });
 	assert.equal(r.ok, false);
 	assert.match(r.missing[0], /aaaaaaaaaaaa/);
-	assert.match(r.missing[0], /origin\/dev/);
+	assert.match(r.missing[0], /no merged pull request/);
 	assert.doesNotMatch(r.missing.join(), /without a merged pull request/);
 });
 

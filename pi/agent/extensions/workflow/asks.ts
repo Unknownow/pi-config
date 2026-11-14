@@ -57,7 +57,7 @@ export interface WaitInfo {
 	check?: string;
 	manual?: boolean;
 	/** "external": nothing for a person (another package's PR, CI, a release); the check resumes it. */
-	waitKind?: "external";
+	waitKind?: "external" | "acceptance";
 }
 
 export function waitPayload(id: string, w: WaitInfo, detail?: string, checkStatus?: CheckStatus): object {

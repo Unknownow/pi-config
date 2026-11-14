@@ -14,6 +14,10 @@ export interface MergeRecord {
 	tree: string;
 	kind: DeliveryKind;
 	at: string;
+	/** Set when the orchestrator itself merged the pull request. */
+	pr?: number;
+	mergeCommit?: string;
+	forced?: boolean;
 }
 
 interface Msg {
@@ -47,7 +51,7 @@ export function mergeGateDecision(c: {
 	if (ask !== "gate") {
 		return { pass: false, refusal: `Tree ${c.tree}${where} is not accepted by the orchestrator yet. \`git_task\` can't ask for acceptance: merge with \`gh pr merge\` in the main session, so the gate asks the orchestrator.` };
 	}
-	const refusal = `The orchestrator has not accepted tree ${c.tree}${where} yet. An acceptance request was sent; end your turn. You get a message when it answers; then retry the merge.`;
+	const refusal = `The orchestrator has not accepted tree ${c.tree}${where} yet. Acceptance pending: end your turn and do not retry; the workflow resumes you when the orchestrator answers.`;
 	if (c.requested) return { pass: false, refusal };
 	return { pass: false, refusal, request: { tree: c.tree, repo: c.key, kind, ask } };
 }
@@ -128,7 +132,6 @@ export function deliveryMerged(c: {
 	if (c.delivery && c.headTree && c.headTree !== c.delivery.tree) notes.push(`HEAD of ${label} differs from its last delivered tree; check for undelivered work`);
 	const changed = c.delivery !== null || c.commitsSinceBase !== 0;
 	if (!changed) return { changed: false, ok: true, missing, notes };
-	const into = c.base ? ` into ${c.base}` : "";
 	if (c.delivery) {
 		const t = c.delivery.tree.slice(0, 12);
 		if (c.delivery.kind === "protected-push") {
@@ -138,8 +141,8 @@ export function deliveryMerged(c: {
 			return { changed, ok, missing, notes };
 		}
 		const ok = c.prTrees.has(c.delivery.tree) ? true : c.prUnknown ? null : false;
-		if (ok === false) missing.push(`tree ${t} of ${label} is in no merged pull request${into}`);
-		if (ok === null) missing.push(`the merged pull requests of ${label}${into} could not be listed`);
+		if (ok === false) missing.push(`tree ${t} of ${label} is in no merged pull request of its branches`);
+		if (ok === null) missing.push(`the merged pull requests of ${label} could not be listed`);
 		return { changed, ok, missing, notes };
 	}
 	if (c.branchMerged === true) return { changed, ok: true, missing, notes };
@@ -174,7 +177,7 @@ export function parseMergedArgs(args: string): { id: string; force: boolean } | 
 	const parts = args.trim().split(/\s+/).filter(Boolean);
 	const force = parts.includes("--force");
 	const rest = parts.filter((p) => p !== "--force");
-	if (rest.length !== 1) return { error: "usage: /orch merged <id> [--force]" };
+	if (rest.length !== 1) return { error: "usage: /orch merge <id> [--force]" };
 	return { id: rest[0], force };
 }
 

@@ -34,7 +34,7 @@ import { buildRepos, crossRunOverlaps, foldersFor, hasKeyPrefix, subRepos, pickD
 import { verdictMatches } from "./inbox.ts";
 import { applyOutbox, combineRepos, deliveryMerged, endDecision, lastDelivery, mergeGateDecision, needsBiggerPage, parseMergedArgs, pickBase, pickGhRepo, prTreeIndex, shouldPoll, stateAfterVerdict, verdictPayload, type EndHow } from "./delivery.ts";
 import { loadConfig, DEFAULTS, type OrchestrateConfig } from "./config.ts";
-import { MODE_ENTRY, modeFromEntries, onTyped, toolRefusal, type Mode } from "./mode.ts";
+import { MODE_ENTRY, mergesPullRequest, modeFromEntries, onTyped, toolRefusal, type Mode } from "./mode.ts";
 import { PROPOSAL_FIX, repoTableText, RUN_KICKOFF, section } from "./prompts.ts";
 import { check, OFFLINE_SECONDS, type Snapshot } from "./monitor.ts";
 import { boardLines, buildView, pendingOf, viewSig, widgetLines, type Paint, type SubInput, type View } from "./view.ts";
@@ -181,6 +181,54 @@ export default function (pi: ExtensionAPI): void {
 
 	const f = (m: Me, name: string) => `${m.dir}/${name}`;
 
+	const myBranches: string[] = [];
+	/** Verdicts already handed to the model (no wait was set then): the replay must not send them again. */
+	const toldModel = new Set<string>();
+	const acceptanceOf = (k: Record<string, unknown> | undefined): { tree: string; since: string } | undefined => {
+		const a = k?.acceptance as { tree?: unknown; since?: unknown } | undefined;
+		return a && typeof a.tree === "string" && a.tree && typeof a.since === "string" ? { tree: a.tree, since: a.since } : undefined;
+	};
+	const deliveryOf = (k: Record<string, unknown> | undefined): { mergeMethod: string; deleteBranch: boolean } | undefined => {
+		const d = k?.delivery as { mergeMethod?: unknown; deleteBranch?: unknown } | undefined;
+		return d && typeof d.mergeMethod === "string" ? { mergeMethod: d.mergeMethod, deleteBranch: d.deleteBranch !== false } : undefined;
+	};
+
+	/** The run's target branches and the default branches: shared, never a package's own head branch. */
+	const sharedBranch = (run: Run | null | undefined, b: string): boolean => b === "main" || b === "master" || Object.values(run?.targets ?? {}).some((t) => t.replace(/^[^/]+\//, "") === b);
+
+	/** Adds the branch checked out in `dir` to the status's branch list (restored from the old status file after a restart). */
+	async function noteBranch(dir: string | undefined): Promise<void> {
+		if (!me || !started || !dir) return;
+		if (!myBranches.length) myBranches.push(...(readStatus(f(me, "status.json")).status?.branches ?? []).filter((b) => typeof b === "string"));
+		const b = (await git(dir, "rev-parse", "--abbrev-ref", "HEAD"))?.trim();
+		if (!b || b === "HEAD" || sharedBranch(readRun(me.common, me.run.id).run ?? me.run, b) || myBranches[myBranches.length - 1] === b) return;
+		const at = myBranches.indexOf(b);
+		if (at >= 0) myBranches.splice(at, 1);
+		myBranches.push(b);
+		while (myBranches.length > 20) myBranches.shift();
+		writeMyStatus();
+	}
+
+	/** K15: hands the orchestrator's verdict on a tree to the workflow's acceptance wait. */
+	function emitAcceptance(m: Message): void {
+		pi.events.emit("workflow:acceptance", { v: 1, tree: String(m.data?.tree ?? ""), accept: m.data?.accept === true, ...(m.data?.merged ? { merged: m.data.merged } : {}), text: m.text });
+	}
+
+	/** After a restart (or when the verdict came before the wait was set): the newest verdict for the waiting tree that follows the newest request for it. */
+	function replayVerdict(): void {
+		if (!me || !started) return;
+		const a = acceptanceOf(lastK4);
+		if (!a) return;
+		try {
+			const out = readNew(f(me, "outbox.jsonl"), 0).msgs.filter((x) => x.type === "accept-request" && x.data?.tree === a.tree);
+			const from = out.length ? out[out.length - 1].ts : a.since;
+			const v = readNew(f(me, "inbox.jsonl"), 0).msgs.filter((x) => x.type === "accept-verdict" && x.data?.tree === a.tree && x.ts >= from && !toldModel.has(x.id));
+			if (v.length) emitAcceptance(v[v.length - 1]);
+		} catch {
+			/* the next status change tries again */
+		}
+	}
+
 	function writeMyStatus(): void {
 		if (!me || !started) return;
 		const k = lastK4 ?? {};
@@ -196,6 +244,9 @@ export default function (pi: ExtensionAPI): void {
 			total: num(k.total),
 			waiting: k.waiting === true ? true : undefined,
 			judging: k.judging === "plan" || k.judging === "discussion" ? k.judging : undefined,
+			...(acceptanceOf(k) ? { acceptance: { tree: acceptanceOf(k)!.tree, since: acceptanceOf(k)!.since } } : {}),
+			...(deliveryOf(k) ? { delivery: deliveryOf(k) } : {}),
+			...(myBranches.length ? { branches: [...myBranches] } : {}),
 			heartbeat: Date.now(),
 			pid: process.pid,
 		};
@@ -229,6 +280,8 @@ export default function (pi: ExtensionAPI): void {
 		for (const w of waiters) w();
 		if (!me || !started) return;
 		writeMyStatus();
+		void noteBranch(me.sub.cwd);
+		replayVerdict();
 	});
 
 	/** K14: the flow ended (normally, stopped or abandoned); the orchestrator then checks the merge. */
@@ -371,6 +424,7 @@ export default function (pi: ExtensionAPI): void {
 		if (!me || !started) return;
 		const d = data as { cwd?: unknown; tree?: unknown; ask?: unknown; kind?: unknown };
 		const m = me;
+		void noteBranch(typeof d.cwd === "string" && d.cwd ? d.cwd : m.sub.cwd);
 		claim(
 			(async () => {
 				if (readRun(m.common, m.run.id).run?.state === "ended") return null; // the run is over: nobody can accept any more
@@ -396,10 +450,12 @@ export default function (pi: ExtensionAPI): void {
 				if (dec.mergePass) post("merge-pass", `Package ${m.sub.id} passed the gate for tree ${tree}${key ? ` of repo ${key}` : ""}.`, dec.mergePass);
 				if (dec.request) {
 					requestedTrees.add(token);
-					post("accept-request", `Package ${m.sub.id} asks to ${dec.request.kind === "protected-push" ? "push to a protected branch" : dec.request.kind === "publish" ? "publish" : "merge"} tree ${tree}${key ? ` of repo ${key}` : ""}.`, dec.request);
+					const branch = (await git(dir, "rev-parse", "--abbrev-ref", "HEAD"))?.trim();
+					post("accept-request", `Package ${m.sub.id} asks to ${dec.request.kind === "protected-push" ? "push to a protected branch" : dec.request.kind === "publish" ? "publish" : "merge"} tree ${tree}${key ? ` of repo ${key}` : ""}.`, { ...dec.request, ...(branch && branch !== "HEAD" ? { branch } : {}) });
 					updateSubStatus();
 				}
-				return dec.pass ? null : { problem: dec.refusal ?? "refused" };
+				if (dec.pass) return null;
+				return { problem: dec.refusal ?? "refused", ...(d.ask === "gate" && (dec.request || requestedTrees.has(token)) ? { pending: true, tree } : {}) };
 			})(),
 		);
 	}
@@ -439,6 +495,14 @@ export default function (pi: ExtensionAPI): void {
 					askClaims.delete(id);
 					const t = typeof m.data?.text === "string" && m.data.text ? { text: m.data.text } : {};
 					resolve(m.data?.resume === true ? { resume: true, ...t } : { choice: m.data?.choice, ...t });
+				}
+			} else if (m.type === "accept-verdict") {
+				const waiting = acceptanceOf(lastK4)?.tree === String(m.data?.tree ?? "");
+				emitAcceptance(m);
+				if (m.data?.accept !== true) requestedTrees.delete(m.data?.repo ? `${String(m.data.repo)}:${String(m.data?.tree ?? "")}` : String(m.data?.tree ?? ""));
+				if (!waiting) {
+					toldModel.add(m.id);
+					sendToModel("orchestrate-message", `Orchestrator (acceptance ${m.data?.accept === true ? "granted" : "refused"}): ${m.text}`);
 				}
 			} else if (m.type === "directive") {
 				sendToModel("orchestrate-message", `Orchestrator directive: ${m.text}`, m.data?.urgent === true ? "steer" : "followUp");
@@ -629,7 +693,13 @@ export default function (pi: ExtensionAPI): void {
 	});
 
 	pi.on("tool_call", async (event) => {
-		if (me || mode === "off") return;
+		if (me) return;
+		// merges of a live run go through /orch merge or orch_merge, also with the guard off
+		if (event.toolName === "bash" && owned && mergesPullRequest(String((event.input as { command?: unknown } | undefined)?.command ?? ""))) {
+			const live = current();
+			if (live && live.state !== "ended" && live.subs.some((s) => s.state !== "merged" && s.state !== "stopped")) return { block: true, reason: "merges in a run go through /orch merge <id> (user) or orch_merge" };
+		}
+		if (mode === "off") return;
 		const why = toolRefusal(mode, event.toolName, (event.input ?? {}) as Record<string, unknown>);
 		if (why) return { block: true, reason: why };
 	});
@@ -1219,11 +1289,24 @@ export default function (pi: ExtensionAPI): void {
 		return t;
 	}
 
-	/** The merged PRs of one repo and base since the run was created, by head tree. Listed at most once per round. */
-	async function listMerged(top: string, slug: string, base: string | null, created: string): Promise<{ trees: Map<string, number>; unknown: boolean; reason?: string }> {
+	/** The branches a package's pull requests have as head: the branches in its accept requests, in its status, and its spawn branch (newest first). */
+	function branchesOf(o: Owned, sub: Sub): string[] {
+		const out: string[] = [];
+		const run = current();
+		const add = (b: unknown): void => {
+			if (typeof b === "string" && b && b !== "HEAD" && !sharedBranch(run, b) && !out.includes(b)) out.push(b);
+		};
+		for (const m of readNew(sf(o, sub.id, "outbox.jsonl"), 0).msgs.reverse()) if (m.type === "accept-request") add(m.data?.branch);
+		for (const b of [...(readStatus(sf(o, sub.id, "status.json")).status?.branches ?? [])].reverse()) add(b);
+		add(sub.branch);
+		return out;
+	}
+
+	/** The merged PRs of one repo since the run was created, by head tree: those of one head branch (any base), else of one base. Listed at most once per round. */
+	async function listMerged(top: string, slug: string, filter: { head?: string; base?: string | null }, created: string): Promise<{ trees: Map<string, number>; unknown: boolean; reason?: string }> {
 		const fetchPage = async (limit: number): Promise<Array<{ number: number; headRefOid: string; mergedAt?: string | null }> | null> => {
 			try {
-				const args = ["pr", "list", "-R", slug, "--state", "merged", ...(base ? ["--base", base] : []), "--limit", String(limit), "--json", "number,headRefOid,mergedAt"];
+				const args = ["pr", "list", "-R", slug, "--state", "merged", ...(filter.head ? ["--head", filter.head] : filter.base ? ["--base", filter.base] : []), "--limit", String(limit), "--json", "number,headRefOid,mergedAt"];
 				const r = await exec("gh", args);
 				if (r.code !== 0) return null;
 				const arr = JSON.parse(r.stdout || "[]") as unknown;
@@ -1262,12 +1345,21 @@ export default function (pi: ExtensionAPI): void {
 			let prTrees = new Map<string, number>();
 			let prUnknown = !gh;
 			if (delivery?.kind === "merge" && gh) {
-				const lk = `${gh.slug}|${base ?? ""}`;
-				if (!listings.has(lk)) listings.set(lk, listMerged(top, gh.slug, base, run.created));
-				const l = await listings.get(lk)!;
-				prTrees = l.trees;
-				prUnknown = l.unknown;
-				if (l.reason && !extra.includes(l.reason)) extra.push(l.reason);
+				const recorded = merges.find((m) => m.key === wt.key && m.tree === delivery.tree && m.pr !== undefined);
+				if (recorded) prTrees.set(delivery.tree, recorded.pr as number);
+				else {
+					const branches = branchesOf(o, sub);
+					const filters: Array<{ head?: string; base?: string | null }> = branches.length ? branches.map((b) => ({ head: b })) : [{ base }];
+					prUnknown = false;
+					for (const fl of filters) {
+						const lk = `${gh.slug}|${fl.head !== undefined ? `head:${fl.head}` : `base:${fl.base ?? ""}`}`;
+						if (!listings.has(lk)) listings.set(lk, listMerged(top, gh.slug, fl, run.created));
+						const l = await listings.get(lk)!;
+						for (const [t, n] of l.trees) prTrees.set(t, n);
+						if (l.unknown) prUnknown = true;
+						if (l.reason && !extra.includes(l.reason)) extra.push(l.reason);
+					}
+				}
 			}
 			const targetTrees = new Set<string>();
 			let targetUnknown = false;
@@ -1283,7 +1375,13 @@ export default function (pi: ExtensionAPI): void {
 				} else targetUnknown = true;
 			}
 			let branchMerged: boolean | null | undefined;
-			if (!delivery && count !== 0 && sub.branch && gh) branchMerged = await ghMerged(gh.slug, sub.branch);
+			if (!delivery && count !== 0 && gh) {
+				const bs = branchesOf(o, sub);
+				if (bs.length) {
+					const seen = await Promise.all(bs.map((b) => ghMerged(gh.slug, b)));
+					branchMerged = seen.includes(true) ? true : seen.includes(null) ? null : false;
+				}
+			}
 			const res = deliveryMerged({ key: wt.key, delivery, prTrees, prUnknown, targetTrees, targetUnknown, commitsSinceBase: count, dirtyFiles, headTree, branchMerged, base: ref ?? undefined });
 			setPr(sub.id, wt.key, res.changed ? res.ok : null);
 			results.push(res);
@@ -1299,6 +1397,131 @@ export default function (pi: ExtensionAPI): void {
 		return p;
 	}
 
+	/** The sub-session's state for merging: `idle` when its session is gone, or its flow ended and it is not in plan or execute again; `waiting` when it holds for acceptance. */
+	function subActivity(o: Owned, sub: Sub): { alive: boolean; waiting: boolean; idle: boolean } {
+		const st = readStatus(sf(o, sub.id, "status.json")).status;
+		const alive = !!st && pidAlive(st.pid);
+		const waiting = alive && !!st?.acceptance;
+		if (!alive) return { alive, waiting, idle: true };
+		const out = readNew(sf(o, sub.id, "outbox.jsonl"), 0).msgs;
+		const lastEnd = [...out].reverse().find((m) => m.type === "flow-ended")?.ts;
+		const lastStart = [...out].reverse().find((m) => m.type === "session-started")?.ts;
+		const ended = !!lastEnd && (!lastStart || lastEnd > lastStart);
+		return { alive, waiting, idle: ended && st?.phase !== "execute" && st?.phase !== "plan" };
+	}
+
+	const globalDelivery = (): { mergeMethod: string; deleteBranch: boolean } => {
+		try {
+			const d = (JSON.parse(fs.readFileSync(`${getAgentDir()}/workflow.json`, "utf8")) as { delivery?: { mergeMethod?: unknown; deleteBranch?: unknown } }).delivery ?? {};
+			return { mergeMethod: d.mergeMethod === "squash" || d.mergeMethod === "rebase" ? d.mergeMethod : "merge", deleteBranch: d.deleteBranch !== false };
+		} catch {
+			return { mergeMethod: "merge", deleteBranch: true };
+		}
+	};
+
+	/**
+	 * The orchestrator merges the pull request of a package: only when the sub-session no longer works on it (flow ended, session closed) or waits for acceptance.
+	 * Without `force` the head tree of the PR must be accepted; with it any head goes. The merge is pinned to the head commit and recorded in merges.json.
+	 * `waiting`: the sub-session is in its acceptance wait, so the package stays registered (the verdict resumes it).
+	 */
+	async function mergePackage(id: string, opt: { force?: boolean; repo?: string }): Promise<{ merged: boolean; waiting: boolean; failed: boolean; text: string }> {
+		const { o, run } = need();
+		const sub = subOf(run, id);
+		const no = (text: string, failed = false) => ({ merged: false, waiting: false, failed, text });
+		if (sub.state === "merged" || sub.state === "stopped") return no(`${id} is already ${sub.state}`);
+		const st = readStatus(sf(o, id, "status.json")).status;
+		const { waiting, idle } = subActivity(o, sub);
+		if (!idle && !waiting) return no(`package ${id} is still working: merging works once its flow ended, its session closed, or while it waits for acceptance`);
+		const accepted = new Set(readAccepted(sf(o, id, "accepted.json")));
+		const settings = st?.delivery ?? globalDelivery();
+		const method = settings.mergeMethod === "squash" || settings.mergeMethod === "rebase" ? settings.mergeMethod : "merge";
+		const wts = worktreesOf(sub, run).filter((w) => !opt.repo || w.key === opt.repo.toLowerCase());
+		const done: string[] = [];
+		const problems: string[] = [];
+		let failed = false;
+		for (const wt of wts) {
+			const label = wt.key || "the repo";
+			const top = topOfKey(o, run, wt.key);
+			const ref = run.targets?.[wt.key] ?? (await git(top, "rev-parse", "--abbrev-ref", "@{u}"));
+			const gh = await ghRepoOf(top, ref);
+			if (!gh) {
+				problems.push(`${label}: no GitHub origin to merge on`);
+				continue;
+			}
+			type Cand = { number: number; sha: string; tree: string; mergedAt?: string; mergeCommit?: string };
+			const mergedPrs: Cand[] = [];
+			const openPrs: Cand[] = [];
+			for (const b of branchesOf(o, sub)) {
+				let arr: Array<{ number: number; state: string; headRefOid: string; mergedAt?: string | null; mergeCommit?: { oid?: string } | null }> = [];
+				try {
+					const r = await exec("gh", ["pr", "list", "-R", gh.slug, "--head", b, "--state", "all", "--limit", "30", "--json", "number,state,headRefOid,mergedAt,mergeCommit"]);
+					if (r.code === 0) arr = JSON.parse(r.stdout || "[]") as typeof arr;
+				} catch {}
+				for (const pr of arr) {
+					if (pr.state !== "MERGED" && pr.state !== "OPEN") continue;
+					if (pr.state === "MERGED" && !(pr.mergedAt && pr.mergedAt >= run.created)) continue;
+					const tree = await treeOfSha(top, gh.slug, pr.headRefOid);
+					if (!tree || (!opt.force && !accepted.has(wt.key ? `${wt.key}:${tree}` : tree))) continue;
+					const c: Cand = { number: pr.number, sha: pr.headRefOid, tree, mergedAt: pr.mergedAt ?? undefined, mergeCommit: pr.mergeCommit?.oid };
+					const list = pr.state === "MERGED" ? mergedPrs : openPrs;
+					if (!list.some((x) => x.number === c.number)) list.push(c);
+				}
+			}
+			const finish = async (c: Cand, how: string, forced: boolean): Promise<void> => {
+				appendMerges(sf(o, id, "merges.json"), [{ key: wt.key, tree: c.tree, kind: "merge", at: new Date().toISOString(), pr: c.number, ...(c.mergeCommit ? { mergeCommit: c.mergeCommit } : {}), ...(forced ? { forced: true } : {}) }]);
+				if (forced) addAccepted(sf(o, id, "accepted.json"), wt.key ? `${wt.key}:${c.tree}` : c.tree);
+				appendMessage(sf(o, id, "inbox.jsonl"), "orch", {
+					type: "accept-verdict",
+					text: `Pull request #${c.number}${wt.key ? ` of repo ${wt.key}` : ""} ${how}. If plan steps remain, ${settings.deleteBranch ? "its branch is deleted: " : ""}start a new branch from the target.`,
+					data: { ...verdictPayload({ tree: c.tree, repo: wt.key, kind: "merge", ask: "gate" }, true), merged: { pr: c.number, ...(c.mergeCommit ? { mergeCommit: c.mergeCommit } : {}) } },
+				});
+				const item = findItem(itemsFile, id, acceptRef(wt.key, c.tree));
+				if (item && item.state === "open") closeItem(id, item.ref, "answered", false, "accepted");
+				done.push(`#${c.number}${wt.key ? ` (${wt.key})` : ""} ${how}`);
+			};
+			if (mergedPrs.length) {
+				mergedPrs.sort((a, b) => (b.mergedAt ?? "").localeCompare(a.mergedAt ?? ""));
+				await finish(mergedPrs[0], "was already merged", false);
+				continue;
+			}
+			if (!openPrs.length) {
+				problems.push(`${label}: no open pull request ${opt.force ? "on the package's branches" : "with an accepted tree"} (branches: ${branchesOf(o, sub).join(", ") || "none known"})`);
+				continue;
+			}
+			if (opt.force && openPrs.length > 1) {
+				problems.push(`${label}: several open pull requests (${openPrs.map((p) => `#${p.number}`).join(", ")}); merge the right one by hand`);
+				continue;
+			}
+			const pr = openPrs[0];
+			const r = await exec("gh", ["pr", "merge", String(pr.number), "-R", gh.slug, `--${method}`, ...(settings.deleteBranch ? ["--delete-branch"] : []), "--match-head-commit", pr.sha]);
+			if (r.code !== 0) {
+				failed = true;
+				problems.push(`${label}: gh pr merge #${pr.number} failed: ${(r.stderr || r.stdout || "").trim().split(/\r?\n/)[0] || "no detail"}`);
+				continue;
+			}
+			try {
+				const v = await exec("gh", ["pr", "view", String(pr.number), "-R", gh.slug, "--json", "mergeCommit", "--jq", ".mergeCommit.oid"]);
+				if (v.code === 0 && /^[0-9a-f]{40}$/.test(v.stdout.trim())) pr.mergeCommit = v.stdout.trim();
+			} catch {}
+			await finish(pr, `merged by the orchestrator (--${method}${settings.deleteBranch ? ", branch deleted" : ""})`, !!opt.force);
+		}
+		if (done.length) await mutate((r) => {
+			const s = subOf(r, id);
+			s.state = stateAfterVerdict(s.state);
+		});
+		return { merged: done.length > 0 && !problems.length, waiting, failed, text: [...done.map((d) => `${id}: pull request ${d}`), ...problems.map((p) => `${id}: ${p}`)].join("\n") || `${id}: nothing to merge` };
+	}
+
+	/** `/orch merge` and `orch_merge`: merge, then (flow not running) confirm and mark the package merged. A waiting sub-session stays registered. */
+	async function mergeAndConfirm(id: string, opt: { force?: boolean; repo?: string }): Promise<string> {
+		const r = await mergePackage(id, opt);
+		const lines = r.merged && !r.waiting ? await checkEnded(true, [id], false) : [];
+		const tail = r.merged && r.waiting ? `${id} waits for acceptance: it gets the merge as its verdict and continues; it is marked merged when its flow ends.` : "";
+		return [r.text, ...lines, tail].filter(Boolean).join("\n");
+	}
+
+	const autoMerged = new Set<string>();
+
 	async function checkRound1(manual: boolean, only?: string[], force?: boolean): Promise<string[]> {
 		const o = owned;
 		const run = current();
@@ -1311,7 +1534,14 @@ export default function (pi: ExtensionAPI): void {
 		for (const sub of run.subs) {
 			if (sub.state === "merged" || sub.state === "stopped") continue;
 			if (only ? !only.includes(sub.id) : !shouldPoll(sub)) continue;
-			const res = await checkSub(o, run, sub, listings);
+			let res = await checkSub(o, run, sub, listings);
+			// fallback: the sub-session's flow ended with an accepted tree whose pull request is still open: the orchestrator merges it (once per tree)
+			if (!manual && !only && res.ok !== true && sub.endedAt && subActivity(o, sub).idle && !autoMerged.has(`${sub.id}|${sub.endedAt}`)) {
+				autoMerged.add(`${sub.id}|${sub.endedAt}`);
+				const m = await mergePackage(sub.id, {}).catch((e) => ({ merged: false, waiting: false, failed: true, text: `${sub.id}: ${(e as Error).message}` }));
+				if (m.merged || m.failed) lines.push(`[${sub.id}] ${m.text}`);
+				if (m.merged) res = await checkSub(o, run, sub, new Map());
+			}
 			const act = endDecision({ endHow: sub.endHow, ok: res.ok, manual, force: !!force, checks: sub.endChecks ?? 0 });
 			const how = sub.endHow ?? "unknown";
 			const noteText = res.notes.length ? ` (${res.notes.join("; ")})` : "";
@@ -1319,7 +1549,7 @@ export default function (pi: ExtensionAPI): void {
 			if (act === "merge") merged.push({ id: sub.id, forcedCheck: res.ok === true ? undefined : res.ok === null ? `could not be checked: ${res.missing.join("; ")}` : res.missing.join("; "), notes: res.notes, endedAt: sub.endedAt });
 			else if (act === "report" && (manual || !sub.endReported)) {
 				upd.endReported = true;
-				const hint = `/orch merged ${sub.id} checks now; /orch merged ${sub.id} --force marks it merged anyway.`;
+				const hint = `/orch merge ${sub.id} merges its accepted PR and checks; /orch merge ${sub.id} --force merges and marks it merged without the acceptance.`;
 				if (res.ok === true) lines.push(`[${sub.id}] flow ${how}; its delivered trees are merged${noteText}. ${hint}`);
 				else lines.push(`[${sub.id}] flow ${how}, ${res.ok === null ? "could not be checked" : "not confirmed merged"}: ${res.missing.join("; ") || "no detail"}${noteText}. ${hint}`);
 			}
@@ -1553,6 +1783,7 @@ export default function (pi: ExtensionAPI): void {
 		dependsOn: Type.Optional(Type.Array(Type.String(), { description: "Package ids that must be merged first" })),
 		decisions: Type.Optional(Type.Array(Type.String(), { description: "Decisions already made with the user" })),
 		notes: Type.Optional(Type.String()),
+		base: Type.Optional(Type.String({ description: "The branch this package starts from and merges into, as the proposal names it (e.g. feat/x); it must be the run's target" })),
 		repos: Type.Optional(Type.Array(Type.String(), { description: "Multi-repo runs: extra repo keys the package needs to read (repos it owns paths in are included on their own)" })),
 	});
 
@@ -1598,7 +1829,9 @@ export default function (pi: ExtensionAPI): void {
 			for (const k of keys) {
 				const top = tops.get(k) as string;
 				const g = given.get(k);
+				let src = "";
 				if (g) {
+					src = "given";
 					const ref = `origin/${g.replace(/^origin\//, "")}`;
 					if ((await git(top, "rev-parse", "--verify", "--quiet", ref)) === null) throw new Error(`target ${g} not found in ${label(k)}: fetch it or fix the name`);
 					targets[k] = ref;
@@ -1608,9 +1841,26 @@ export default function (pi: ExtensionAPI): void {
 						const br = await git(top, "rev-parse", "--abbrev-ref", "HEAD");
 						if (br && br !== "HEAD" && (await git(top, "rev-parse", "--verify", "--quiet", `refs/remotes/origin/${br}`)) !== null) ref = `origin/${br}`;
 					}
-					if (ref) targets[k] = ref;
+					if (ref) {
+						targets[k] = ref;
+						src = `upstream of ${(await git(top, "rev-parse", "--abbrev-ref", "HEAD")) ?? "the checkout"}`;
+					}
 				}
-				targetLines.push(targets[k] ? `Diff target (${label(k)}): ${targets[k]}` : `No diff target for ${label(k)}: drift is measured against the default branch`);
+				targetLines.push(targets[k] ? `Diff target (${label(k)}): ${targets[k]} (${src}); new worktrees start there` : `No diff target for ${label(k)}: drift is measured against the default branch`);
+			}
+			// a package that names another base than the run's target: the person decides before anything is written
+			const workKey = keys[0];
+			for (const p of packages) {
+				if (!p.base || !targets[workKey]) continue;
+				const named = `origin/${p.base.replace(/^origin\//, "")}`;
+				if (named === targets[workKey]) continue;
+				if (!ctx.hasUI) throw new Error(`package ${p.id} names the base ${named}, but the run's target is ${targets[workKey]} (${given.has(workKey) ? "given" : "upstream of the checkout"}); pass targets: ["${p.base}"] or fix the package`);
+				const pick = await ctx.ui.select(`Package ${p.id} starts from ${named}, but the run's target is ${targets[workKey]}`, [`Use ${targets[workKey]}`, `Use ${named}`, "Cancel"]);
+				if (pick === `Use ${named}`) {
+					if ((await git(tops.get(workKey) as string, "rev-parse", "--verify", "--quiet", named)) === null) throw new Error(`base ${named} not found in ${label(workKey)}: fetch it or fix the name`);
+					targets[workKey] = named;
+					for (let i = 0; i < targetLines.length; i++) if (targetLines[i].startsWith(`Diff target (${label(workKey)})`)) targetLines[i] = `Diff target (${label(workKey)}): ${named} (chosen: package ${p.id}); new worktrees start there`;
+				} else if (pick !== `Use ${targets[workKey]}`) throw new Error("cancelled: no run was created");
 			}
 			const overlapNote = repos ? await confirmOverlaps(ctx, repos, packages) : undefined;
 			let existing: string[] = [];
@@ -1684,6 +1934,13 @@ export default function (pi: ExtensionAPI): void {
 						}
 						payload = { ...payload, folders: foldersFor(sub, added, (dir) => keyOf.get(dir) ?? null) };
 					}
+					// new worktrees start at the run's target, not at the default branch
+					const bases: Record<string, string> = {};
+					for (const [k, ref] of Object.entries(run.targets ?? {})) {
+						const t = run.repos ? run.repos.find((r) => r.key === k)?.top : norm((await git(o.repoCwd, "rev-parse", "--show-toplevel")) ?? o.repoCwd);
+						if (t) bases[t] = ref;
+					}
+					if (Object.keys(bases).length) payload = { ...payload, bases };
 					const claims = emitClaims((d) => pi.events.emit("worktree:create", d), payload, 120_000);
 					if (!claims.claimed) throw new Error("worktree extension not loaded");
 					const ans = (await claims.answer) as { error?: string; cwd?: string; branch?: string; launched?: boolean; text?: string; repos?: Array<{ top?: string; cwd?: string }> } | null;
@@ -1851,6 +2108,19 @@ export default function (pi: ExtensionAPI): void {
 	});
 
 	pi.registerTool({
+		name: "orch_merge",
+		label: "Orchestrate: merge",
+		description: "Merge the pull request of a package whose tree you accepted, pinned to its head commit, with the sub-session's own merge settings. Only when the sub-session no longer works (flow ended, session closed) or waits for acceptance; otherwise refused. A waiting sub-session gets the merge as its verdict. There is no force: only the user forces a merge (/orch merge <id> --force).",
+		promptSnippet: "orch_merge: merge a package's accepted pull request",
+		parameters: Type.Object({ id: Type.String({ description: "Package id" }), repo: Type.Optional(Type.String({ description: "Multi-repo runs: only this repo key" })) }),
+		async execute(_id, params) {
+			const { run } = need();
+			subOf(run, params.id);
+			return text(await mergeAndConfirm(params.id, { repo: params.repo }));
+		},
+	});
+
+	pi.registerTool({
 		name: "orch_decide",
 		label: "Orchestrate: decide",
 		description: "Answer a workflow menu or wait of a sub-session (an `ask` message): pick one of its options (choice, optional text for the sub-session) or end a wait (resume). Some answers are refused: approving or discussing in a plan menu, and anything that stops the flow or repeats a replan needs the user's quote (userQuote).",
@@ -1910,9 +2180,9 @@ export default function (pi: ExtensionAPI): void {
 	});
 
 	pi.registerCommand("orch", {
-		description: "Orchestrator mode and run: start (read-only discussion; \"go\" on a proposal runs the proposal judge first), off, go force, judge cancel, status, watch (resume watching a run), merged <id> (check a PR merge now), end",
+		description: "Orchestrator mode and run: start (read-only discussion; \"go\" on a proposal runs the proposal judge first), off, go force, judge cancel, status, watch (resume watching a run), merge <id> [--force] (merge an accepted PR now; --force skips the acceptance), end",
 		getArgumentCompletions: (prefix) =>
-			["start", "off", "go", "judge", "status", "board", "watch", "merged", "end"].filter((s) => s.startsWith(prefix.trim())).map((s) => ({ value: s, label: s })),
+			["start", "off", "go", "judge", "status", "board", "watch", "merge", "end"].filter((s) => s.startsWith(prefix.trim())).map((s) => ({ value: s, label: s })),
 		handler: async (args, ctx) => {
 			uiCtx = ctx;
 			let sub = args.trim().split(/\s+/)[0];
@@ -1948,11 +2218,11 @@ export default function (pi: ExtensionAPI): void {
 					ctx.ui.notify(await table(), "info");
 				} else if (sub === "board") {
 					await showBoard(ctx);
-				} else if (sub === "merged") {
+				} else if (sub === "merge") {
 					const pm = parseMergedArgs(args.trim().split(/\s+/).slice(1).join(" "));
 					if ("error" in pm) throw new Error(pm.error);
 					subOf(need().run, pm.id);
-					ctx.ui.notify(`orchestrate: ${(await checkEnded(true, [pm.id], pm.force)).join("\n") || "nothing to check"}`, "info");
+					ctx.ui.notify(`orchestrate: ${await mergeAndConfirm(pm.id, { force: pm.force })}`, "info");
 				} else if (sub === "end" && !owned) {
 					if (mode === "off") throw new Error("no active run in this session");
 					setMode("off", true, ctx);

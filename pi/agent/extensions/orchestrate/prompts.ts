@@ -10,7 +10,7 @@ You are the orchestrator of a job that will be split into work packages run by s
 - When the discussion settles, end the reply with a short \`Agreed so far:\` list (decisions, constraints, open questions) and mention that "go" moves on to the package proposal.`;
 
 export const PROPOSE = `## Orchestrator mode: PROPOSE
-Write the proposal as \`## Packages: <title>\` with one \`### <id>\` per package (2 to 4): goal, acceptance criteria, owns (globs), forbids, dependsOn, decisions. No two packages own the same path. Change nothing and call no tool that changes things.
+Write the proposal as \`## Packages: <title>\` with one \`### <id>\` per package (2 to 4): goal, acceptance criteria, owns (globs), forbids, dependsOn, decisions, and base (the branch it starts from and merges into; pass it as base to orch_run). No two packages own the same path. Change nothing and call no tool that changes things.
 Ask only about what blocks the proposal. When the user says "go" on a finished proposal, the run starts; other replies revise it.`;
 
 export const RUN = `## Orchestrator mode: RUN

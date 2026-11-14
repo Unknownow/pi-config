@@ -22,8 +22,10 @@ test("planReviewAction", () => {
 });
 
 test("acceptanceRefusal", () => {
-	assert.equal(acceptanceRefusal({ problem: "wait" }), "wait");
-	assert.equal(acceptanceRefusal({ error: "boom" }), ACCEPTANCE_NO_ANSWER);
+	assert.deepEqual(acceptanceRefusal({ problem: "wait" }), { text: "wait", pending: false });
+	assert.deepEqual(acceptanceRefusal({ problem: "wait", pending: true, tree: "abc" }), { text: "wait", pending: true, tree: "abc" });
+	assert.equal(acceptanceRefusal({ problem: "wait", pending: true })?.pending, false);
+	assert.equal(acceptanceRefusal({ error: "boom" })?.text, ACCEPTANCE_NO_ANSWER);
 	assert.equal(acceptanceRefusal(null), null);
 });
 
@@ -54,7 +56,7 @@ test("planReviewRoute: no claim goes to the menu, a claim to review", () => {
 });
 
 test("acceptanceRefusal refuses answers outside the contract", () => {
-	for (const bad of ["ok", {}, { problem: "" }, { problem: 5 }]) assert.equal(acceptanceRefusal(bad), ACCEPTANCE_NO_ANSWER);
+	for (const bad of ["ok", {}, { problem: "" }, { problem: 5 }]) assert.equal(acceptanceRefusal(bad)?.text, ACCEPTANCE_NO_ANSWER);
 });
 
 import { flowEndKind, flowEndPayload, k11Payload, K11_SITES, withEndFlow } from "./hooks.ts";

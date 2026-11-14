@@ -30,6 +30,12 @@ export interface Status {
 	waiting?: boolean;
 	/** Set while the sub's workflow runs a judge gate. */
 	judging?: "discussion" | "plan";
+	/** Set while the sub's flow holds for the orchestrator's acceptance (K4 `acceptance`). */
+	acceptance?: { tree: string; since: string };
+	/** The sub's merge settings (K4 `delivery`): the orchestrator's merges use them. */
+	delivery?: { mergeMethod: string; deleteBranch: boolean };
+	/** Branches the sub worked on, newest last (at most 20): the orchestrator finds its pull requests by head branch. */
+	branches?: string[];
 	heartbeat: number;
 	pid: number;
 }
@@ -186,6 +192,9 @@ export interface MergeRecordFile {
 	tree: string;
 	kind: "merge" | "protected-push";
 	at: string;
+	pr?: number;
+	mergeCommit?: string;
+	forced?: boolean;
 }
 
 /** The merge-pass records the orchestrator saved for a sub (`merges.json`). */
