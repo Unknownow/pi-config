@@ -379,3 +379,75 @@ test("the first push refuses a branch that already exists on origin, and never t
 		s.clean();
 	}
 });
+
+/** Runs real git, except: origin reads as a GitHub URL and `gh` is answered by `gh(args)`. Every gh call is recorded. */
+function githubOrigin(s: Scenario, gh: (args: string[]) => { code: number; stdout?: string; stderr?: string }): string[][] {
+	const calls: string[][] = [];
+	const real = s.ctx.run;
+	s.ctx.run = async (cmd, args, cwd, opts) => {
+		if (cmd === "git" && args[0] === "remote" && args[1] === "get-url" && args[2] === "origin") return { code: 0, stdout: "https://github.com/acme/widget.git\n", stderr: "" };
+		if (cmd === "gh") {
+			calls.push(args);
+			const r = gh(args);
+			return { code: r.code, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
+		}
+		return real(cmd, args, cwd, opts);
+	};
+	return calls;
+}
+
+test("GitHub origin: gh repo view <slug> (no -R), the PR is opened and squash-merged, nothing is pushed to the target", async () => {
+	const s = scenario(1, MERGE);
+	try {
+		const mainBefore = git(s.repos[0].bare, "rev-parse", "main");
+		const head = () => git(s.repos[0].wt, "rev-parse", "HEAD");
+		const calls = githubOrigin(s, (a) => {
+			if (a[0] === "repo") return a.includes("-R") ? { code: 1, stderr: "unknown shorthand flag: 'R' in -R" } : { code: 0, stdout: '{"name":"widget"}' };
+			if (a[0] === "pr" && a[1] === "view" && a.includes("headRefOid,state")) return { code: 0, stdout: JSON.stringify({ headRefOid: head(), state: "OPEN" }) };
+			if (a[0] === "pr" && a[1] === "view") return { code: 1, stderr: "no pull requests found" };
+			if (a[0] === "pr" && a[1] === "create") return { code: 0, stdout: "https://github.com/acme/widget/pull/7\n" };
+			if (a[0] === "pr" && a[1] === "merge") return { code: 0 };
+			return { code: 1, stderr: `unexpected gh ${a.join(" ")}` };
+		});
+		assert.equal(await deliverStep.run(s.job, s.ctx), "report");
+		assert.deepEqual(calls[0], ["repo", "view", "acme/widget", "--json", "name"]);
+		assert.ok(calls.some((a) => a[0] === "pr" && a[1] === "create"));
+		assert.ok(calls.some((a) => a[0] === "pr" && a[1] === "merge" && a.includes("--squash")));
+		assert.equal(s.job.repos[0].pr, "https://github.com/acme/widget/pull/7");
+		assert.equal(s.job.repos[0].merged, true);
+		assert.equal(git(s.repos[0].bare, "rev-parse", "main"), mainBefore, "no direct push to main");
+	} finally {
+		s.clean();
+	}
+});
+
+test("GitHub origin but gh repo view fails: delivery stops with an error and pushes nothing", async () => {
+	const s = scenario(1, MERGE);
+	try {
+		const mainBefore = git(s.repos[0].bare, "rev-parse", "main");
+		const calls = githubOrigin(s, () => ({ code: 1, stderr: "HTTP 401: Bad credentials" }));
+		assert.equal(await deliverStep.run(s.job, s.ctx), "wait");
+		assert.match(s.job.notes.at(-1) ?? "", /delivery stopped: could not reach GitHub for R0 \(gh repo view failed: HTTP 401: Bad credentials\); relay_deliver retries/);
+		assert.equal(s.job.repos[0].merged, undefined);
+		assert.equal(s.job.repos[0].remoteBranch, undefined, "the job branch was not pushed either");
+		assert.equal(git(s.repos[0].bare, "rev-parse", "main"), mainBefore);
+		assert.ok(calls.every((a) => a[0] === "repo"));
+		assert.ok(s.logs.some((l) => /gh repo view acme\/widget failed: HTTP 401/.test(l)), s.logs.join("\n"));
+	} finally {
+		s.clean();
+	}
+});
+
+test("GitHub origin, PR could not be opened: no fallback push to the target", async () => {
+	const s = scenario(1, MERGE);
+	try {
+		const mainBefore = git(s.repos[0].bare, "rev-parse", "main");
+		githubOrigin(s, (a) => (a[0] === "repo" ? { code: 0, stdout: "{}" } : { code: 1, stderr: "nope" }));
+		assert.equal(await deliverStep.run(s.job, s.ctx), "wait");
+		assert.match(s.job.notes.at(-1) ?? "", /no pull request in R0/);
+		assert.equal(s.job.repos[0].merged, undefined);
+		assert.equal(git(s.repos[0].bare, "rev-parse", "main"), mainBefore);
+	} finally {
+		s.clean();
+	}
+});

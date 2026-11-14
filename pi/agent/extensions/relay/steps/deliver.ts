@@ -108,11 +108,19 @@ export async function pushJobBranch(ctx: StepCtx, repo: RepoState, protectedBran
 	return { ok: true };
 }
 
-async function github(ctx: StepCtx, repo: RepoState): Promise<string | undefined> {
+/**
+ * The GitHub slug of the repo's origin: `{}` when origin is not GitHub (delivery merges with a fast-forward push), `{slug}` when gh
+ * reaches it, `{error}` when origin is GitHub but gh cannot reach it: never a direct push to the target then.
+ * `gh repo view` takes the repo as an argument; it has no -R flag.
+ */
+export async function github(ctx: StepCtx, repo: RepoState): Promise<{ slug?: string; error?: string }> {
 	const slug = await originRepo((c, a, d) => ctx.run(c, a, d), repo.worktree);
-	if (!slug) return undefined;
-	const v = await ctx.run("gh", ["repo", "view", "-R", slug, "--json", "name"], repo.worktree);
-	return v.code === 0 ? slug : undefined;
+	if (!slug) return {};
+	const v = await ctx.run("gh", ["repo", "view", slug, "--json", "name"], repo.worktree);
+	if (v.code === 0) return { slug };
+	const why = firstLine(v.stderr) || `exit ${v.code}`;
+	ctx.log("gh", `${repo.key}: gh repo view ${slug} failed: ${why}`);
+	return { error: `could not reach GitHub for ${repo.key} (gh repo view failed: ${why}); relay_deliver retries` };
 }
 
 async function ensurePr(ctx: StepCtx, job: Job, repo: RepoState, slug: string, goal: string, base: string): Promise<string | undefined> {
@@ -151,7 +159,9 @@ async function deliverOnce(job: Job, ctx: StepCtx, attempt: number): Promise<Out
 		if (repo.merged) continue;
 		if (ctx.stopped() || !ctx.isOwner()) return { kind: "stopped" };
 		const pol = repoPolicy(ctx.cfg, repo.main);
-		const slug = await github(ctx, repo);
+		const gh = await github(ctx, repo);
+		if (gh.error) return { kind: "error", error: gh.error };
+		const slug = gh.slug;
 		slugs.set(repo.key, slug);
 		// the predecessor merged and this repo was restacked: the PR follows to the target before the push (D17)
 		if (repo.retarget) {
@@ -188,6 +198,7 @@ async function deliverOnce(job: Job, ctx: StepCtx, attempt: number): Promise<Out
 		if (repo.merged || !mergeAllowed(parsed.authority.merge, mergeApproved, pol.merge)) continue;
 		const slug = slugs.get(repo.key);
 		const tree = repo.acceptedTree ?? "";
+		if (slug && !repo.pr) return { kind: "error", error: `no pull request in ${repo.key}; relay does not push to ${repo.target} directly on GitHub; relay_deliver retries` };
 		if (slug && repo.pr) {
 			const gate = await gateCheck((c, a, d) => ctx.run(c, a, d), "merge", repo.worktree, repo.pr, { passedTrees: [tree], noMerge: false, repo: slug });
 			if (gate.problem) return { kind: "error", error: `merge refused in ${repo.key}: ${gate.problem}` };
@@ -196,7 +207,7 @@ async function deliverOnce(job: Job, ctx: StepCtx, attempt: number): Promise<Out
 			if (m.code !== 0) return { kind: "error", error: `gh pr merge failed in ${repo.key}: ${firstLine(m.stderr)}` };
 			repo.merged = true;
 		} else {
-			// no GitHub: a fast-forward push to the target
+			// origin is not GitHub: a fast-forward push to the target
 			await ctx.run("git", ["fetch", "origin"], repo.worktree);
 			const sha = firstLine((await ctx.run("git", ["rev-parse", "HEAD"], repo.worktree)).stdout);
 			const ff = await ctx.run("git", ["merge-base", "--is-ancestor", `origin/${repo.target}`, sha], repo.worktree);
