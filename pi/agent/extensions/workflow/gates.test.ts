@@ -27,9 +27,10 @@ trailing`;
 	assert.deepEqual(parseFindings("nothing\nVERDICT: PASS"), []);
 });
 
-test("isClean: a PASS with findings is not clean", () => {
+test("isClean: a PASS with a blocker or major is not clean; minors are notes", () => {
 	assert.equal(isClean("PASS", []), true);
-	assert.equal(isClean("PASS", [f("auto", "minor")]), false);
+	assert.equal(isClean("PASS", [f("auto", "minor")]), true);
+	assert.equal(isClean("PASS", [f("auto", "major")]), false);
 	assert.equal(isClean("FAIL", []), false);
 });
 
@@ -89,7 +90,8 @@ test("planGateAfterVerdict", () => {
 	const o = { verdict: "FAIL", rounds: 1, max: 3, confirm: false };
 	assert.equal(planGateAfterVerdict({ ...o, verdict: "PASS", findings: [] }).action, "offer");
 	assert.equal(planGateAfterVerdict({ ...o, findings: [f("auto")] }).action, "fix");
-	assert.equal(planGateAfterVerdict({ ...o, verdict: "PASS", findings: [f("auto", "minor")] }).action, "fix");
+	const minorOnly = planGateAfterVerdict({ ...o, verdict: "PASS", findings: [f("auto", "minor")] });
+	assert.deepEqual([minorOnly.action, minorOnly.auto.length, minorOnly.notes.length], ["offer", 0, 1]);
 	const onlyUser = planGateAfterVerdict({ ...o, findings: [f("user")] });
 	assert.equal(onlyUser.action, "offer");
 	assert.equal(onlyUser.user.length, 1);
@@ -163,8 +165,8 @@ test("discussionGateStart", () => {
 	assert.equal(discussionGateStart({ ...startBase, quick: true }), "move");
 	assert.equal(discussionGateStart({ ...startBase, listHash: undefined }), "warn-move");
 	assert.equal(discussionGateStart({ ...startBase, listHash: "L1", last: rev({ verdict: "PASS", findings: [] }) }), "move");
-	// a PASS with a minor auto finding on the same hash does not skip
-	assert.equal(discussionGateStart({ ...startBase, listHash: "L1", last: rev({ verdict: "PASS", findings: [f("auto", "minor")] }) }), "recheck");
+	// a PASS with only a minor finding moves on: minors never start another review
+	assert.equal(discussionGateStart({ ...startBase, listHash: "L1", last: rev({ verdict: "PASS", findings: [f("auto", "minor")] }) }), "move");
 	assert.equal(discussionGateStart({ ...startBase, last: rev() }), "recheck");
 	assert.equal(discussionGateStart({ ...startBase, last: rev(), sinceChars: 40000 }), "full");
 	assert.equal(discussionGateStart({ ...startBase, last: rev(), sinceChars: Infinity }), "full");
@@ -176,7 +178,7 @@ test("discussionGateAfterVerdict", () => {
 	const o = { rounds: 1, max: 2 };
 	assert.equal(discussionGateAfterVerdict({ ...o, verdict: "PASS", findings: [] }), "move");
 	assert.equal(discussionGateAfterVerdict({ ...o, verdict: "FAIL", findings: [f("auto")] }), "fix");
-	assert.equal(discussionGateAfterVerdict({ ...o, verdict: "PASS", findings: [f("auto", "minor")] }), "fix");
+	assert.equal(discussionGateAfterVerdict({ ...o, verdict: "PASS", findings: [f("auto", "minor")] }), "move");
 	assert.equal(discussionGateAfterVerdict({ ...o, verdict: "FAIL", findings: [f("auto"), f("user")] }), "pause");
 	assert.equal(discussionGateAfterVerdict({ rounds: 2, max: 2, verdict: "FAIL", findings: [f("user")] }), "pause");
 	assert.equal(discussionGateAfterVerdict({ rounds: 2, max: 2, verdict: "FAIL", findings: [f("auto")] }), "move-open");

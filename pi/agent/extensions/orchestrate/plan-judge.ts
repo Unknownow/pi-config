@@ -7,6 +7,8 @@ export interface PlanJudge {
 	spec: "agreed" | "brief" | "none";
 	findings: string[];
 	userFindings: string[];
+	/** Minor findings the sub keeps as notes for its executor. */
+	notes?: number;
 }
 
 const VERDICTS = ["PASS", "FAIL", "cancelled", "error"];
@@ -20,7 +22,7 @@ export function parsePlanJudge(data: unknown): PlanJudge | undefined {
 	if (typeof d.ran !== "boolean" || typeof d.verdict !== "string" || !VERDICTS.includes(d.verdict)) return undefined;
 	if (typeof d.rounds !== "number" || typeof d.spec !== "string" || !SPECS.includes(d.spec)) return undefined;
 	if (!strings(d.findings) || !strings(d.userFindings)) return undefined;
-	return { ran: d.ran, verdict: d.verdict as PlanJudge["verdict"], rounds: d.rounds, spec: d.spec as PlanJudge["spec"], findings: d.findings, userFindings: d.userFindings };
+	return { ran: d.ran, verdict: d.verdict as PlanJudge["verdict"], rounds: d.rounds, spec: d.spec as PlanJudge["spec"], findings: d.findings, userFindings: d.userFindings, ...(typeof d.notes === "number" ? { notes: d.notes } : {}) };
 }
 
 const isClean = (j: PlanJudge): boolean => j.ran && j.verdict === "PASS" && j.findings.length === 0 && j.userFindings.length === 0;
@@ -29,7 +31,7 @@ const isClean = (j: PlanJudge): boolean => j.ran && j.verdict === "PASS" && j.fi
 export function planReviewJudgeLine(j?: PlanJudge): string {
 	if (!j) return "";
 	if (!j.ran) return `judge: did not run (${j.verdict === "cancelled" ? "cancelled" : "error"})`;
-	if (isClean(j)) return `judge: PASS (${j.rounds} runs)`;
+	if (isClean(j)) return `judge: PASS (${j.rounds} runs${j.notes ? `, ${j.notes} minor notes for the executor` : ""})`;
 	const open = j.findings.length + j.userFindings.length;
 	return `judge: ${open} open findings (${j.userFindings.length} need a decision) after ${j.rounds} runs, see the plan file`;
 }

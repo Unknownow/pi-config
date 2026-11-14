@@ -11,7 +11,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { GATE_ENTRY, nextLastProposal, proposalGateAfterFixReply, proposalGateAfterVerdict, proposalGateFromEntries, proposalGateOnInput, proposalGateRounds, proposalGateStart, proposalReviewPrompts, roleOnRestore, roleSwitch, roleWarnText, type ProposalReview, type SavedModel } from "./proposal-gate.ts";
 import { runSubagent } from "../agents/subagent.ts";
-import { branchAssistantTexts, findingsBlock, isEscKey, judgeVerdict, lastAgreedList, parseFindings } from "../shared/findings.ts";
+import { blockingFindings, branchAssistantTexts, findingsBlock, isEscKey, judgeVerdict, lastAgreedList, minorFindings, parseFindings } from "../shared/findings.ts";
 import type { Finding } from "../shared/findings.ts";
 import { confirmPlanTitle, judgeSection, parsePlanJudge, phaseLabel, planReviewJudgeLine } from "./plan-judge.ts";
 import * as fs from "node:fs";
@@ -773,10 +773,10 @@ export default function (pi: ExtensionAPI): void {
 		say(`the proposal judge needs your decision; answer, then say "go" (or /orch go force)`, "warning");
 	}
 	/** Leaves propose for run and sends the kickoff, with the open judge findings when there are any. */
-	function moveToRun(ctx: ExtensionContext, open: Finding[]): void {
+	function moveToRun(ctx: ExtensionContext, open: Finding[], notes: Finding[] = []): void {
 		if (proposalReview) proposalReview = { ...proposalReview, status: "idle" };
 		setMode("run", true, ctx);
-		sendToModel("orchestrate-run-kickoff", open.length ? `${RUN_KICKOFF}\n\nOpen proposal-judge findings; settle them in the briefs' decisions:\n${findingsBlock(open)}` : RUN_KICKOFF);
+		sendToModel("orchestrate-run-kickoff", RUN_KICKOFF + (open.length ? `\n\nOpen proposal-judge findings; settle them in the briefs' decisions:\n${findingsBlock(open)}` : "") + (notes.length ? `\n\nMinor proposal-judge notes (not blockers; take them into the briefs where they fit):\n${findingsBlock(notes)}` : ""));
 	}
 	async function runJudge(ctx: ExtensionContext, systemPrompts: string[], signal: AbortSignal): Promise<{ ok: boolean; text: string; error?: string }> {
 		const role = cfg.roles.judge ?? (ctx.model ? { model: `${ctx.model.provider}/${ctx.model.id}`, thinking: "high" as const } : undefined);
@@ -844,12 +844,12 @@ export default function (pi: ExtensionAPI): void {
 			// display only
 		}
 		const next = proposalGateAfterVerdict({ verdict, findings, rounds, max: cfg.maxProposalJudgeRounds });
-		if (next === "move") return moveToRun(ctx, []);
-		if (next === "move-open") return moveToRun(ctx, findings);
+		if (next === "move") return moveToRun(ctx, [], minorFindings(findings));
+		if (next === "move-open") return moveToRun(ctx, blockingFindings(findings), minorFindings(findings));
 		if (next === "fix") {
 			proposalReview = { ...proposalReview, status: "awaiting-fix" };
 			saveReview();
-			return sendToModel("orchestrate-proposal-fix", `${PROPOSAL_FIX}\n\n${findingsBlock(findings.filter((f) => f.route === "auto"))}`);
+			return sendToModel("orchestrate-proposal-fix", `${PROPOSAL_FIX}\n\n${findingsBlock(blockingFindings(findings).filter((f) => f.route === "auto"))}`);
 		}
 		pauseProposal();
 	}

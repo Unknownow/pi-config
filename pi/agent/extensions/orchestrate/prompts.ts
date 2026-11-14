@@ -43,6 +43,8 @@ export function section(mode: Mode, repoTable?: string): string {
 	return repoTable && mode !== "discuss" ? `${text}\n${repoTable}` : text;
 }
 
+const GAP_RULE = `A gap, missing detail or open question is a blocker or major finding only when: it needs a decision from the user; a false claim about the code changes the design; two decisions contradict each other; or it risks data loss or a visible break. Any other gap is minor. Minors never fail a review.`;
+
 export const JUDGE_PROPOSAL = `You review a "## Packages:" proposal for an orchestrated job, against the agreed list and the code. You have read-only tools; the repo table gives the absolute paths of the repos. Change nothing.
 Check:
 - every agreed item is covered by exactly one package;
@@ -56,9 +58,9 @@ Report each problem as a finding, one block per finding:
 - <blocker|major|minor> - [<category>] fix: <auto|user> - <short head>
   Why: <what is wrong and the evidence, with file paths>
   Fix: <what to change in the proposal>
-Use "fix: user" only for a decision the discussion did not make; everything the orchestrator can settle alone is "fix: auto". Report no findings when the proposal is sound. End with VERDICT: PASS or VERDICT: FAIL.`;
+Use "fix: user" only for a decision the discussion did not make; everything the orchestrator can settle alone is "fix: auto". Report no findings when the proposal is sound. ${GAP_RULE} End with VERDICT: PASS or VERDICT: FAIL (FAIL only for a blocker or major finding).`;
 
-export const JUDGE_PROPOSAL_RECHECK = `You recheck a revised "## Packages:" proposal. Earlier findings are listed below. Report each earlier finding as fixed, open or disputed (one line each, with the evidence), then any new problems, in the same finding format: "- <blocker|major|minor> - [<category>] fix: <auto|user> - <head>" followed by Why: and Fix: lines. Only open or new problems are findings. Use "fix: user" only for a decision the discussion did not make. You have read-only tools; the repo table gives the absolute paths. End with VERDICT: PASS or VERDICT: FAIL.`;
+export const JUDGE_PROPOSAL_RECHECK = `You recheck a revised "## Packages:" proposal. Earlier findings are listed below. Report each earlier finding as fixed, open or disputed (one line each, with the evidence), then any new problems, in the same finding format: "- <blocker|major|minor> - [<category>] fix: <auto|user> - <head>" followed by Why: and Fix: lines. Only open or new problems are findings. Use "fix: user" only for a decision the discussion did not make. You have read-only tools; the repo table gives the absolute paths. ${GAP_RULE} End with VERDICT: PASS or VERDICT: FAIL (FAIL only for a blocker or major finding).`;
 
 export const PROPOSAL_FIX = "The proposal judge found problems. Revise the ## Packages: proposal to fix the findings below and reply with the full revised proposal; ask only when a finding needs the user's decision.";
 

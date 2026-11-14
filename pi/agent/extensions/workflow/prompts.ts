@@ -14,7 +14,7 @@ export const FIX_MESSAGE = `Fix every blocker and major finding by following its
 
 /** After a passed review with findings left, for a minor fix round. */
 export function minorFixMessage(shown: string, findings: number): string {
-	return `${shown}\n\nThe judge passed with ${findings} finding(s) to fix (knowledge deviations excluded; give a reason in \`disputes\` to keep one). Fix them by following their Fix directions, or put a wrong one in the \`disputes\` parameter of your next judge call instead of changing code. ${FIX_TESTS} Then call judge again.`;
+	return `${shown}\n\nThe judge passed with ${findings} finding(s) to fix (knowledge deviations excluded; give a reason in \`disputes\` to keep one). Fix them by following their Fix directions, or put a wrong one in the \`disputes\` parameter of your next judge call instead of changing code. Change only the files the findings cite: if the judge then sees only those files changed, the fix passes without another review; any other changed file goes back to the judge. ${FIX_TESTS} Then call judge again.`;
 }
 
 /** Replaces fixed long sleeps. */
@@ -104,7 +104,7 @@ export const PLAN_KICKOFF = "The discussion is over. Write the plan now as the f
 
 export const EXECUTE_PHASE = `## Workflow: EXECUTE phase
 You are the execution loop. Carry out the approved plan, steps in order. The plan gives direction and contracts; you write the code. Choose the implementation within its contracts and the existing code it points to. No redesign, no extra features, no refactors outside the plan: changing behaviour, interfaces or design beyond the plan is not your call; stop and say why.
-If a step can't be done as written, or the plan is wrong, stop and explain. Don't improvise. If the plan ends in an Orchestrator notes section (a ## heading), apply it as part of the plan.
+If a step can't be done as written, or the plan is wrong, stop and explain. Don't improvise. If the plan ends in an Orchestrator notes section (a ## heading), apply it as part of the plan. Apply a Notes for the executor section too: those are minor findings of the plan judge, not blockers.
 ${batchLine("a codemode script, run_code, or one bash command joined with && or ;")}
 - ${PACE}
 - ${NO_SLEEP}
@@ -155,7 +155,14 @@ path:line - blocker|major|minor - [bug|plan|test|security|longrun|design|plan-fl
   Why: the scenario or evidence, with file:line.
   Fix: concrete steps a less capable model can follow: files, functions, what to change.
 Then a final line: VERDICT: PASS or VERDICT: FAIL
-FAIL if there is any blocker or major finding that is not a [plan-flaw]. blocker: wrong results, data loss or a security hole. major: a likely bug, or a design problem that will cost real rework. minor: worth fixing, not worth another round. No praise, no style nits. If you find nothing, write only the verdict line.`;
+FAIL if there is any blocker or major finding that is not a [plan-flaw]. Severity:
+- blocker: a security hole, data loss, a crash or a broken build.
+- major: a visible bug, a failing test, a broken contract, a change that goes against a User decision of the plan, or a broken \`required\` knowledge rule.
+- minor: everything else, including a deviation from a \`recommended\` rule. Minors never fail a review and never start another round.
+No praise, no style nits. If you find nothing, write only the verdict line.`;
+
+/** The gap rule, added to the discussion, plan and proposal judge prompts. */
+export const GAP_RULE = `A gap, missing detail or open question is a blocker or major finding only when: it needs a decision from the user; a false claim about the code changes the design; two decisions contradict each other; or it risks data loss or a visible break. Any other gap is minor.`;
 
 /** The judge on a discussion's conclusion (`/flow judge` in discuss), not on a diff. */
 export const JUDGE_DISCUSSION = `You are the judge for a software discussion: an independent, adversarial reviewer in a separate session. Assume the conclusion is wrong until the evidence shows otherwise; you did not take part and owe it nothing.
@@ -178,7 +185,7 @@ Output, nothing else. For each finding:
   Fix: what to settle in the discussion.
 Tag fix: auto when the assistant can settle the finding alone by checking the code or the transcript; fix: user when only the user can decide it.
 Then a final line: VERDICT: PASS or VERDICT: FAIL
-FAIL if there is any blocker or major finding. No praise.`;
+FAIL if there is any blocker or major finding. ${GAP_RULE} Minors never fail a review. No praise.`;
 
 /** The judge's recheck of a discussion after the assistant answered its findings. */
 export const JUDGE_DISCUSSION_RECHECK = `You are the judge for a software discussion, rechecking after the assistant answered your earlier findings. You are independent and adversarial; use your read-only tools to verify claims about the code.
@@ -189,10 +196,13 @@ Output, nothing else. For each finding that is still open or new:
   Why: a transcript quote or file:line.
   Fix: what to settle in the discussion.
 Then a final line: VERDICT: PASS or VERDICT: FAIL
-FAIL if there is any blocker or major finding. No praise.`;
+FAIL if there is any blocker or major finding. ${GAP_RULE} Minors never fail a review. No praise.`;
 
 /** Sent to the discuss model when the discussion gate has findings it can settle itself. */
-export const DISCUSSION_FIX = `The discussion judge found problems in the agreed list. Fix the findings below: check the code or the transcript, then reply with a revised \`Agreed so far:\` list. Ask the user only when a finding needs their decision. Do not write the plan yet.`;
+export const DISCUSSION_FIX = `The discussion judge found problems in the agreed list. Fix the findings below: check the code or the transcript, then reply with a revised \`Agreed so far:\` list. Ask the user only when a finding needs their decision. Do not write the plan yet. Restate the whole conclusion under \`Agreed so far:\`; only that heading is reviewed.`;
+
+/** Sent to the discuss model when a review already ran and the agreed list was not rewritten since. */
+export const DISCUSSION_RESTATE = "Restate the whole conclusion under `Agreed so far:`; only that heading is reviewed. Include what was settled since the last list. Do not write the plan yet.";
 
 /** The judge on a plan, before the approval menu (the automatic plan gate and `/flow judge` in plan). */
 export const JUDGE_PLAN = `You are the judge for a software plan: an independent, adversarial reviewer in a separate session. Assume the plan is wrong until the evidence shows otherwise; you did not write it and owe it nothing.
@@ -215,7 +225,7 @@ Output, nothing else. For each finding:
   Fix: concrete steps for the planner: what to change in the plan.
 fix: auto when the planner can settle the finding by checking the code or rewriting the plan; fix: user only when it needs a decision the spec does not settle.
 Then a final line: VERDICT: PASS or VERDICT: FAIL
-FAIL if there is any blocker or major finding. No praise.`;
+FAIL if there is any blocker or major finding. ${GAP_RULE} Minors never fail a review. No praise.`;
 
 /** The judge's second and later runs on a plan: it checks the previous findings against the changes. */
 export const JUDGE_PLAN_RECHECK = `You are the judge for a software plan, on a recheck. You reviewed this plan before; the planner has changed it since.
@@ -228,7 +238,7 @@ Output, nothing else. For each open or new finding:
   Why: the evidence, with file:line.
   Fix: concrete steps for the planner.
 Then a final line: VERDICT: PASS or VERDICT: FAIL
-FAIL if there is any blocker or major finding. No praise.`;
+FAIL if there is any blocker or major finding. ${GAP_RULE} Minors never fail a review. No praise.`;
 
 /** Sent to the planner with the plan judge's fixable findings. */
 export const PLAN_FIX = "The plan judge found problems you can fix. Fix each finding below: check the code where it says so, then reply with the whole plan again as a new `## Plan:` (or `## Plan changes` for a staged plan's changes). If a finding is wrong, put a `Disputes:` block (the finding and your evidence, file:line) on its own lines BEFORE the `## Plan` heading instead of changing the plan for it.";
@@ -243,9 +253,11 @@ export const JUDGE_QUICK = `This review is for a quick flow: a small change with
 export const JUDGE_MAJOR_ONLY = `This review follows a minor-fix round: report only blocker and major findings, and leave out minor ones.`;
 
 export const JUDGE_RECHECK = `This is a re-review. An earlier round reviewed the whole change and reported the findings below; the code has changed since. You get only the changes since that round, plus the names of every file in the whole change.
-The last round could be wrong too. Check that each previous finding is fixed, minor ones included, re-verify any finding before you report it again, and drop findings the code disproves. If the executor disputes a finding, decide it from the code: drop it only if the code shows the executor is right.
-Look for problems the new changes introduce, including in code that calls them or that they call: read those files when a change could affect them. Aim for at most about 8 read/grep/find/ls calls, reading only code the changes since the last round can affect.
-Report a previous finding again only if it is still there. Use the same output format, including Why and Fix; the verdict covers the whole change as it is now.`;
+The last round could be wrong too. Check that each previous finding is fixed, re-verify any finding before you report it again, and drop findings the code disproves. If the executor disputes a finding, decide it from the code: drop it only if the code shows the executor is right.
+Report only: (1) earlier findings that are still not fixed, and (2) new problems in the lines the changes touched, or in code those lines break (read the callers and callees when a change could affect them). Aim for at most about 8 read/grep/find/ls calls.
+Anything else you notice that is new and outside those lines is a late finding: report it with the tag [late] right after its category, for example \`- minor - [late][bug] ...\`. A late finding never fails the review unless it is a blocker.
+An earlier finding tagged [late] is not expected to be fixed: do not report it again (or, if you do, keep its [late] tag).
+Report a previous finding again only if it is still there. Use the same output format, including Why and Fix. The verdict is FAIL only for an earlier finding still open (blocker or major), or a new blocker or major in the changed lines, or a late blocker.`;
 
 /** Compaction instructions when the workflow hands over to the next step (execute, a fix round, the next stage). */
 export const HANDOVER_COMPACT = `The workflow is handing over to the next step (executing the approved plan, a fix round, or the next stage). The next message carries a plan card (goal, decisions, done-when, open steps, file path), so don't copy the plan into the summary.

@@ -9,6 +9,8 @@ export interface Finding {
 	severity: Severity;
 	category: string;
 	route: "auto" | "user";
+	/** Tagged `[late]`: a new problem a recheck found outside the changed lines. It is reported, and blocks only as a blocker. */
+	late?: boolean;
 	/** The head line as written, without its leading "- ". */
 	head: string;
 	/** The `Why:` and `Fix:` lines that follow it. */
@@ -17,6 +19,7 @@ export interface Finding {
 
 const HEAD = /^-\s+(blocker|major|minor)\s+-\s+\[([^\]]+)\]/i;
 const ROUTE = /\bfix:\s*(auto|user)\b/i;
+const LATE = /\[late\]/i;
 
 /** The findings of a judge reply. A missing `fix:` tag means "user"; text outside finding blocks is ignored. */
 export function parseFindings(text: string): Finding[] {
@@ -32,7 +35,7 @@ export function parseFindings(text: string): Finding[] {
 		if (m && !/^\s/.test(line)) {
 			flush();
 			const route = ROUTE.exec(line)?.[1].toLowerCase() === "auto" ? "auto" : "user";
-			cur = { f: { severity: m[1].toLowerCase() as Severity, category: m[2].trim(), route, head: line.replace(/^-\s+/, ""), body: "" }, body: [] };
+			cur = { f: { severity: m[1].toLowerCase() as Severity, category: m[2].trim(), route, ...(LATE.test(line) ? { late: true } : {}), head: line.replace(/^-\s+/, ""), body: "" }, body: [] };
 			continue;
 		}
 		if (/^\s*VERDICT:/i.test(line)) {
@@ -46,9 +49,20 @@ export function parseFindings(text: string): Finding[] {
 	return out;
 }
 
-/** A clean result: PASS and nothing left to report. */
+/** Findings that block: a blocker, or a major that is not late. Minors and late majors are notes. */
+export function blockingFindings(fs: Finding[]): Finding[] {
+	return fs.filter((f) => f.severity === "blocker" || (f.severity === "major" && !f.late));
+}
+
+/** Findings that never block: minors, and late majors. */
+export function minorFindings(fs: Finding[]): Finding[] {
+	const b = new Set(blockingFindings(fs));
+	return fs.filter((f) => !b.has(f));
+}
+
+/** A clean result: PASS and no blocker or major (minors are notes and never start another review). */
 export function isClean(verdict: string | undefined, findings: Finding[]): boolean {
-	return verdict === "PASS" && findings.length === 0;
+	return verdict === "PASS" && blockingFindings(findings).length === 0;
 }
 
 /** A finding as one string: its head line plus its body. */

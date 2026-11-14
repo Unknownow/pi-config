@@ -45,13 +45,13 @@ import {
 	type WorkflowConfig,
 } from "./config.ts";
 import { describeRole, parseRoleSpec, pickRoleSpec, roleCompletions, type Thinking } from "../shared/roles.ts";
-import { judgeAddenda, profileRole, nextProfile, handoverAction, handoverKind, preFlowModelAction, gitTaskAllowed, migrateSavedState, afterPass, noChangeStage, arbiterFirst, fixableFindings, canApprove, approvalBlock, addPlanReply, composePlan, type PlanDraft, hasPlanFlaw, planFlawLines, planFlawOnPass,  judgeCapReached, minorFixOpen, passPending, stageEndAction, parseArbiter, parseMergeArbiter, phaseAfterFlow, shouldResume, skipJudge } from "./agent-end.ts";
+import { judgeAddenda, profileRole, nextProfile, handoverAction, handoverKind, preFlowModelAction, gitTaskAllowed, migrateSavedState, afterPass, noChangeStage, arbiterFirst, fixableFindings, codeVerdict, lateFindingLines, findingLines, canApprove, approvalBlock, addPlanReply, composePlan, type PlanDraft, hasPlanFlaw, planFlawLines, planFlawOnPass,  judgeCapReached, minorFixOpen, passPending, stageEndAction, parseArbiter, parseMergeArbiter, phaseAfterFlow, shouldResume, skipJudge } from "./agent-end.ts";
 import { countTokens, fmtTok, type Tok } from "../shared/tokens.ts";
 import { idleReason, notifyCommand, notifyDue } from "./notify.ts";
 import * as prompts from "./prompts.ts";
 import { discussionReviewPrompts, discussionVerdict, lastAgreedList } from "./discussion-review.ts";
 import { branchTranscript } from "../shared/transcript.ts";
-import { type DiscussionReview, type Finding, type PlanGate, type SpecKind, discussionGateAfterFixReply, discussionGateAfterVerdict, discussionGateOnInput, discussionGateStart, discussionRecheckPrompts, findingText, forcedOpenFindings, isClean, isEscKey, menuJudgeLines, parseFindings, planDisputes, planGateAfterVerdict, planGateDecide, planGateReset, planOfferAction, planReadyJudge, planReviewPrompts, planTextDiff, textHash } from "./gates.ts";
+import { type DiscussionReview, type Finding, type PlanGate, type SpecKind, discussionGateAfterFixReply, discussionGateAfterVerdict, discussionGateOnInput, discussionGateStart, discussionRecheckPrompts, findingText, forcedOpenFindings, blockingFindings, isClean, minorFindings, isEscKey, menuJudgeLines, parseFindings, planDisputes, planGateAfterVerdict, planGateDecide, planGateReset, planOfferAction, planReadyJudge, planReviewPrompts, planTextDiff, textHash } from "./gates.ts";
 import { planTitle } from "./delivery.ts";
 import { pathCompletions } from "./pickers.ts";
 import { ghCandidates, withPathDir } from "./gh-path.ts";
@@ -78,7 +78,7 @@ import { type CheckStatus, MAX_REASKS, PLAN_ARBITER, PLAN_APPROVE, PLAN_BACK, PL
 import { refilterPlanTools, hiddenInPhase, syncFlowOnlyTools } from "./plan-tools.ts";
 import { AGENT_ROLES } from "../agents/config.ts";
 import { countSubagent } from "./agent-events.ts";
-import { MetricsQueue, type MetricEvent, subagentMetric } from "./metrics.ts";
+import { MetricsQueue, type MetricEvent, subagentMetric, judgeMetric } from "./metrics.ts";
 import { addUsage, emptyUsage, mapLimit, type RunResult, runSubagent } from "../agents/subagent.ts";
 import { renderRuns, toolProgress } from "../agents/render.ts";
 import {
@@ -120,6 +120,10 @@ interface FlowState {
 	minorRounds?: number;
 	/** Diff the last minor-fix message was sent for. */
 	minorSentFor?: string;
+	/** The passed tree per repo and the files the minor findings cite: a fix that touches only those files needs no re-review. */
+	minorFix?: { trees: Record<string, string>; cited: string[]; text: string };
+	/** Late findings (new problems a recheck found outside the changed lines, not blockers): listed on the final card, never blocking. */
+	lateFindings?: string[];
 	/** Hash of the last diff the judge passed. */
 	passedDiff?: string;
 	/** The last judge round, so the next one reviews only what changed since. */
@@ -268,8 +272,20 @@ function assistantText(m: AgentMessage | undefined): string {
 		.join("\n");
 }
 
-function countFindings(text: string): number {
-	return text.split("\n").filter((l) => /\s-\s*(blocker|major|minor)\s*-/i.test(l)).length;
+function countFindings(text: string): { total: number; late: number } {
+	const lines = text.split("\n").filter((l) => /\s-\s*(blocker|major|minor)\s*-/i.test(l));
+	const late = lines.filter((l) => /\[late\]/i.test(l)).length;
+	return { total: lines.length - late, late };
+}
+
+/** The paths a judge report's finding lines cite (`path:line`), with `/` separators. */
+function citedPaths(text: string): string[] {
+	const out = new Set<string>();
+	for (const l of findingLines(text)) {
+		const m = /^\s*(.+?):\d/.exec(l);
+		if (m) out.add(m[1].replace(/\\/g, "/"));
+	}
+	return [...out];
 }
 
 export default function workflow(pi: ExtensionAPI) {
@@ -468,10 +484,12 @@ export default function workflow(pi: ExtensionAPI) {
 		const flowId = state.planDoc?.flowId;
 		state.flowSummarized = true;
 		state.flowFindings = undefined;
+		const lateFindings = state.lateFindings?.length ? state.lateFindings : undefined;
+		state.lateFindings = undefined;
 		if (state.planDoc && !state.planDoc.finished) planMilestone(undefined, { at: new Date().toISOString(), ok, text: outcome });
 		state.touchedRepos = undefined;
 		view.settleMain();
-		if (!view.hasFlowUsage() && !steps && !findings && !human.length) {
+		if (!view.hasFlowUsage() && !steps && !findings && !lateFindings && !human.length) {
 			if (flowId) {
 				const empty = view.peekFlow(outcome, ok);
 				recordMetric({ kind: "flow", at: new Date().toISOString(), flowId, outcome, ok, started: empty.started, ended: empty.ended, stages: empty.stages, ...(state.profile ? { profile: state.profile } : {}) });
@@ -480,7 +498,7 @@ export default function workflow(pi: ExtensionAPI) {
 			return false;
 		}
 		const summary = view.endFlow(outcome, ok);
-		pi.appendEntry(SUMMARY_ENTRY, { ...summary, steps, findings, ...(human.length ? { humanChecks: human } : {}) });
+		pi.appendEntry(SUMMARY_ENTRY, { ...summary, steps, findings, ...(lateFindings ? { lateFindings } : {}), ...(human.length ? { humanChecks: human } : {}) });
 		if (flowId) recordMetric({ kind: "flow", at: new Date().toISOString(), flowId, outcome, ok, started: summary.started, ended: summary.ended, stages: summary.stages, ...(state.profile ? { profile: state.profile } : {}) });
 		persist();
 		return true;
@@ -686,6 +704,7 @@ export default function workflow(pi: ExtensionAPI) {
 		state.judgeRounds = 0;
 		state.minorRounds = 0;
 		state.minorSentFor = undefined;
+		state.minorFix = undefined;
 		endWaitAsk();
 		state.waiting = undefined;
 		state.checkpoints = undefined;
@@ -721,8 +740,8 @@ export default function workflow(pi: ExtensionAPI) {
 		updateStatus(ctx);
 	}
 
-	function sendPlanKickoff(open?: Finding[]): void {
-		const extra = open?.length ? "\n\nOpen discussion-judge findings the plan must address:\n" + open.map((f) => `- ${f.head}`).join("\n") : "";
+	function sendPlanKickoff(open?: Finding[], notes?: Finding[]): void {
+		const extra = (open?.length ? "\n\nOpen discussion-judge findings the plan must address:\n" + open.map((f) => `- ${f.head}`).join("\n") : "") + (notes?.length ? "\n\nMinor discussion-judge notes (take them into the plan where they fit; they are not blockers):\n" + notes.map((f) => `- ${f.head}`).join("\n") : "");
 		pi.sendMessage({ customType: "workflow-plan-kickoff", content: prompts.PLAN_KICKOFF + extra, display: true }, { triggerTurn: true, deliverAs: "followUp" });
 	}
 
@@ -806,7 +825,11 @@ export default function workflow(pi: ExtensionAPI) {
 			return;
 		}
 		state.planFlaw = arbiterOnFlaw ? "auto" : undefined;
-		const plan = [composePlan(planDraft), notes ? `## Orchestrator notes\n${notes}` : ""].filter(Boolean).join("\n\n");
+		const composed = composePlan(planDraft);
+		// minors of the plan judge are notes for the executor, never another review
+		const minors = state.planGate && state.planGate.planHash === textHash(composed) ? state.planGate.notes ?? [] : [];
+		const minorNotes = minors.length ? `## Notes for the executor\n${minors.map((f) => `- ${findingText(f).replace(/\n/g, "\n  ")}`).join("\n")}` : "";
+		const plan = [composed, minorNotes, notes ? `## Orchestrator notes\n${notes}` : ""].filter(Boolean).join("\n\n");
 		await setPhase(ctx, "execute");
 		const extra = startExecution(ctx, plan);
 		persist();
@@ -1061,6 +1084,24 @@ export default function workflow(pi: ExtensionAPI) {
 		return snaps;
 	}
 
+	/** True when a minor-fix round changed only files the minor findings cite, in every repo of the diff. */
+	async function minorFixOnly(diff: Diff): Promise<boolean> {
+		const fix = state.minorFix;
+		if (!fix || !fix.cited.length || state.lastJudge?.base !== diff.base) return false;
+		const snaps = await snapshotRepos(diff);
+		if (!snaps) return false;
+		const keys = Object.keys(snaps);
+		if (keys.length !== Object.keys(fix.trees).length || keys.some((k) => !fix.trees[k])) return false;
+		for (const r of diff.repos) {
+			const k = repoKey(r.root);
+			const d = await git(r.dir, "diff", "--name-only", "-z", fix.trees[k], snaps[k].tree);
+			if (d.code !== 0) return false;
+			const names = d.stdout.split("\0").filter(Boolean).map((n) => n.replace(/\\/g, "/"));
+			if (names.some((n) => !fix.cited.some((c) => c === n || c.endsWith(`/${n}`) || (c.includes("/") && n.endsWith(`/${c}`))))) return false;
+		}
+		return true;
+	}
+
 	/** Whether the judge reviews the whole diff, only the changes since its last round, or nothing (no changes since). */
 	async function reviewPlan(diff: Diff, full: boolean, skipSame = false): Promise<ReviewPlan> {
 		const prev = state.lastJudge;
@@ -1096,6 +1137,23 @@ export default function workflow(pi: ExtensionAPI) {
 	 * re-review gets one final full review when the changes since touched a file the last findings did not cite. `full` forces a full review.
 	 */
 	async function judge(ctx: ExtensionContext, diff: Diff, focus: string | undefined, signal?: AbortSignal, onChange?: (run: FlowRun) => void, full = false, disputes?: string): Promise<JudgeResult & { run: FlowRun }> {
+		// A minor-fix round that touched only the cited files needs no review: the tree counts as passed.
+		if (!full && !disputes && (await minorFixOnly(diff))) {
+			const run = view.start("judge", "minor fixes in the cited files");
+			view.finish(run, true, "PASS · only the cited files changed, no re-review");
+			onChange?.(run);
+			seenDiffs.add(diff.hash);
+			const snaps = await snapshotRepos(diff);
+			state.minorFix = undefined;
+			state.lastJudge = snaps ? { hash: diff.hash, repos: snaps, base: diff.base, verdict: "PASS", text: "The fix touched only the files the minor findings cite; it is passed without another review." } : state.lastJudge;
+			markPassed(diff.hash);
+			return { verdict: "PASS", text: "The fix touched only the files the minor findings cite; it is passed without another review.", hash: diff.hash, usage: emptyUsage(), run };
+		}
+		// A real review is running: the minor-fix shortcut is gone for good.
+		if (state.minorFix) {
+			state.minorFix = undefined;
+			persist();
+		}
 		// Disputes need a fresh look at the code, so they never get the "no changes" shortcut (a recheck still applies).
 		const plan = await reviewPlan(diff, full, Boolean(disputes));
 		if (plan.kind === "same") {
@@ -2050,10 +2108,15 @@ export default function workflow(pi: ExtensionAPI) {
 			text += `\n\n${knowledgeFooter(final, deviations.length)}`;
 			knowledge = { hash: diff.hash, ...final, deviations };
 		}
-		const verdict = /VERDICT:\s*PASS/i.test(text) && !/VERDICT:\s*FAIL/i.test(text) ? "PASS" : "FAIL";
-		const findings = countFindings(text);
+		const verdict = codeVerdict(text);
+		const counted = countFindings(text);
+		const findings = counted.total;
+		const lateNote = counted.late ? ` + ${counted.late} late` : "";
 		const knowledgeNote = knowledge ? ` · knowledge ${knowledge.status === "checked" ? "checked" : "not checked"}` : "";
-		view.finish(run, verdict === "PASS", `${verdict} · ${findings} finding${findings === 1 ? "" : "s"}${recheck ? " · re-review" : ""}${knowledgeNote}`);
+		view.finish(run, verdict === "PASS", `${verdict} · ${findings} finding${findings === 1 ? "" : "s"}${lateNote}${recheck ? " · re-review" : ""}${knowledgeNote}`);
+		recordMetric(judgeMetric("code", state.judgeRounds + 1, verdict, text));
+		const late = lateFindingLines(text);
+		if (late.length) state.lateFindings = [...new Set([...(state.lateFindings ?? []), ...late])].slice(-30);
 		onChange?.(run);
 		// Back to the phase's stage either way.
 		view.stage = phaseStage();
@@ -2805,6 +2868,7 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 				const knowledge = state.lastKnowledge?.hash === diff.hash ? state.lastKnowledge : undefined;
 				const block = knowledge ? deviationBlock(knowledge.deviations) : "";
 				if (block) text += `\n\nEnd the pull request body (or the last commit message if there is no pull request) with this block, unchanged:\n\n${block}`;
+				if (state.lateFindings?.length) text += `\n\nAdd a "Late findings (not fixed)" section to the pull request body (or the last commit message) listing:\n${state.lateFindings.map((l) => `- ${l}`).join("\n")}`;
 			}
 			const reminder = state.phase === "execute" ? openStepsReminder(state.checklist, currentStages()?.current) : undefined;
 			if (reminder) text += `\n\n${reminder}${state.phase === "execute" ? deliverHintsText(currentStages()?.current) : ""}`;
@@ -3445,7 +3509,7 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 			if (act === "recheck") {
 				state.discussionReview = { ...dr, status: "idle" };
 				persist();
-				void runDiscussionGate(ctx, "recheck", true, false);
+				void runDiscussionGate(ctx, "recheck", dr.restateLoop ?? true, false);
 			}
 			else {
 				state.discussionReview = { ...dr, status: "paused" };
@@ -3568,6 +3632,7 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 		state.judgeRounds = 0;
 		state.minorRounds = 0;
 		state.minorSentFor = undefined;
+		state.minorFix = undefined;
 		state.stageJudged = undefined;
 		if (state.passedDiff) markPassSummarized(state.passedDiff); // a leftover diff from the stage before is not this stage's
 		state.lastJudge = undefined; // a new stage gets a full review, not a re-review of the last one
@@ -3607,6 +3672,7 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 		}
 		state.minorRounds = 0;
 		state.minorSentFor = undefined;
+		state.minorFix = undefined;
 		state.planFlaw = undefined;
 		view.stage = "execute";
 		const decided = mergeDecisionsText(state.approvedPlan);
@@ -3625,6 +3691,7 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 		const final = stagesOutcome(state.stageOutcomes, staged.stages.length);
 		state.minorRounds = 0;
 		state.minorSentFor = undefined;
+		state.minorFix = undefined;
 		const decided = mergeDecisionsText(state.approvedPlan);
 		const finalText = decided ? `${final.text}; ${decided}` : final.text;
 		state.planFlaw = undefined;
@@ -3814,12 +3881,14 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 		const after = planGateAfterVerdict({ verdict, findings, rounds, max: cfg.maxPlanJudgeRounds, confirm });
 		const clean = isClean(verdict, findings);
 		view.finish(outcome.run, verdict === "PASS", `${verdict} · plan`);
+		recordMetric(judgeMetric("plan", rounds, verdict, outcome.text));
 		const g: PlanGate = {
 			planHash: run.judgedHash,
 			rounds,
 			verdict,
 			autoFindings: after.auto,
 			userFindings: after.user,
+			notes: after.notes,
 			judgedPlan: plan,
 			cappedHash: after.action === "offer" && !clean && (after.capped || confirm) ? run.judgedHash : undefined,
 			spec: specKind,
@@ -3877,11 +3946,27 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 	}
 
 	/** Leaves discuss for plan after the discussion gate; `open` findings go into the kickoff. */
-	async function moveToPlan(ctx: ExtensionContext, open?: Finding[]): Promise<void> {
+	async function moveToPlan(ctx: ExtensionContext, open?: Finding[], notes?: Finding[]): Promise<void> {
 		if (state.discussionReview) state.discussionReview = { ...state.discussionReview, status: "idle" };
 		await setPhase(ctx, "plan");
 		ctx.ui.notify(`workflow: planning on ${describeRole(cfg.roles.plan)}`, "info");
-		sendPlanKickoff(open);
+		sendPlanKickoff(open, notes);
+	}
+
+	/** The list hash the discuss model was already asked to restate; one restate per list. */
+	let restateAskedFor: string | undefined;
+
+	/** A review already ran on this list and the list was not rewritten since: the judge would read the same text again, so the discuss model restates the conclusion first. True when it asked. */
+	function askRestate(ctx: ExtensionContext, loop: boolean): boolean {
+		const last = state.discussionReview;
+		const list = lastAgreedList(branchAssistantTexts(ctx.sessionManager.getBranch()));
+		if (!last || !list || last.listHash !== textHash(list) || isClean(last.verdict, last.findings) || restateAskedFor === last.listHash) return false;
+		restateAskedFor = last.listHash;
+		state.discussionReview = { ...last, status: "awaiting-fix", restateLoop: loop };
+		persist();
+		ctx.ui.notify("workflow: the agreed list was not rewritten since the last review; asking for a restated conclusion first", "info");
+		pi.sendMessage({ customType: "workflow-discussion-restate", content: prompts.DISCUSSION_RESTATE, display: true }, { triggerTurn: true, deliverAs: "followUp" });
+		return true;
 	}
 
 	/** The move from discuss to plan. Returns true when the discussion judge started (the move happens after it); false when the caller moves now. */
@@ -3902,6 +3987,7 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 		const d = discussionGateStart({ mode: cfg.autoJudgeDiscussion, quick: state.profile === "quick", listHash: list ? textHash(list) : undefined, last, sinceChars, cap: 30_000 });
 		if (d === "warn-move") ctx.ui.notify("workflow: no Agreed so far: list: discussion judge skipped", "warning");
 		if (d === "move" || d === "warn-move") return false;
+		if (askRestate(ctx, true)) return true;
 		void runDiscussionGate(ctx, d, true);
 		return true;
 	}
@@ -3983,6 +4069,7 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 		const verdict = discussionVerdict(outcome.text);
 		const rounds = (resetRounds ? 0 : prev?.rounds ?? 0) + (loop ? 1 : 0);
 		view.finish(outcome.run, verdict === "PASS", `${verdict} · discussion`);
+		recordMetric(judgeMetric("discussion", rounds, verdict, outcome.text));
 		pi.sendMessage({ customType: "workflow-discussion-review", content: `**Discussion review: ${verdict}**\n\n${outcome.text}`, display: true }, { triggerTurn: false });
 		const after = ctx.sessionManager.getBranch();
 		state.discussionReview = { listHash, verdict, findings, afterEntryId: (after[after.length - 1] as { id?: string } | undefined)?.id, rounds, status: "idle" };
@@ -3992,20 +4079,20 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 			return;
 		}
 		const action = discussionGateAfterVerdict({ verdict, findings, rounds, max: cfg.maxDiscussionJudgeRounds });
-		if (action === "move") await moveToPlan(ctx);
+		if (action === "move") await moveToPlan(ctx, undefined, minorFindings(findings));
 		else if (action === "move-open") {
-			ctx.ui.notify(`workflow: discussion judge: ${findings.length} finding(s) still open after ${rounds} runs; planning with them noted`, "warning");
-			await moveToPlan(ctx, findings);
+			ctx.ui.notify(`workflow: discussion judge: ${blockingFindings(findings).length} finding(s) still open after ${rounds} runs; planning with them noted`, "warning");
+			await moveToPlan(ctx, blockingFindings(findings), minorFindings(findings));
 		} else if (action === "fix") {
 			state.discussionReview = { ...state.discussionReview, status: "awaiting-fix" };
 			persist();
-			ctx.ui.notify(`workflow: discussion judge: fixing ${findings.length} finding(s) (run ${rounds}/${cfg.maxDiscussionJudgeRounds})`, "info");
-			const listed = findings.map((f) => `- ${findingText(f).replace(/\n/g, "\n  ")}`).join("\n");
+			ctx.ui.notify(`workflow: discussion judge: fixing ${blockingFindings(findings).length} finding(s) (run ${rounds}/${cfg.maxDiscussionJudgeRounds})`, "info");
+			const listed = blockingFindings(findings).map((f) => `- ${findingText(f).replace(/\n/g, "\n  ")}`).join("\n");
 			pi.sendMessage({ customType: "workflow-discussion-fix", content: `${prompts.DISCUSSION_FIX}\n\n${listed}`, display: true }, { triggerTurn: true, deliverAs: "followUp" });
 		} else {
 			state.discussionReview = { ...state.discussionReview, status: "paused" };
 			persist();
-			ctx.ui.notify(`workflow: discussion judge: ${findings.filter((f) => f.route === "user").length} finding(s) need your decision; answer them, then say go again`, "warning");
+			ctx.ui.notify(`workflow: discussion judge: ${blockingFindings(findings).filter((f) => f.route === "user").length} finding(s) need your decision; answer them, then say go again`, "warning");
 		}
 	}
 
@@ -4246,6 +4333,9 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 		if (afterPass(findings, state.minorRounds ?? 0, judgeLimits().maxMinorRounds) !== "fix") return false;
 		state.minorRounds = (state.minorRounds ?? 0) + 1;
 		state.minorSentFor = hash;
+		// Remember the passed tree: a fix that touches only the cited files passes without another review.
+		const passedRepos = state.lastJudge?.hash === hash ? state.lastJudge.repos : undefined;
+		state.minorFix = passedRepos ? { trees: Object.fromEntries(Object.entries(passedRepos).map(([k, v]) => [k, v.tree])), cited: citedPaths(text), text } : undefined;
 		persist();
 		const shown = report ?? `**Judge: PASS**\n\n${text}`;
 		handover(
@@ -4410,6 +4500,7 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 		await advanceReviewBase(ctx);
 		state.minorRounds = 0;
 		state.minorSentFor = undefined;
+		state.minorFix = undefined;
 		state.stageNudgedFor = undefined;
 		if (staged) {
 			state.stageOutcomes = [...(state.stageOutcomes ?? []), outcome];
@@ -4919,6 +5010,7 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 						else ctx.ui.notify("workflow: no judge running", "info");
 						return;
 					}
+					if (state.phase === "discuss" && askRestate(ctx, false)) return;
 					if (state.phase === "discuss") await runDiscussionGate(ctx, "full", false);
 					else if (state.phase === "plan") judgePlanNow(ctx);
 					else await reviewDiff(ctx, true);

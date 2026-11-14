@@ -91,6 +91,8 @@ export interface FlowSummary {
 	findings?: ReportFinding[];
 	/** Checks only a person can do, listed after the flow. */
 	humanChecks?: { id?: string; text: string }[];
+	/** Late judge findings (new problems outside the changed lines of a recheck, not blockers): reported, not fixed. */
+	lateFindings?: string[];
 	/** The card was posted again after a compaction hid it. */
 	reposted?: boolean;
 }
@@ -165,7 +167,7 @@ export function summaryLines(s: FlowSummary, theme: Theme): string[] {
 		);
 	}
 	const tone = { head: "text", done: "success", open: "warning", fixed: "dim", noted: "muted", human: "accent" } as const;
-	for (const l of reportLines(s.steps, s.findings, s.humanChecks)) lines.push(l.tone === "head" ? theme.bold(l.text) : theme.fg(tone[l.tone], l.text));
+	for (const l of reportLines(s.steps, s.findings, s.humanChecks, s.lateFindings)) lines.push(l.tone === "head" ? theme.bold(l.text) : theme.fg(tone[l.tone], l.text));
 	return lines;
 }
 

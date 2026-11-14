@@ -218,9 +218,33 @@ export function arbiterFirst(flow: "auto" | undefined, config: "ask" | "auto"): 
  * except [knowledge <id>] deviations from a recommended rule, which may stay with a reason, and [plan-flaw] findings, which the arbiter or the user decides.
  */
 export function fixableFindings(text: string): number {
-	return text
-		.split(/\r?\n/)
-		.filter((l) => /^\S.*\s-\s*(blocker|major|minor)\s*-/i.test(l) && !/-\s*(\[plan-flaw\]|\[knowledge\b[^\]]*\]\s*deviation from a recommended rule)/i.test(l)).length;
+	return findingLines(text).filter((l) => !/-\s*(\[plan-flaw\]|\[knowledge\b[^\]]*\]\s*deviation from a recommended rule)/i.test(l) && !isLateNonBlocker(l)).length;
+}
+
+/** The finding head lines of a code-judge report (not the indented Why/Fix lines). */
+export function findingLines(text: string): string[] {
+	return text.split(/\r?\n/).filter((l) => /^\S.*\s-\s*(blocker|major|minor)\s*-/i.test(l));
+}
+
+/** A finding tagged [late] that is not a blocker: reported, never blocking. */
+export function isLateNonBlocker(line: string): boolean {
+	return /\[late\]/i.test(line) && !/\s-\s*blocker\s*-/i.test(line);
+}
+
+/** The late non-blocker finding heads of a report. */
+export function lateFindingLines(text: string): string[] {
+	return findingLines(text).filter(isLateNonBlocker).map((l) => l.trim());
+}
+
+/**
+ * The verdict of a code-judge report. With finding lines: FAIL for a blocker or a major that is not late (plan flaws don't count);
+ * a late major is a note. Without finding lines the VERDICT line decides.
+ */
+export function codeVerdict(text: string): "PASS" | "FAIL" {
+	const stated = /VERDICT:\s*PASS/i.test(text) && !/VERDICT:\s*FAIL/i.test(text) ? "PASS" : "FAIL";
+	const lines = findingLines(text).filter((l) => !/\[plan-flaw\]/i.test(l));
+	if (!lines.length) return stated;
+	return lines.some((l) => /\s-\s*blocker\s*-/i.test(l) || (/\s-\s*major\s*-/i.test(l) && !/\[late\]/i.test(l))) ? "FAIL" : "PASS";
 }
 
 export interface ArbiterDecision {
