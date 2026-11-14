@@ -67,6 +67,8 @@ test("the judged tree is the tree the judge saw; judge tokens count against the 
 		assert.equal(await judgeStep.run(s.job, s.ctx), "deliver");
 		assert.equal(s.job.repos[0].judgedTree, git(s.dir, "rev-parse", "HEAD^{tree}"));
 		assert.equal(s.job.lastVerdict?.verdict, "PASS");
+		assert.deepEqual([s.job.lastVerdict?.blockers, s.job.lastVerdict?.majors, s.job.lastVerdict?.minors], [0, 0, 0]);
+		assert.ok(s.wakes.some((w) => /round 1, 0 minor/.test(w)));
 		assert.equal(s.job.used.tokens, 1000 + 100 * 5, "weighted: input 1, output 5");
 		assert.ok(s.wakes.some((w) => /judge PASS/.test(w)));
 	} finally {

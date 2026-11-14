@@ -149,13 +149,13 @@ export const judgeStep: Step = {
 		const seen = await Promise.all(job.repos.map(treeOf));
 		const task = await judgeTask(job, ctx);
 		const cwd = job.cwd ?? job.repos[0].worktree;
-		const count = (u: unknown) => void (job.used.tokens += countTokens(u as Parameters<typeof countTokens>[0], ctx.cfg.tokenWeights).cost);
+		const addUsage = (u: unknown) => void (job.used.tokens += countTokens(u as Parameters<typeof countTokens>[0], ctx.cfg.tokenWeights).cost);
 		let res = await ctx.review("judge", task, cwd);
-		count(res.usage);
+		addUsage(res.usage);
 		if (!res.ok && !ctx.stopped()) {
 			ctx.log("judge-error", res.error ?? "no output");
 			res = await ctx.review("judge", task, cwd);
-			count(res.usage);
+			addUsage(res.usage);
 		}
 		if (ctx.stopped()) return "report";
 		if (!res.ok) {
