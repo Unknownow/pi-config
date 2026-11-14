@@ -593,14 +593,14 @@ The rest of S2 is unchanged.
 - [x] S13 Append the notes to the plan (workflow K10). In `hooks.ts:23-29`, `index.ts:3637-3640` and `approve` (`:800`): when ther
 - [x] S14 Hold messages during review.
 - [x] S15 Docs and backlog: K10 notes in both READMEs, and row A50 Done. The measure is plans per package, which should be 1-2.
-- [ ] S16 Severity helpers in `shared/findings.ts`.
-- [ ] S17 Minors become notes.
-- [ ] S18 Fix code minors without a re-review.
-- [ ] S19 Rechecks and late findings.
-- [ ] S20 Define severity in `JUDGE`, the knowledge section (`:289-317`) and `JUDGE_PROPOSAL`.
-- [ ] S21 Stale-list fix. Before any discussion review (`index.ts:3842-3870`, and the manual `/flow judge` path in `discussion-rev
-- [ ] S22 Metrics. Add `judgeMetric` to `metrics.ts`, modelled on `:19`. Write a `judge` event where the code (`:2051`), plan (`~:
-- [ ] S23 Docs and backlog: README gate rules (`workflow/README.md:148-161`), plus these rows, each Done:
+- [x] S16 Severity helpers in `shared/findings.ts`.
+- [x] S17 Minors become notes.
+- [x] S18 Fix code minors without a re-review.
+- [x] S19 Rechecks and late findings.
+- [x] S20 Define severity in `JUDGE`, the knowledge section (`:289-317`) and `JUDGE_PROPOSAL`.
+- [x] S21 Stale-list fix. Before any discussion review (`index.ts:3842-3870`, and the manual `/flow judge` path in `discussion-rev
+- [x] S22 Metrics. Add `judgeMetric` to `metrics.ts`, modelled on `:19`. Write a `judge` event where the code (`:2051`), plan (`~:
+- [x] S23 Docs and backlog: README gate rules (`workflow/README.md:148-161`), plus these rows, each Done:
 - [ ] S24 The run charter.
 - [ ] S25 The decision log.
 - [ ] S26 Step back instead of escalating.
