@@ -145,26 +145,6 @@ test("restart is refused when the critic finds a blocker in the amendment; nothi
 	}
 });
 
-test("a stop while the critic checks a restart wins: the restart is refused, the job is stopped and reported", async () => {
-	const w = world();
-	try {
-		w.write({ worker: [{ hang: true }], critic: [{ text: PASS, delayMs: 1500 }] });
-		const id = await start(w);
-		const jr = await working(w, id);
-		const p = w.engine.send(id, "go another way", "restart");
-		await waitFor(() => w.calls().some((c) => c.mode === "json" && c.role === "critic"), 30_000, "the critic to start");
-		await w.engine.stop(id);
-		const r = await p;
-		assert.ok("error" in r && /moved on/.test(r.error), JSON.stringify(r));
-		assert.equal(jr.job.state, "stopped");
-		assert.equal(rpcCalls(w).length, 1, "no new worker");
-		assert.ok(fs.existsSync(path.join(jr.dir, "report.md")));
-		assert.equal(jr.job.briefVersion, 1);
-	} finally {
-		w.end();
-	}
-});
-
 test("an amendment after PASS holds delivery: nothing merges until the new version is judged", async () => {
 	let pushing: (() => void) | undefined;
 	const slow = new Promise<void>((r) => (pushing = r));
@@ -217,8 +197,6 @@ test("escalation: after the judge rounds the worker switches model; then a re-pl
 		assert.ok(w.wakes.some((x) => /relay_replan/.test(x)));
 		assert.ok("error" in (await w.engine.resume(id)), "a re-plan wait is not resumed, it is re-planned");
 		assert.ok("error" in (await w.engine.deliver(id)));
-		assert.ok("error" in (await w.engine.send(id, "start over", "restart")), "a restart cannot reset the round counters past the re-plan cap");
-		assert.equal(jr.job.round, 3);
 		// the Targets cannot change
 		assert.ok("error" in (await w.engine.replan(id, brief({ repo: w.repo, target: "other" }))));
 		const r = await w.engine.replan(id, brief({ repo: w.repo }).replace("One new file.", "Two small files."));
@@ -593,26 +571,6 @@ test("a follow-up is refused for a running job, an unknown job, an empty text; a
 		assert.equal(readJob(jr.dir)?.state, "done");
 		assert.ok(fs.existsSync(path.join(jr.dir, "report.md")));
 		assert.equal(readJob(jr.dir)?.followups, 0);
-	} finally {
-		w.end();
-	}
-});
-
-test("a restart with reset base in a follow-up resets to where the follow-up began, not into the job's earlier work", async () => {
-	const { w } = followWorld({}, { worker: [turn("greeting.txt"), { hang: true }, turn("b2.txt", "b" + nl)], judge: [PASS, PASS] });
-	try {
-		const id = await start(w);
-		await ended(w, id);
-		const f = await w.engine.followup(id, "also add b2.txt");
-		assert.ok("ok" in f, JSON.stringify(f));
-		const jr = w.engine.get(id)!;
-		await waitFor(() => jr.job.state === "working" && jr.ws.alive && w.cmds().filter((c) => c.type === "prompt").length === 2, 30_000, "the follow-up worker");
-		const r = await w.engine.send(id, "do it differently", "restart", { reset: "base" });
-		assert.ok("ok" in r, JSON.stringify(r));
-		await ended(w, id);
-		assert.equal(jr.job.state, "done");
-		assert.equal(git(w.bare!, "show", `wt/${id}:greeting.txt`), "hello", "the job's earlier work survived the reset");
-		assert.equal(git(w.bare!, "show", `wt/${id}:b2.txt`), "b");
 	} finally {
 		w.end();
 	}

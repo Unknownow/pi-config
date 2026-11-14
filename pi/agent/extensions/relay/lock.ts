@@ -67,8 +67,6 @@ export const thisHost = () => os.hostname();
 
 export class JobLock {
 	gen: number | undefined;
-	/** The owner whose stale lock the last successful `takeOver` replaced. */
-	previous?: LockFile | "unreadable";
 	private readonly fs: LockFs;
 	private readonly now: () => number;
 	private readonly staleMs: number;
@@ -193,7 +191,6 @@ export class JobLock {
 		if (gens.length === 0) return this.acquire();
 		const n = gens[0];
 		if (!this.isStale(n)) return false;
-		const previous = this.read(n);
 		this.opts.beforeCreate?.();
 		const next = n + 1;
 		const tmp = path.join(this.dir, `owner.${next}.lock.${process.pid}.${Math.floor(Math.random() * 1e6)}.tmp`);
@@ -222,7 +219,6 @@ export class JobLock {
 			this.gen = undefined;
 			return false;
 		}
-		this.previous = previous;
 		for (const g of this.generations()) {
 			if (g < next) {
 				try {
