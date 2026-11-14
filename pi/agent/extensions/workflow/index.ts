@@ -72,7 +72,7 @@ import { pushArgs, tagDecision } from "./tags.ts";
 import { type CheckVerdict, autopilotAmendment, autopilotReply, checkTitle, checkVerdict, cleanCheck, waitCheckProblem, type HumanCheck, humanChecks, parseVerifyStep, parseWaitStep, pollDecision, waitLimitMs, waitKindProblem, autopilotSkipsWait, replaceWait, resumePrefix, verifyAmendment, waitAmendment } from "./waits.ts";
 import { nextStage, parseStages, planWaitProblems, stageLine, stageNote, stageStart, stagesOutcome } from "./stages.ts";
 import { planToolProblem, planToolRefused, phaseToolRefusal } from "../shared/readonly-tools.ts";
-import { acceptanceRefusal, exactToolRegexes, flowEndKind, flowEndPayload, k11Payload, keepExtraTools, withEndFlow, type K11Site, parseStartPlan, planReviewAction, planReviewNotes, planReviewRoute, START_PLAN_PREFACE } from "./hooks.ts";
+import { acceptanceRefusal, exactToolRegexes, flowEndKind, flowEndPayload, k11Payload, parseFlowActive, relayOwner, keepExtraTools, withEndFlow, type K11Site, parseStartPlan, planReviewAction, planReviewNotes, planReviewRoute, START_PLAN_PREFACE } from "./hooks.ts";
 import { emitClaims, gatherClaims } from "../shared/claims.ts";
 import { type CheckStatus, MAX_REASKS, PLAN_ARBITER, PLAN_APPROVE, PLAN_BACK, PLAN_FULL, type AskKey, type AskRole, type OpenAsk, askAnswer, askMenu, idleDue, idleNoticeAllowed, idlePayload, bumpAskId, planMenuRequest, waitDonePayload, restoreAsks, resumeContent, waitPayload, waitResumeOutcome } from "./asks.ts";
 import { refilterPlanTools, hiddenInPhase, syncFlowOnlyTools } from "./plan-tools.ts";
@@ -677,8 +677,22 @@ export default function workflow(pi: ExtensionAPI) {
 		state.toolsBeforePlan = undefined;
 	}
 
-	/** `profile`: "quick" starts a quick flow (plan phase only); see nextProfile. */
-	async function setPhase(ctx: ExtensionContext, phase: Phase, profile?: "quick"): Promise<void> {
+	/** K16: true when the relay extension owns this session (it answered a `flow:active` question with owner "relay"). No answer, a timeout or an error count as no claim. */
+	async function relayOwns(): Promise<boolean> {
+		const claims = emitClaims((d) => pi.events.emit("flow:active", d), { v: 1, from: "workflow" }, 2000);
+		return relayOwner(await claims.answer);
+	}
+	const RELAY_ACTIVE = "workflow: relay is active in this session; /relay off first";
+
+	/**
+	 * `profile`: "quick" starts a quick flow (plan phase only); see nextProfile.
+	 * Returns false (and changes nothing) when a flow would start from "off" while relay owns the session (K16).
+	 */
+	async function setPhase(ctx: ExtensionContext, phase: Phase, profile?: "quick"): Promise<boolean> {
+		if (state.phase === "off" && phase !== "off" && (await relayOwns())) {
+			ctx.ui.notify(RELAY_ACTIVE, "warning");
+			return false;
+		}
 		const leavingFlow = state.phase === "execute" && phase !== state.phase;
 		if (flowEndKind({ from: state.phase, to: phase, viaEndFlow: endFlowFlag.on })) emitFlowEnd("abandoned");
 		if (phase !== state.phase) {
@@ -751,6 +765,7 @@ export default function workflow(pi: ExtensionAPI) {
 		if (phase === "off") state.preFlowModel = undefined;
 		persist();
 		updateStatus(ctx);
+		return true;
 	}
 
 	function sendPlanKickoff(open?: Finding[], notes?: Finding[]): void {
@@ -765,7 +780,7 @@ export default function workflow(pi: ExtensionAPI) {
 			return;
 		}
 		const from = state.profile === "quick" ? state.quickFrom : state.phase === "execute" ? "off" : state.phase;
-		await setPhase(ctx, "plan", "quick");
+		if (!(await setPhase(ctx, "plan", "quick"))) return;
 		state.quickFrom = from;
 		persist();
 		updateStatus(ctx);
@@ -1814,6 +1829,10 @@ export default function workflow(pi: ExtensionAPI) {
 			notify(`a flow is already running (${busy}); finish or leave it before resuming another`);
 			return;
 		}
+		if (state.phase === "off" && (await relayOwns())) {
+			ctx.ui.notify(RELAY_ACTIVE, "warning");
+			return;
+		}
 		const cwdRoot = await gitRoot(ctx.cwd);
 		if (!cwdRoot) {
 			notify("the working folder is not in a git repo, so there is no plan to resume");
@@ -1952,7 +1971,7 @@ export default function workflow(pi: ExtensionAPI) {
 			if (remote && fetched && (await gitEnv(r.root, ["merge", "--ff-only", "--quiet", `${remote.name}/${r.branch}`])).code !== 0) stuck();
 		}
 
-		await setPhase(ctx, "execute");
+		if (!(await setPhase(ctx, "execute"))) return;
 		const folders = [...(state.folders ?? [])];
 		let added = 0;
 		for (const r of roots) {
@@ -4670,8 +4689,7 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 		view.flowStarted = undefined;
 		applyAddDir(ctx);
 		publishFolders(ctx);
-		if (start !== "off") await setPhase(ctx, start);
-		else updateStatus(ctx);
+		if (start === "off" || !(await setPhase(ctx, start))) updateStatus(ctx);
 		void planHousekeeping(ctx);
 	});
 
@@ -4680,6 +4698,13 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 		if (!(state.phase === "execute" && state.approvedPlan)) return;
 		ctx.ui.notify("workflow: a flow is executing; finish it or leave it with /flow off before switching sessions", "warning");
 		return { cancel: true };
+	});
+
+	// K16: relay asks whether a workflow flow is running; a flow in any phase but off claims the session.
+	pi.events.on("flow:active", (data: unknown) => {
+		const req = parseFlowActive(data);
+		if ("error" in req || req.from === "workflow" || typeof req.claim !== "function") return;
+		if (state.phase !== "off") req.claim(Promise.resolve({ owner: "workflow" }));
 	});
 
 	// K9: another extension starts a flow at the plan phase from a brief.
@@ -4695,7 +4720,10 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 				if (state.phase === "execute" || state.phase === "plan" || state.approvedPlan) return { error: `workflow:start-plan: a flow is already running (phase ${state.phase})` };
 				const prev = state.phase;
 				state.extraPlanTools = req.allowTools.length ? req.allowTools : undefined;
-				await setPhase(ctx, "plan");
+				if (!(await setPhase(ctx, "plan"))) {
+					state.extraPlanTools = undefined;
+					return { error: "workflow:start-plan: relay is active in this session" };
+				}
 				refilterTools(); // discuss to plan keeps the tool snapshot, so the allowed tools must be put back
 				state.planSpec = { kind: "brief", text: req.brief };
 				persist();
@@ -4938,7 +4966,7 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 					}
 					if (sub.toLowerCase() === "plan" && state.phase === "discuss" && (await startDiscussionGate(ctx))) return;
 					const from = state.phase;
-					await setPhase(ctx, sub.toLowerCase() as Phase);
+					if (!(await setPhase(ctx, sub.toLowerCase() as Phase))) return;
 					ctx.ui.notify(`workflow: ${state.phase}`, "info");
 					if (from === "discuss" && state.phase === "plan") sendPlanKickoff();
 					return;

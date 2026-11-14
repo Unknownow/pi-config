@@ -107,3 +107,34 @@ test("/flow plan force moves to plan with the matching findings and never starts
 	assert.ok(!b.includes("startDiscussionGate("));
 	assert.ok(source.includes('{ value: "plan force"'));
 });
+
+// K16: relay and workflow never own a session together.
+test("setPhase has exactly 18 call sites (a new one must decide whether it can start from off)", () => {
+	const calls = [...source.matchAll(/setPhase\(ctx,/g)];
+	assert.equal(calls.length, 18);
+});
+
+test("the call sites that can start a flow from off check setPhase's result", () => {
+	const checked = (header: string, call: RegExp) => assert.match(body(header), call, header);
+	checked("async function startQuick(", /if \(!\(await setPhase\(ctx, "plan", "quick"\)\)\) return;/);
+	checked("async function resumeFlow(", /if \(!\(await setPhase\(ctx, "execute"\)\)\) return;/);
+	assert.match(source, /if \(start === "off" \|\| !\(await setPhase\(ctx, start\)\)\) updateStatus\(ctx\);/);
+	assert.match(source, /if \(!\(await setPhase\(ctx, "plan"\)\)\) \{\s*state\.extraPlanTools = undefined;\s*return \{ error: "workflow:start-plan: relay is active in this session" \};/);
+	assert.match(source, /if \(!\(await setPhase\(ctx, sub\.toLowerCase\(\) as Phase\)\)\) return;/);
+});
+
+test("resumeFlow asks relayOwns before it touches git", () => {
+	const fn = body("async function resumeFlow(");
+	const owns = fn.indexOf("relayOwns(");
+	assert.ok(owns > 0);
+	for (const git of ["gitRoot(", "planChain", '"switch"', "gitEnv("]) {
+		const at = fn.indexOf(git);
+		if (at >= 0) assert.ok(owns < at, `relayOwns( comes before ${git}`);
+	}
+});
+
+test("setPhase refuses only off to a flow phase while relay owns the session", () => {
+	const fn = body("async function setPhase(");
+	assert.match(fn, /if \(state\.phase === "off" && phase !== "off" && \(await relayOwns\(\)\)\) \{\s*ctx\.ui\.notify\(RELAY_ACTIVE, "warning"\);\s*return false;/);
+	assert.match(source, /const RELAY_ACTIVE = "workflow: relay is active in this session; \/relay off first";/);
+});

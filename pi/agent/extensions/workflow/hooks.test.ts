@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseStartPlan, planReviewAction, acceptanceRefusal, ACCEPTANCE_NO_ANSWER, exactToolRegexes } from "./hooks.ts";
+import { emitClaims } from "../shared/claims.ts";
+import { parseFlowActive, relayOwner, parseStartPlan, planReviewAction, acceptanceRefusal, ACCEPTANCE_NO_ANSWER, exactToolRegexes } from "./hooks.ts";
 
 test("parseStartPlan accepts a good payload", () => {
 	assert.deepEqual(parseStartPlan({ v: 1, title: "t", brief: "b", allowTools: ["x"] }), { title: "t", brief: "b", allowTools: ["x"] });
@@ -99,4 +100,33 @@ test("k11Payload and K11_SITES", () => {
 test("flowEndPayload", () => {
 	assert.deepEqual(flowEndPayload("f1", "stopped"), { v: 1, flowId: "f1", how: "stopped" });
 	assert.deepEqual(flowEndPayload(undefined, "abandoned"), { v: 1, how: "abandoned" });
+});
+
+test("parseFlowActive (K16) checks version and sender", () => {
+	const claim = () => {};
+	assert.deepEqual(parseFlowActive({ v: 1, from: "relay", claim }), { from: "relay", claim });
+	assert.deepEqual(parseFlowActive({ v: 1, from: "workflow" }), { from: "workflow", claim: undefined });
+	assert.ok("error" in parseFlowActive({ v: 2, from: "relay" }));
+	assert.ok("error" in parseFlowActive({ v: 1, from: "other" }));
+	assert.ok("error" in parseFlowActive(null));
+});
+
+test("relayOwner reads only owner relay; no answer, an error and other owners are no claim", () => {
+	assert.equal(relayOwner({ owner: "relay" }), true);
+	assert.equal(relayOwner({ owner: "workflow" }), false);
+	assert.equal(relayOwner({ error: "no answer within 2 s" }), false);
+	assert.equal(relayOwner(null), false);
+	assert.equal(relayOwner(undefined), false);
+});
+
+test("K16 through emitClaims: a listener that never answers is no claim after the timeout; an error is no claim", async (t) => {
+	t.mock.timers.enable({ apis: ["setTimeout"] });
+	const never = emitClaims((d) => (d as { claim: (p: Promise<unknown>) => void }).claim(new Promise(() => {})), { v: 1, from: "workflow" }, 2000);
+	t.mock.timers.tick(2000);
+	assert.equal(relayOwner(await never.answer), false);
+	const failing = emitClaims((d) => (d as { claim: (p: Promise<unknown>) => void }).claim(Promise.reject(new Error("x"))), { v: 1, from: "workflow" }, 2000);
+	assert.equal(relayOwner(await failing.answer), false);
+	const owned = emitClaims((d) => (d as { claim: (p: Promise<unknown>) => void }).claim(Promise.resolve({ owner: "relay" })), { v: 1, from: "workflow" }, 2000);
+	assert.equal(relayOwner(await owned.answer), true);
+	assert.equal(relayOwner(await emitClaims(() => {}, { v: 1, from: "workflow" }, 2000).answer), false);
 });
