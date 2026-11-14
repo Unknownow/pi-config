@@ -59,7 +59,7 @@ export function filesOverlap(a: string[], b: string[]): boolean {
 			if (/[*?]/.test(x) && /[*?]/.test(y)) {
 				const dx = dirOf(x);
 				const dy = dirOf(y);
-				if (dx.startsWith(dy) || dy.startsWith(dx)) return true;
+				if (dx && dy && (dx.startsWith(dy) || dy.startsWith(dx))) return true;
 			}
 		}
 	}

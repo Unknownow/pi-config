@@ -46,6 +46,8 @@ test("briefFiles: the Files section, else the paths named in Design; filesOverla
 	assert.equal(filesOverlap(["src/**"], ["src/x.ts"]), true);
 	assert.equal(filesOverlap(["src/*.ts"], ["lib/*.ts"]), false);
 	assert.equal(filesOverlap(["src/**"], ["src/ui/**"]), true);
+	assert.equal(filesOverlap(["*.md"], ["src/*.ts"]), false);
+	assert.equal(filesOverlap(["**/package.json"], ["**/package.json"]), true);
 });
 
 test("toolSummary: the tool name and a short first argument", () => {
@@ -366,4 +368,30 @@ test("adoption leaves a stacked job queued until its predecessor has passed", as
 test("stackState: a follow-up that cleared the predecessor's merged flag still counts as merged", () => {
 	const repo: any = { main: "/r", stackedOn: { job: "rp", branch: "wt/rp", head: "abc" } };
 	assert.equal(stackState(repo, { repos: [{ main: "/r", mergedBefore: true }] } as unknown as Job), "merged");
+	assert.equal(stackState(repo, { repos: [{ main: "/r", mergedBefore: true, remoteBranch: "wt/rp-f1" }] } as unknown as Job), "merged", "a dependent of the old branch");
+	assert.equal(stackState(repo, { repos: [{ main: "/r", mergedBefore: true, remoteBranch: "wt/rp" }] } as unknown as Job), "open", "a dependent of the follow-up branch");
+});
+
+test("a queued job keeps its lock fresh, and a lead that lost the lock does not stop it", async () => {
+	const w = world({}, undefined, { heartbeatMs: 50 });
+	try {
+		w.write({ worker: [{ hang: true }] });
+		const a = await start(w);
+		await running(w, a);
+		const r = await w.engine.dispatch({ brief: brief({ repo: w.repo, extra: nl + "## Depends on" + nl + a + nl }) });
+		const b = (r as { id: string }).id;
+		const jr = w.engine.get(b)!;
+		const beat = () => fs.readdirSync(jr.dir).filter((f) => /^owner\.\d+\.lock$/.test(f)).map((f) => fs.readFileSync(path.join(jr.dir, f), "utf8")).join();
+		const before = beat();
+		await waitFor(() => beat() !== before, 5000, "a heartbeat of the queued job");
+		// another lead takes the lock: stop refuses and writes nothing
+		jr.lock.isOwner = () => false;
+		const s = await w.engine.stop(b);
+		assert.ok("error" in s && /no longer owns/.test(s.error), JSON.stringify(s));
+		assert.equal(readJob(jr.dir)!.state, "queued");
+		jr.lock.isOwner = () => true;
+		await w.engine.stop(a);
+	} finally {
+		w.end();
+	}
 });

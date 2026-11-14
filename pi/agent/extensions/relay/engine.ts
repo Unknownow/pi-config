@@ -623,7 +623,7 @@ export class Engine {
 		await this.cascade();
 		this.startQueued();
 		for (const jr of [...this.jobs.values()]) {
-			if (jr.ended || FINISHED.includes(jr.job.state) || jr.job.state === "queued") continue;
+			if (jr.ended || FINISHED.includes(jr.job.state)) continue;
 			const dt = jr.lastTick ? now - jr.lastTick : 0;
 			jr.lastTick = now;
 			if (now - jr.lastBeat >= (this.d.heartbeatMs ?? 30_000)) {
@@ -633,6 +633,8 @@ export class Engine {
 					continue;
 				}
 			}
+			// a queued job is heartbeated (another lead must not take it over) but not pumped or budgeted
+			if (jr.job.state === "queued") continue;
 			this.pump(jr);
 			if (jr.job.state === "working" || jr.job.state === "judging") jr.job.used.wallMs += dt;
 			const b = budgetState(jr.job, this.cfg, now);
@@ -734,6 +736,7 @@ export class Engine {
 		const jr = this.find(id);
 		if ("error" in jr) return jr;
 		if (jr.ended || FINISHED.includes(jr.job.state)) return { error: `job ${id} is already ${jr.job.state}` };
+		if (!jr.lock.isOwner()) return { error: `this lead no longer owns job ${id}` };
 		jr.stopRequested = true;
 		jr.job.endReason = reason ?? "stopped by the lead";
 		jr.job.state = "stopped";

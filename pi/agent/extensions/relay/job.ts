@@ -38,7 +38,8 @@ export interface RepoState {
 export function stackState(repo: RepoState, pred: Job | undefined): "none" | "open" | "merged" {
 	if (!repo.stackedOn) return "none";
 	const pr = pred?.repos.find((x) => x.main.toLowerCase() === repo.main.toLowerCase());
-	return pr?.merged || pr?.mergedBefore ? "merged" : "open";
+	// a follow-up gives the repo a new remote branch: a dependent stacked on the old one counts the predecessor as merged
+	return pr?.merged || (pr?.mergedBefore && pr.remoteBranch !== repo.stackedOn.branch) ? "merged" : "open";
 }
 
 export interface Approval {

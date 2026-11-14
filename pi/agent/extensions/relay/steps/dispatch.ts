@@ -66,7 +66,7 @@ export const dispatchStep: Step = {
 		if (job.dependsOn && !pred) return fail(`Depends on: job ${job.dependsOn} was not found`);
 		for (const t of tops) {
 			const pr = pred?.repos.find((x) => same(x.main, t.main));
-			if (!pred || !pr || pr.merged || pr.mergedBefore) continue;
+			if (!pred || !pr || pr.merged || (pr.mergedBefore && !pr.remoteBranch)) continue;
 			// never a quiet plain start: the dependent would not sit on its predecessor's work
 			if (!pr.remoteBranch || !pr.remotePushed) return fail(`Depends on: predecessor ${pred.id} has not pushed its branch for ${t.key}`);
 			await ctx.run("git", ["fetch", "origin"], t.main);
