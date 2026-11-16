@@ -46,7 +46,7 @@ test("the lead prompt is added in lead mode only", async () => {
 	const off = relayOn(bus, dir);
 	const ev2 = { systemPromptOptions: { sections: {} as Record<string, string> } };
 	await off.hooks.get("before_agent_start")!(ev2, fakeCtx(dir));
-	assert.equal(ev2.systemPromptOptions.sections.relay, undefined);
+	assert.match(ev2.systemPromptOptions.sections.relay, /Relay lead mode is off/);
 	cleanup(dir);
 });
 

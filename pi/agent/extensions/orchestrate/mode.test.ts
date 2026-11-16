@@ -48,7 +48,7 @@ test("modeFromEntries: newest wins, bad payload is off", () => {
 });
 
 test("section is empty only when off", () => {
-	assert.equal(section("off"), "");
+	assert.match(section("off"), /Orchestrate mode is off/);
 	assert.match(section("discuss"), /DISCUSS/);
 	assert.match(section("propose", "repos: x"), /repos: x/);
 	assert.match(section("run"), /orch_run/);

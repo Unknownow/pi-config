@@ -24,6 +24,8 @@ import type { EngineDeps } from "./engine.ts";
 import type { Size } from "./config.ts";
 import type { Wt } from "./types.ts";
 
+/** Text of the `relay` section when lead mode is off. */
+export const RELAY_OFF = "Relay lead mode is off. Instructions from an earlier relay section no longer apply.";
 export const KICKOFF = "Go. Write the brief now (all sections, Authority with all six categories), run relay_critic on it, revise on its findings (up to 3 rounds, passing the draft id back), then relay_dispatch it. After that, tell me the job id and stop; relay reports when it is done.";
 
 export interface LeadDeps {
@@ -219,11 +221,15 @@ export function createLead(pi: ExtensionAPI, d: LeadDeps) {
 
 	// ----------------------------------------------------------------------------------------- hooks
 
+	// The section is never left out or empty when lead mode is off: pi drops an empty section, and one dropped and
+	// re-added moves to the end in pi's patch replay, which then no longer matches the prompt pi-claude-bridge saved
+	// (prompt_capture_unresolved).
 	pi.on("before_agent_start", async (event: any, ctx: any) => {
-		if (!(await leadOn(ctx))) return;
+		const on = await leadOn(ctx);
 		if (hosted) return;
 		const sections = event?.systemPromptOptions?.sections;
-		if (sections) sections.relay = fs.readFileSync(path.join(d.relayDir, "prompts", "lead.md"), "utf8");
+		if (!sections) return;
+		sections.relay = on ? fs.readFileSync(path.join(d.relayDir, "prompts", "lead.md"), "utf8") : RELAY_OFF;
 	});
 
 	pi.on("input", async (event: any, ctx: any) => {

@@ -724,7 +724,7 @@ export default function (pi: ExtensionAPI): void {
 		return a.content.filter((c: { type?: string }) => c.type === "text").map((c: { text: string }) => c.text).join("\n");
 	};
 
-	// The section is always set (empty when off) so pi's patch replay of the system prompt stays stable.
+	// The section is always set (non-empty when off; empty in a sub-session, which never shows it) so pi's patch replay of the system prompt stays stable.
 	let repoTableCache: { key: string; text: string | undefined } | undefined;
 	pi.on("before_agent_start", async (event, ctx) => {
 		if (!me) retryRelayAtTurn();

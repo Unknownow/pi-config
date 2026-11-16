@@ -72,9 +72,10 @@ export function repoTableText(repos: Array<{ key: string; top: string }>): strin
 	].join("\n");
 }
 
-/** Text of the `orchestrate` section. Empty when the mode is off. */
+/** Text of the `orchestrate` section. Never empty: pi drops an empty section, and one dropped and re-added moves to
+ *  the end in pi's patch replay, which then no longer matches the prompt pi-claude-bridge saved. */
 export function section(mode: Mode, repoTable?: string, executor: "relay" | "workflow" = "workflow", askUser: string[] = []): string {
-	if (mode === "off") return "";
+	if (mode === "off") return "Orchestrate mode is off. Instructions from an earlier orchestrate section no longer apply.";
 	const relay = executor === "relay";
 	const text = mode === "discuss" ? (relay ? `${DISCUSS}\n${DISCUSS_RELAY}` : DISCUSS) : mode === "propose" ? (relay ? PROPOSE_RELAY : PROPOSE) : relay ? relayRunSection(askUser) : RUN;
 	return repoTable && mode !== "discuss" ? `${text}\n${repoTable}` : text;
