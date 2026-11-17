@@ -15,9 +15,9 @@ Code that more than one extension uses. The folder has no `index.ts`, so pi does
 | `claims.ts` | The claim pattern over the event bus (`emitClaims`, `gatherClaims`): listeners call `claim(promise)` during the emit; the first non-null answer wins. | workflow (`workflow:folder-add`), relay (worktree events), agents (`agents:judge-call`) |
 | `findings.ts` | Reviewer findings: `parseFindings`, `judgeVerdict`, `isClean`, `blockingFindings`, `findingsBlock`. | workflow, relay, agents |
 | `session-folders.ts` | Readers of the `session-folders` entry: `foldersForCwd(branch, cwd)` (newest entry, only when it names the cwd) and `newestFolders(branch)` (newest entry for any cwd), `FOLDERS_ENTRY`, `SessionFoldersData`. | agents (relay and worktree to follow) |
-| `git/merge-gate.ts` | The judge gate for merges, protected pushes and publishing (`gateCheck`, `recordJudged`, `noMerge`, `midFlowMergeProblem`, …). One copy of the workflow and relay versions. | none yet (workflow and relay switch later) |
-| `git/push-guard.ts` | The git command guard (`pushProblem`, `shellProblem`, `mergeTarget`, …), with the optional force-with-lease `lease` of a delivery step. | none yet |
-| `git/repo-diff.ts` | Per-repo diff with untracked files (`collectRepoDiff`), the default review base (`defaultReviewBase`: merge-base with the origin default branch), citation helpers (`uncitedFiles`, `citeNames`, …). | agents (judge tool) |
+| `git/merge-gate.ts` | The judge gate for merges, protected pushes and publishing (`gateCheck`, `recordJudged`, `noMerge`, `midFlowMergeProblem`, …). One copy of the workflow and relay versions. | workflow (`flow/` modules, `git-guard.ts`) |
+| `git/push-guard.ts` | The git command guard (`pushProblem`, `shellProblem`, `mergeTarget`, …), with the optional force-with-lease `lease` of a delivery step. | workflow (`flow/hooks.ts`, `commit-guard.ts`, `git-guard.ts`) |
+| `git/repo-diff.ts` | Per-repo diff with untracked files (`collectRepoDiff`), the default review base (`defaultReviewBase`: merge-base with the origin default branch), citation helpers (`uncitedFiles`, `citeNames`, …). | agents (judge tool), workflow (`flow/diff.ts`) |
 
 ## Dock contracts and owner election
 

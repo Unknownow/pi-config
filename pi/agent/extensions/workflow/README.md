@@ -405,3 +405,29 @@ Ns`. The idle timer pauses while a tool runs, so a long build is not cut off. `0
 ## Completions
 
 `/flow ` offers every subcommand with a description (`commands.ts`), then the second level: `plan force`, `autopilot on|off`, `critic cancel`, and `model <role> <provider/id>[:thinking]` (roles, models with auth, thinking levels). `/folders ` offers `add` (folders of the typed path), `remove` (the added folders by number) and `list`.
+
+## Code layout
+
+`index.ts` is only the wiring: it creates the session's `Flow` and registers the flags, then calls `registerTools`, `registerHooks` and `registerCommands`, in that order. `Flow` (`flow/context.ts`) is the one shared context: `pi`, the config, the persisted `FlowState` (`fl.state`), the view and every other piece of session state, some grouped (`fl.notify`, `fl.plan` for the plan folders, `fl.claim`, `fl.live`, `fl.wait`). The code in `flow/` is plain exported functions that take `fl: Flow` first; the modules call each other through imports, and only at run time.
+
+| `flow/` module | What it holds |
+|---|---|
+| `context.ts` | `Flow` and `createFlow`, `FlowState` and the shared types, constants and small helpers |
+| `notify.ts` | desktop notifications, `askUser` (notify, then ask), the idle notice, `abortGate` |
+| `roles.ts` | the roles' models, `runRole` (the workflow's own subagent runs) and their knowledge tools |
+| `phase.ts` | `setPhase`, approval, `startExecution`, escalation, the flow's end, status, `persist` |
+| `diff.ts` | the flow's repos and diffs, the judge call and its review plan, the review base, the plan text the judge reads |
+| `plan-files.ts` | plan folders and refs, the session's claim, `live.json`, milestones, housekeeping, metrics |
+| `resume.ts` | `/flow resume` |
+| `judge.ts` | judge rounds (`reviewDiff`), fix or ask, plan flaws and the arbiter, minor findings, stage outcomes |
+| `wait-points.ts` | the wait state, its check and timer |
+| `tools.ts` | `registerTools`: `wait_for_user`, `publish_packages`, `git_task`, `plan_check`, `request_merge`, `deliver`, and the judge-call claim |
+| `hooks.ts` | `registerHooks`: every `pi.on` hook (session start and shutdown included) and the plan phase's tool rules |
+| `handover.ts` | the end of a run: handover messages, `onAgentEnd`, stage moves, no-change turns, `ensureGh` |
+| `plan-gate.ts` | the approval menu and the automatic plan judge |
+| `discussion-gate.ts` | the critic's review of the agreed list before the plan phase |
+| `merge.ts` | merge checks and `stageDone` |
+| `folders.ts` | `--add-dir` and following the working folder to another checkout |
+| `commands.ts` | `registerCommands`: `/folders`, `/flow` and the status text |
+
+The other files in this folder are pure modules (`gates.ts`, `asks.ts`, `waits.ts`, `agent-end.ts`, `view.ts`, …) that the `flow/` modules use. `wiring.test.ts` checks that `index.ts` registers the same flags, tools, commands and events in the same order; the source-scan tests (`gate-wiring.test.ts`, `ui-guard.test.ts`, `commands.test.ts`, `boundary.test.ts`) read `index.ts` and `flow/*.ts`.
