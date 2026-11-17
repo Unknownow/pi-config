@@ -81,7 +81,7 @@ async function turn(message) {
 		let go = true;
 		if (problem) {
 			const mid = `q${Date.now().toString(36)}`;
-			const cat = /\((\w+)\)/.exec(problem)?.[1] ?? "formats";
+			const cat = /outside the brief's Files/.test(problem) ? "files" : (/\((\w+)\)/.exec(problem)?.[1] ?? "formats");
 			append(path.join(jobDir, "outbox.jsonl"), { type: "approval", id: mid, category: cat, item: w.file.replace(/\\/g, "/"), why: "needed" });
 			const r = await waitReply(jobDir, mid, undefined, 100);
 			go = r?.type === "approve";
