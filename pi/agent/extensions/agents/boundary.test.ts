@@ -1,6 +1,6 @@
 // node --experimental-strip-types --test boundary.test.ts
 // Agents is a library other extensions use: it imports only its own files and ../shared, never workflow,
-// relay, orchestrate or worktree.
+// relay or worktree.
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import { test } from "node:test";
@@ -17,9 +17,9 @@ test("agents imports nothing of another extension but ../shared", () => {
 	}
 });
 
-test("agents imports nothing from workflow, relay, orchestrate or worktree", () => {
+test("agents imports nothing from workflow, relay or worktree", () => {
 	for (const f of files) {
-		const bad = importsOf(f).filter((i) => /^\.\.\/(workflow|relay|orchestrate|worktree)\//.test(i));
+		const bad = importsOf(f).filter((i) => /^\.\.\/(workflow|relay|worktree)\//.test(i));
 		assert.deepEqual(bad, [], `${f} imports from ${bad.join(", ")}`);
 	}
 });

@@ -56,7 +56,7 @@ test("criticPrompt: base CRITIC, about and document in the task", () => {
 
 test("prompts name no other extension and use the shared findings format", () => {
 	for (const text of [JUDGE, CRITIC, judgeKnowledgeStep("knowledge", ["a.ts"])]) {
-		assert.doesNotMatch(text, /workflow|\bflow\b|relay|orchestrat/i);
+		assert.doesNotMatch(text, /workflow|\bflow\b|relay/i);
 	}
 	for (const text of [JUDGE, CRITIC]) {
 		assert.ok(text.includes("- blocker|major|minor - [category] `path:line` - one-line title fix: auto|user"));
