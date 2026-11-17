@@ -1,4 +1,4 @@
-/** Pure helpers for judge findings, shared by the workflow and orchestrate gates: parse a judge reply, hash a text, find the agreed list. */
+/** Pure helpers for judge findings, shared by the workflow gates: parse a judge reply, hash a text, find the agreed list. */
 
 import { createHash } from "node:crypto";
 

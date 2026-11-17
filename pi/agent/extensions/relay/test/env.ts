@@ -21,7 +21,6 @@ export interface World {
 	wtCalls: { create: any[]; remove: any[]; addRepo: any[]; refuse: number };
 	wakes: string[];
 	notices: string[];
-	events: { name: string; payload: any }[];
 	wt: Wt;
 	cfg: RelayConfig;
 	engine: Engine;
@@ -138,7 +137,6 @@ export function world(cfgRaw: object = {}, files?: Record<string, string>, over:
 		wtCalls,
 		wakes: [],
 		notices: [],
-		events: [],
 		wt,
 		cfg,
 		engine: undefined as unknown as Engine,
@@ -161,7 +159,6 @@ export function world(cfgRaw: object = {}, files?: Record<string, string>, over:
 		wt,
 		notify: (l) => w.notices.push(l),
 		wake: (t) => w.wakes.push(t),
-		emit: (name, payload) => w.events.push({ name, payload }),
 		leadCwd: repo,
 		folders: () => [],
 		pollMs: 40,

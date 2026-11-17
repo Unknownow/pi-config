@@ -30,8 +30,7 @@ test("an aborted run counts no round: the abort path returns before the round is
 	assert.ok(fn.indexOf("if (run.reason)") < fn.indexOf("const rounds ="));
 });
 
-test("idleDue gets judging, and the local notice waits while a gate runs", () => {
-	assert.match(source, /idleDue\(\{[^}]*judging: !!gateRun/);
+test("the local idle notice waits while a gate runs", () => {
 	assert.match(source, /if \(gateRun \|\| notifiedSinceStart/);
 });
 
@@ -50,7 +49,7 @@ test("the judge command handles cancel before the phase dispatch and judges the 
 test("the plan branch decides with planGateDecide before offerPlan", () => {
 	const a = source.indexOf("planGateDecide({ mode: cfg.autoJudgePlan");
 	assert.ok(a > 0);
-	assert.ok(source.indexOf("offerPlan(ctx, text, blocked", a) > a);
+	assert.ok(source.indexOf("offerPlan(ctx, blocked", a) > a);
 	assert.ok(source.indexOf("void runPlanGate(ctx, emitted", a) > a);
 });
 
@@ -59,15 +58,8 @@ test("the plan branch passes hasDisputes built from planDisputes", () => {
 	assert.ok(source.slice(a, a + 500).includes("hasDisputes: wasFixing && planDisputes(text) !== undefined"));
 });
 
-test("the orchestrator's rejection resets the plan gate before the revise message", () => {
-	const a = source.indexOf('planGateReset(state.planGate, "rejected")');
-	assert.ok(a > 0);
-	assert.ok(source.indexOf('customType: "workflow-plan-review"', a) > a);
-});
-
-test("entering plan resets the gate; start-plan sets the brief as the spec", () => {
+test("entering plan resets the gate", () => {
 	assert.match(source, /planGateReset\(state\.planGate, "enter-plan"\)/);
-	assert.match(source, /state\.planSpec = \{ kind: "brief", text: req\.brief \}/);
 });
 
 test("setPhase aborts a running gate when the phase changes", () => {
@@ -106,35 +98,4 @@ test("/flow plan force moves to plan with the matching findings and never starts
 	assert.ok(b.includes("moveToPlan(ctx, forcedOpenFindings("));
 	assert.ok(!b.includes("startDiscussionGate("));
 	assert.ok(fs.readFileSync(new URL("./commands.ts", import.meta.url), "utf8").includes('plan: [{ value: "force"'));
-});
-
-// K16: relay and workflow never own a session together.
-test("setPhase has exactly 18 call sites (a new one must decide whether it can start from off)", () => {
-	const calls = [...source.matchAll(/setPhase\(ctx,/g)];
-	assert.equal(calls.length, 18);
-});
-
-test("the call sites that can start a flow from off check setPhase's result", () => {
-	const checked = (header: string, call: RegExp) => assert.match(body(header), call, header);
-	checked("async function startQuick(", /if \(!\(await setPhase\(ctx, "plan", "quick"\)\)\) return;/);
-	checked("async function resumeFlow(", /if \(!\(await setPhase\(ctx, "execute"\)\)\) return;/);
-	assert.match(source, /if \(start === "off" \|\| !\(await setPhase\(ctx, start\)\)\) updateStatus\(ctx\);/);
-	assert.match(source, /if \(!\(await setPhase\(ctx, "plan"\)\)\) \{\s*state\.extraPlanTools = undefined;\s*return \{ error: "workflow:start-plan: relay is active in this session" \};/);
-	assert.match(source, /if \(!\(await setPhase\(ctx, sub\.toLowerCase\(\) as Phase\)\)\) return;/);
-});
-
-test("resumeFlow asks relayOwns before it touches git", () => {
-	const fn = body("async function resumeFlow(");
-	const owns = fn.indexOf("relayOwns(");
-	assert.ok(owns > 0);
-	for (const git of ["gitRoot(", "planChain", '"switch"', "gitEnv("]) {
-		const at = fn.indexOf(git);
-		if (at >= 0) assert.ok(owns < at, `relayOwns( comes before ${git}`);
-	}
-});
-
-test("setPhase refuses only off to a flow phase while relay owns the session", () => {
-	const fn = body("async function setPhase(");
-	assert.match(fn, /if \(state\.phase === "off" && phase !== "off" && \(await relayOwns\(\)\)\) \{\s*ctx\.ui\.notify\(RELAY_ACTIVE, "warning"\);\s*return false;/);
-	assert.match(source, /const RELAY_ACTIVE = "workflow: relay is active in this session; \/relay off first";/);
 });

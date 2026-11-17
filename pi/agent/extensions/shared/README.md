@@ -5,14 +5,14 @@ Code that more than one extension uses. The folder has no `index.ts`, so pi does
 | File | What | Used by |
 |---|---|---|
 | `readonly-bash.ts` | Shell parser (`parseCommands`, `KEYWORDS`, `WRAPPERS`, `unwrapCommand`) and the read-only command policy (`commandReadOnlyProblem`, `readOnlyProblem`, `UNITY_PLAN_ALLOW`). | workflow, agents (runner guard), worktree (Unity guard) |
-| `readonly-tools.ts` | Read-only tool gate: `PLAN_TOOLS` (reading tools by name), `planToolRefused`, `phaseToolRefusal`, `planToolProblem` (bash text and run_code JavaScript checks). | workflow (discuss and plan phase), orchestrate (orchestrator mode) |
+| `readonly-tools.ts` | Read-only tool gate: `PLAN_TOOLS` (reading tools by name), `planToolRefused`, `phaseToolRefusal`, `planToolProblem` (bash text and run_code JavaScript checks). | workflow (discuss and plan phase) |
 | `repos.ts` | Repo roots of a command (`repoTexts`, `repoKey`, `uniqueRoots`, worktree and `--add-dir` parsing). Tested with the push guard in `workflow/repos.test.ts`. | workflow, agents |
 | `tokens.ts` | Token counts: raw and cost-weighted (`countTokens`, `DEFAULT_TOKEN_WEIGHTS`), the per-kind counts and their formatting. | workflow, agents |
 | `runs.ts` | Run cards: one row per sub-agent run (`newRun`, `applyEvent`, `endRun`, `runLine`, `shortModel`). | agents (tool rows), workflow (widget, via `FlowRun`) |
 | `roles.ts` | Role specs `provider/id[:thinking]` (`parseRoleSpec`, `describeRole`, `THINKING_LEVELS`), the model list, Tab completions and the model picker. | `/agents model`, `/flow model` |
-| `notify.ts` | Desktop notification command per platform (`notifyCommand`). | workflow, orchestrate |
+| `notify.ts` | Desktop notification command per platform (`notifyCommand`). | workflow |
 | `dock.ts` | The dock: one `dock` widget below the editor with two columns. `layoutDock` (pure layout), `attachDock` (owner: subscribes to `dock:lines`, draws, repaints), `publishDock` / `unpublishDock` (producers). | worktree (left: `wt-sessions`), relay (right: `relay`) |
-| `claims.ts` | The claim pattern over the event bus (`emitClaims`, `gatherClaims`): listeners call `claim(promise)` during the emit; the first non-null answer wins. | workflow K9-K11, orchestrate, agents (`agents:judge-call`) |
+| `claims.ts` | The claim pattern over the event bus (`emitClaims`, `gatherClaims`): listeners call `claim(promise)` during the emit; the first non-null answer wins. | workflow (`workflow:folder-add`), relay (worktree events), agents (`agents:judge-call`) |
 | `findings.ts` | Reviewer findings: `parseFindings`, `judgeVerdict`, `isClean`, `blockingFindings`, `findingsBlock`. | workflow, relay, agents |
 | `session-folders.ts` | Readers of the `session-folders` entry: `foldersForCwd(branch, cwd)` (newest entry, only when it names the cwd) and `newestFolders(branch)` (newest entry for any cwd), `FOLDERS_ENTRY`, `SessionFoldersData`. | agents (relay and worktree to follow) |
 | `git/merge-gate.ts` | The judge gate for merges, protected pushes and publishing (`gateCheck`, `recordJudged`, `noMerge`, `midFlowMergeProblem`, …). One copy of the workflow and relay versions. | none yet (workflow and relay switch later) |

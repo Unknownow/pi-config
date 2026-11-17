@@ -1,7 +1,7 @@
 // node --experimental-strip-types --test gates.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { type Finding, type PlanGate, findingText, forcedOpenFindings, isClean, isEscKey, menuJudgeLines, parseFindings, planDisputes, planGateAfterVerdict, planGateDecide, planGateReset, planOfferAction, planReadyJudge, planReviewPrompts, planTextDiff, textHash } from "./gates.ts";
+import { type Finding, type PlanGate, findingText, forcedOpenFindings, isClean, isEscKey, parseFindings, planDisputes, planGateAfterVerdict, planGateDecide, planGateReset, planOfferAction, planReviewPrompts, planTextDiff, textHash } from "./gates.ts";
 import { JUDGE_PLAN, JUDGE_PLAN_RECHECK, NO_SPEC_NOTE } from "./prompts.ts";
 
 const f = (route: "auto" | "user", severity: Finding["severity"] = "major", head = "x"): Finding => ({ severity, category: "gap", route, head: `${severity} - [gap] fix: ${route} - ${head}`, body: "Why: w\nFix: f" });
@@ -109,30 +109,16 @@ test("planOfferAction", () => {
 	assert.equal(planOfferAction({ clean: true, queuedGo: false }), "offer");
 });
 
-test("planReadyJudge", () => {
-	const j = planReadyJudge(gate({ autoFindings: [f("auto")], userFindings: [f("user")], rounds: 3 }), true);
-	assert.equal(j.ran, true);
-	assert.equal(j.verdict, "FAIL");
-	assert.equal(j.rounds, 3);
-	assert.equal(j.findings.length, 1);
-	assert.match(j.userFindings[0], /Why: w/);
-	const c = planReadyJudge(gate({ verdict: "cancelled", spec: "none" }), false);
-	assert.deepEqual([c.ran, c.verdict, c.spec], [false, "cancelled", "none"]);
-	assert.equal(planReadyJudge(gate({ verdict: "error" }), false).verdict, "error");
-});
-
 test("planGateReset", () => {
 	assert.equal(planGateReset(gate(), "enter-plan"), undefined);
-	const r = planGateReset(gate({ rounds: 3, cappedHash: "h1", judgedPlan: "p", autoFindings: [f("auto")] }), "rejected")!;
-	assert.deepEqual([r.rounds, r.cappedHash, r.judgedPlan, r.autoFindings.length], [0, undefined, "p", 1]);
-	assert.equal(planGateReset(undefined, "rejected"), undefined);
+	assert.equal(planGateReset(undefined, "enter-plan"), undefined);
 });
 
 test("planReviewPrompts", () => {
 	const none = planReviewPrompts({ plan: "P", folders: [] });
 	assert.deepEqual(none, [JUDGE_PLAN, NO_SPEC_NOTE, "## Plan under review", "P"]);
-	const brief = planReviewPrompts({ plan: "P", spec: { kind: "brief", text: "do X" }, folders: ["/a"] });
-	assert.match(brief[1], /the brief[\s\S]*do X/);
+	const brief = planReviewPrompts({ plan: "P", spec: { kind: "agreed", text: "do X" }, folders: ["/a"] });
+	assert.match(brief[1], /the agreed list[\s\S]*do X/);
 	assert.match(brief[2], /\/a/);
 	const re = planReviewPrompts({ plan: "P", folders: [], recheck: { findings: [f("auto", "major", "needs caller")], disputes: "Disputes: no", diff: "+new" } });
 	assert.equal(re[0], JUDGE_PLAN_RECHECK);
@@ -141,16 +127,6 @@ test("planReviewPrompts", () => {
 	assert.match(all, /Disputes: no/);
 	assert.match(all, /\+new/);
 	assert.equal(re[re.length - 1], "P");
-});
-
-test("menuJudgeLines", () => {
-	assert.deepEqual(menuJudgeLines(gate({ verdict: "PASS", rounds: 2 })), ["Plan judge: PASS (2 runs)"]);
-	const open = menuJudgeLines(gate({ autoFindings: [f("auto")], userFindings: [f("user", "minor", "pick")], cappedHash: "h1", spec: "none" }));
-	assert.match(open[0], /1 open finding after the cap/);
-	assert.ok(open.includes("Needs your decision:"));
-	assert.ok(open.includes("spec: none"));
-	assert.deepEqual(menuJudgeLines(undefined, "plan judge cancelled"), ["plan judge cancelled"]);
-	assert.equal(menuJudgeLines(gate({ verdict: "cancelled" }), "plan judge did not run: boom")[0], "plan judge did not run: boom");
 });
 
 // ---- discussion gate ----

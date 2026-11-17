@@ -16,13 +16,13 @@ function sources(d: string): string[] {
 	});
 }
 
-test("relay imports nothing from workflow, orchestrate, worktree, agents or sandbox", () => {
+test("relay imports nothing from workflow, worktree, agents or sandbox", () => {
 	const bad: string[] = [];
 	for (const f of sources(dir)) {
 		if (f.endsWith("boundary.test.ts")) continue;
 		const text = fs.readFileSync(f, "utf8");
 		for (const m of text.matchAll(/(?:from|import)\s*\(?\s*["']([^"']+)["']/g)) {
-			if (/\.\.\/(workflow|orchestrate|worktree|agents|sandbox|quiet-tools|markdown-view)(\/|$)/.test(m[1])) bad.push(`${path.basename(f)}: ${m[1]}`);
+			if (/\.\.\/(workflow|worktree|agents|sandbox|quiet-tools|markdown-view)(\/|$)/.test(m[1])) bad.push(`${path.basename(f)}: ${m[1]}`);
 		}
 	}
 	assert.deepEqual(bad, []);

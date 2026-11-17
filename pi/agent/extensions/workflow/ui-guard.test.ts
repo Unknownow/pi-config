@@ -1,5 +1,5 @@
 // node --experimental-strip-types --test ui-guard.test.ts
-// An orchestrated session must never ask a person at the keyboard: every menu goes through askUser (K12).
+// Every menu that waits for a person goes through askUser (it notifies first).
 // The only direct UI prompts left are the ones a typed command or a typed message opens.
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -30,7 +30,7 @@ test("workflow opens UI prompts only in the allowed blocks", () => {
 	assert.ok(files.includes("index.ts"));
 	for (const f of files) {
 		const bad = promptsOutsideAllowlist(fs.readFileSync(new URL(f, dir), "utf8"));
-		assert.deepEqual(bad, [], `${f}: a UI prompt outside askUser would block an orchestrated session`);
+		assert.deepEqual(bad, [], `${f}: a UI prompt outside askUser skips the notification`);
 	}
 });
 

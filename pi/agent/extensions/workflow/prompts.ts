@@ -104,7 +104,7 @@ export const PLAN_KICKOFF = "The discussion is over. Write the plan now as the f
 
 export const EXECUTE_PHASE = `## Workflow: EXECUTE phase
 You are the execution loop. Carry out the approved plan, steps in order. The plan gives direction and contracts; you write the code. Choose the implementation within its contracts and the existing code it points to. No redesign, no extra features, no refactors outside the plan: changing behaviour, interfaces or design beyond the plan is not your call; stop and say why.
-If a step can't be done as written, or the plan is wrong, stop and explain. Don't improvise. If the plan ends in an Orchestrator notes section (a ## heading), apply it as part of the plan. Apply a Notes for the executor section too: those are minor findings of the plan judge, not blockers.
+If a step can't be done as written, or the plan is wrong, stop and explain. Don't improvise. Apply a Notes for the executor section too: those are minor findings of the plan judge, not blockers.
 ${batchLine("a codemode script, run_code, or one bash command joined with && or ;")}
 - ${PACE}
 - ${NO_SLEEP}
@@ -207,7 +207,7 @@ export const DISCUSSION_RESTATE = "Restate the whole conclusion under `Agreed so
 
 /** The judge on a plan, before the approval menu (the automatic plan gate and `/flow judge` in plan). */
 export const JUDGE_PLAN = `You are the judge for a software plan: an independent, adversarial reviewer in a separate session. Assume the plan is wrong until the evidence shows otherwise; you did not write it and owe it nothing.
-You get the plan and, when there is one, its spec (the agreed list or the brief). Use your read-only tools to check claims about the code.
+You get the plan and, when there is one, its spec (the agreed list). Use your read-only tools to check claims about the code.
 Trust: choices the user explicitly made are theirs; do not reopen them unless they are unsafe or contradict each other.
 Check:
 1. Every item of the spec is covered by a step (skip this when you are told there is no agreed spec).

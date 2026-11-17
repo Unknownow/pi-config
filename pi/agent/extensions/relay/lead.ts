@@ -1,5 +1,5 @@
 /**
- * The lead side of relay: activation (K16), the prompt, the typed "go", the edit budget, the action log, the tools and the commands.
+ * The lead side of relay: activation, the prompt, the typed "go", the edit budget, the action log, the tools and the commands.
  * Everything pi-specific arrives through `pi` and `LeadDeps`, so tests drive it with a fake `pi` (index.ts is the thin wiring).
  */
 
@@ -15,7 +15,7 @@ import { editBudgetProblem, measureEdits } from "./budget.ts";
 import { type RelayConfig, configPath, loadConfig, repoPolicy, saveRole } from "./config.ts";
 import { RELAY_ROLES, relayCompletions, relayDescription } from "./commands.ts";
 import { Engine } from "./engine.ts";
-import { Activation, parseControl, parseDispatch, parseFlowActive, parseHosted, parseJobQuery, type Tag } from "./events.ts";
+import { Activation } from "./events.ts";
 import { foldersFromEntries } from "./folders.ts";
 import { jobRoot } from "./job.ts";
 import { type Run, run as realRun } from "./sh.ts";
@@ -38,7 +38,6 @@ export interface LeadDeps {
 	relayDir: string;
 	/** Test seams, passed to the engine. */
 	engine?: Partial<EngineDeps>;
-	timeoutMs?: number;
 	/** The interval of the adoption scan (default 10 min). */
 	scanMs?: number;
 	widgetMs?: number;
@@ -56,12 +55,10 @@ export function createLead(pi: ExtensionAPI, d: LeadDeps) {
 	let loaded = loadConfig(file);
 	let cfg: RelayConfig = loaded.config;
 	let warned = false;
-	const act = new Activation({ active: () => cfg.active, cwd: d.cwd, role: env.RELAY_ROLE, emit: (data) => pi.events.emit("flow:active", data), timeoutMs: d.timeoutMs });
+	const act = new Activation({ active: () => cfg.active, cwd: d.cwd, role: env.RELAY_ROLE });
 	let engine: Engine | undefined;
 	let pendingEngine: Promise<Engine | { error: string }> | undefined;
 	let lastCtx: any;
-	/** relay:hosted: an orchestrator hosts this session; lead mode is decided at once, no prompt section, no "go" hook. */
-	let hosted = false;
 	let overBudgetNoted = false;
 	let scanTimer: ReturnType<typeof setInterval> | undefined;
 	let scans = 0;
@@ -91,14 +88,6 @@ export function createLead(pi: ExtensionAPI, d: LeadDeps) {
 			// a stale UI is fine
 		}
 	}
-
-	// K16: registered at load, answers only for relay.
-	const unsubK16 = pi.events.on("flow:active", (data: unknown) => {
-		const p = parseFlowActive(data);
-		if ("error" in p) return;
-		const a = act.claim(p.from);
-		if (a && p.claim) p.claim(a);
-	});
 
 	const foldersOf = (ctx: any): string[] => {
 		try {
@@ -144,7 +133,7 @@ export function createLead(pi: ExtensionAPI, d: LeadDeps) {
 		}
 	}
 
-	const offMsg = () => `relay: lead mode is off (${act.reason || "not decided"}); /relay on asks again.`;
+	const offMsg = () => `relay: lead mode is off (${act.reason || "not decided"}); /relay on turns it on.`;
 	const off = () => text(offMsg());
 
 	const claimWt = async (event: string, payload: object, timeoutMs: number): Promise<any> => {
@@ -210,7 +199,6 @@ export function createLead(pi: ExtensionAPI, d: LeadDeps) {
 			},
 			notify: (line) => say("relay-notice", line, false),
 			wake: (t) => say("relay", t, true),
-			emit: (n, p) => pi.events.emit(n, p),
 			leadCwd: ctx.cwd,
 			folders: () => foldersOf(lastCtx ?? ctx),
 			...d.engine,
@@ -226,14 +214,13 @@ export function createLead(pi: ExtensionAPI, d: LeadDeps) {
 	// (prompt_capture_unresolved).
 	pi.on("before_agent_start", async (event: any, ctx: any) => {
 		const on = await leadOn(ctx);
-		if (hosted) return;
 		const sections = event?.systemPromptOptions?.sections;
 		if (!sections) return;
 		sections.relay = on ? fs.readFileSync(path.join(d.relayDir, "prompts", "lead.md"), "utf8") : RELAY_OFF;
 	});
 
 	pi.on("input", async (event: any, ctx: any) => {
-		if (event.source === "extension" || hosted) return { action: "continue" };
+		if (event.source === "extension") return { action: "continue" };
 		const typed = String(event.text ?? "").trim();
 		if (!typed || typed.startsWith("/")) return { action: "continue" };
 		if (!(await leadOn(ctx))) return { action: "continue" };
@@ -273,8 +260,6 @@ export function createLead(pi: ExtensionAPI, d: LeadDeps) {
 	});
 
 	pi.on("session_shutdown", async () => {
-		unsubK16?.();
-		unsubBus();
 		if (scanTimer) clearInterval(scanTimer);
 		if (widgetTimer) clearInterval(widgetTimer);
 		releaseDock?.();
@@ -311,14 +296,14 @@ export function createLead(pi: ExtensionAPI, d: LeadDeps) {
 	/** Tool text of an action error: the tool name in front, except for messages that already start with "relay:". */
 	const fmt = (tool: string, e: string) => text(e.startsWith("relay:") ? e : `${tool}: ${e}`);
 
-	// One implementation per action, shared by the tools and the relay:* listeners.
-	async function doDispatch(ctx: any, p: { brief: string; size?: string; draft?: string; overrides?: any; tag?: Tag }): Promise<{ id: string; queued: boolean } | { error: string }> {
+	// One implementation per action, shared by the tools and the commands.
+	async function doDispatch(ctx: any, p: { brief: string; size?: string; draft?: string; overrides?: any }): Promise<{ id: string; queued: boolean } | { error: string }> {
 		if (!(await leadOn(ctx))) return { error: offMsg() };
 		if (act.jobSet) return { error: "this session is inside a job's worktree; it cannot dispatch jobs." };
 		const eng = await engineFor(ctx);
 		if ("error" in eng) return { error: eng.error };
 		if (p.size !== undefined && !["small", "normal", "large"].includes(p.size)) return { error: 'size must be "small", "normal" or "large"' };
-		const r = await eng.dispatch({ brief: p.brief, size: p.size as Size | undefined, draft: p.draft, overrides: p.overrides, tag: p.tag });
+		const r = await eng.dispatch({ brief: p.brief, size: p.size as Size | undefined, draft: p.draft, overrides: p.overrides });
 		return "error" in r ? { error: r.error } : { id: r.id, queued: r.queued };
 	}
 	async function doStop(ctx: any, id: string): Promise<{ ok: true } | { error: string }> {
@@ -505,77 +490,13 @@ export function createLead(pi: ExtensionAPI, d: LeadDeps) {
 		},
 	});
 
-	// ----------------------------------------------------------------------------------------- bus contracts
-
-	type Claim = ((answer: unknown) => void) | undefined;
-	/** Answers a claim with the result of `work` (the claim is made synchronously, as the claim pattern needs). */
-	const answerWith = (claim: Claim, work: () => Promise<unknown>) => claim?.(work().catch((e: Error) => ({ error: String(e?.message ?? e) })));
-
-	function onDispatch(data: unknown) {
-		const p = parseDispatch(data);
-		if ("error" in p) return p.claim?.({ error: p.error });
-		answerWith(p.claim, async () => {
-			if (!lastCtx) return { error: "relay:dispatch: no session context yet" };
-			const r = await doDispatch(lastCtx, { brief: p.brief, size: p.size, tag: p.tag });
-			return "error" in r ? { error: r.error } : { id: r.id, queued: r.queued };
-		});
-	}
-	function onControl(data: unknown) {
-		const p = parseControl(data);
-		if ("error" in p) return p.claim?.({ error: p.error });
-		answerWith(p.claim, async () => {
-			if (!lastCtx) return { error: "relay:control: no session context yet" };
-			if (p.action === "stop") {
-				const r = await doStop(lastCtx, p.job);
-				return "error" in r ? { error: r.error } : { ok: true, job: p.job };
-			}
-			const r = await doFollowup(lastCtx, p.job, p.text!);
-			return "error" in r ? { error: r.error } : { ok: true, job: p.job, n: r.n, queued: r.queued };
-		});
-	}
-	function onJobQuery(data: unknown) {
-		const p = parseJobQuery(data);
-		if ("error" in p) return p.claim?.({ error: p.error });
-		answerWith(p.claim, async () => {
-			if (!lastCtx) return { error: "relay:job-query: no session context yet" };
-			const eng = await engineFor(lastCtx);
-			if ("error" in eng) return { error: eng.error };
-			return { jobs: eng.query(p.ids) };
-		});
-	}
-	function onHosted(data: unknown) {
-		const p = parseHosted(data);
-		if ("error" in p) return p.claim?.({ error: p.error });
-		hosted = p.on;
-		answerWith(p.claim, async () => {
-			if (!lastCtx) return { on: p.on, mode: "off", reason: "no session context" };
-			const on = p.on ? await leadOn(lastCtx) : act.mode === "on";
-			return { on: p.on, mode: on ? "on" : "off", ...(on || !act.reason ? {} : { reason: act.reason }) };
-		});
-		// hosted without a claim still decides lead mode at once
-		if (!p.claim && p.on && lastCtx) void leadOn(lastCtx);
-	}
-
-	let unsubBus = () => {};
-	function registerBus() {
-		unsubBus();
-		const subs = [pi.events.on("relay:dispatch", onDispatch), pi.events.on("relay:control", onControl), pi.events.on("relay:job-query", onJobQuery), pi.events.on("relay:hosted", onHosted)];
-		unsubBus = () => {
-			for (const u of subs) (u as unknown as (() => void) | undefined)?.();
-			unsubBus = () => {};
-		};
-	}
-	registerBus();
-
 	pi.on("session_start", async (_event: any, ctx: any) => {
 		lastCtx = ctx;
 		if (ctx.hasUI && d.dock) {
 			releaseDock?.();
 			releaseDock = attachDock(pi, ctx.ui, d.dock);
 		}
-		registerBus();
-		if (hosted) await leadOn(ctx);
-		else paintStatus();
+		paintStatus();
 	});
 
 	// ----------------------------------------------------------------------------------------- commands

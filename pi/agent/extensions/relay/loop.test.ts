@@ -53,7 +53,6 @@ function setup() {
 			onReview(reviews.length);
 			return { ok: true, text: PASS, turns: 1, usage: { input: 1000, output: 100, cacheRead: 0, cacheWrite: 0, totalTokens: 1100, cost: {} } as any, toolCalls: [] };
 		},
-		emit() {},
 		now: () => 0,
 		relayDir: "",
 		leadCwd: dir,

@@ -63,8 +63,6 @@ test("dispatch -> FAIL -> fix -> PASS -> delivery to the bare remote -> report.m
 		assert.ok(!w.wakes.some((x) => /FAIL/.test(x)));
 		assert.ok(w.wakes.some((x) => /judge PASS/.test(x)));
 		assert.ok(w.wakes.some((x) => /delivered/.test(x)));
-		assert.deepEqual(w.events.map((e) => e.name).filter((n) => n !== "relay:job-progress"), ["relay:approval", "relay:job-start", "relay:job-end"]);
-		assert.equal(w.events.find((e) => e.name === "relay:job-end")!.payload.how, "delivered");
 		// the worker was spawned with the contract's arguments
 		const rpc = w.calls().find((c) => c.mode === "rpc")!;
 		for (const f of ["-ne", "-ns", "-np", "--session-dir"]) assert.ok(rpc.args.includes(f), f);
@@ -119,7 +117,6 @@ test("an edit to package.json is refused until relay_approve", async () => {
 		await finish(w, r.id);
 		assert.equal(readJob(jr.dir)?.state, "done");
 		assert.match(fs.readFileSync(path.join(jr.dir, "report.md"), "utf8"), /\[deps\] package\.json - by lead/);
-		assert.ok(w.events.some((e) => e.name === "relay:approval" && e.payload.by === "lead"));
 	} finally {
 		w.end();
 	}
@@ -294,6 +291,34 @@ test("jobs are stored under the cwd repo's git folder", async () => {
 		await finish(w, r.id);
 		assert.deepEqual(listJobs(w.jobRoot).map((j) => j.job.id), [r.id]);
 		assert.ok(fs.existsSync(path.join(w.jobRoot, r.id, "brief.md")));
+	} finally {
+		w.end();
+	}
+});
+
+test("defaultMerge is after-pass: a job with merge n/a merges after PASS; merge no does not merge", async () => {
+	const w = world();
+	try {
+		w.write({ worker: [{ write: [{ file: "greeting.txt", content: "hello\n" }], done: "done" }], judge: [PASS] });
+		const a = await w.engine.dispatch({ brief: brief({ repo: w.repo, authority: { merge: "n/a" } }) });
+		if (!("id" in a)) throw new Error(JSON.stringify(a));
+		const jr = await finish(w, a.id);
+		assert.equal(jr.job.repos[0].merged, true);
+		assert.equal(readJob(jr.dir)?.state, "done");
+		assert.equal(readJob(jr.dir)?.repos[0].merged, true);
+	} finally {
+		w.end();
+	}
+});
+
+test("merge no in the brief keeps the PR-only behaviour under the default", async () => {
+	const w = world();
+	try {
+		w.write({ worker: [{ write: [{ file: "greeting.txt", content: "hello\n" }], done: "done" }], judge: [PASS] });
+		const b = await w.engine.dispatch({ brief: brief({ repo: w.repo, authority: { merge: "no" } }) });
+		if (!("id" in b)) throw new Error(JSON.stringify(b));
+		const jb = await finish(w, b.id);
+		assert.notEqual(jb.job.repos[0].merged, true);
 	} finally {
 		w.end();
 	}

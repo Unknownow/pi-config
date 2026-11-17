@@ -51,7 +51,7 @@ import { idleReason, notifyCommand, notifyDue } from "./notify.ts";
 import * as prompts from "./prompts.ts";
 import { discussionReviewPrompts, discussionVerdict, lastAgreedList } from "./discussion-review.ts";
 import { branchTranscript } from "../shared/transcript.ts";
-import { type DiscussionReview, type Finding, type PlanGate, type SpecKind, discussionGateAfterFixReply, discussionGateAfterVerdict, discussionGateOnInput, discussionGateStart, discussionRecheckPrompts, findingText, forcedOpenFindings, blockingFindings, isClean, minorFindings, isEscKey, menuJudgeLines, parseFindings, planDisputes, planGateAfterVerdict, planGateDecide, planGateReset, planOfferAction, planReadyJudge, planReviewPrompts, planTextDiff, textHash } from "./gates.ts";
+import { type DiscussionReview, type Finding, type PlanGate, type SpecKind, discussionGateAfterFixReply, discussionGateAfterVerdict, discussionGateOnInput, discussionGateStart, discussionRecheckPrompts, findingText, forcedOpenFindings, blockingFindings, isClean, minorFindings, isEscKey, parseFindings, planDisputes, planGateAfterVerdict, planGateDecide, planGateReset, planOfferAction, planReviewPrompts, planTextDiff, textHash } from "./gates.ts";
 import { planTitle } from "./delivery.ts";
 import { FLOW_UNKNOWN, FOLDERS_SUBS, flowCompletions, foldersCompletions, foldersDescription, foldersUsage } from "./commands.ts";
 import { isKnown } from "../shared/completions.ts";
@@ -70,12 +70,10 @@ import { autopilotDecisions, type FlowFinding, recordFindings, reportFindings, t
 import { readOnlyProblem } from "../shared/readonly-bash.ts";
 import { afterMergeStep, gateOpenSteps, deliverMergeOpen, mergeAmendment, mergeDecisions, mergeDecisionsText, checkpointAmendment, checkpointNote, checkpointOutcome, deliverHint, deliverHintsBlock, deliverStepSpec, hasCheckpointAmendment, checkpointText, isPlannedTag, parseDeliverStep, publishRefusal, withCheckpoints } from "./checkpoints.ts";
 import { pushArgs, tagDecision } from "./tags.ts";
-import { type CheckVerdict, autopilotAmendment, autopilotReply, checkTitle, checkVerdict, cleanCheck, waitCheckProblem, type HumanCheck, humanChecks, parseVerifyStep, parseWaitStep, pollDecision, waitLimitMs, waitKindProblem, autopilotSkipsWait, replaceWait, resumePrefix, verifyAmendment, waitAmendment } from "./waits.ts";
+import { type CheckVerdict, autopilotAmendment, autopilotReply, checkTitle, checkVerdict, cleanCheck, waitCheckProblem, type HumanCheck, humanChecks, parseVerifyStep, parseWaitStep, pollDecision, waitKindProblem, autopilotSkipsWait, replaceWait, resumePrefix, verifyAmendment, waitAmendment } from "./waits.ts";
 import { nextStage, parseStages, planWaitProblems, stageLine, stageNote, stageStart, stagesOutcome } from "./stages.ts";
 import { planToolProblem, planToolRefused, phaseToolRefusal } from "../shared/readonly-tools.ts";
-import { acceptanceRefusal, exactToolRegexes, flowEndKind, flowEndPayload, k11Payload, parseFlowActive, relayOwner, keepExtraTools, withEndFlow, type K11Site, parseStartPlan, planReviewAction, planReviewNotes, planReviewRoute, START_PLAN_PREFACE } from "./hooks.ts";
-import { emitClaims, gatherClaims } from "../shared/claims.ts";
-import { type CheckStatus, MAX_REASKS, PLAN_ARBITER, PLAN_APPROVE, PLAN_BACK, PLAN_FULL, type AskKey, type AskRole, type OpenAsk, askAnswer, askMenu, idleDue, idleNoticeAllowed, idlePayload, bumpAskId, planMenuRequest, waitDonePayload, restoreAsks, resumeContent, waitPayload, waitResumeOutcome } from "./asks.ts";
+import { PLAN_ARBITER, PLAN_APPROVE, PLAN_BACK, PLAN_FULL, askMenu, planMenuRequest, resumeContent } from "./asks.ts";
 import { refilterPlanTools, hiddenInPhase, syncFlowOnlyTools } from "./plan-tools.ts";
 import { AGENT_ROLES } from "../agents/config.ts";
 import { agentsOnlyRoles, claimJudgeCall, type JudgeParams } from "./judge-claim.ts";
@@ -113,8 +111,6 @@ type Phase = "off" | "discuss" | "plan" | "execute";
 
 interface FlowState {
 	phase: Phase;
-	/** Tool names a start-plan caller (K9) allows in discuss and plan on top of planAllowedTools; cleared when the flow ends. */
-	extraPlanTools?: string[];
 	/** Main session is on the escalate model instead of the phase's own. */
 	escalated: boolean;
 	judgeRounds: number;
@@ -184,11 +180,7 @@ interface FlowState {
 	/** Git roots edited in this flow that are neither the working folder's repo nor an added folder's repo. */
 	touchedRepos?: string[];
 	/** The flow waits for a person (and maybe a check) before it continues; no judge, delivery or stage advance meanwhile. */
-	waiting?: { askId?: string; manual?: boolean; waitKind?: "external" | "acceptance"; accept?: { tree: string; root: string; kind: "merge" | "protected-push" | "publish" }; reason: string; check?: string; step?: string; stage?: number; since: string; planned: boolean; atStageStart?: boolean; checkPassed?: boolean; held?: string };
-	/** Counter of the K12 asks this flow sent; the next ask id is derived from it. */
-	askSeq?: number;
-	/** The K12 menu ask that waits for an answer; a restart withdraws it. */
-	openAsk?: OpenAsk;
+	waiting?: { waitKind?: "external"; reason: string; check?: string; step?: string; stage?: number; since: string; planned: boolean; atStageStart?: boolean; checkPassed?: boolean; held?: string };
 	/** Deliveries made inside the plan, before the end of a stage or flow. */
 	checkpoints?: { step?: string; stage?: number; text: string; ok: boolean }[];
 	/** Per repo key: the commit the judge diffs from. It starts at HEAD when the flow starts executing and moves up when a stage passes (and when the base branch is merged in), so commits made meanwhile do not change what the judge sees. */
@@ -203,8 +195,6 @@ interface FlowState {
 	planGate?: PlanGate;
 	/** The discussion gate's last review (the list it judged, its findings, and whether a fix round is open). */
 	discussionReview?: DiscussionReview;
-	/** The brief a start-plan caller (K9) sent: the plan judge's spec in that flow. */
-	planSpec?: { kind: "brief"; text: string };
 }
 
 interface LastJudge {
@@ -342,32 +332,10 @@ export default function workflow(pi: ExtensionAPI) {
 			child.unref();
 		} catch {}
 	}
-	/** A menu that waits for a person. K12 first: a listener (the orchestrator) may answer it; unclaimed, it notifies and asks locally as before. */
-	function askUser(ctx: ExtensionContext, key: AskKey, title: string, options: string[], opts: { detail?: string; roles?: Record<string, AskRole>; localNotice?: () => void; skipLocal?: boolean } = {}): Promise<string | undefined> {
-		return askMenu(
-			{
-				newId: () => {
-					return bumpAskId(state);
-				},
-				setOpen: (o) => {
-					state.openAsk = o;
-					persist();
-				},
-				emit: (channel, data) => pi.events.emit(channel, data),
-				select: (t, o) => ctx.ui.select(t, o),
-				notify: (t) => notifyUser(ctx, t),
-				// After the caller applied the choice; a flow that ended meanwhile drops it.
-				deliverText: (text) => {
-					const t = setTimeout(() => {
-						if (state.phase !== "off") handover("workflow-orchestrator", text, ctx);
-					}, 0);
-					t.unref?.();
-				},
-			},
-			{ key, title, options, ...opts },
-		);
+	/** A menu that waits for a person; it notifies, then asks. */
+	function askUser(ctx: ExtensionContext, title: string, options: string[], opts: { localNotice?: () => void; skipLocal?: boolean } = {}): Promise<string | undefined> {
+		return askMenu({ select: (t, o) => ctx.ui.select(t, o), notify: (t) => notifyUser(ctx, t) }, { title, options, ...opts });
 	}
-	/** K13 handled the idle period: the local notification stays off until the next turn. */
 	/** The automatic judge gate that runs now (not persisted: a restart drops it). Only one at a time. */
 	type GateAbort = "esc" | "command" | "message" | "phase" | "restart";
 	let gateRun: { kind: "discussion" | "plan"; controller: AbortController; offEsc?: () => void; judgedHash: string; reason?: GateAbort } | undefined;
@@ -380,35 +348,6 @@ export default function workflow(pi: ExtensionAPI) {
 		if (!gateRun || gateRun.reason) return;
 		gateRun.reason = reason;
 		gateRun.controller.abort();
-	}
-	let idleHandled = false;
-	/** The K13 claim is still open: the local notice waits for its answer. */
-	let idlePending = false;
-	let idle13Timer: ReturnType<typeof setTimeout> | undefined;
-	/** K13: a listener may take the idle session (the orchestrator is told it stopped). Independent of the notify settings. */
-	function scheduleIdleClaim(ctx: ExtensionContext): void {
-		if (idle13Timer) clearTimeout(idle13Timer);
-		idle13Timer = setTimeout(() => {
-			idle13Timer = undefined;
-			try {
-				if (!idleDue({ phase: state.phase, idle: ctx.isIdle(), compacting, compactPending, pendingHandover: !!pendingHandover, judging: !!gateRun })) {
-					if (state.phase === "plan" || state.phase === "execute") if (compacting || compactPending || pendingHandover) scheduleIdleClaim(ctx);
-					return;
-				}
-				const claims = emitClaims((d) => pi.events.emit("workflow:idle", d), idlePayload(state.planDoc?.flowId, state.phase, lastAssistantText(ctx)), 0);
-				if (!claims.claimed) return;
-				idlePending = true;
-				const settled = (handled: boolean): void => {
-					idlePending = false;
-					if (handled) idleHandled = true;
-					// Not handled: the notice that waited for this answer shows now.
-					else if (compacting || compactPending || pendingHandover) scheduleIdleNotice(ctx);
-					else if (cfg.notify.enabled && ctx.hasUI && !notifiedSinceStart && !idleTimer && ctx.isIdle()) notifyUser(ctx, idleReason({ phase: state.phase, waiting: state.waiting?.reason }));
-				};
-				void claims.answer.then((a) => settled(!!a && typeof a === "object" && (a as { handled?: unknown }).handled === true), () => settled(false));
-			} catch {}
-		}, cfg.notify.idleMs);
-		idle13Timer.unref?.();
 	}
 	function lastAssistantText(ctx: ExtensionContext): string {
 		try {
@@ -423,12 +362,11 @@ export default function workflow(pi: ExtensionAPI) {
 	/** After a run settles, notify when the session stays idle; a new turn cancels it. */
 	function scheduleIdleNotice(ctx: ExtensionContext): void {
 		if (idleTimer) clearTimeout(idleTimer);
-		scheduleIdleClaim(ctx);
 		if (!cfg.notify.enabled || !ctx.hasUI) return;
 		idleTimer = setTimeout(() => {
 			idleTimer = undefined;
 			try {
-				if (gateRun || notifiedSinceStart || !idleNoticeAllowed({ handled: idleHandled, pending: idlePending }) || !ctx.isIdle()) return;
+				if (gateRun || notifiedSinceStart || !ctx.isIdle()) return;
 				if (compacting || compactPending || pendingHandover) return scheduleIdleNotice(ctx);
 				notifyUser(ctx, idleReason({ phase: state.phase, waiting: state.waiting?.reason }));
 			} catch {}
@@ -521,27 +459,13 @@ export default function workflow(pi: ExtensionAPI) {
 		return true;
 	}
 
-	const endFlowFlag = { on: false };
-	/** K14: tells other extensions the flow ended (before the phase changes, so the flow id is still set). */
-	function emitFlowEnd(how: "finished" | "stopped" | "abandoned"): void {
-		try {
-			pi.events.emit("workflow:flow-end", flowEndPayload(state.planDoc?.flowId, how));
-		} catch {}
-	}
-
 	/** A flow has ended: on to the phase `returnTo` names. */
-	async function endFlow(ctx: ExtensionContext, how: "finished" | "stopped"): Promise<void> {
-		return withEndFlow(endFlowFlag, how, emitFlowEnd, () => endFlowBody(ctx));
-	}
-
-	async function endFlowBody(ctx: ExtensionContext): Promise<void> {
+	async function endFlow(ctx: ExtensionContext): Promise<void> {
 		notifyUser(ctx, "flow finished");
 		await dropReviewRefs(ctx);
 		state.reviewBase = undefined;
 		state.passedTrees = undefined;
 		state.judgedMerges = undefined;
-		state.extraPlanTools = undefined;
-		endWaitAsk();
 		state.waiting = undefined;
 		stopWaitTimer();
 		updateStatus(ctx);
@@ -608,7 +532,6 @@ export default function workflow(pi: ExtensionAPI) {
 			...(cl?.length ? { done: cl.filter((i) => i.done).length, total: cl.length } : {}),
 			...(cl && state.waiting ? { waiting: true } : {}),
 			...(gateRun ? { judging: gateRun.kind } : {}),
-			...(state.waiting?.waitKind === "acceptance" && state.waiting.accept ? { acceptance: { tree: state.waiting.accept.tree, repoRoot: state.waiting.accept.root, kind: state.waiting.accept.kind, since: state.waiting.since } } : {}),
 			delivery: { mergeMethod: cfg.delivery.mergeMethod, deleteBranch: cfg.delivery.deleteBranch },
 		};
 		const json = JSON.stringify(payload);
@@ -681,24 +604,9 @@ export default function workflow(pi: ExtensionAPI) {
 		state.toolsBeforePlan = undefined;
 	}
 
-	/** K16: true when the relay extension owns this session (it answered a `flow:active` question with owner "relay"). No answer, a timeout or an error count as no claim. */
-	async function relayOwns(): Promise<boolean> {
-		const claims = emitClaims((d) => pi.events.emit("flow:active", d), { v: 1, from: "workflow" }, 2000);
-		return relayOwner(await claims.answer);
-	}
-	const RELAY_ACTIVE = "workflow: relay is active in this session; /relay off first";
-
-	/**
-	 * `profile`: "quick" starts a quick flow (plan phase only); see nextProfile.
-	 * Returns false (and changes nothing) when a flow would start from "off" while relay owns the session (K16).
-	 */
+	/** `profile`: "quick" starts a quick flow (plan phase only); see nextProfile. The result is always true. */
 	async function setPhase(ctx: ExtensionContext, phase: Phase, profile?: "quick"): Promise<boolean> {
-		if (state.phase === "off" && phase !== "off" && (await relayOwns())) {
-			ctx.ui.notify(RELAY_ACTIVE, "warning");
-			return false;
-		}
 		const leavingFlow = state.phase === "execute" && phase !== state.phase;
-		if (flowEndKind({ from: state.phase, to: phase, viaEndFlow: endFlowFlag.on })) emitFlowEnd("abandoned");
 		if (phase !== state.phase) {
 			abortGate("phase");
 			planApproveQueued = false;
@@ -706,7 +614,6 @@ export default function workflow(pi: ExtensionAPI) {
 		}
 		if (phase === "plan" && state.phase !== "plan") {
 			state.planGate = planGateReset(state.planGate, "enter-plan");
-			state.planSpec = undefined;
 		}
 		if (leavingFlow && state.approvedPlan && !state.flowSummarized) {
 			summarizeFlow(stoppedSummary(phase === "plan" ? "back to planning" : phase === "discuss" ? "back to discussion" : "abandoned"), false);
@@ -723,7 +630,6 @@ export default function workflow(pi: ExtensionAPI) {
 		}
 		if (!readOnly(phase)) syncFlowOnlyTools(pi, phase); // plan_check and deliver only exist inside a flow
 		if (leavingFlow && state.planDoc && !state.planDoc.finished) planMilestone(ctx, { at: new Date().toISOString(), ok: false, text: "abandoned" });
-		if (!keepExtraTools(state.phase, phase)) state.extraPlanTools = undefined;
 		const samePhase = phase === state.phase; // a repeated setPhase keeps what the judge already passed
 		const modelAction = preFlowModelAction(state.phase, phase);
 		if (modelAction === "save" && ctx.model) state.preFlowModel = { model: `${ctx.model.provider}/${ctx.model.id}`, thinking: pi.getThinkingLevel() };
@@ -736,7 +642,6 @@ export default function workflow(pi: ExtensionAPI) {
 		state.minorRounds = 0;
 		state.minorSentFor = undefined;
 		state.minorFix = undefined;
-		endWaitAsk();
 		state.waiting = undefined;
 		state.checkpoints = undefined;
 		if (!samePhase) {
@@ -850,7 +755,7 @@ export default function workflow(pi: ExtensionAPI) {
 		return hint ? ` ${hint}` : "";
 	}
 
-	async function approve(ctx: ExtensionContext, arbiterOnFlaw = false, notes = ""): Promise<void> {
+	async function approve(ctx: ExtensionContext, arbiterOnFlaw = false): Promise<void> {
 		const blocked = approvalBlock(planDraft, planWaitNow);
 		if (blocked) {
 			ctx.ui.notify(`workflow: can't approve: ${blocked}.`, "warning");
@@ -861,7 +766,7 @@ export default function workflow(pi: ExtensionAPI) {
 		// minors of the plan judge are notes for the executor, never another review
 		const minors = state.planGate && state.planGate.planHash === textHash(composed) ? state.planGate.notes ?? [] : [];
 		const minorNotes = minors.length ? `## Notes for the executor\n${minors.map((f) => `- ${findingText(f).replace(/\n/g, "\n  ")}`).join("\n")}` : "";
-		const plan = [composed, minorNotes, notes ? `## Orchestrator notes\n${notes}` : ""].filter(Boolean).join("\n\n");
+		const plan = [composed, minorNotes].filter(Boolean).join("\n\n");
 		await setPhase(ctx, "execute");
 		const extra = startExecution(ctx, plan);
 		persist();
@@ -1704,7 +1609,7 @@ export default function workflow(pi: ExtensionAPI) {
 	function waitSnapshot(): Pick<PlanSnap, "waiting" | "checkpoints" | "reviewBase" | "passedTrees" | "judgedMerges"> {
 		const w = state.waiting;
 		return {
-			...(w && w.waitKind !== "acceptance" ? { waiting: { reason: w.reason, ...(w.check ? { check: w.check } : {}), ...(w.waitKind ? { waitKind: w.waitKind } : {}), since: w.since, planned: w.planned, ...(w.atStageStart ? { atStageStart: true } : {}), ...(w.held ? { held: w.held } : {}) } } : {}),
+			...(w ? { waiting: { reason: w.reason, ...(w.check ? { check: w.check } : {}), ...(w.waitKind ? { waitKind: w.waitKind } : {}), since: w.since, planned: w.planned, ...(w.atStageStart ? { atStageStart: true } : {}), ...(w.held ? { held: w.held } : {}) } } : {}),
 			...(state.checkpoints?.length ? { checkpoints: state.checkpoints.map((c) => ({ ...(c.step ? { step: c.step } : {}), ...(c.stage ? { stage: c.stage } : {}), text: c.text, ok: c.ok })) } : {}),
 			...(state.reviewBase && Object.keys(state.reviewBase).length ? { reviewBase: { ...state.reviewBase } } : {}),
 			...(state.passedTrees && Object.keys(state.passedTrees).length ? { passedTrees: { ...state.passedTrees } } : {}),
@@ -1831,10 +1736,6 @@ export default function workflow(pi: ExtensionAPI) {
 		const busy = state.phase === "execute" && state.planDoc && !state.planDoc.finished ? state.planDoc.flowId : undefined;
 		if (busy && (!wanted || !busy.startsWith(wanted))) {
 			notify(`a flow is already running (${busy}); finish or leave it before resuming another`);
-			return;
-		}
-		if (state.phase === "off" && (await relayOwns())) {
-			ctx.ui.notify(RELAY_ACTIVE, "warning");
 			return;
 		}
 		const cwdRoot = await gitRoot(ctx.cwd);
@@ -1993,7 +1894,6 @@ export default function workflow(pi: ExtensionAPI) {
 		if (!state.checklist.length) state.checklist = undefined;
 		state.checkpoints = status.checkpoints?.map((c) => ({ ...c }));
 		await restoreReview(ctx, status);
-		endWaitAsk();
 		state.waiting = undefined;
 		publishWaitSince.clear();
 		if (status.waiting) {
@@ -2017,7 +1917,6 @@ export default function workflow(pi: ExtensionAPI) {
 			});
 		}
 		state.planDoc = { flowId: status.flowId, rev: status.rev, roots: roots.map((r) => r.root) };
-		if (state.waiting) askWait(ctx);
 		persist();
 		publishFolders(ctx);
 		updateStatus(ctx);
@@ -2228,7 +2127,6 @@ export default function workflow(pi: ExtensionAPI) {
 
 	/** The wait is over: clears it and records the new state. */
 	function clearWait(ctx: ExtensionContext): void {
-		endWaitAsk();
 		state.waiting = undefined;
 		stopWaitTimer();
 		persist();
@@ -2236,110 +2134,30 @@ export default function workflow(pi: ExtensionAPI) {
 		planMilestone(ctx);
 	}
 
-	/** Sets the wait. A wait set over an open one ends the old one's ask first, so a listener never keeps a dead ask. */
+	/** Sets the wait; a wait set over an open one stops the old one's poll timer. */
 	function setWaiting(next: FlowState["waiting"]): void {
-		replaceWait(state.waiting, { endAsk: (w) => endWaitAsk(w as FlowState["waiting"]), unclaim: (id) => claimedWaits.delete(id), stopTimer: stopWaitTimer });
+		replaceWait(state.waiting, { stopTimer: stopWaitTimer });
 		state.waiting = next;
 	}
 
-	/** Ends the wait's K12 ask: whoever answers for the person drops it from their list. */
-	function endWaitAsk(w: FlowState["waiting"] = state.waiting): void {
-		const done = waitDonePayload(w);
-		if (done) pi.events.emit("workflow:ask-done", done);
-	}
-
-	/** K12 for a wait that was just set: a listener may resume it in place of the person. Unclaimed, the wait stays local as before. */
-	function askWait(ctx: ExtensionContext, manual?: boolean): void {
-		const w = state.waiting;
-		if (!w) return;
-		if (!w.askId) {
-			w.askId = bumpAskId(state);
-		}
-		if (manual) w.manual = true;
-		sendWaitAsk(ctx, w);
-	}
-
-	/** Waits whose K12 ask a listener claimed: the workflow shows nothing local about them, it asks again instead. */
-	const claimedWaits = new Set<string>();
-	const waitClaimed = (w: NonNullable<FlowState["waiting"]>): boolean => !!w.askId && claimedWaits.has(w.askId);
-
-	function sendWaitAsk(ctx: ExtensionContext, w: NonNullable<FlowState["waiting"]>, detail?: string, checkStatus: CheckStatus = w.checkPassed ? "passed" : "pending", tries = 0): void {
-		const id = w.askId;
-		if (!id) return;
-		const claims = emitClaims((d) => pi.events.emit("workflow:ask", d), waitPayload(id, w, detail, checkStatus), 0);
-		if (!claims.claimed) return;
-		claimedWaits.add(id);
-		void claims.answer.then(async (answer) => {
-			if (state.waiting !== w || w.askId !== id) return;
-			const a = askAnswer(answer, undefined, "wait");
-			if (a.kind === "local") {
-				claimedWaits.delete(id);
-				return;
-			}
-			if (a.kind === "invalid" && tries < MAX_REASKS) return sendWaitAsk(ctx, w, detail, checkStatus, tries + 1);
-			if (a.kind !== "resume") {
-				claimedWaits.delete(id);
-				return;
-			}
-			await resumeWait(ctx, w, a.text);
-		}, () => {
-			claimedWaits.delete(id);
-		});
-	}
-
-	/** The old ask is over and the wait is asked again under a new id, with what changed in the detail. */
-	function reaskWait(ctx: ExtensionContext, w: NonNullable<FlowState["waiting"]>, detail: string, checkStatus: CheckStatus): void {
-		endWaitAsk(w);
-		if (w.askId) claimedWaits.delete(w.askId);
-		w.askId = bumpAskId(state);
-		persist();
-		sendWaitAsk(ctx, w, detail, checkStatus);
-	}
-
-	/** The wait is over because a person typed, or a listener resumed it: clears it and returns the message that resumes the executor. */
+	/** The wait is over because a person typed: clears it and returns the message that resumes the executor. */
 	function finishWait(ctx: ExtensionContext, w: NonNullable<FlowState["waiting"]>, how: "passed" | "forced" | "plain", text: string | undefined): string {
 		clearWait(ctx);
-		const note = w.waitKind === "acceptance" ? "\n\n(The orchestrator's acceptance is still pending: a merge stays refused until it answers or the user runs /orch merge.)" : "";
-		return resumeContent(resumePrefix(w.reason, how), w.held, text) + note;
-	}
-
-	/** A listener resumed the wait: a check that does not pass sends a new ask with the check result; otherwise the wait ends like a typed message ends it. */
-	async function resumeWait(ctx: ExtensionContext, w: NonNullable<FlowState["waiting"]>, text: string | undefined): Promise<void> {
-		// A poll check that is running finishes first; the resume is never dropped.
-		for (let i = 0; waitChecking && i < 300; i++) await new Promise((r) => setTimeout(r, 200));
-		if (state.waiting !== w) return;
-		stopWaitTimer();
-		waitChecking = true;
-		let verdict: CheckVerdict | undefined;
-		try {
-			if (w.check && !w.checkPassed) verdict = await runWaitCheck(w.check);
-		} finally {
-			waitChecking = false;
-		}
-		if (state.waiting !== w) return;
-		if (waitResumeOutcome(w, verdict) === "reask" && w.check && verdict) {
-			startWaitTimer();
-			reaskWait(ctx, w, checkTitle(verdict, w.check), "pending");
-			return;
-		}
-		const content = finishWait(ctx, w, w.check ? "passed" : "plain", text);
-		pi.sendMessage({ customType: "workflow-wait", content, display: true }, { triggerTurn: true, deliverAs: "followUp" });
+		return resumeContent(resumePrefix(w.reason, how), w.held, text);
 	}
 
 	async function waitTick(): Promise<void> {
 		const w = state.waiting;
 		const ctx = lastCtx;
-		if (!w || !ctx || waitChecking || state.phase !== "execute" || w.waitKind === "acceptance") return;
+		if (!w || !ctx || waitChecking || state.phase !== "execute") return;
 		const elapsedMs = Date.now() - waitTimerStart;
-		const limit = waitLimitMs(waitClaimed(w), cfg.wait);
+		const limit = cfg.wait.maxMs;
 		const idle = ctx.isIdle() && (!ctx.hasUI || ctx.ui.getEditorText().trim() === "");
 		const d = pollDecision({ waiting: true, hasCheck: !!w.check && !w.checkPassed, idle, elapsedMs, maxMs: limit });
 		if (d === "hold") return;
 		if (d === "stop") {
 			stopWaitTimer();
-			if (w.check && elapsedMs >= limit && waitClaimed(w)) {
-				reaskWait(ctx, w, `stopped polling "${w.check}" after ${Math.round(elapsedMs / 60_000)} min`, "stopped");
-			} else if (w.check && elapsedMs >= limit) {
+			if (w.check && elapsedMs >= limit) {
 				ctx.ui.notify(`workflow: stopped polling "${w.check}" after ${Math.round(elapsedMs / 60_000)} min; your next message checks again`, "warning");
 				notifyUser(ctx, `stopped waiting for "${w.check}" after ${Math.round(elapsedMs / 60_000)} min`);
 			}
@@ -2351,10 +2169,6 @@ export default function workflow(pi: ExtensionAPI) {
 			if (state.waiting !== w) return;
 			if (verdict.status === "broken") {
 				stopWaitTimer();
-				if (waitClaimed(w)) {
-					reaskWait(ctx, w, `the check can't run (${verdict.detail}): ${w.check}`, "broken");
-					return;
-				}
 				ctx.ui.notify(`workflow: wait check can't run (${verdict.detail}): ${w.check}; fix it or send a message to continue`, "warning");
 				notifyUser(ctx, `wait check can't run: ${verdict.detail}`);
 				return;
@@ -2365,9 +2179,6 @@ export default function workflow(pi: ExtensionAPI) {
 				clearWait(ctx);
 				const body = w.held ?? "Continue with the open steps of the plan.";
 				pi.sendMessage({ customType: "workflow-wait", content: `${resumePrefix(w.reason, "passed")} ${body}`, display: true }, { triggerTurn: true, deliverAs: "followUp" });
-			} else if (waitClaimed(w)) {
-				w.checkPassed = true;
-				reaskWait(ctx, w, `the check passed: ${w.check}`, "passed");
 			} else {
 				w.checkPassed = true;
 				persist();
@@ -2441,7 +2252,6 @@ export default function workflow(pi: ExtensionAPI) {
 				refreshChecklist();
 			}
 			setWaiting({ reason, ...(check ? { check } : {}), ...(params.kind === "external" ? { waitKind: "external" as const } : {}), ...(step ? { step } : {}), stage: state.stage, since: new Date().toISOString(), planned });
-			askWait(ctx, params.manual);
 			persist();
 			updateStatus(ctx);
 			planMilestone(ctx);
@@ -2527,16 +2337,10 @@ export default function workflow(pi: ExtensionAPI) {
 			const repo = (await flowRepos(ctx)).find((r) => fs.existsSync(path.join(r.root, "scripts", "update-packages.mjs")));
 			if (!repo) return reply("No repo of this flow has scripts/update-packages.mjs (add the unity-packages folder to the flow). Nothing published.");
 			const root = repo.root;
-			const accepted = await acceptanceProblem("publish", root, null);
-			if (accepted) {
-				if (accepted.pending && accepted.tree) setAcceptanceWait("publish", accepted.tree, root, `Call publish_packages again with step ${step}.`);
-				return reply(`${accepted.text}. Nothing published.`);
-			}
 			const wait = (why: string, check: string): ToolReply => {
 				const since = waitSince(publishWaitSince.get(step), new Date().toISOString());
 				publishWaitSince.set(step, since);
 				setWaiting({ reason: why, check, step, stage: state.stage, since, planned: true, held: `Call publish_packages again with step ${step}.` });
-				askWait(ctx);
 				persist();
 				updateStatus(ctx);
 				planMilestone(ctx);
@@ -2581,14 +2385,12 @@ export default function workflow(pi: ExtensionAPI) {
 			const cwd = params.repo ? path.resolve(ctx.cwd, params.repo) : ctx.cwd;
 			if (!fs.existsSync(cwd)) return reply(`git_task failed: ${cwd} does not exist.`);
 			const multi = (state.folders?.length ?? 0) > 0 || (state.touchedRepos?.length ?? 0) > 0;
-			const acceptance = allowed.ungated ? null : (await acceptanceProblem("git-task", cwd, null))?.text ?? null;
 			const spec: GitGuardSpec = {
 				roots: multi ? repos.map((r) => r.root) : [],
 				protectedBranches: cfg.protectedBranches,
 				passedTrees: state.passedTrees ?? {},
 				noMerge: noMerge(state.approvedPlan ?? ""),
 				...(allowed.ungated ? { ungated: true } : (() => { const mf = midFlowMergeRefusal(); return mf ? { midFlow: mf } : {}; })()),
-				...(acceptance ? { acceptance } : {}),
 			};
 			const task = [
 				params.task.trim(),
@@ -2853,9 +2655,7 @@ export default function workflow(pi: ExtensionAPI) {
 			pi.sendMessage({ customType: "workflow-judge", content: `**Merge request before the end of the flow**\n\nThe executor's reason: ${reason}\n\nThe arbiter's view: ${seen || "it hands the decision to you"}`, display: true }, { triggerTurn: false });
 			let answer: string | undefined;
 			try {
-				answer = await askUser(ctx, "merge-early", `Merge before the end of the flow? ${reason}`, ["Allow the merge", "Don't merge"], { detail: `The executor's reason: ${reason}
-
-The arbiter's view: ${seen || "it hands the decision to you"}` });
+				answer = await askUser(ctx, `Merge before the end of the flow? ${reason}`, ["Allow the merge", "Don't merge"]);
 			} catch {}
 			const allowed = answer === "Allow the merge";
 			recordMergeDecision(ctx, "user", allowed, reason);
@@ -3005,7 +2805,6 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 			const t = await deliverTag(ctx, tag, isPlannedTag(stepText, tag.name, tag.move));
 			if (t.wait) {
 				setWaiting({ reason: t.wait, ...(planned && step ? { step } : {}), stage: state.stage, since: new Date().toISOString(), planned });
-				askWait(ctx);
 			}
 			state.checkpoints = [...(state.checkpoints ?? []), { ...(planned && step ? { step } : {}), stage: state.stage, text: checkpointText(planned ? step : undefined, t.text), ok: t.ok }];
 			persist();
@@ -3106,11 +2905,6 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 				if (early) return early;
 				const res = await gateCheck(defaultRunner, kind, dir, target, { passedTrees: state.passedTrees?.[key] ?? [], noMerge: noMerge(state.approvedPlan ?? ""), repo: repo ?? (await originRepo(defaultRunner, dir)) });
 				if (res.problem) return res.problem;
-				const accepted = await acceptanceProblem(kind, dir, res.tree ?? null);
-				if (accepted) {
-					if (accepted.pending && accepted.tree) setAcceptanceWait(kind, accepted.tree, dir);
-					return accepted.text;
-				}
 				if (res.tree) {
 					const stage = state.stage;
 					const record = kind === "merge" ? { pr: target ?? (await branchOf(dir)), tree: res.tree, ...(stage ? { stage } : {}) } : res.commit ? { commit: res.commit, tree: res.tree, ...(stage ? { stage } : {}) } : undefined;
@@ -3148,57 +2942,9 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 		});
 	}
 
-	/** K11: asks the listeners of `workflow:merge-gate` (after the judge gate passed) whether the merge, protected push or publish may go on; a refusal text or null. */
-	async function acceptanceProblem(site: K11Site, cwd: string, tree: string | null): Promise<{ text: string; pending: boolean; tree?: string } | null> {
-		return acceptanceRefusal(await gatherClaims((d) => pi.events.emit("workflow:merge-gate", d), k11Payload(site, cwd, tree), 30_000));
-	}
-
-	/** An acceptance request is pending: the flow holds (no ask, no timer) until the orchestrator answers (K15), the person types, or /orch merge merges. */
-	function setAcceptanceWait(kind: "merge" | "protected-push" | "publish", tree: string, root: string, held?: string): void {
-		if (state.phase !== "execute") return;
-		const ctx = lastCtx;
-		const w = state.waiting;
-		if (w?.waitKind === "acceptance" && w.accept?.tree === tree && w.accept.root === root && w.accept.kind === kind) return;
-		const what = kind === "merge" ? "merge" : kind === "publish" ? "publish" : "push to a protected branch";
-		setWaiting({ reason: `the orchestrator's acceptance of the ${what} (tree ${tree.slice(0, 8)})`, waitKind: "acceptance", accept: { tree, root, kind }, ...(state.stage ? { stage: state.stage } : {}), since: new Date().toISOString(), planned: false, ...(held ? { held } : {}) });
-		persist();
-		if (ctx) {
-			updateStatus(ctx);
-			planMilestone(ctx);
-		}
-	}
-
-	/** K15: the orchestrator answered an acceptance request (or merged the pull request itself). */
-	pi.events.on("workflow:acceptance", (data: unknown) => {
-		const d = data as { tree?: unknown; accept?: unknown; merged?: { pr?: unknown } | null; text?: unknown };
-		const w = state.waiting;
-		const ctx = lastCtx;
-		if (!ctx || !w || w.waitKind !== "acceptance" || !w.accept || state.phase !== "execute" || d?.tree !== w.accept.tree) return;
-		const text = typeof d.text === "string" ? d.text : "";
-		const a = w.accept;
-		let content: string;
-		if (d.merged && d.merged.pr !== undefined) {
-			state.judgedMerges = { ...(state.judgedMerges ?? {}), [repoKey(a.root)]: { pr: String(d.merged.pr), tree: a.tree, ...(state.stage ? { stage: state.stage } : {}) } };
-			content = `The orchestrator merged PR #${String(d.merged.pr)} (its branch may be deleted). If plan steps remain, fetch, start a new branch from the updated target and continue; otherwise tick the Deliver step and end your turn.`;
-		} else if (d.accept === true) {
-			const retry = a.kind === "publish" ? (w.held ? w.held.replace(/\.$/, "").replace(/^C/, "c") : "call publish_packages again") : `retry the ${a.kind === "merge" ? "merge" : "push"}, as its own command`;
-			content = `Accepted: ${retry} now.${text ? ` (${text})` : ""}`;
-		} else content = `The orchestrator refused: ${text || "no reason given"}\n\nFix it, rerun the judge, then retry.`;
-		clearWait(ctx);
-		pi.sendMessage({ customType: "workflow-wait", content, display: true }, { triggerTurn: true, deliverAs: "followUp" });
-	});
-
 	function planAllowedTools(): RegExp[] {
-		const own = cfg.planAllowedTools.flatMap((p) => {
-			try {
-				return [new RegExp(p)];
-			} catch {
-				return [];
-			}
-		});
-		return [...own, ...exactToolRegexes(state.extraPlanTools)];
+		return regexes(cfg.planAllowedTools);
 	}
-
 	function planAllow(): RegExp[] {
 		return cfg.planBashAllow.flatMap((p) => {
 			try {
@@ -3324,10 +3070,6 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 	pi.on("agent_start", async () => {
 		if (idleTimer) clearTimeout(idleTimer);
 		idleTimer = undefined;
-		if (idle13Timer) clearTimeout(idle13Timer);
-		idle13Timer = undefined;
-		idleHandled = false;
-		idlePending = false;
 		notifiedSinceStart = false;
 		view.clearFinished(15_000);
 	});
@@ -3579,10 +3321,10 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 					await approve(lastCtx ?? ctx);
 					return;
 				}
-				await offerPlan(ctx, text, blocked, reused ? { gate: reused, ran: true } : undefined);
+				await offerPlan(ctx, blocked);
 				return;
 			}
-			await offerPlan(ctx, text, blocked);
+			await offerPlan(ctx, blocked);
 			return;
 		}
 
@@ -3597,7 +3339,7 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 				noteAuto("executor error: retried automatically");
 				ctx.ui.notify("workflow: autopilot: the executor's reply failed; retrying once", "info");
 			}
-			const choice = autoRetry ? "Retry" : await askUser(ctx, "executor-error", "The executor's last reply ended in an error", ["Retry", "Back to planning", "Stop"], { roles: { "Back to planning": "replan", Stop: "stop" }, detail: assistantText(last).slice(0, 2000) });
+			const choice = autoRetry ? "Retry" : await askUser(ctx, "The executor's last reply ended in an error", ["Retry", "Back to planning", "Stop"]);
 			if (choice === "Retry") {
 				pi.sendMessage(
 					{ customType: "workflow-retry", content: "Your last reply ended in an error. Continue with the open steps of the approved plan.", display: true },
@@ -3608,7 +3350,7 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 			} else {
 				ctx.ui.notify("workflow: stopped: the executor's reply failed", "warning");
 				summarizeFlow(stoppedSummary("stopped: the executor's reply failed"), false);
-				await endFlow(ctx, "stopped");
+				await endFlow(ctx);
 			}
 			return;
 		}
@@ -3643,7 +3385,6 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 	function holdForStageWait(ctx: ExtensionContext, stage: ReturnType<typeof parseStages>[number], held: string): boolean {
 		if (!stage.after) return false;
 		setWaiting({ reason: stage.after.reason, ...(stage.after.check ? { check: stage.after.check } : {}), stage: stage.n, since: new Date().toISOString(), planned: true, atStageStart: true, held });
-		askWait(ctx);
 		persist();
 		updateStatus(ctx);
 		planMilestone(ctx);
@@ -3683,7 +3424,7 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 		if (what === "advance" && auto && !state.stageJudged) ctx.ui.notify(`workflow: stage ${staged.current} ended with no changes; continuing (${cfg.stageAdvance === "auto" ? "stageAdvance: auto" : "autopilot"})`, "info");
 		if (what === "ask") {
 			const yes = "Mark done and continue";
-			if ((await askUser(ctx, "stage-empty", `Stage ${staged.current} ended with no changes`, [yes, "Wait"], { roles: { Wait: "wait" } })) !== yes) return;
+			if ((await askUser(ctx, `Stage ${staged.current} ended with no changes`, [yes, "Wait"])) !== yes) return;
 		}
 		await stageWithoutChanges(ctx, staged);
 	}
@@ -3695,7 +3436,7 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 		if ((state.checklist ?? []).some((i) => !isHuman(i) && !i.done)) {
 			if (!ctx.hasUI) return;
 			const yes = "Mark done and finish";
-			if ((await askUser(ctx, "steps-open", "All changes were delivered at checkpoints, but plan steps are still open", [yes, "Wait"], { roles: { Wait: "wait" } })) !== yes) return;
+			if ((await askUser(ctx, "All changes were delivered at checkpoints, but plan steps are still open", [yes, "Wait"])) !== yes) return;
 		}
 		state.minorRounds = 0;
 		state.minorSentFor = undefined;
@@ -3704,7 +3445,7 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 		view.stage = "execute";
 		const decided = mergeDecisionsText(state.approvedPlan);
 		if (!summarizeFlow(decided ? `${outcome.text}; ${decided}` : outcome.text, outcome.ok)) persist();
-		await endFlow(ctx, "finished");
+		await endFlow(ctx);
 	}
 
 	/** A staged plan's stage ended with nothing to review: records it and starts the next stage, or ends the flow after the last one. */
@@ -3726,7 +3467,7 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 		state.stageOutcomes = undefined;
 		view.stage = "execute";
 		if (!summarizeFlow(finalText, final.ok)) persist();
-		await endFlow(ctx, "finished");
+		await endFlow(ctx);
 	}
 
 	/** The summary text for a flow that stops early: the stages already delivered, then `text`. Clears the stage state. */
@@ -3764,42 +3505,14 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 		return true;
 	}
 
-	/** The plan is complete and judged (or the judge is off): K10 for the orchestrator, else the approval menu. */
-	async function offerPlan(ctx: ExtensionContext, text: string, blocked: string | undefined, judge?: { gate: PlanGate; note?: string; ran: boolean }): Promise<void> {
-		if (planReady && !blocked) {
-			const emitted = composePlan(planDraft);
-			const review = emitClaims((d) => pi.events.emit("workflow:plan-ready", d), { v: 1, title: planTitle(emitted), plan: emitted, ...(judge ? { judge: planReadyJudge(judge.gate, judge.ran) } : {}) }, 0);
-			if (planReviewRoute(planReady, !!blocked, review.claimed) === "review") {
-				ctx.ui.notify("workflow: plan sent for review.", "info");
-				void review.answer.then(async (answer) => {
-					const current = state.phase === "plan" && planReady && composePlan(planDraft) === emitted;
-					const action = planReviewAction(answer, current);
-					if (action === "approve") {
-						const notes = planReviewNotes(answer);
-						ctx.ui.notify(`workflow: plan approved, executing on ${describeRole(cfg.roles.execute)}`, "info");
-						await approve(lastCtx ?? ctx, false, notes);
-					} else if (action === "reject") {
-						// The orchestrator's rejection starts a new judge budget; the findings stay for the recheck.
-						state.planGate = planGateReset(state.planGate, "rejected");
-						persist();
-						pi.sendMessage({ customType: "workflow-plan-review", content: `${(answer as { reject: string }).reject}\n\nRevise the plan: reply with the whole plan again as a new \`## Plan:\`.`, display: true }, { triggerTurn: true, deliverAs: "followUp" });
-					} else if (current) {
-						ctx.ui.notify(`workflow: no verdict on the plan (${answer && typeof answer === "object" && "error" in answer ? String((answer as { error: unknown }).error) : "none"}).`, "warning");
-					}
-				}, () => {});
-				return;
-			}
-		}
+	/** The plan is complete and judged (or the judge is off): the approval menu. */
+	async function offerPlan(ctx: ExtensionContext, blocked: string | undefined): Promise<void> {
 		const approveLabel = PLAN_APPROVE;
 		const arbiterLabel = PLAN_ARBITER;
 		const quick = state.profile === "quick";
 		const fullLabel = PLAN_FULL;
-		// K12 first, whatever planPrompt says; unclaimed, the notices and the menu are what they were before.
 		const menu = planMenuRequest({ blocked: !!blocked, quick, planFlawAsk: cfg.planFlaw === "ask", planPrompt: cfg.planPrompt });
-		const judgeLines = judge ? menuJudgeLines(judge.gate, judge.note).join("\n") : "";
-		const choice = await askUser(ctx, menu.key, `${quick ? "Quick flow" : "Plan phase"} · execute on ${describeRole(cfg.roles.execute)}`, menu.options, {
-			roles: menu.roles,
-			detail: [blocked ? `Can't approve: ${blocked}.` : "", judgeLines, text.slice(0, 4000)].filter(Boolean).join("\n\n"),
+		const choice = await askUser(ctx, `${quick ? "Quick flow" : "Plan phase"} · execute on ${describeRole(cfg.roles.execute)}`, menu.options, {
 			skipLocal: menu.skipLocal,
 			localNotice: () => {
 				if (!cfg.planPrompt) ctx.ui.notify(`workflow: say "go" to execute on ${describeRole(cfg.roles.execute)}, or keep discussing.`, "info");
@@ -3847,8 +3560,8 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 					: typeof m.content === "string" ? m.content : "";
 				if (t.trim()) assistantTexts.push(t);
 			}
-			const agreed = state.planSpec ? undefined : lastAgreedList(assistantTexts);
-			const spec = state.planSpec ? { kind: "brief" as const, text: state.planSpec.text } : agreed ? { kind: "agreed" as const, text: agreed } : undefined;
+			const agreed = lastAgreedList(assistantTexts);
+			const spec = agreed ? { kind: "agreed" as const, text: agreed } : undefined;
 			specKind = spec ? spec.kind : "none";
 			const diff = decision !== "full" && gate0?.judgedPlan !== undefined ? planTextDiff(gate0.judgedPlan, plan) : null;
 			const recheck = diff !== null && gate0 ? { findings: [...gate0.autoFindings, ...gate0.userFindings], disputes: planDisputes(lastAssistantText(ctx)), diff } : undefined;
@@ -3886,7 +3599,7 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 				state.planGate = g;
 				persist();
 				ctx.ui.notify("workflow: plan judge cancelled", "info");
-				await offerPlan(ctx, text, undefined, { gate: g, note: "plan judge cancelled", ran: false });
+				await offerPlan(ctx, undefined);
 			}
 			return;
 		}
@@ -3898,7 +3611,7 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 			persist();
 			planApproveQueued = false;
 			ctx.ui.notify(`workflow: plan judge did not run: ${error}`, "warning");
-			await offerPlan(ctx, text, undefined, { gate: g, note: `plan judge did not run: ${error}`, ran: false });
+			await offerPlan(ctx, undefined);
 			return;
 		}
 		const findings = parseFindings(outcome.text);
@@ -3938,7 +3651,7 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 			await approve(lastCtx ?? ctx);
 			return;
 		}
-		await offerPlan(ctx, text, undefined, { gate: g, ran: true });
+		await offerPlan(ctx, undefined);
 	}
 
 	/** `/flow judge` in plan: judge the plan on screen now, whatever the gate remembers. */
@@ -4151,7 +3864,7 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 		}
 		if (!manual && (cfg.autoJudge === "off" || seenDiffs.has(diff.hash))) return;
 		if (!manual && cfg.autoJudge === "ask" && !autopilotOn()) {
-			const run = (await askUser(ctx, "run-judge", `Diff ready: run the judge (${describeRole(flowSpec("judge"))}) on ${diff.files} changed file(s)?`, ["Run the judge", "Skip"])) === "Run the judge";
+			const run = (await askUser(ctx, `Diff ready: run the judge (${describeRole(flowSpec("judge"))}) on ${diff.files} changed file(s)?`, ["Run the judge", "Skip"])) === "Run the judge";
 			if (!run) {
 				seenDiffs.add(diff.hash);
 				return;
@@ -4174,7 +3887,7 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 				noteAuto("judge error: retried automatically");
 				ctx.ui.notify("workflow: autopilot: the judge failed to run; retrying once", "info");
 			}
-			const choice = autoRetry ? "Retry the judge" : await askUser(ctx, "judge-error", "The judge failed to run", ["Retry the judge", "Back to planning", "Stop"], { roles: { "Back to planning": "replan", Stop: "stop" }, detail: r.text });
+			const choice = autoRetry ? "Retry the judge" : await askUser(ctx, "The judge failed to run", ["Retry the judge", "Back to planning", "Stop"]);
 			if (choice === "Retry the judge") {
 				await reviewDiff(ctx, true);
 			} else if (choice === "Back to planning") {
@@ -4182,7 +3895,7 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 			} else {
 				ctx.ui.notify("workflow: stopped: the judge failed to run", "warning");
 				summarizeFlow(stoppedSummary("stopped: the judge failed to run"), false);
-				await endFlow(ctx, "stopped");
+				await endFlow(ctx);
 			}
 			return;
 		}
@@ -4216,7 +3929,7 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 				noteAuto(`judge cap (${state.judgeRounds} failed rounds): ${autoCap === "Stop" ? "stopped (second cap)" : "escalated and kept fixing (advisor asked once)"}`);
 				ctx.ui.notify(`workflow: autopilot: judge cap reached; ${autoCap === "Stop" ? "stopping" : "escalating and fixing on"}`, "warning");
 			}
-			const choice = autoCap ?? await askUser(ctx, "judge-cap", `Judge failed ${state.judgeRounds} rounds in a row`, ["Keep fixing", "Escalate and keep fixing", "Stop"], { roles: { Stop: "stop" }, ...(report ? { detail: report } : {}) });
+			const choice = autoCap ?? await askUser(ctx, `Judge failed ${state.judgeRounds} rounds in a row`, ["Keep fixing", "Escalate and keep fixing", "Stop"]);
 			if (choice === "Keep fixing" || choice === "Escalate and keep fixing") {
 				if (choice !== "Keep fixing") await escalate(ctx);
 				state.judgeRounds = 0;
@@ -4226,7 +3939,7 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 			}
 			ctx.ui.notify(`workflow: stopped after ${state.judgeRounds} failed judge rounds`, "warning");
 			summarizeFlow(stoppedSummary(`stopped: judge failed ${state.judgeRounds} rounds`), false);
-			await endFlow(ctx, "stopped");
+			await endFlow(ctx);
 			return;
 		}
 		pi.sendMessage(
@@ -4254,11 +3967,11 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 			if (!ctx.hasUI) {
 				pi.sendMessage({ customType: "workflow-judge", content: report, display: true }, { triggerTurn: false });
 				summarizeFlow(stoppedSummary("stopped: judge questions the plan"), false);
-				await endFlow(ctx, "stopped");
+				await endFlow(ctx);
 				return "stop";
 			}
 			const options = ["Back to planning", ...(canAsk ? ["Let the arbiter decide"] : []), "Ignore and continue", "Stop"];
-			const choice = await askUser(ctx, "plan-flaw", "Judge questions the plan", options, { roles: { "Back to planning": "replan", Stop: "stop" }, detail: report });
+			const choice = await askUser(ctx, "Judge questions the plan", options);
 			if (choice === "Back to planning") {
 				await setPhase(ctx, "plan");
 				pi.sendMessage({ customType: "workflow-judge", content: report, display: true }, { triggerTurn: false });
@@ -4275,7 +3988,7 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 			}
 			pi.sendMessage({ customType: "workflow-judge", content: report, display: true }, { triggerTurn: false });
 			summarizeFlow(stoppedSummary("stopped: judge questions the plan"), false);
-			await endFlow(ctx, "stopped");
+			await endFlow(ctx);
 			return "stop";
 		}
 	}
@@ -4559,7 +4272,7 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 		state.stageOutcomes = undefined;
 		view.stage = "execute";
 		if (!summarizeFlow(outcome.text, outcome.ok)) persist();
-		await endFlow(ctx, "finished");
+		await endFlow(ctx);
 	}
 
 
@@ -4653,14 +4366,6 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 			}
 			updateStatus(ctx);
 			if (state.phase === "execute" && state.waiting) startWaitTimer();
-			// K12 after a restart: a saved menu ask is withdrawn (its caller is gone); a saved wait is asked again under its id.
-			const asks = restoreAsks({ openAsk: state.openAsk, waiting: state.waiting });
-			if (asks.withdraw) {
-				pi.events.emit("workflow:ask-done", { v: 1, id: asks.withdraw, how: "withdrawn" });
-				state.openAsk = undefined;
-				persist();
-			}
-			if (asks.resendWait && state.phase === "execute" && state.waiting) sendWaitAsk(ctx, state.waiting);
 			if (event.reason !== "reload") void planHousekeeping(ctx);
 			// Rewrites the plan file, which also (re)starts this session's claim on an unfinished flow.
 			if (state.planDoc && !state.planDoc.finished && state.approvedPlan) planMilestone(ctx, undefined, false);
@@ -4687,46 +4392,6 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 		return { cancel: true };
 	});
 
-	// K16: relay asks whether a workflow flow is running; a flow in any phase but off claims the session.
-	pi.events.on("flow:active", (data: unknown) => {
-		const req = parseFlowActive(data);
-		if ("error" in req || req.from === "workflow" || typeof req.claim !== "function") return;
-		if (state.phase !== "off") req.claim(Promise.resolve({ owner: "workflow" }));
-	});
-
-	// K9: another extension starts a flow at the plan phase from a brief.
-	pi.events.on("workflow:start-plan", (data: unknown) => {
-		const claim = (data as { claim?: unknown } | null)?.claim;
-		if (typeof claim !== "function") return;
-		(claim as (p: Promise<unknown>) => void)(
-			(async () => {
-				const req = parseStartPlan(data);
-				if ("error" in req) return req;
-				const ctx = lastCtx;
-				if (!ctx) return { error: "workflow:start-plan: the workflow is not ready yet" };
-				if (state.phase === "execute" || state.phase === "plan" || state.approvedPlan) return { error: `workflow:start-plan: a flow is already running (phase ${state.phase})` };
-				const prev = state.phase;
-				state.extraPlanTools = req.allowTools.length ? req.allowTools : undefined;
-				if (!(await setPhase(ctx, "plan"))) {
-					state.extraPlanTools = undefined;
-					return { error: "workflow:start-plan: relay is active in this session" };
-				}
-				refilterTools(); // discuss to plan keeps the tool snapshot, so the allowed tools must be put back
-				state.planSpec = { kind: "brief", text: req.brief };
-				persist();
-				try {
-					pi.sendUserMessage(`${START_PLAN_PREFACE}${req.brief}`, { deliverAs: "followUp" });
-				} catch (e) {
-					state.extraPlanTools = undefined;
-					await setPhase(ctx, prev);
-					persist();
-					return { error: `workflow:start-plan: could not send the brief: ${(e as Error).message}` };
-				}
-				return { ok: true };
-			})(),
-		);
-	});
-
 	// Explore, advisor and test_run run in the agents extension; a flow counts their usage and metrics.
 	pi.events.on("agents:subagent-finished", (data: unknown) => {
 		const c = countSubagent(data, state.phase, view.stage);
@@ -4739,8 +4404,6 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 	pi.on("session_shutdown", async () => {
 		if (idleTimer) clearTimeout(idleTimer);
 		idleTimer = undefined;
-		if (idle13Timer) clearTimeout(idle13Timer);
-		idle13Timer = undefined;
 		stopWaitTimer();
 		const dir = claimedFlow ? planDirs.get(claimedFlow) : undefined;
 		if (dir && claimedFlow) dropClaim(dir, claimedFlow);

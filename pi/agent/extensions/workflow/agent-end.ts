@@ -160,7 +160,10 @@ export function gitTaskAllowed(phase: FlowPhase, hasPlan: boolean): { ok: boolea
 	return { ok: phase === "execute" && hasPlan, ungated: false };
 }
 
-/** A saved flow state from before the test phase was removed loads as normal mode; its test token row is dropped. */
+/**
+ * A saved flow state from before the test phase was removed loads as normal mode; its test token row is dropped.
+ * Fields that only the removed external-controller contracts used (open ask and its counter, extra plan tools, a plan brief, claimed-wait data) are dropped, and a saved acceptance wait is cleared: an old session resumes as an unclaimed one.
+ */
 export function migrateSavedState<T extends { phase: string; tokens?: unknown }>(data: T): T {
 	let out: Record<string, unknown> = data;
 	const dr = (data as { discussionReview?: { status?: string } }).discussionReview;
@@ -169,6 +172,17 @@ export function migrateSavedState<T extends { phase: string; tokens?: unknown }>
 	if (data.tokens && typeof data.tokens === "object" && "test" in data.tokens) {
 		const { test: _drop, ...rest } = data.tokens as Record<string, unknown>;
 		out = { ...out, tokens: rest };
+	}
+	const o = out as { openAsk?: unknown; askSeq?: unknown; extraPlanTools?: unknown; planSpec?: unknown; waiting?: { waitKind?: string; askId?: unknown; manual?: unknown; accept?: unknown } };
+	const w = o.waiting;
+	if ("openAsk" in o || "askSeq" in o || "extraPlanTools" in o || "planSpec" in o || (w && (w.waitKind === "acceptance" || "askId" in w || "manual" in w || "accept" in w))) {
+		const { openAsk: _a, askSeq: _b, extraPlanTools: _c, planSpec: _d, waiting: _w, ...rest } = o;
+		let keep: Record<string, unknown> | undefined;
+		if (w && w.waitKind !== "acceptance") {
+			const { askId: _e, manual: _f, accept: _g, ...kept } = w;
+			keep = kept;
+		}
+		out = { ...rest, ...(keep ? { waiting: keep } : {}) };
 	}
 	if (data.phase === "test") {
 		// Only what belonged to the test flow goes; added folders and the rest stay.

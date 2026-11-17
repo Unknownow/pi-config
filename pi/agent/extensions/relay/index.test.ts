@@ -6,7 +6,7 @@ import * as path from "node:path";
 import { test } from "node:test";
 import { KICKOFF } from "./lead.ts";
 import { listJobs } from "./job.ts";
-import { fakeCtx, makeBus, relayOn, workflowSide } from "./test/fake-api.ts";
+import { fakeCtx, makeBus, relayOn } from "./test/fake-api.ts";
 import { brief, makeWt, waitFor, FAKE_PI } from "./test/env.ts";
 import { cleanup, git, makeRepo, tmpDir } from "./test/helpers.ts";
 
@@ -28,9 +28,8 @@ test('typed "go" in lead mode is transformed; "/go" and "go" with lead mode off 
 	await r.commands.get("relay").handler("go", ctx);
 	assert.deepEqual(r.userMessages, [KICKOFF]);
 
-	const bus = makeBus();
-	workflowSide(bus, { value: "execute" });
-	const off = relayOn(bus, dir);
+	const off = relayOn(makeBus(), dir);
+	await off.commands.get("relay").handler("off", fakeCtx(dir));
 	assert.equal((await input(off, "go", fakeCtx(dir))).action, "continue");
 	cleanup(dir);
 });
@@ -41,9 +40,8 @@ test("the lead prompt is added in lead mode only", async () => {
 	const ev = { systemPromptOptions: { sections: {} as Record<string, string> } };
 	await r.hooks.get("before_agent_start")!(ev, fakeCtx(dir));
 	assert.match(ev.systemPromptOptions.sections.relay, /you are the lead/);
-	const bus = makeBus();
-	workflowSide(bus, { value: "plan" });
-	const off = relayOn(bus, dir);
+	const off = relayOn(makeBus(), dir);
+	await off.commands.get("relay").handler("off", fakeCtx(dir));
 	const ev2 = { systemPromptOptions: { sections: {} as Record<string, string> } };
 	await off.hooks.get("before_agent_start")!(ev2, fakeCtx(dir));
 	assert.match(ev2.systemPromptOptions.sections.relay, /Relay lead mode is off/);

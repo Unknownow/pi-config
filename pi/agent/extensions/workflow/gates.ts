@@ -8,7 +8,7 @@ import { endsInQuestion } from "./agent-end.ts";
 import { JUDGE_DISCUSSION_RECHECK, JUDGE_PLAN, JUDGE_PLAN_RECHECK, NO_SPEC_NOTE } from "./prompts.ts";
 
 export type GateVerdict = "PASS" | "FAIL" | "cancelled" | "error";
-export type SpecKind = "agreed" | "brief" | "none";
+export type SpecKind = "agreed" | "none";
 
 /** What the plan gate remembers about the plan it judged; persisted in the state entry. */
 export interface PlanGate {
@@ -25,18 +25,6 @@ export interface PlanGate {
 	spec: SpecKind;
 	/** Minors of the last run (and late majors): shown as a count and appended to the approved plan as notes for the executor. */
 	notes?: Finding[];
-}
-
-/** The optional `judge` field of K10 `workflow:plan-ready`. */
-export interface K10Judge {
-	ran: boolean;
-	verdict: GateVerdict;
-	rounds: number;
-	spec: SpecKind;
-	findings: string[];
-	userFindings: string[];
-	/** Number of minor findings, kept as notes for the executor (optional, version stays 1). */
-	notes?: number;
 }
 
 /** A line diff of `prev` against `next` with 2 lines of context (`+`, `-`, ` ` prefixes, `@@` between hunks). "" when equal; null when too big (cells over 4M or output over `cap` lines). */
@@ -114,36 +102,14 @@ export function planOfferAction(o: { clean: boolean; queuedGo: boolean }): "appr
 	return o.clean && o.queuedGo ? "approve" : "offer";
 }
 
-/** The K10 `judge` field from the gate's state; `ran` is false when the judge was cancelled or failed. */
-export function planReadyJudge(gate: PlanGate, ran: boolean): K10Judge {
-	return { ran, verdict: gate.verdict ?? (ran ? "FAIL" : "error"), rounds: gate.rounds, spec: gate.spec, findings: gate.autoFindings.map(findingText), userFindings: gate.userFindings.map(findingText), ...(gate.notes?.length ? { notes: gate.notes.length } : {}) };
-}
-
-/** A new flow, or a replan, starts clean ("enter-plan"); an orchestrator rejection keeps what the judge knows but gives a fresh budget. */
-export function planGateReset(gate: PlanGate | undefined, why: "enter-plan" | "rejected"): PlanGate | undefined {
-	if (why === "enter-plan" || !gate) return undefined;
-	return { ...gate, rounds: 0, cappedHash: undefined };
-}
-
-/** Lines the approval menu shows above the plan. */
-export function menuJudgeLines(gate: PlanGate | undefined, note?: string): string[] {
-	const out: string[] = [];
-	if (note) out.push(note);
-	if (!gate) return out;
-	const open = gate.autoFindings.length + gate.userFindings.length;
-	if (gate.verdict === "PASS" && !open) out.push(`Plan judge: PASS (${gate.rounds} run${gate.rounds === 1 ? "" : "s"})`);
-	else if (gate.verdict === "PASS" || gate.verdict === "FAIL") {
-		if (gate.autoFindings.length) out.push(`Plan judge: ${gate.autoFindings.length} open finding${gate.autoFindings.length === 1 ? "" : "s"}${gate.cappedHash !== undefined ? " after the cap" : ""}`, ...gate.autoFindings.map((f) => `- ${f.head}`));
-		if (gate.userFindings.length) out.push("Needs your decision:", ...gate.userFindings.map((f) => `- ${f.head}`));
-	}
-	if (gate.notes?.length) out.push(`${gate.notes.length} minor note${gate.notes.length === 1 ? "" : "s"} go to the executor`);
-	if (gate.spec === "none") out.push("spec: none");
-	return out;
+/** A new flow, or a replan, starts clean ("enter-plan"). */
+export function planGateReset(_gate: PlanGate | undefined, _why: "enter-plan"): PlanGate | undefined {
+	return undefined;
 }
 
 /** The judge's system prompts for a plan: a full pass, or (with `recheck`) the previous findings, the disputes and the diff. */
-export function planReviewPrompts(o: { plan: string; spec?: { kind: "agreed" | "brief"; text: string }; folders: string[]; recheck?: { findings: Finding[]; disputes?: string; diff: string } }): string[] {
-	const spec = o.spec ? `## Spec (${o.spec.kind === "brief" ? "the brief" : "the agreed list"})\n\n${o.spec.text}` : NO_SPEC_NOTE;
+export function planReviewPrompts(o: { plan: string; spec?: { kind: "agreed"; text: string }; folders: string[]; recheck?: { findings: Finding[]; disputes?: string; diff: string } }): string[] {
+	const spec = o.spec ? `## Spec (the agreed list)\n\n${o.spec.text}` : NO_SPEC_NOTE;
 	const folders = o.folders.length ? [`## Other folders of this session\n\n${o.folders.map((f) => `- ${f}`).join("\n")}`] : [];
 	if (!o.recheck) return [JUDGE_PLAN, spec, ...folders, "## Plan under review", o.plan];
 	return [

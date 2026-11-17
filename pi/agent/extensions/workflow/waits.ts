@@ -130,17 +130,9 @@ export function autopilotSkipsWait(autopilot: boolean, manual: boolean | undefin
 	return autopilot && !manual && kind !== "external";
 }
 
-/** Sets a new wait over the old one: the old wait's ask ends first (a listener must not keep a dead ask), then the new wait is assigned by the caller. */
-export function replaceWait(old: { askId?: string } | undefined, deps: { endAsk(w: { askId?: string }): void; unclaim(askId: string): void; stopTimer(): void }): void {
-	if (!old?.askId) return;
-	deps.endAsk(old);
-	deps.unclaim(old.askId);
-	deps.stopTimer();
-}
-
-/** How long a wait polls: a wait whose ask a listener claimed (an orchestrator watches it) may poll longer. */
-export function waitLimitMs(claimed: boolean, w: { maxMs: number; claimedMaxMs: number }): number {
-	return claimed ? w.claimedMaxMs : w.maxMs;
+/** Sets a new wait over the old one: the old wait's poll timer stops first, then the new wait is assigned by the caller. */
+export function replaceWait(old: unknown, deps: { stopTimer(): void }): void {
+	if (old) deps.stopTimer();
 }
 
 /** What a poll tick does: stop polling, hold (the session is busy) or run the check. */

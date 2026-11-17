@@ -1,4 +1,4 @@
-/** The folders a session has added, read from the workflow's public `session-folders` entry (contract K1). Copy of orchestrate/folders.ts (relay imports no extension). */
+/** The folders a session has added, read from the workflow's public `session-folders` entry (contract K1). Relay imports no extension, so it reads the entry itself. */
 
 export const FOLDERS_ENTRY = "session-folders";
 
