@@ -8,6 +8,7 @@ import { deliverMergeOpen, mergeDecisions, gateOpenSteps, mergeAmendment, afterM
 import { stagesOutcome } from "../stages.ts";
 import { type Diff, type Flow } from "./context.ts";
 import { advanceReviewBase, flowRepos, git, nextAmendmentNumber, stageCheckpoints } from "./diff.ts";
+import { handover, noChangeTurn, startNextStage } from "./handover.ts";
 import { markPassSummarized, stageOutcomeText } from "./judge.ts";
 import { currentStages, endFlow, persist, refreshChecklist, summarizeFlow } from "./phase.ts";
 import { planMilestone } from "./plan-files.ts";
@@ -105,7 +106,7 @@ export async function stageDone(fl: Flow, ctx: ExtensionContext, diff: Diff, rep
 	const staged = currentStages(fl);
 	if (fl.state.summarizedPasses?.includes(hash)) {
 		// A staged plan's stage added nothing to the diff that was already passed.
-		if (staged) await fl.legacy.noChangeTurn(ctx, staged);
+		if (staged) await noChangeTurn(fl, ctx, staged);
 		return;
 	}
 	const open = (fl.state.checklist ?? []).filter((i) => !isHuman(i) && !i.done && (!staged || i.stage === undefined || i.stage === staged.current));
@@ -122,7 +123,7 @@ export async function stageDone(fl: Flow, ctx: ExtensionContext, diff: Diff, rep
 		if (unpushed.length) lines.push(`The judge passed: commit and push ${unpushed.join(", ")}, then end your turn.`);
 		if (unmerged.length) lines.push(`The judge passed: merge the pull request (gh pr merge, as its own command)${unmerged.length > 1 || diff.multi ? ` in ${unmerged.join(", ")}` : ""}, then end your turn.`);
 		if (openLine && afterOnly) lines.push(openLine);
-		fl.legacy.handover("workflow-open-steps", lines.join("\n"));
+		handover(fl, "workflow-open-steps", lines.join("\n"));
 		return;
 	}
 	const knowledge = fl.state.lastKnowledge?.hash === hash ? fl.state.lastKnowledge : undefined;
@@ -139,7 +140,7 @@ export async function stageDone(fl: Flow, ctx: ExtensionContext, diff: Diff, rep
 	if (staged) {
 		fl.state.stageOutcomes = [...(fl.state.stageOutcomes ?? []), outcome];
 		if (staged.current < staged.stages.length) {
-			fl.legacy.startNextStage(ctx, staged.stages, outcome.text);
+			startNextStage(fl, ctx, staged.stages, outcome.text);
 			return;
 		}
 		outcome = stagesOutcome(fl.state.stageOutcomes, staged.stages.length);

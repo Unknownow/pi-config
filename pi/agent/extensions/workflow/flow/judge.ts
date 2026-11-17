@@ -14,6 +14,7 @@ import { covers, judgeKnowledge, parseDeviations, knowledgeFooter } from "../kno
 import type { FlowRun } from "../view.ts";
 import { citedPaths, countFindings, type Diff, type Flow, type JudgeResult, type LastKnowledge, MAX_PLAN_CHARS, type ReviewPlan } from "./context.ts";
 import { collectFlowDiff, git, judge, markPassed, nextAmendmentNumber, planForJudge, refreshReviewBase, repoRoots } from "./diff.ts";
+import { ensureGh, flowWithoutChanges, handover, noChangeTurn, stoppedSummary } from "./handover.ts";
 import { stageDone } from "./merge.ts";
 import { askUser } from "./notify.ts";
 import { autopilotOn, currentStages, endFlow, escalate, noteAuto, persist, phaseStage, refreshChecklist, setPhase, summarizeFlow } from "./phase.ts";
@@ -138,8 +139,8 @@ export async function reviewDiff(fl: Flow, ctx: ExtensionContext, manual: boolea
 			await stageDone(fl, ctx, { ...diff, hash: fl.state.passedDiff });
 		} else {
 			const staged = currentStages(fl);
-			if (staged) await fl.legacy.noChangeTurn(ctx, staged);
-			else await fl.legacy.flowWithoutChanges(ctx);
+			if (staged) await noChangeTurn(fl, ctx, staged);
+			else await flowWithoutChanges(fl, ctx);
 		}
 		return;
 	}
@@ -183,7 +184,7 @@ export async function reviewDiff(fl: Flow, ctx: ExtensionContext, manual: boolea
 			await setPhase(fl, ctx, "plan");
 		} else {
 			ctx.ui.notify("workflow: stopped: the judge failed to run", "warning");
-			summarizeFlow(fl, fl.legacy.stoppedSummary("stopped: the judge failed to run"), false);
+			summarizeFlow(fl, stoppedSummary(fl, "stopped: the judge failed to run"), false);
 			await endFlow(fl, ctx);
 		}
 		return;
@@ -227,7 +228,7 @@ export async function fixOrAsk(fl: Flow, ctx: ExtensionContext, report: string |
 			return;
 		}
 		ctx.ui.notify(`workflow: stopped after ${fl.state.judgeRounds} failed judge rounds`, "warning");
-		summarizeFlow(fl, fl.legacy.stoppedSummary(`stopped: judge failed ${fl.state.judgeRounds} rounds`), false);
+		summarizeFlow(fl, stoppedSummary(fl, `stopped: judge failed ${fl.state.judgeRounds} rounds`), false);
 		await endFlow(fl, ctx);
 		return;
 	}
@@ -255,7 +256,7 @@ export async function resolvePlanFlaw(fl: Flow, ctx: ExtensionContext, report: s
 		}
 		if (!ctx.hasUI) {
 			fl.pi.sendMessage({ customType: "workflow-judge", content: report, display: true }, { triggerTurn: false });
-			summarizeFlow(fl, fl.legacy.stoppedSummary("stopped: judge questions the plan"), false);
+			summarizeFlow(fl, stoppedSummary(fl, "stopped: judge questions the plan"), false);
 			await endFlow(fl, ctx);
 			return "stop";
 		}
@@ -276,7 +277,7 @@ export async function resolvePlanFlaw(fl: Flow, ctx: ExtensionContext, report: s
 			return "continue";
 		}
 		fl.pi.sendMessage({ customType: "workflow-judge", content: report, display: true }, { triggerTurn: false });
-		summarizeFlow(fl, fl.legacy.stoppedSummary("stopped: judge questions the plan"), false);
+		summarizeFlow(fl, stoppedSummary(fl, "stopped: judge questions the plan"), false);
 		await endFlow(fl, ctx);
 		return "stop";
 	}
@@ -382,7 +383,7 @@ export function fixMinorFindings(fl: Flow, text: string, hash: string, report?: 
 	fl.state.minorFix = passedRepos ? { trees: Object.fromEntries(Object.entries(passedRepos).map(([k, v]) => [k, v.tree])), cited: citedPaths(parsed), text } : undefined;
 	persist(fl);
 	const shown = report ?? `**Judge: PASS**\n\n${text}`;
-	fl.legacy.handover(
+	handover(fl,
 		"workflow-fix",
 		prompts.minorFixMessage(shown, findings),
 	);
@@ -398,7 +399,7 @@ export function markPassSummarized(fl: Flow, hash: string): void {
 export async function stageOutcomeText(fl: Flow, ctx: ExtensionContext, diff: Diff): Promise<string> {
 	const changed = diff.repos.filter((r) => r.changed);
 	const repos = changed.length ? changed : diff.repos;
-	await fl.legacy.ensureGh(ctx).catch(() => false);
+	await ensureGh(fl, ctx).catch(() => false);
 	const parts = await Promise.all(
 		repos.map(async (ref) => {
 			const branch = (await git(fl, ref.dir, "rev-parse", "--abbrev-ref", "HEAD")).stdout.trim() || "HEAD";

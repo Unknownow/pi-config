@@ -15,6 +15,7 @@ import { hiddenInPhase, refilterPlanTools, syncFlowOnlyTools } from "../plan-too
 import type { Stage } from "../view.ts";
 import { APPROVED_FINAL, type Flow, FOLDERS_ENTRY, type Phase, STATE_ENTRY, SUMMARY_ENTRY } from "./context.ts";
 import { dropReviewRefs, existingFolders, initReviewBase } from "./diff.ts";
+import { handover, holdForStageWait, stoppedSummary } from "./handover.ts";
 import { abortGate, notifyUser } from "./notify.ts";
 import { liveTick, planMilestone, recordMetric } from "./plan-files.ts";
 import { modelOf } from "./roles.ts";
@@ -234,7 +235,7 @@ export async function setPhase(fl: Flow, ctx: ExtensionContext, phase: Phase): P
 		fl.state.planGate = planGateReset(fl.state.planGate, "enter-plan");
 	}
 	if (leavingFlow && fl.state.approvedPlan && !fl.state.flowSummarized) {
-		summarizeFlow(fl, fl.legacy.stoppedSummary(phase === "plan" ? "back to planning" : phase === "discuss" ? "back to discussion" : "abandoned"), false);
+		summarizeFlow(fl, stoppedSummary(fl, phase === "plan" ? "back to planning" : phase === "discuss" ? "back to discussion" : "abandoned"), false);
 	}
 	fl.planReady = false;
 	fl.planProposed = false;
@@ -320,7 +321,7 @@ export function startExecution(fl: Flow, ctx: ExtensionContext, plan: string | u
 	if (!stages.length) return deliverHintsText(fl, undefined);
 	ctx.ui.notify(`workflow: staged plan, ${stages.length} stages; stage 1: ${stages[0].title}`, "info");
 	const first = stageStart(stages, 1);
-	if (fl.legacy.holdForStageWait(ctx, stages[0], first)) return `\n\nStage 1 waits for: ${stages[0].after?.reason}. Don't start it; end your turn now. The workflow sends you the stage when the wait is over.`;
+	if (holdForStageWait(fl, ctx, stages[0], first)) return `\n\nStage 1 waits for: ${stages[0].after?.reason}. Don't start it; end your turn now. The workflow sends you the stage when the wait is over.`;
 	return `\n\n${first}${deliverHintsText(fl, 1)}`;
 }
 
@@ -363,7 +364,7 @@ export async function approve(fl: Flow, ctx: ExtensionContext, arbiterOnFlaw = f
 	await setPhase(fl, ctx, "execute");
 	const extra = startExecution(fl, ctx, plan);
 	persist(fl);
-	fl.legacy.handover("workflow-execute", APPROVED_FINAL + extra, ctx);
+	handover(fl, "workflow-execute", APPROVED_FINAL + extra, ctx);
 }
 
 export async function escalate(fl: Flow, ctx: ExtensionContext): Promise<void> {
