@@ -113,7 +113,8 @@ import {
 	summaryLines,
 } from "./view.ts";
 import { shortModel } from "../shared/runs.ts";
-import { APPROVED_FINAL, assistantText, citedPaths, countFindings, createFlow, type Diff, execFileAsync, type FlowState, FOLDERS_ENTRY, GIT_GUARD_EXTENSION, type JudgeResult, type LastKnowledge, MAX_PLAN_CHARS, MODEL_ROLES, OWN_TOOLS, type Phase, type PlanSnap, type RepoRef, type ReviewPlan, type Snaps, STATE_ENTRY, SUMMARY_ENTRY, type ToolReply } from "./flow/context.ts";
+import { APPROVED_FINAL, assistantText, citedPaths, countFindings, createFlow, type Diff, execFileAsync, type FlowState, FOLDERS_ENTRY, GIT_GUARD_EXTENSION, type JudgeResult, type LastKnowledge, MAX_PLAN_CHARS, MODEL_ROLES, OWN_TOOLS, type Phase, type PlanSnap, type ReviewPlan, STATE_ENTRY, SUMMARY_ENTRY, type ToolReply } from "./flow/context.ts";
+import { advanceReviewBase, collectBoard, collectFlowDiff, dropReviewRefs, existingFolders, flowRepos, git, gitRoot, initReviewBase, joinReviewBase, judge, markPassed, nextAmendmentNumber, planCardReady, planCardText, planForJudge, refreshReviewBase, repoRoots, restoreReview, stageCheckpoints } from "./flow/diff.ts";
 import { abortGate, askUser, lastAssistantText, notifyUser, scheduleIdleNotice } from "./flow/notify.ts";
 import { judgeKnowledgeServer, modelOf, roleSpecOf, runRole } from "./flow/roles.ts";
 
@@ -200,7 +201,7 @@ export default function workflow(pi: ExtensionAPI) {
 	/** A flow has ended: on to the phase `returnTo` names. */
 	async function endFlow(ctx: ExtensionContext): Promise<void> {
 		notifyUser(fl, ctx, "flow finished");
-		await dropReviewRefs(ctx);
+		await dropReviewRefs(fl, ctx);
 		fl.state.reviewBase = undefined;
 		fl.state.passedTrees = undefined;
 		fl.state.judgedMerges = undefined;
@@ -227,7 +228,7 @@ export default function workflow(pi: ExtensionAPI) {
 		else if (fl.state.phase === "plan") fl.view.stage = "plan";
 		else if (fl.view.stage === "discuss" || fl.view.stage === "plan") fl.view.stage = "execute";
 		if (ctx.hasUI) fl.view.mount(ctx.ui);
-		const n = existingFolders().length + (fl.state.touchedRepos?.length ?? 0);
+		const n = existingFolders(fl).length + (fl.state.touchedRepos?.length ?? 0);
 		const cl = fl.state.checklist;
 		if (ctx.hasUI) ctx.ui.setStatus("workflow-plan", cl?.length && fl.state.phase === "execute" ? `plan ${cl.filter((i) => !isHuman(i) && i.done).length}/${cl.filter((i) => !isHuman(i)).length}` : undefined);
 		if (ctx.hasUI) ctx.ui.setStatus("workflow-wait", fl.state.waiting && fl.state.phase === "execute" ? `waiting: ${fl.state.waiting.reason.slice(0, 40)}` : undefined);
@@ -362,7 +363,7 @@ export default function workflow(pi: ExtensionAPI) {
 		const modelAction = preFlowModelAction(fl.state.phase, phase);
 		if (modelAction === "save" && ctx.model) fl.state.preFlowModel = { model: `${ctx.model.provider}/${ctx.model.id}`, thinking: pi.getThinkingLevel() };
 		const restoreModel = modelAction === "restore" ? fl.state.preFlowModel : undefined;
-		if (leavingFlow) await dropReviewRefs(ctx);
+		if (leavingFlow) await dropReviewRefs(fl, ctx);
 		fl.state.phase = phase;
 		fl.state.escalated = false;
 		fl.state.judgeRounds = 0;
@@ -393,7 +394,7 @@ export default function workflow(pi: ExtensionAPI) {
 			fl.state.planFlaw = undefined;
 		}
 		fl.consecutiveErrors = 0;
-		if (phase === "execute" && !(samePhase && fl.state.reviewBase)) await initReviewBase(ctx);
+		if (phase === "execute" && !(samePhase && fl.state.reviewBase)) await initReviewBase(fl, ctx);
 		if (phase !== "off") await applyRole(ctx, phase);
 		else if (restoreModel) await restorePreFlowModel(ctx, restoreModel);
 		if (phase === "off") fl.state.preFlowModel = undefined;
@@ -491,464 +492,6 @@ export default function workflow(pi: ExtensionAPI) {
 		persist();
 		updateStatus(ctx);
 		ctx.ui.notify(`workflow: back to ${fl.state.phase}${fl.state.phase === "off" ? "" : ` on ${describeRole(fl.cfg.roles[fl.state.phase])}`}`, "info");
-	}
-
-	async function git(cwd: string, ...args: string[]) {
-		return pi.exec("git", ["-C", cwd, ...args], { timeout: 30_000 });
-	}
-
-	/** Tracked changes against `base` plus untracked files of one repo (untruncated), or null outside a git work tree. */
-	function collectRepoDiff(cwd: string, base = "HEAD"): Promise<RepoDiff | null> {
-		return collectRepoDiffImpl(git, cwd, base);
-	}
-
-	/** A Diff from the whole text (hashed) and its per-repo parts; agents' fitDiffs fits the parts to the judge's limit. */
-	function makeDiff(full: string, parts: DiffPart[], files: number, names: string[], checkNames: string[], base: string, repos: RepoRef[], multi: boolean): Diff {
-		const hash = createHash("sha1").update(full).digest("hex");
-		return { text: full, parts, hash, files, base, names, checkNames, chars: full.length, repos, multi };
-	}
-
-	/** One repo's diff, or null outside a git work tree. `baseKey` identifies the base(s) the diff was taken against. */
-	async function collectDiff(cwd: string, base = "HEAD", baseKey = base): Promise<Diff | null> {
-		const r = await collectRepoDiff(cwd, base);
-		if (!r) return null;
-		const root = (await gitRoot(cwd)) ?? cwd;
-		return makeDiff(r.full, [{ key: root, base, full: r.full, names: r.names }], r.files, r.names, r.checkNames, baseKey, [{ root, dir: cwd, changed: r.full.length > 0 }], false);
-	}
-
-	/** The git work tree's top folder containing `dir`, or null. Only successes are cached. */
-	async function gitRoot(dir: string): Promise<string | null> {
-		const k = repoKey(dir);
-		const hit = fl.rootCache.get(k);
-		if (hit) return hit;
-		if (!fs.existsSync(dir)) return null;
-		const r = await git(dir, "rev-parse", "--show-toplevel");
-		const root = r.code === 0 ? r.stdout.trim() : "";
-		if (!root) return null;
-		fl.rootCache.set(k, root);
-		return root;
-	}
-
-	/** Folders added to the session that still exist. */
-	function existingFolders(): string[] {
-		return (fl.state.folders ?? []).filter((f) => {
-			try {
-				return fs.statSync(f).isDirectory();
-			} catch {
-				return false;
-			}
-		});
-	}
-
-	/** Every flow this machine's sessions have recently touched: registry dirs plus this session's repos. */
-	async function collectBoard(ctx: ExtensionContext) {
-		const dirs = new Set<string>(readRegistry(path.join(getAgentDir(), "workflow", "board.json")));
-		try {
-			dirs.add(await planDirFor(null));
-			for (const r of await flowRepos(ctx)) dirs.add(await planDirFor(r.root));
-		} catch {}
-		const entries: BoardEntry[] = [];
-		for (const dir of dirs) {
-			if (!fs.existsSync(dir)) continue;
-			for (const it of readLocalStatuses(dir)) entries.push({ flowId: it.flowId, dir, status: it.status, live: readLive(dir, it.flowId), mtime: it.mtime });
-		}
-		return boardRows(entries, Date.now(), os.hostname(), pidAlive);
-	}
-
-	/** The repos of this flow: the working folder's, the added folders', then those edited in the flow; git work trees only, no repeats. */
-	async function flowRepos(ctx: ExtensionContext): Promise<RepoRef[]> {
-		const out: RepoRef[] = [];
-		const seen = new Set<string>();
-		const add = (root: string | null, dir: string) => {
-			if (!root || seen.has(repoKey(root))) return;
-			seen.add(repoKey(root));
-			out.push({ root, dir, changed: false });
-		};
-		add(await gitRoot(ctx.cwd), ctx.cwd);
-		for (const f of existingFolders()) {
-			const root = await gitRoot(f);
-			add(root, root ?? f);
-		}
-		for (const t of fl.state.touchedRepos ?? []) {
-			const root = await gitRoot(t);
-			add(root, root ?? t);
-		}
-		return out;
-	}
-
-	/** The ref each repo's diff is taken against: `base` when given, else the repo's review base while executing, else HEAD. */
-	async function diffBase(ctx: ExtensionContext, ref: RepoRef, base: string | undefined): Promise<string> {
-		if (base) {
-			// A base that exists only in the working folder's repo means HEAD in the others.
-			if (ref.dir !== ctx.cwd && base !== "HEAD" && (await git(ref.dir, "rev-parse", "--verify", "--quiet", `${base}^{commit}`)).code !== 0) return "HEAD";
-			return base;
-		}
-		if (fl.state.phase === "execute" && !fl.state.reviewBase?.[repoKey(ref.root)]) await joinReviewBase(ref.root, true);
-		const review = fl.state.phase === "execute" ? fl.state.reviewBase?.[repoKey(ref.root)] : undefined;
-		if (!review) return "HEAD";
-		if ((await git(ref.dir, "rev-parse", "--verify", "--quiet", `${review}^{commit}`)).code === 0) return review;
-		if (!fl.goneBases.has(review)) {
-			fl.goneBases.add(review);
-			ctx.ui.notify(`workflow: the review base of ${ref.root} is gone; reviewing from HEAD`, "warning");
-		}
-		return "HEAD";
-	}
-
-	/** The diff of every repo in this flow, each against its review base (or `base`). With only the working folder's repo it is exactly collectDiff(ctx.cwd). */
-	async function collectFlowDiff(ctx: ExtensionContext, base?: string): Promise<Diff | null> {
-		const refs = await flowRepos(ctx);
-		if (refs.length === 0) return null;
-		const bases = await Promise.all(refs.map((ref) => diffBase(ctx, ref, base)));
-		const baseKey = refs.map((ref, i) => `${repoKey(ref.root)}=${bases[i]}`).join(";");
-		if (refs.length === 1 && refs[0].dir === ctx.cwd) return collectDiff(ctx.cwd, bases[0], baseKey);
-		const per = await mapLimit(refs, 4, async (ref) => collectRepoDiff(ref.dir, bases[refs.indexOf(ref)]));
-		const parts: { root: string; text: string }[] = [];
-		const diffParts: DiffPart[] = [];
-		const names: string[] = [];
-		const checkNames: string[] = [];
-		let files = 0;
-		const repos = refs.map((ref, i) => {
-			const r = per[i];
-			if (r) {
-				parts.push({ root: ref.root, text: r.full });
-				if (r.full) diffParts.push({ key: ref.root, base: bases[i], full: r.full, names: r.rootNames });
-				names.push(...r.rootNames.map((n) => `${ref.root}/${n}`));
-				for (const n of r.checkNames) if (!checkNames.includes(n)) checkNames.push(n);
-				files += r.files;
-			}
-			return { ...ref, changed: !!r && r.full.length > 0 };
-		});
-		return makeDiff(combineRepoTexts(parts), diffParts, files, names, checkNames, baseKey, repos, true);
-	}
-
-	function repoRoots(diff: Diff): string[] {
-		return diff.repos.filter((r) => r.changed).map((r) => r.root);
-	}
-
-	/** The working tree (tracked and untracked files, minus ignored ones) as a git tree id, or null. Uses a temporary index. */
-	async function snapshotTree(cwd: string): Promise<string | null> {
-		const tmp = path.join(os.tmpdir(), `workflow-judge-index-${process.pid}-${randomUUID()}`); // unique: snapshotRepos runs this for several repos at once
-		const run = (args: string[]) =>
-			execFileAsync("git", ["-C", cwd, ...args], { env: { ...process.env, GIT_INDEX_FILE: tmp }, timeout: 60_000, maxBuffer: 16 * 1024 * 1024 });
-		try {
-			const index = path.resolve(cwd, (await execFileAsync("git", ["-C", cwd, "rev-parse", "--git-path", "index"])).stdout.trim());
-			if (fs.existsSync(index)) fs.copyFileSync(index, tmp); // warm start: only changed files get hashed
-			await run(["add", "-A"]);
-			return (await run(["write-tree"])).stdout.trim() || null;
-		} catch {
-			return null;
-		} finally {
-			fs.rmSync(tmp, { force: true });
-		}
-	}
-
-	/** Each repo's working tree and HEAD, or null when a tree cannot be built. */
-	async function snapshotRepos(diff: Diff): Promise<Snaps | null> {
-		const per = await Promise.all(
-			diff.repos.map(async (r) => {
-				const [tree, head] = await Promise.all([snapshotTree(r.dir), git(r.dir, "rev-parse", "HEAD")]);
-				return { key: repoKey(r.root), tree, head: head.stdout.trim() };
-			}),
-		);
-		const snaps: Snaps = {};
-		for (const p of per) {
-			if (!p.tree) return null;
-			snaps[p.key] = { tree: p.tree, head: p.head };
-		}
-		return snaps;
-	}
-
-	/** True when a minor-fix round changed only files the minor findings cite, in every repo of the diff. */
-	async function minorFixOnly(diff: Diff): Promise<boolean> {
-		const fix = fl.state.minorFix;
-		if (!fix || !fix.cited.length || fl.state.lastJudge?.base !== diff.base) return false;
-		const snaps = await snapshotRepos(diff);
-		if (!snaps) return false;
-		const keys = Object.keys(snaps);
-		if (keys.length !== Object.keys(fix.trees).length || keys.some((k) => !fix.trees[k])) return false;
-		for (const r of diff.repos) {
-			const k = repoKey(r.root);
-			const d = await git(r.dir, "diff", "--name-only", "-z", fix.trees[k], snaps[k].tree);
-			if (d.code !== 0) return false;
-			const names = d.stdout.split("\0").filter(Boolean).map((n) => n.replace(/\\/g, "/"));
-			if (names.some((n) => !fix.cited.some((c) => c === n || c.endsWith(`/${n}`) || (c.includes("/") && n.endsWith(`/${c}`))))) return false;
-		}
-		return true;
-	}
-
-	/** Whether the judge reviews the whole diff, only the changes since its last round, or nothing (no changes since). */
-	async function reviewPlan(diff: Diff, full: boolean, skipSame = false): Promise<ReviewPlan> {
-		const prev = fl.state.lastJudge;
-		if (!full && !skipSame && prev?.hash === diff.hash) return { kind: "same", prev };
-		const snaps = await snapshotRepos(diff);
-		const fullPlan = { kind: "full" as const, snaps };
-		// Another base or another set of repos: the last round no longer lines up. Commits since do not matter: the delta is between trees.
-		if (full || !fl.cfg.judge.recheck || !prev?.repos || !snaps || prev.base !== diff.base) return fullPlan;
-		const before = prev.repos;
-		const keys = Object.keys(snaps);
-		if (keys.length !== Object.keys(before).length || keys.some((k) => !before[k])) return fullPlan;
-		const per = await Promise.all(
-			diff.repos.map(async (r) => {
-				const k = repoKey(r.root);
-				const [d, n] = await Promise.all([
-					git(r.dir, "diff", "--no-color", before[k].tree, snaps[k].tree),
-					git(r.dir, "diff", "--name-only", "-z", "--diff-filter=d", before[k].tree, snaps[k].tree),
-				]);
-				return { root: r.root, base: before[k].tree, text: d.stdout, names: n.stdout.split("\0").filter(Boolean) };
-			}),
-		);
-		const delta = diff.multi ? combineRepoTexts(per) : per[0].text;
-		// Fixes that rewrite most of the change get a full review: little to save, more to miss.
-		if (!delta.trim() || delta.length > diff.chars * fl.cfg.judge.recheckMaxShare) return fullPlan;
-		const changed: string[] = [];
-		for (const p of per) for (const n of p.names) if (!changed.includes(n)) changed.push(n);
-		const parts = per.filter((p) => p.text).map((p) => ({ key: p.root, base: p.base, full: p.text, names: p.names }));
-		return { kind: "recheck", snaps, prev, delta, parts, changed, cites: citeNames(per, diff.multi) };
-	}
-
-	/**
-	 * Reviews `diff`. The first round sees the whole diff; later rounds see only the changes since the
-	 * last round plus its findings (cheaper, fresh each time). A large change that passes on a
-	 * re-review gets one final full review when the changes since touched a file the last findings did not cite. `full` forces a full review.
-	 */
-	async function judge(ctx: ExtensionContext, diff: Diff, focus: string | undefined, signal?: AbortSignal, onChange?: (run: FlowRun) => void, full = false, disputes?: string): Promise<JudgeResult & { run: FlowRun }> {
-		// A minor-fix round that touched only the cited files needs no review: the tree counts as passed.
-		if (!full && !disputes && (await minorFixOnly(diff))) {
-			const run = fl.view.start("judge", "minor fixes in the cited files", modelOf(fl, "judge").model);
-			fl.view.finish(run, true, "PASS · only the cited files changed, no re-review");
-			onChange?.(run);
-			fl.seenDiffs.add(diff.hash);
-			const snaps = await snapshotRepos(diff);
-			fl.state.minorFix = undefined;
-			fl.state.lastJudge = snaps ? { hash: diff.hash, repos: snaps, base: diff.base, verdict: "PASS", text: "The fix touched only the files the minor findings cite; it is passed without another review." } : fl.state.lastJudge;
-			markPassed(diff.hash);
-			return { verdict: "PASS", text: "The fix touched only the files the minor findings cite; it is passed without another review.", findings: [], hash: diff.hash, usage: emptyUsage(), run };
-		}
-		// A real review is running: the minor-fix shortcut is gone for good.
-		if (fl.state.minorFix) {
-			fl.state.minorFix = undefined;
-			persist();
-		}
-		// Disputes need a fresh look at the code, so they never get the "no changes" shortcut (a recheck still applies).
-		const plan = await reviewPlan(diff, full, Boolean(disputes));
-		if (plan.kind === "same") {
-			const run = fl.view.start("judge", "no changes since the last round", modelOf(fl, "judge").model);
-			fl.view.finish(run, plan.prev.verdict === "PASS", `${plan.prev.verdict} · unchanged, previous result`);
-			onChange?.(run);
-			fl.seenDiffs.add(diff.hash);
-			return { verdict: plan.prev.verdict, text: `No changes since the last judge round; its result stands.\n\n${plan.prev.text}`, findings: parseFindings(plan.prev.text), hash: diff.hash, usage: emptyUsage(), run };
-		}
-		let r = await judgeOnce(ctx, diff, focus, plan, signal, onChange, disputes);
-		const limit = fl.cfg.judge.finalFullReviewOverChars;
-		if (r.verdict === "PASS" && plan.kind === "recheck" && limit > 0 && diff.chars > limit && needsFinalFullReview(fl.cfg.judge.finalFullReviewNewFilesOnly, plan.prev.text, plan.cites)) {
-			const share = await repeatShare(diff, plan.snaps);
-			if (share !== undefined) {
-				r = { ...r, text: `${r.text}\n\nFinal full review skipped: a full review passed this stage and the changes since are ${Math.round(share * 100)}% of the diff.` };
-			} else {
-				const final = await judgeOnce(ctx, diff, focus, { kind: "full", snaps: plan.snaps }, signal, onChange, disputes);
-				r = { ...final, usage: addUsage(addUsage(emptyUsage(), r.usage), final.usage) };
-			}
-		}
-		// A pass that questions the plan is not a pass yet: resolvePlanFlaw decides.
-		if (r.verdict === "PASS" && !planFlaws(r.findings).length) markPassed(diff.hash);
-		return r;
-	}
-
-	/** The share of the diff changed since the last passing full review of this stage, when that is small enough to skip the final full review; else undefined. */
-	async function repeatShare(diff: Diff, snaps: Snaps | undefined): Promise<number | undefined> {
-		const pass = fl.state.lastFullPass;
-		if (!pass || !snaps || pass.base !== diff.base || diff.chars <= 0) return undefined;
-		const keys = Object.keys(snaps);
-		if (keys.length !== Object.keys(pass.repos).length || keys.some((k) => !pass.repos[k])) return undefined;
-		const parts = await Promise.all(diff.repos.map((r) => git(r.dir, "diff", "--no-color", pass.repos[repoKey(r.root)]?.tree ?? "", snaps[repoKey(r.root)]?.tree ?? "")));
-		if (parts.some((p) => p.code !== 0)) return undefined;
-		const since = parts.reduce((n, p) => n + p.stdout.length, 0);
-		return shouldSkipRepeatFullReview(since, diff.chars, fl.cfg.judge.finalFullReviewRepeatMaxShare) ? since / diff.chars : undefined;
-	}
-
-	function markPassed(hash: string): void {
-		fl.state.passedDiff = hash;
-		fl.state.judgeRounds = 0;
-		recordPassedTrees(hash);
-		persist();
-	}
-
-	// ----------------------------------------------------------------------
-	// Review base, passed trees and the judge gate
-	// ----------------------------------------------------------------------
-
-	/** Remembers the trees of a judge pass: a merge, a push to a protected branch and a publish need the tree they act on to be one of them. */
-	function recordPassedTrees(hash: string): void {
-		const repos = fl.state.lastJudge?.hash === hash ? fl.state.lastJudge.repos : undefined;
-		if (!repos) return;
-		const all = { ...(fl.state.passedTrees ?? {}) };
-		for (const [k, v] of Object.entries(repos)) all[k] = [...(all[k] ?? []).filter((t) => t !== v.tree), v.tree].slice(-20);
-		fl.state.passedTrees = all;
-	}
-
-	/** Every repo of the flow starts its review at its HEAD. */
-	async function initReviewBase(ctx: ExtensionContext): Promise<void> {
-		const base: Record<string, string> = {};
-		for (const r of await flowRepos(ctx)) {
-			const head = await git(r.dir, "rev-parse", "HEAD");
-			if (head.code === 0 && head.stdout.trim()) base[repoKey(r.root)] = head.stdout.trim();
-		}
-		fl.state.reviewBase = Object.keys(base).length ? base : undefined;
-	}
-
-	/**
-	 * A repo that joins the flow later reviews from its HEAD at that time. `lazy`: the join is only noticed now (a resumed flow, or a diff of a repo
-	 * nobody announced), so commits may already exist: the base is then where the branch left the base branch, so they are reviewed too.
-	 */
-	async function joinReviewBase(root: string, lazy = false): Promise<void> {
-		if (fl.state.phase !== "execute") return;
-		const key = repoKey(root);
-		if (fl.state.reviewBase?.[key]) return;
-		let base = "";
-		if (lazy) {
-			const upstream = await upstreamBase(root);
-			base = (upstream ? await forkBase(defaultRunner, root, upstream) : null) ?? "";
-		}
-		if (!base) {
-			const head = await git(root, "rev-parse", "HEAD");
-			if (head.code === 0) base = head.stdout.trim();
-		}
-		if (base) {
-			fl.state.reviewBase = { ...(fl.state.reviewBase ?? {}), [key]: base };
-			persist();
-		}
-	}
-
-	/** Moves a repo's review base to `commit` and keeps that commit alive under the flow's ref. A failed ref write only warns: the base works until git collects it. */
-	async function setReviewBase(ctx: ExtensionContext, ref: RepoRef, commit: string): Promise<void> {
-		const key = repoKey(ref.root);
-		fl.state.reviewBase = { ...(fl.state.reviewBase ?? {}), [key]: commit };
-		const flowId = fl.state.planDoc?.flowId;
-		if (!flowId) return;
-		if (await writeReviewRef(gitEnv, ref.dir, flowId, commit)) fl.reviewRefs.set(key, { dir: ref.dir, flowId });
-		else ctx.ui.notify(`workflow: review base kept in memory only (could not write refs/pi/review-base/${flowId} in ${ref.root})`, "warning");
-	}
-
-	/** The base branch of a repo as `origin/<name>`: delivery.base, else origin's HEAD, else origin/main; undefined when none exists. */
-	async function upstreamBase(dir: string): Promise<string | undefined> {
-		const names: string[] = [];
-		if (fl.cfg.delivery.base) names.push(`origin/${fl.cfg.delivery.base}`);
-		const head = await git(dir, "symbolic-ref", "--short", "refs/remotes/origin/HEAD");
-		if (head.code === 0 && head.stdout.trim()) names.push(head.stdout.trim());
-		names.push("origin/main");
-		for (const n of names) if ((await git(dir, "rev-parse", "--verify", "--quiet", `${n}^{commit}`)).code === 0) return n;
-		return undefined;
-	}
-
-	/**
-	 * Before a judge run: when the base branch was merged into a repo's branch, its review base takes in what that brought, so the merged work
-	 * is not reviewed as this flow's. Returns a note for the judge's focus when that was not possible (a conflict, or git before 2.38).
-	 */
-	async function refreshReviewBase(ctx: ExtensionContext): Promise<string | undefined> {
-		if (fl.state.phase !== "execute") return undefined;
-		const notes = new Set<string>();
-		for (const ref of await flowRepos(ctx)) {
-			const base = fl.state.reviewBase?.[repoKey(ref.root)];
-			if (!base) continue;
-			const upstream = await upstreamBase(ref.dir);
-			if (!upstream) continue;
-			if ((await git(ref.dir, "merge-base", "--is-ancestor", upstream, "HEAD")).code !== 0) continue;
-			if ((await git(ref.dir, "merge-base", "--is-ancestor", upstream, base)).code === 0) continue;
-			const moved = await mergedBase(defaultRunner, ref.dir, base, upstream);
-			if (moved) await setReviewBase(ctx, ref, moved);
-			else notes.add(`This diff includes changes merged from ${upstream}; review only this flow's changes.`);
-		}
-		return notes.size ? [...notes].join(" ") : undefined;
-	}
-
-	/** After a stage passes: each repo's review base becomes the worktree as it is, so the next stage is reviewed on its own. */
-	async function advanceReviewBase(ctx: ExtensionContext): Promise<void> {
-		const repos = fl.state.lastJudge?.repos;
-		if (!repos) return;
-		for (const ref of await flowRepos(ctx)) {
-			const snap = repos[repoKey(ref.root)];
-			if (!snap) continue;
-			// The worktree as it is now, not the tree that was judged: the flow's pull request may be merged and the base branch moved on since.
-			const tree = (await snapshotTree(ref.dir)) ?? snap.tree;
-			const sha = await baseFromTree(defaultRunner, ref.dir, tree);
-			if (!sha) {
-				ctx.ui.notify("workflow: review base not moved (git commit-tree failed)", "warning");
-				continue;
-			}
-			await setReviewBase(ctx, ref, sha);
-		}
-	}
-
-	/** Deletes the flow's review-base refs: those this session wrote, and the flow's ref in every repo it covers (a reloaded session lost the list). */
-	async function dropReviewRefs(ctx: ExtensionContext): Promise<void> {
-		const written = [...fl.reviewRefs.values()];
-		fl.reviewRefs.clear();
-		for (const v of written) await deleteReviewRef(gitEnv, v.dir, v.flowId);
-		const flowId = fl.state.planDoc?.flowId;
-		if (!flowId) return;
-		for (const ref of await flowRepos(ctx)) await deleteReviewRef(gitEnv, ref.dir, flowId);
-	}
-
-	/** A resumed flow takes back its review state. A review base git no longer has falls back to HEAD with a warning. */
-	async function restoreReview(ctx: ExtensionContext, status: PlanStatus): Promise<void> {
-		fl.state.passedTrees = status.passedTrees ? Object.fromEntries(Object.entries(status.passedTrees).map(([k, v]) => [k, [...v]])) : undefined;
-		fl.state.judgedMerges = status.judgedMerges ? Object.fromEntries(Object.entries(status.judgedMerges).map(([k, v]) => [k, { ...v }])) : undefined;
-		for (const ref of await flowRepos(ctx)) {
-			const key = repoKey(ref.root);
-			const sha = status.reviewBase?.[key];
-			if (!sha) {
-				await joinReviewBase(ref.root, true);
-				continue;
-			}
-			if ((await git(ref.dir, "cat-file", "-e", `${sha}^{commit}`)).code === 0) {
-				fl.state.reviewBase = { ...(fl.state.reviewBase ?? {}), [key]: sha };
-				fl.reviewRefs.set(key, { dir: ref.dir, flowId: status.flowId });
-			} else ctx.ui.notify(`workflow: the review base of ${ref.root} is gone; reviewing from HEAD`, "warning");
-		}
-	}
-
-	/** The approved plan for the judge and the arbiter; a very long one loses its middle, never its amendments. */
-	function planForJudge(): string {
-		const plan = fl.state.approvedPlan;
-		if (!plan) return "None recorded: judge the diff on its own.";
-		const staged = currentStages();
-		const note = staged ? `\n\n${stageNote(staged.stages, staged.current)}` : "";
-		const list = fl.state.checklist?.length ? `\n\n## Executor's checklist (claims, not proof)\n${fl.state.checklist.map((i) => `- [${i.done ? "x" : " "}] ${i.id} ${i.text}`).join("\n")}` : "";
-		return trimPlan(plan) + note + list + checkpointSection();
-	}
-
-	/** Checkpoints delivered earlier: this stage's in a staged plan, all of them otherwise. */
-	function stageCheckpoints(): NonNullable<FlowState["checkpoints"]> {
-		const staged = currentStages();
-		return (fl.state.checkpoints ?? []).filter((c) => !staged || c.stage === staged.current);
-	}
-
-	function checkpointSection(): string {
-		const note = checkpointNote(stageCheckpoints());
-		return note ? `\n\n${note}` : "";
-	}
-
-	/** N of the next `## Amendment N`: the amendments already in the approved plan + 1 (shared by the arbiter and the executor). */
-	function nextAmendmentNumber(): number {
-		return (fl.state.approvedPlan?.match(/^## Amendment \d+/gm) ?? []).length + 1;
-	}
-
-	/** `planCardText` once the plan file is written: waits for the plan write queue, at most 10 s, so the card can name the file. */
-	async function planCardReady(): Promise<string> {
-		if (!planFilePath()) {
-			let timer: ReturnType<typeof setTimeout> | undefined;
-			await Promise.race([fl.plan.planChain, new Promise<void>((resolve) => (timer = setTimeout(resolve, 10_000)))]);
-			clearTimeout(timer);
-		}
-		return planCardText();
-	}
-
-	/** The short plan sent after a compaction in place of the full plan. Without a plan file it carries the (trimmed) plan itself. */
-	function planCardText(): string {
-		const staged = currentStages();
-		const file = planFilePath();
-		const plan = fl.state.approvedPlan ?? "";
-		return planCard(file ? plan : trimPlan(plan), fl.state.checklist, staged?.current, staged?.stages.length, file, fl.state.waiting?.reason);
 	}
 
 	// ----------------------------------------------------------------------
@@ -1089,7 +632,7 @@ export default function workflow(pi: ExtensionAPI) {
 
 	async function writePlan(ctx: ExtensionContext, snap: PlanSnap): Promise<void> {
 		fl.claim.claimCwd = ctx.cwd.replace(/\\/g, "/");
-		const found = [...(await flowRepos(ctx)).map((r) => r.root), ...(await Promise.all(snap.touched.map((t) => gitRoot(t))))];
+		const found = [...(await flowRepos(fl, ctx)).map((r) => r.root), ...(await Promise.all(snap.touched.map((t) => gitRoot(fl, t))))];
 		const roots = uniqueRoots([...snap.roots, ...found.filter((r): r is string => !!r)]);
 		const dir = fl.plan.planDirs.get(snap.flowId) ?? (await planDirFor(roots[0] ?? null));
 		const infos = await Promise.all(roots.map((r) => repoInfo(gitEnv, r)));
@@ -1277,7 +820,7 @@ export default function workflow(pi: ExtensionAPI) {
 	/** Deletes plans past the retention limits in this flow's plan folders, and restores the active flow's file. */
 	async function planHousekeeping(ctx: ExtensionContext): Promise<void> {
 		try {
-			const repos = await flowRepos(ctx);
+			const repos = await flowRepos(fl, ctx);
 			const dirs = new Set<string>([await planDirFor(null)]);
 			for (const r of repos) dirs.add(await planDirFor(r.root));
 			const active = fl.state.planDoc && !fl.state.planDoc.finished ? fl.state.planDoc.flowId : undefined;
@@ -1334,14 +877,14 @@ export default function workflow(pi: ExtensionAPI) {
 			notify(`a flow is already running (${busy}); finish or leave it before resuming another`);
 			return;
 		}
-		const cwdRoot = await gitRoot(ctx.cwd);
+		const cwdRoot = await gitRoot(fl, ctx.cwd);
 		if (!cwdRoot) {
 			notify("the working folder is not in a git repo, so there is no plan to resume");
 			return;
 		}
 		const searchRoots: string[] = [cwdRoot];
-		for (const f of existingFolders()) {
-			const r = await gitRoot(f);
+		for (const f of existingFolders(fl)) {
+			const r = await gitRoot(fl, f);
 			if (r && !searchRoots.some((s) => repoKey(s) === repoKey(r))) searchRoots.push(r);
 		}
 		const found = new Map<string, { entry: RefEntry; root: string }>();
@@ -1428,7 +971,7 @@ export default function workflow(pi: ExtensionAPI) {
 			}
 			for (const d of siblings) {
 				const remote = await remoteOf(gitEnv, d);
-				if (remote?.url === url) return (await gitRoot(d)) ?? undefined;
+				if (remote?.url === url) return (await gitRoot(fl, d)) ?? undefined;
 			}
 			return undefined;
 		};
@@ -1440,7 +983,7 @@ export default function workflow(pi: ExtensionAPI) {
 				const label = r.remote ?? "a repo without a remote";
 				const answer = r.remote ? (await ctx.ui.input(`Where is ${label} on this device?`, "path to the repo, empty to skip"))?.trim() : "";
 				const abs = answer ? path.resolve(ctx.cwd, answer).replace(/\\/g, "/") : "";
-				root = abs && isDir(abs) ? ((await gitRoot(abs)) ?? undefined) : undefined;
+				root = abs && isDir(abs) ? ((await gitRoot(fl, abs)) ?? undefined) : undefined;
 				if (!root) {
 					notify(`${label}: not found on this device, skipped`);
 					continue;
@@ -1489,7 +1032,7 @@ export default function workflow(pi: ExtensionAPI) {
 		fl.state.checklist = parseChecklist(plan).map((i) => ({ ...i, done: status.done.includes(i.id) }));
 		if (!fl.state.checklist.length) fl.state.checklist = undefined;
 		fl.state.checkpoints = status.checkpoints?.map((c) => ({ ...c }));
-		await restoreReview(ctx, status);
+		await restoreReview(fl, ctx, status);
 		fl.state.waiting = undefined;
 		fl.wait.publishWaitSince.clear();
 		if (status.waiting) {
@@ -1520,7 +1063,7 @@ export default function workflow(pi: ExtensionAPI) {
 		startWaitTimer(fl.state.waiting?.step && fl.wait.publishWaitSince.has(fl.state.waiting.step) ? Date.parse(fl.state.waiting.since) : undefined);
 		await fl.plan.planChain;
 		pi.sendMessage(
-			{ customType: "workflow-resume-plan", content: `Resumed on this device: check \`git status\` and the branch in each repo, then continue with the open steps.\n\n${planCardText()}`, display: true },
+			{ customType: "workflow-resume-plan", content: `Resumed on this device: check \`git status\` and the branch in each repo, then continue with the open steps.\n\n${planCardText(fl)}`, display: true },
 			{ triggerTurn: false },
 		);
 		notify(`resumed "${status.title}"${status.stage ? ` at stage ${status.stage}` : ""}; send a message to continue${added ? ` (reloading to add ${added} folder${added === 1 ? "" : "s"})` : ""}`, "info");
@@ -1586,7 +1129,7 @@ export default function workflow(pi: ExtensionAPI) {
 			mode: recheck ? "incremental" : "full",
 			diff: recheck ? plan.parts : diff.parts,
 			files,
-			spec: fl.state.approvedPlan ? planForJudge() : undefined,
+			spec: fl.state.approvedPlan ? planForJudge(fl) : undefined,
 			focus,
 			criteria,
 			previousFindings: prev ? parseFindings(prev.text) : undefined,
@@ -1777,7 +1320,7 @@ export default function workflow(pi: ExtensionAPI) {
 			if (params.kind === "verify") {
 				const vstep = params.step?.trim().toUpperCase() || undefined;
 				if (!(vstep && parseVerifyStep(plan, vstep))) {
-					fl.state.approvedPlan = `${plan.replace(/\s+$/, "")}\n\n${verifyAmendment(nextAmendmentNumber(), { steps: reason, step: vstep })}\n`;
+					fl.state.approvedPlan = `${plan.replace(/\s+$/, "")}\n\n${verifyAmendment(nextAmendmentNumber(fl), { steps: reason, step: vstep })}\n`;
 					const item = vstep ? fl.state.checklist?.find((i) => i.id === vstep) : undefined;
 					if (item && !isHuman(item)) item.done = true;
 					refreshChecklist();
@@ -1806,14 +1349,14 @@ export default function workflow(pi: ExtensionAPI) {
 			if (autopilotSkipsWait(autopilotOn(), params.manual, params.kind)) {
 				const kind = params.kind === "approve" ? "approve" : "act";
 				noteAuto(`wait skipped: ${reason}`);
-				fl.state.approvedPlan = `${plan.replace(/\s+$/, "")}\n\n${autopilotAmendment(nextAmendmentNumber(), { reason, step, kind })}\n`;
+				fl.state.approvedPlan = `${plan.replace(/\s+$/, "")}\n\n${autopilotAmendment(nextAmendmentNumber(fl), { reason, step, kind })}\n`;
 				refreshChecklist();
 				persist();
 				planMilestone(ctx);
 				return reply(autopilotReply(kind, reason, check));
 			}
 			if (!planned) {
-				fl.state.approvedPlan = `${plan.replace(/\s+$/, "")}\n\n${waitAmendment(nextAmendmentNumber(), { reason, step, check })}\n`;
+				fl.state.approvedPlan = `${plan.replace(/\s+$/, "")}\n\n${waitAmendment(nextAmendmentNumber(fl), { reason, step, check })}\n`;
 				refreshChecklist();
 			}
 			setWaiting({ reason, ...(check ? { check } : {}), ...(params.kind === "external" ? { waitKind: "external" as const } : {}), ...(step ? { step } : {}), stage: fl.state.stage, since: new Date().toISOString(), planned });
@@ -1852,7 +1395,7 @@ export default function workflow(pi: ExtensionAPI) {
 
 	/** The clone's publish lock file (shared by every session and worktree of the clone). */
 	async function publishLockFile(root: string): Promise<string> {
-		const common = (await git(root, "rev-parse", "--git-common-dir")).stdout.trim() || ".git";
+		const common = (await git(fl, root, "rev-parse", "--git-common-dir")).stdout.trim() || ".git";
 		return path.resolve(root, common, "iec-publish.lock");
 	}
 
@@ -1897,7 +1440,7 @@ export default function workflow(pi: ExtensionAPI) {
 			const mir = pub ? null : parseMirrorStep(plan, step);
 			if (!pub && !mir) return reply(`Step ${step} is not a \`Publish: <package>\` or \`Mirror: <folder>|all\` step of the approved plan (packages only, no versions). Nothing published.`);
 			if (fl.state.checklist?.find((i) => i.id === step)?.done) return reply(`Step ${step} is already ticked. Nothing published.`);
-			const repo = (await flowRepos(ctx)).find((r) => fs.existsSync(path.join(r.root, "scripts", "update-packages.mjs")));
+			const repo = (await flowRepos(fl, ctx)).find((r) => fs.existsSync(path.join(r.root, "scripts", "update-packages.mjs")));
 			if (!repo) return reply("No repo of this flow has scripts/update-packages.mjs (add the unity-packages folder to the flow). Nothing published.");
 			const root = repo.root;
 			const wait = (why: string, check: string): ToolReply => {
@@ -1944,7 +1487,7 @@ export default function workflow(pi: ExtensionAPI) {
 			const allowed = gitTaskAllowed(fl.state.phase, !!fl.state.approvedPlan);
 			if (!allowed.ok) return reply("git_task works only in normal mode or while executing an approved plan. Nothing changed.");
 			if (!fs.existsSync(GIT_GUARD_EXTENSION)) return reply(`git_task failed: git guard extension not found at ${GIT_GUARD_EXTENSION}`);
-			const repos = await flowRepos(ctx);
+			const repos = await flowRepos(fl, ctx);
 			const cwd = params.repo ? path.resolve(ctx.cwd, params.repo) : ctx.cwd;
 			if (!fs.existsSync(cwd)) return reply(`git_task failed: ${cwd} does not exist.`);
 			const multi = (fl.state.folders?.length ?? 0) > 0 || (fl.state.touchedRepos?.length ?? 0) > 0;
@@ -1971,9 +1514,9 @@ export default function workflow(pi: ExtensionAPI) {
 			const headBefore = new Map<string, string>();
 			const remoteBefore = new Map<string, boolean>();
 			for (const r of repoList) {
-				branchBefore.set(r.root, (await git(r.dir, "rev-parse", "--abbrev-ref", "HEAD")).stdout.trim());
-				headBefore.set(r.root, (await git(r.dir, "rev-parse", "HEAD")).stdout.trim());
-				remoteBefore.set(r.root, !!(await git(r.dir, "branch", "-r", "--contains", "HEAD")).stdout.trim());
+				branchBefore.set(r.root, (await git(fl, r.dir, "rev-parse", "--abbrev-ref", "HEAD")).stdout.trim());
+				headBefore.set(r.root, (await git(fl, r.dir, "rev-parse", "HEAD")).stdout.trim());
+				remoteBefore.set(r.root, !!(await git(fl, r.dir, "branch", "-r", "--contains", "HEAD")).stdout.trim());
 			}
 			const progress = toolProgress(onUpdate);
 			const prevStage = fl.view.stage;
@@ -1998,9 +1541,9 @@ export default function workflow(pi: ExtensionAPI) {
 			const lines: string[] = [];
 			for (const r of repoList) {
 				const key = repoKey(r.root);
-				const branch = (await git(r.dir, "rev-parse", "--abbrev-ref", "HEAD")).stdout.trim();
+				const branch = (await git(fl, r.dir, "rev-parse", "--abbrev-ref", "HEAD")).stdout.trim();
 				const base = fl.state.reviewBase?.[key];
-				const n = base ? (await git(r.dir, "rev-list", "--count", `${base}..HEAD`)).stdout.trim() : "?";
+				const n = base ? (await git(fl, r.dir, "rev-list", "--count", `${base}..HEAD`)).stdout.trim() : "?";
 				const rec = await recordJudged(defaultRunner, r.dir, { startBranch: branchBefore.get(r.root) ?? "", headBefore: headBefore.get(r.root), remoteBefore: remoteBefore.get(r.root), report: text, passed: fl.state.passedTrees?.[key] ?? [], protectedBranches: fl.cfg.protectedBranches });
 				const pr = rec.pr;
 				const existing = fl.state.judgedMerges?.[key];
@@ -2021,7 +1564,7 @@ export default function workflow(pi: ExtensionAPI) {
 	async function judgedMergeHead(root: string): Promise<{ head: string } | { error: string }> {
 		const jm = fl.state.judgedMerges?.[repoKey(root)];
 		if (!jm) return { error: NO_JUDGED_MERGE };
-		await git(root, "fetch", "--quiet", "origin");
+		await git(fl, root, "fetch", "--quiet", "origin");
 		if (jm.pr) {
 			const slug = await originRepo(defaultRunner, root);
 			const view = await defaultRunner("gh", ["pr", "view", jm.pr, ...(slug ? ["-R", slug] : []), "--json", "state,mergeCommit"], root);
@@ -2037,7 +1580,7 @@ export default function workflow(pi: ExtensionAPI) {
 			}
 		}
 		if (jm.commit) {
-			const onRemote = await git(root, "branch", "-r", "--contains", jm.commit);
+			const onRemote = await git(fl, root, "branch", "-r", "--contains", jm.commit);
 			if (onRemote.code !== 0 || !onRemote.stdout.trim()) return { error: `The judged commit ${jm.commit.slice(0, 9)} is not on origin yet: push it first. Nothing published.` };
 			return { head: jm.commit };
 		}
@@ -2048,7 +1591,7 @@ export default function workflow(pi: ExtensionAPI) {
 	async function readMergedItems(root: string, head: string, packages: string[]): Promise<{ items: { name: string; version: string }[] } | { error: string }> {
 		const items: { name: string; version: string }[] = [];
 		for (const name of packages) {
-			const show = await git(root, "show", `${head}:${name}/package.json`);
+			const show = await git(fl, root, "show", `${head}:${name}/package.json`);
 			let version = "";
 			try {
 				version = String(JSON.parse(show.stdout).version ?? "");
@@ -2078,7 +1621,7 @@ export default function workflow(pi: ExtensionAPI) {
 	async function taggedOnOrigin(root: string, items: { name: string; version: string }[]): Promise<Set<string>> {
 		const tagged = new Set<string>();
 		for (const i of items) {
-			const remote = await git(root, "ls-remote", "--tags", "origin", `${i.name}/v${i.version}`);
+			const remote = await git(fl, root, "ls-remote", "--tags", "origin", `${i.name}/v${i.version}`);
 			if (remote.code === 0 && remote.stdout.trim()) tagged.add(`${i.name}/v${i.version}`);
 		}
 		return tagged;
@@ -2176,9 +1719,9 @@ export default function workflow(pi: ExtensionAPI) {
 				ctx.ui.setWorkingMessage("arbiter checking the merge request…");
 				try {
 					const repoLines: string[] = [];
-					for (const r of await flowRepos(ctx)) {
-						const status = (await git(r.dir, "status", "--short")).stdout.trim();
-						const log = (await git(r.dir, "log", "--oneline", "-20")).stdout.trim();
+					for (const r of await flowRepos(fl, ctx)) {
+						const status = (await git(fl, r.dir, "status", "--short")).stdout.trim();
+						const log = (await git(fl, r.dir, "log", "--oneline", "-20")).stdout.trim();
 						repoLines.push(`### ${r.root}\n${status || "(clean)"}\n${log}`);
 					}
 					const openIds = gateOpenSteps(fl.state.approvedPlan ?? "", fl.state.checklist, staged ? { current: staged.current, total: staged.stages.length } : undefined);
@@ -2187,7 +1730,7 @@ export default function workflow(pi: ExtensionAPI) {
 					const { result, run } = await runRole(fl, "arbiter", "merge", {
 						systemPrompts: [
 							prompts.MERGE_ARBITER,
-							`## Approved plan\n\n${planForJudge()}`,
+							`## Approved plan\n\n${planForJudge(fl)}`,
 							`## Position\n\n${position}\nOpen steps: ${open.map((i) => `${i.id} ${i.text}`).join("; ") || "none"}`,
 							`## Repos\n\n${repoLines.join("\n\n") || "(none)"}`,
 							`## Executor's reason\n\n${reason}`,
@@ -2233,8 +1776,8 @@ export default function workflow(pi: ExtensionAPI) {
 	// its own review (review base, rounds, gates). Errors the review throws reject the claim.
 	pi.events.on("agents:judge-call", (payload) =>
 		claimJudgeCall(fl.state.phase, payload, async (params: JudgeParams, signal: AbortSignal | undefined, onUpdate: any, ctx: ExtensionContext) => {
-			const baseNote = params.base ? undefined : await refreshReviewBase(ctx);
-			const diff = await collectFlowDiff(ctx, params.base || undefined);
+			const baseNote = params.base ? undefined : await refreshReviewBase(fl, ctx);
+			const diff = await collectFlowDiff(fl, ctx, params.base || undefined);
 			if (!diff) throw new Error("no git work tree in this flow (working folder, /folders, or repos edited this flow); the judge reviews git diffs");
 			if (fl.state.phase === "execute" && currentStages()) {
 				fl.state.stageJudged = true;
@@ -2242,7 +1785,7 @@ export default function workflow(pi: ExtensionAPI) {
 			}
 			if (!diff.text) return { content: [{ type: "text", text: "No changes to review." }], details: undefined };
 			const progress = toolProgress(onUpdate);
-			const r = await judge(ctx, diff, [params.focus, baseNote].filter(Boolean).join("\n") || undefined, signal, progress.track, params.full === true, params.disputes);
+			const r = await judge(fl, ctx, diff, [params.focus, baseNote].filter(Boolean).join("\n") || undefined, signal, progress.track, params.full === true, params.disputes);
 			if (r.verdict === "ERROR") throw new Error(r.text);
 			if (r.verdict === "FAIL") fl.state.judgeRounds++;
 			let text = r.text;
@@ -2273,27 +1816,27 @@ export default function workflow(pi: ExtensionAPI) {
 	/** The tag part of `deliver`: creates or moves a tag on the remote default branch, safely. A wait is returned for the caller to set. */
 	async function deliverTag(ctx: ExtensionContext, t: { name: string; commit?: string; move: boolean; repo?: string }, planned: boolean): Promise<{ text: string; ok: boolean; wait?: string }> {
 		const fail = (text: string) => ({ text: `tag ${t.name}: ${text}`, ok: false });
-		const refs = await flowRepos(ctx);
+		const refs = await flowRepos(fl, ctx);
 		const want = t.repo?.trim();
 		const ref = want ? refs.find((r) => r.root === want || path.basename(r.root) === want || repoKey(r.root) === repoKey(want)) : undefined;
 		if (want && !ref) return fail(`no repo of this flow matches "${want}"`);
 		const dir = ref?.dir ?? ctx.cwd;
-		const remotes = (await git(dir, "remote")).stdout.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+		const remotes = (await git(fl, dir, "remote")).stdout.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
 		const remote = remotes.includes("origin") ? "origin" : remotes[0];
 		if (!remote) return fail("the repo has no remote");
-		const sym = await git(dir, "ls-remote", "--symref", remote, "HEAD");
+		const sym = await git(fl, dir, "ls-remote", "--symref", remote, "HEAD");
 		const head = /^ref:\s+refs\/heads\/(\S+)\s+HEAD/m.exec(sym.stdout);
 		if (sym.code !== 0 || !head) return fail(`cannot read the default branch of ${remote}`);
 		const branch = head[1];
-		const fetched = await git(dir, "fetch", remote, branch);
+		const fetched = await git(fl, dir, "fetch", remote, branch);
 		if (fetched.code !== 0) return fail(`cannot fetch ${remote} ${branch}`);
 		const remoteRef = `${remote}/${branch}`;
-		const resolved = await git(dir, "rev-parse", "--verify", "--quiet", `${t.commit?.trim() || remoteRef}^{commit}`);
+		const resolved = await git(fl, dir, "rev-parse", "--verify", "--quiet", `${t.commit?.trim() || remoteRef}^{commit}`);
 		const target = resolved.stdout.trim();
 		if (resolved.code !== 0 || !target) return fail(`cannot resolve ${t.commit?.trim() || remoteRef}`);
-		const onDefault = (await git(dir, "merge-base", "--is-ancestor", target, remoteRef)).code === 0;
+		const onDefault = (await git(fl, dir, "merge-base", "--is-ancestor", target, remoteRef)).code === 0;
 
-		const listed = await git(dir, "ls-remote", "--tags", remote, `refs/tags/${t.name}`, `refs/tags/${t.name}^{}`);
+		const listed = await git(fl, dir, "ls-remote", "--tags", remote, `refs/tags/${t.name}`, `refs/tags/${t.name}^{}`);
 		if (listed.code !== 0) return fail(`cannot read the tags of ${remote}`);
 		let tagObject: string | undefined;
 		let peeled: string | undefined;
@@ -2305,13 +1848,13 @@ export default function workflow(pi: ExtensionAPI) {
 		const remoteSha = peeled ?? tagObject;
 		let oldIsAncestor: boolean | undefined;
 		if (remoteSha && t.move) {
-			if ((await git(dir, "cat-file", "-e", `${remoteSha}^{commit}`)).code !== 0) {
+			if ((await git(fl, dir, "cat-file", "-e", `${remoteSha}^{commit}`)).code !== 0) {
 				// A tag ref is always fetchable; a raw SHA only where the server allows it.
-				const viaRef = await git(dir, "fetch", remote, `+refs/tags/${t.name}:refs/tmp-deliver/${t.name}`);
-				if (viaRef.code !== 0) await git(dir, "fetch", remote, remoteSha);
-				await git(dir, "update-ref", "-d", `refs/tmp-deliver/${t.name}`);
+				const viaRef = await git(fl, dir, "fetch", remote, `+refs/tags/${t.name}:refs/tmp-deliver/${t.name}`);
+				if (viaRef.code !== 0) await git(fl, dir, "fetch", remote, remoteSha);
+				await git(fl, dir, "update-ref", "-d", `refs/tmp-deliver/${t.name}`);
 			}
-			oldIsAncestor = (await git(dir, "merge-base", "--is-ancestor", remoteSha, target)).code === 0;
+			oldIsAncestor = (await git(fl, dir, "merge-base", "--is-ancestor", remoteSha, target)).code === 0;
 		}
 		const d = tagDecision({ name: t.name, planned, move: t.move, remoteSha, target, onDefault, oldIsAncestor });
 		if (d.action === "refuse") return { text: `tag ${t.name}: ${d.text}`, ok: d.ok === true };
@@ -2322,7 +1865,7 @@ export default function workflow(pi: ExtensionAPI) {
 			const why = `tag ${t.name} was not pushed: ${(pushed.stderr || pushed.stdout).split(/\r?\n/).find((l) => l.trim())?.trim() ?? "git push failed"}`;
 			return { text: why, ok: false, wait: why };
 		}
-		const synced = await git(dir, "fetch", remote, `+refs/tags/${t.name}:refs/tags/${t.name}`);
+		const synced = await git(fl, dir, "fetch", remote, `+refs/tags/${t.name}:refs/tags/${t.name}`);
 		const note = synced.code === 0 ? "" : " (the local tag was not updated)";
 		return { text: d.action === "move" ? `moved ${t.name} from ${(remoteSha as string).slice(0, 9)} to ${target.slice(0, 9)}${note}` : `tag ${t.name} created at ${target.slice(0, 9)}${note}`, ok: true };
 	}
@@ -2359,7 +1902,7 @@ export default function workflow(pi: ExtensionAPI) {
 				const reason = params.reason?.trim() || "needed to continue";
 				const amend = { tag: tag.name, reason };
 				if (!hasCheckpointAmendment(plan, amend)) {
-					fl.state.approvedPlan = `${plan.replace(/\s+$/, "")}\n\n${checkpointAmendment(nextAmendmentNumber(), amend)}\n`;
+					fl.state.approvedPlan = `${plan.replace(/\s+$/, "")}\n\n${checkpointAmendment(nextAmendmentNumber(fl), amend)}\n`;
 					refreshChecklist();
 					planMilestone(ctx);
 					persist();
@@ -2376,8 +1919,8 @@ export default function workflow(pi: ExtensionAPI) {
 			planMilestone(ctx);
 			if (t.wait) return reply(`${t.text}\n\nWaiting for: ${t.wait}. End your turn now; the workflow resumes you when the user replies.`);
 			const branches: string[] = [];
-			for (const ref of await flowRepos(ctx)) {
-				const b = (await git(ref.dir, "rev-parse", "--abbrev-ref", "HEAD")).stdout.trim();
+			for (const ref of await flowRepos(fl, ctx)) {
+				const b = (await git(fl, ref.dir, "rev-parse", "--abbrev-ref", "HEAD")).stdout.trim();
 				if (b) branches.push(`${path.basename(ref.root)}: ${b}`);
 			}
 			return reply(`${t.text}${branches.length ? `\n\nCurrent branch: ${branches.join(", ")}` : ""}\n\nContinue with the next steps in this turn.`);
@@ -2398,7 +1941,7 @@ export default function workflow(pi: ExtensionAPI) {
 
 	pi.on("before_agent_start", async (event, ctx) => {
 		refilterTools();
-		const folders = existingFolders();
+		const folders = existingFolders(fl);
 		const touched = fl.state.touchedRepos ?? [];
 		const opts = event.systemPromptOptions;
 		const listed: { path: string; size: number }[] = [];
@@ -2421,8 +1964,8 @@ export default function workflow(pi: ExtensionAPI) {
 		// pi-claude-bridge saved (prompt_capture_unresolved). So both sections are always set, in this order.
 		opts.sections.workspace = prompts.workspaceSection(ctx.cwd, folders, touched, listed);
 		const staged = fl.state.phase === "execute" ? currentStages() : undefined;
-		const publishKey = [ctx.cwd, ...existingFolders(), ...(fl.state.touchedRepos ?? [])].join("|");
-		if (fl.publishCache?.key !== publishKey) fl.publishCache = { key: publishKey, value: (await flowRepos(ctx)).some((r) => fs.existsSync(path.join(r.root, "scripts", "update-packages.mjs"))) };
+		const publishKey = [ctx.cwd, ...existingFolders(fl), ...(fl.state.touchedRepos ?? [])].join("|");
+		if (fl.publishCache?.key !== publishKey) fl.publishCache = { key: publishKey, value: (await flowRepos(fl, ctx)).some((r) => fs.existsSync(path.join(r.root, "scripts", "update-packages.mjs"))) };
 		const canPublish = (fl.state.phase === "plan" || fl.state.phase === "execute") && fl.publishCache.value;
 		const phaseText = prompts.phaseSection(fl.state.phase, {
 			publish: canPublish,
@@ -2454,15 +1997,15 @@ export default function workflow(pi: ExtensionAPI) {
 			if (gitTexts.length === 0) return;
 			// Several repos: a command is checked against the repo it points at (git -C, cd), else the working folder's.
 			const multi = (fl.state.folders?.length ?? 0) > 0 || (fl.state.touchedRepos?.length ?? 0) > 0;
-			const roots = multi ? (await flowRepos(ctx)).map((r) => r.root) : [];
+			const roots = multi ? (await flowRepos(fl, ctx)).map((r) => r.root) : [];
 			const branches = new Map<string, string>();
 			const branchOf = async (dir: string) => {
-				if (!branches.has(dir)) branches.set(dir, (await git(dir, "rev-parse", "--abbrev-ref", "HEAD")).stdout.trim());
+				if (!branches.has(dir)) branches.set(dir, (await git(fl, dir, "rev-parse", "--abbrev-ref", "HEAD")).stdout.trim());
 				return branches.get(dir) as string;
 			};
 			const gate = async (kind: "merge" | "protected-push", root: string | undefined, target: string | undefined, repo?: string): Promise<string | null> => {
 				const dir = root ?? ctx.cwd;
-				const key = repoKey(root ?? (await gitRoot(ctx.cwd)) ?? ctx.cwd);
+				const key = repoKey(root ?? (await gitRoot(fl, ctx.cwd)) ?? ctx.cwd);
 				if (kind === "merge") await ensureGh(ctx).catch(() => false);
 				const early = noMerge(fl.state.approvedPlan ?? "") ? null : midFlowMergeRefusal();
 				if (early) return early;
@@ -2478,7 +2021,7 @@ export default function workflow(pi: ExtensionAPI) {
 				}
 				return null;
 			};
-			const isTag = async (root: string | undefined, name: string) => (await git(root ?? ctx.cwd, "show-ref", "--verify", "--quiet", `refs/tags/${name}`)).code === 0;
+			const isTag = async (root: string | undefined, name: string) => (await git(fl, root ?? ctx.cwd, "show-ref", "--verify", "--quiet", `refs/tags/${name}`)).code === 0;
 			for (const { text, powershell } of gitTexts) {
 				const problem = await shellProblem(text, powershell, { roots: multi ? roots : undefined, cwd: ctx.cwd, protectedBranches: fl.cfg.protectedBranches, branchOf, gate, isTag });
 				if (problem) return { block: true, reason: publishRefuse(problem) };
@@ -2534,12 +2077,12 @@ export default function workflow(pi: ExtensionAPI) {
 		if (!raw) return;
 		let dir = path.dirname(path.resolve(ctx.cwd, raw));
 		while (!fs.existsSync(dir) && path.dirname(dir) !== dir) dir = path.dirname(dir);
-		const root = await gitRoot(dir);
+		const root = await gitRoot(fl, dir);
 		if (!root) return;
-		const known = new Set((await flowRepos(ctx)).map((r) => repoKey(r.root)));
+		const known = new Set((await flowRepos(fl, ctx)).map((r) => repoKey(r.root)));
 		if (known.has(repoKey(root)) || (fl.state.touchedRepos ?? []).some((t) => repoKey(t) === repoKey(root))) return;
 		fl.state.touchedRepos = [...(fl.state.touchedRepos ?? []), root];
-		await joinReviewBase(root);
+		await joinReviewBase(fl, root);
 		persist();
 		updateStatus(ctx);
 		ctx.ui.notify(`workflow: ${root} joins this flow (edited ${raw})`, "info");
@@ -2549,7 +2092,7 @@ export default function workflow(pi: ExtensionAPI) {
 	pi.on("resources_discover", async () => {
 		const skillPaths: string[] = [];
 		const promptPaths: string[] = [];
-		for (const f of existingFolders()) {
+		for (const f of existingFolders(fl)) {
 			for (const d of [path.join(f, ".pi", "skills"), path.join(f, ".agents", "skills")]) if (fs.existsSync(d)) skillPaths.push(d);
 			const dir = path.join(f, ".pi", "prompts");
 			if (fs.existsSync(dir)) promptPaths.push(dir);
@@ -2619,7 +2162,7 @@ export default function workflow(pi: ExtensionAPI) {
 				recordMetric({ kind: "compaction", at: new Date().toISOString(), reason: "guard", tokensBefore: tokens, ms: Date.now() - compactStart, ok: true });
 				fl.compacting = false;
 				fl.guardTokens = null;
-				if (fl.state.phase === "execute" && fl.state.approvedPlan) void planCardReady().then((card) => fl.state.phase === "execute" && fl.state.approvedPlan && pi.sendMessage({ customType: "workflow-plan-card", content: card, display: true }, { triggerTurn: false }));
+				if (fl.state.phase === "execute" && fl.state.approvedPlan) void planCardReady(fl).then((card) => fl.state.phase === "execute" && fl.state.approvedPlan && pi.sendMessage({ customType: "workflow-plan-card", content: card, display: true }, { triggerTurn: false }));
 			},
 			onError: (e) => {
 				recordMetric({ kind: "compaction", at: new Date().toISOString(), reason: "guard", tokensBefore: tokens, ms: Date.now() - compactStart, ok: false, error: e.message });
@@ -2760,7 +2303,7 @@ export default function workflow(pi: ExtensionAPI) {
 				recordMetric({ kind: "compaction", at: new Date().toISOString(), reason: "handover", tokensBefore: held ?? null, ms: Date.now() - compactStart, ok: true });
 				fl.compacting = false;
 				fl.guardTokens = null;
-				void planCardReady().then((card) => send(`${msg.content}\n\n${card}`));
+				void planCardReady(fl).then((card) => send(`${msg.content}\n\n${card}`));
 			},
 			onError: (e) => {
 				recordMetric({ kind: "compaction", at: new Date().toISOString(), reason: "handover", tokensBefore: held ?? null, ms: Date.now() - compactStart, ok: false, error: e.message });
@@ -2920,13 +2463,13 @@ export default function workflow(pi: ExtensionAPI) {
 			const report = fl.state.pendingPlanFlaw;
 			fl.state.pendingPlanFlaw = undefined;
 			persist();
-			const flawed = await collectFlowDiff(ctx);
+			const flawed = await collectFlowDiff(fl, ctx);
 			if (flawed) {
 				if (fl.state.lastJudge?.hash === flawed.hash) {
 					const route = planFlawOnPass(parseFindings(report), fl.state.lastJudge.verdict === "PASS" ? "PASS" : "FAIL");
 					const outcome = route === "stop" ? await resolvePlanFlaw(ctx, report, flawed) : await settlePlanFlawOnPass(ctx, report, flawed, route);
 					if (outcome !== "continue") return;
-					if (fl.state.lastJudge.verdict === "PASS") markPassed(flawed.hash);
+					if (fl.state.lastJudge.verdict === "PASS") markPassed(fl, flawed.hash);
 					else {
 						await fixOrAsk(ctx, undefined);
 						return;
@@ -3010,7 +2553,7 @@ export default function workflow(pi: ExtensionAPI) {
 
 	/** A staged plan's stage ended with nothing to review: records it and starts the next stage, or ends the flow after the last one. */
 	async function stageWithoutChanges(ctx: ExtensionContext, staged: { stages: ReturnType<typeof parseStages>; current: number }): Promise<void> {
-		const outcome = checkpointOutcome(stageCheckpoints()) ?? { text: "no changes", ok: true };
+		const outcome = checkpointOutcome(stageCheckpoints(fl)) ?? { text: "no changes", ok: true };
 		fl.state.stageOutcomes = [...(fl.state.stageOutcomes ?? []), outcome];
 		if (staged.current < staged.stages.length) {
 			startNextStage(ctx, staged.stages, outcome.text);
@@ -3402,8 +2945,8 @@ export default function workflow(pi: ExtensionAPI) {
 
 	/** diff ready -> judge -> fix loop, or commit (and push) once it passes. */
 	async function reviewDiff(ctx: ExtensionContext, manual: boolean): Promise<void> {
-		const baseNote = await refreshReviewBase(ctx);
-		const diff = await collectFlowDiff(ctx);
+		const baseNote = await refreshReviewBase(fl, ctx);
+		const diff = await collectFlowDiff(fl, ctx);
 		if (!diff?.text) {
 			if (manual) ctx.ui.notify("workflow: no changes to review", "info");
 			else if (diff && fl.state.passedDiff && passPending({ passedDiff: fl.state.passedDiff, judged: fl.state.lastJudge, summarized: fl.state.summarizedPasses })) {
@@ -3436,7 +2979,7 @@ export default function workflow(pi: ExtensionAPI) {
 		ctx.ui.setWorkingMessage(`judge reviewing ${diff.files} file(s)…`);
 		let r: JudgeResult;
 		try {
-			r = await judge(ctx, diff, baseNote);
+			r = await judge(fl, ctx, diff, baseNote);
 		} finally {
 			ctx.ui.setWorkingMessage();
 		}
@@ -3468,7 +3011,7 @@ export default function workflow(pi: ExtensionAPI) {
 			const route = planFlawOnPass(r.findings, r.verdict);
 			const outcome = route === "stop" ? await resolvePlanFlaw(ctx, report, diff) : await settlePlanFlawOnPass(ctx, report, diff, route);
 			if (outcome !== "continue") return;
-			if (r.verdict === "PASS") markPassed(diff.hash);
+			if (r.verdict === "PASS") markPassed(fl, diff.hash);
 		}
 		if (r.verdict === "FAIL") {
 			fl.state.judgeRounds++;
@@ -3589,7 +3132,7 @@ export default function workflow(pi: ExtensionAPI) {
 		let text: string;
 		try {
 			const { result, run } = await runRole(fl, "arbiter", "plan-flaw", {
-				systemPrompts: [...(diff.multi ? [prompts.repoNote(repoRoots(diff))] : []), prompts.ARBITER, `## Approved plan\n\n${planForJudge()}`, `## Judge report\n\n${report}`, `## Diff\n\n${fitDiffs(diff.parts, loadAgentsConfig().config.judge.maxDiffChars)}`],
+				systemPrompts: [...(diff.multi ? [prompts.repoNote(repoRoots(diff))] : []), prompts.ARBITER, `## Approved plan\n\n${planForJudge(fl)}`, `## Judge report\n\n${report}`, `## Diff\n\n${fitDiffs(diff.parts, loadAgentsConfig().config.judge.maxDiffChars)}`],
 				tools: fl.cfg.arbiter.tools,
 				task: "Decide on the [plan] findings of the judge report in your system prompt.",
 				cwd: ctx.cwd,
@@ -3623,7 +3166,7 @@ export default function workflow(pi: ExtensionAPI) {
 				return "ask";
 			}
 			fl.state.planRevisions = done + 1;
-			fl.state.approvedPlan = `${fl.state.approvedPlan ?? ""}\n\n## Amendment ${nextAmendmentNumber()} (arbiter)\n${d.amendment}`;
+			fl.state.approvedPlan = `${fl.state.approvedPlan ?? ""}\n\n## Amendment ${nextAmendmentNumber(fl)} (arbiter)\n${d.amendment}`;
 			refreshChecklist();
 			planMilestone(ctx);
 			persist();
@@ -3674,9 +3217,9 @@ export default function workflow(pi: ExtensionAPI) {
 		await ensureGh(ctx).catch(() => false);
 		const parts = await Promise.all(
 			repos.map(async (ref) => {
-				const branch = (await git(ref.dir, "rev-parse", "--abbrev-ref", "HEAD")).stdout.trim() || "HEAD";
+				const branch = (await git(fl, ref.dir, "rev-parse", "--abbrev-ref", "HEAD")).stdout.trim() || "HEAD";
 				const base = fl.state.reviewBase?.[repoKey(ref.root)];
-				const counted = base ? await git(ref.dir, "rev-list", "--count", `${base}..HEAD`) : undefined;
+				const counted = base ? await git(fl, ref.dir, "rev-list", "--count", `${base}..HEAD`) : undefined;
 				const n = counted?.code === 0 ? Number(counted.stdout.trim()) : undefined;
 				let text = `${branch}${n === undefined ? "" : `, ${n} commit${n === 1 ? "" : "s"} since the review base`}`;
 				const jm = fl.state.judgedMerges?.[repoKey(ref.root)];
@@ -3725,7 +3268,7 @@ export default function workflow(pi: ExtensionAPI) {
 	/** Records a merge decision in the approved plan, tells the user in chat and with a notification. */
 	function recordMergeDecision(ctx: ExtensionContext, by: "arbiter" | "user", allowed: boolean, reason: string, shown?: string): void {
 		const stage = currentStages()?.current ?? 0;
-		fl.state.approvedPlan = `${fl.state.approvedPlan ?? ""}\n\n${mergeAmendment(nextAmendmentNumber(), { by, allowed, stage, reason })}`;
+		fl.state.approvedPlan = `${fl.state.approvedPlan ?? ""}\n\n${mergeAmendment(nextAmendmentNumber(fl), { by, allowed, stage, reason })}`;
 		refreshChecklist();
 		planMilestone(ctx);
 		persist();
@@ -3738,11 +3281,11 @@ export default function workflow(pi: ExtensionAPI) {
 	async function unpushedRepos(diff: Diff): Promise<string[]> {
 		const out: string[] = [];
 		for (const ref of diff.repos.filter((r) => r.changed)) {
-			if (!(await git(ref.dir, "remote")).stdout.trim()) continue;
-			const dirty = (await git(ref.dir, "status", "--porcelain")).stdout.trim() !== "";
-			const up = await git(ref.dir, "rev-parse", "--abbrev-ref", "@{u}");
+			if (!(await git(fl, ref.dir, "remote")).stdout.trim()) continue;
+			const dirty = (await git(fl, ref.dir, "status", "--porcelain")).stdout.trim() !== "";
+			const up = await git(fl, ref.dir, "rev-parse", "--abbrev-ref", "@{u}");
 			const hasUpstream = up.code === 0;
-			const ahead = hasUpstream ? Number((await git(ref.dir, "rev-list", "--count", "@{u}..HEAD")).stdout.trim()) || 0 : 0;
+			const ahead = hasUpstream ? Number((await git(fl, ref.dir, "rev-list", "--count", "@{u}..HEAD")).stdout.trim()) || 0 : 0;
 			const why = unpushedReason({ dirty, hasUpstream, ahead });
 			if (why) out.push(`${path.basename(ref.root)} (${why})`);
 		}
@@ -3751,7 +3294,7 @@ export default function workflow(pi: ExtensionAPI) {
 
 	/** Whether some repo of the flow has a remote, so a pull request can be merged. */
 	async function flowHasRemote(ctx: ExtensionContext): Promise<boolean> {
-		const remotes = await Promise.all((await flowRepos(ctx)).map((r) => git(r.dir, "remote")));
+		const remotes = await Promise.all((await flowRepos(fl, ctx)).map((r) => git(fl, r.dir, "remote")));
 		return remotes.some((r) => r.stdout.trim() !== "");
 	}
 
@@ -3772,7 +3315,7 @@ export default function workflow(pi: ExtensionAPI) {
 				} catch {}
 				if (state2 === "MERGED") continue;
 			}
-			if (!(await git(ref.dir, "remote")).stdout.trim()) continue;
+			if (!(await git(fl, ref.dir, "remote")).stdout.trim()) continue;
 			out.push(path.basename(ref.root));
 		}
 		return out;
@@ -3811,10 +3354,10 @@ export default function workflow(pi: ExtensionAPI) {
 		const knowledge = fl.state.lastKnowledge?.hash === hash ? fl.state.lastKnowledge : undefined;
 		if (knowledge && knowledge.status !== "checked") ctx.ui.notify(`workflow: judge passed without the knowledge check: ${knowledge.reason}`, "warning");
 		let outcome = { text: await stageOutcomeText(ctx, diff), ok: true };
-		const cps = stageCheckpoints();
+		const cps = stageCheckpoints(fl);
 		if (cps.length) outcome = { text: withCheckpoints(cps.map((c) => c.text), outcome.text), ok: cps.every((c) => c.ok) };
 		markPassSummarized(hash);
-		await advanceReviewBase(ctx);
+		await advanceReviewBase(fl, ctx);
 		fl.state.minorRounds = 0;
 		fl.state.minorSentFor = undefined;
 		fl.state.minorFix = undefined;
@@ -3875,13 +3418,13 @@ export default function workflow(pi: ExtensionAPI) {
 			.pop() as { data?: { cwd?: unknown } } | undefined;
 		const prev = newest?.data?.cwd;
 		if (typeof prev !== "string" || repoKey(prev) === repoKey(ctx.cwd)) return;
-		const top = await gitRoot(ctx.cwd);
+		const top = await gitRoot(fl, ctx.cwd);
 		if (!top) return;
 		const infos = new Map<string, { top: string; worktrees: string[] }>();
 		for (const f of folders) {
-			const t = await gitRoot(f);
+			const t = await gitRoot(fl, f);
 			if (!t) continue;
-			const r = await git(t, "worktree", "list", "--porcelain");
+			const r = await git(fl, t, "worktree", "list", "--porcelain");
 			if (r.code === 0) infos.set(repoKey(f), { top: t, worktrees: parseWorktreeList(r.stdout) });
 		}
 		const res = followFolders(folders, ctx.cwd.replace(/\\/g, "/"), top, (f) => infos.get(repoKey(f)) ?? null, (p) => fs.existsSync(p));
@@ -4020,7 +3563,7 @@ export default function workflow(pi: ExtensionAPI) {
 			if (sub === "list") {
 				const lines = [`working folder  ${ctx.cwd}`];
 				for (const [i, f] of folders.entries()) {
-					const note = !fs.existsSync(f) ? " (missing)" : (await gitRoot(f)) ? "" : " (not a git repo)";
+					const note = !fs.existsSync(f) ? " (missing)" : (await gitRoot(fl, f)) ? "" : " (not a git repo)";
 					lines.push(`${i + 1}. ${f}${note}`);
 				}
 				for (const t of fl.state.touchedRepos ?? []) lines.push(`   ${t} (edited in this flow)`);
@@ -4084,8 +3627,8 @@ export default function workflow(pi: ExtensionAPI) {
 					return;
 				}
 				fl.state.folders = [...current, final];
-				const addedRoot = await gitRoot(final);
-				if (addedRoot) await joinReviewBase(addedRoot);
+				const addedRoot = await gitRoot(fl, final);
+				if (addedRoot) await joinReviewBase(fl, addedRoot);
 				persist();
 				publishFolders(ctx);
 				updateStatus(ctx);
@@ -4154,7 +3697,7 @@ export default function workflow(pi: ExtensionAPI) {
 					await resumeFlow(ctx, rest[0]);
 					return;
 				case "board": {
-					let rows = await collectBoard(ctx);
+					let rows = await collectBoard(fl, ctx);
 					if ((ctx as { mode?: string }).mode !== "tui" || !ctx.hasUI) {
 						ctx.ui.notify(boardLines(rows, -1, 200, Date.now()).join("\n"), "info");
 						return;
@@ -4169,7 +3712,7 @@ export default function workflow(pi: ExtensionAPI) {
 						const timer = setInterval(() => {
 							if (busy || closed) return;
 							busy = true;
-							collectBoard(ctx)
+							collectBoard(fl, ctx)
 								.then((r) => {
 									if (closed) return;
 									rows = r;
@@ -4306,5 +3849,5 @@ export default function workflow(pi: ExtensionAPI) {
 		},
 	});
 
-	Object.assign(fl.legacy, { recordMetric });
+	Object.assign(fl.legacy, { currentStages, gitEnv, judgeOnce, persist, planDirFor, planFilePath, recordMetric, trimPlan });
 }
