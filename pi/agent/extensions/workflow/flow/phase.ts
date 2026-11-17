@@ -16,6 +16,7 @@ import type { Stage } from "../view.ts";
 import { APPROVED_FINAL, type Flow, FOLDERS_ENTRY, type Phase, STATE_ENTRY, SUMMARY_ENTRY } from "./context.ts";
 import { dropReviewRefs, existingFolders, initReviewBase } from "./diff.ts";
 import { handover, holdForStageWait, stoppedSummary } from "./handover.ts";
+import { planAllowedTools } from "./hooks.ts";
 import { abortGate, notifyUser } from "./notify.ts";
 import { liveTick, planMilestone, recordMetric } from "./plan-files.ts";
 import { modelOf } from "./roles.ts";
@@ -198,7 +199,7 @@ export function blockPlanTools(fl: Flow): void {
 }
 
 export function planToolRefusedIn(fl: Flow, name: string): boolean {
-	return hiddenInPhase("plan", name, (n) => planToolRefused(n, fl.legacy.planAllowedTools(), fl.cfg.planBlockedTools) !== null);
+	return hiddenInPhase("plan", name, (n) => planToolRefused(n, planAllowedTools(fl), fl.cfg.planBlockedTools) !== null);
 }
 
 /** Tools that registered after the phase began (an MCP server that connected late) get the same filter. */

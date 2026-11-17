@@ -238,8 +238,6 @@ export type ToolReply = { content: { type: "text"; text: string }[]; details: ob
 /** The workflow's session state: everything `workflow(pi)` used to hold in its closure. Created once per extension load. */
 export interface Flow {
 	pi: ExtensionAPI;
-	/** Closure functions not moved to flow/ yet (temporary, while index.ts is split). */
-	legacy: Record<string, any>;
 	cfg: WorkflowConfig;
 	configError: string | undefined;
 	/** The old-keys warning of workflow.json already shown this session. */
@@ -340,7 +338,6 @@ export function createFlow(pi: ExtensionAPI): Flow {
 	const { config: cfg, error: configError } = loadConfig();
 	return {
 		pi,
-		legacy: {},
 		cfg,
 		configError,
 		configWarning: undefined,
