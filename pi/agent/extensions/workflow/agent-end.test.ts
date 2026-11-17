@@ -321,3 +321,15 @@ test("migrateSavedState: an open discussion fix round does not survive a restart
 	const paused = migrateSavedState({ phase: "discuss", discussionReview: { status: "paused" } } as { phase: string }) as { discussionReview: { status: string } };
 	assert.equal(paused.discussionReview.status, "paused");
 });
+
+test("migrateSavedState: fields of the removed external-controller contracts are dropped and an acceptance wait is cleared", () => {
+	const saved = { phase: "execute", approvedPlan: "p", openAsk: { id: "f:1" }, askSeq: 3, extraPlanTools: ["x"], planSpec: { kind: "brief", text: "b" }, waiting: { reason: "r", since: "s", planned: false, askId: "f:2", manual: true, waitKind: "external", check: "c" } };
+	const out = migrateSavedState(saved as { phase: string }) as Record<string, any>;
+	for (const k of ["openAsk", "askSeq", "extraPlanTools", "planSpec"]) assert.ok(!(k in out), k);
+	assert.deepEqual(out.waiting, { reason: "r", since: "s", planned: false, waitKind: "external", check: "c" });
+	assert.equal(out.approvedPlan, "p");
+	const acc = migrateSavedState({ phase: "execute", waiting: { reason: "acceptance", since: "s", planned: false, waitKind: "acceptance", accept: { tree: "t", root: "r", kind: "merge" } } } as { phase: string }) as Record<string, any>;
+	assert.equal(acc.waiting, undefined);
+	const plain = { phase: "execute", waiting: { reason: "r", since: "s", planned: true } };
+	assert.equal(migrateSavedState(plain), plain);
+});

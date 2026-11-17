@@ -70,7 +70,6 @@ function scenario(n: number, briefOver: Parameters<typeof brief>[0] = {}, cfgRaw
 		prompt: async (t) => void prompts.push(t),
 		stopWorker: async () => {},
 		review: async () => ({ ok: false, text: "", turns: 0, usage: {} as any, toolCalls: [] }),
-		emit() {},
 		now: () => 0,
 		relayDir: "",
 		leadCwd: repos[0].main,

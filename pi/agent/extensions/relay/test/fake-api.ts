@@ -1,6 +1,4 @@
-// A fake pi extension API and event bus, enough to drive relay's lead.ts, and a simulated workflow side of K16.
-import { emitClaims } from "../../shared/claims.ts";
-import { ownerOf } from "../events.ts";
+// A fake pi extension API and event bus, enough to drive relay's lead.ts.
 import type { LeadDeps } from "../lead.ts";
 import { createLead } from "../lead.ts";
 
@@ -57,19 +55,3 @@ export function relayOn(bus: Bus, cwd: string, over: Partial<LeadDeps> = {}) {
 	return { ...api, lead };
 }
 
-/** The workflow side of K16: claims while its phase is not "off"; `startPhase` asks relay first, as workflow's setPhase does. */
-export function workflowSide(bus: Bus, phase: { value: string }) {
-	bus.on("flow:active", (d) => {
-		if (d?.from === "workflow") return;
-		if (phase.value !== "off") d.claim({ owner: "workflow" });
-	});
-	const relayOwns = async () => ownerOf(await emitClaims((d) => bus.emit("flow:active", d), { v: 1, from: "workflow" }, 2000).answer) === "relay";
-	return {
-		relayOwns,
-		async startPhase(to: string) {
-			if (phase.value === "off" && (await relayOwns())) return false;
-			phase.value = to;
-			return true;
-		},
-	};
-}

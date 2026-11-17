@@ -3,7 +3,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { parseBrief } from "../brief.ts";
-import { JOB_START, jobStartPayload } from "../events.ts";
 import { repoPolicy } from "../config.ts";
 import { gitOut } from "../sh.ts";
 import { applySnapshot, dropSnapshotBranch, revertSnapshotted, snapshotEdits } from "../snapshot.ts";
@@ -137,7 +136,6 @@ export const dispatchStep: Step = {
 		job.state = "working";
 		ctx.save(job);
 		await ctx.startWorker(job, { prompt: workerPrompt(ctx, job) });
-		ctx.emit(JOB_START, jobStartPayload(job.id, job.title, repos.map((r) => r.key), job.tag));
 		ctx.log("dispatch", `set ${job.set}, ${repos.length} repo(s), worker started${stacked.size ? `, stacked on job ${job.dependsOn}` : ""}`);
 		return "work";
 	},

@@ -127,14 +127,11 @@ test("parseWaitStep keeps a check with nested parentheses", () => {
 	assert.deepEqual(parseWaitStep("**S4.** Wait: open the Editor (check: echo $(x))", "S4"), { reason: "open the Editor", check: "echo $(x)" });
 });
 
-test("waitLimitMs: a claimed wait polls longer; a lost claim falls back to maxMs", async () => {
-	const { waitLimitMs, pollDecision } = await import("./waits.ts");
-	const w = { maxMs: 3_600_000, claimedMaxMs: 14_400_000 };
-	assert.equal(waitLimitMs(true, w), 14_400_000);
-	assert.equal(waitLimitMs(false, w), 3_600_000);
+test("pollDecision stops polling at maxMs", async () => {
+	const { pollDecision } = await import("./waits.ts");
 	const o = { waiting: true, hasCheck: true, idle: true, elapsedMs: 90 * 60_000 };
-	assert.equal(pollDecision({ ...o, maxMs: waitLimitMs(true, w) }), "run");
-	assert.equal(pollDecision({ ...o, maxMs: waitLimitMs(false, w) }), "stop");
+	assert.equal(pollDecision({ ...o, maxMs: 3_600_000 }), "stop");
+	assert.equal(pollDecision({ ...o, maxMs: 4 * 3_600_000 }), "run");
 });
 
 test("waitKindProblem and autopilotSkipsWait: external needs a check and pauses under autopilot", async () => {
@@ -148,14 +145,13 @@ test("waitKindProblem and autopilotSkipsWait: external needs a check and pauses 
 	assert.equal(autopilotSkipsWait(false, false, "act"), false);
 });
 
-test("replaceWait ends the old ask and drops its claim, in that order; nothing without an askId", async () => {
+test("replaceWait stops the old wait's timer; nothing without an old wait", async () => {
 	const { replaceWait } = await import("./waits.ts");
 	const calls: string[] = [];
-	const deps = { endAsk: (w: { askId?: string }) => calls.push(`end ${w.askId}`), unclaim: (id: string) => calls.push(`unclaim ${id}`), stopTimer: () => calls.push("stop") };
-	replaceWait({ askId: "f:4" }, deps);
-	assert.deepEqual(calls, ["end f:4", "unclaim f:4", "stop"]);
+	const deps = { stopTimer: () => calls.push("stop") };
+	replaceWait({ reason: "r" }, deps);
+	assert.deepEqual(calls, ["stop"]);
 	calls.length = 0;
-	replaceWait({}, deps);
 	replaceWait(undefined, deps);
 	assert.deepEqual(calls, []);
 });

@@ -2,7 +2,7 @@
 
 An autonomous lead / worker / judge extension for hands-off work. Your session is the **lead**: it discusses the what and the how with you, does small work itself, and hands real work to headless **workers**. A **critic** checks each brief before dispatch; a **judge** checks each result. Relay delivers within the Authority you agreed, then writes a report. "go" is the only input relay needs from you; the report is the only output you need to read.
 
-`workflow` stays installed and standalone for manual control. Relay imports nothing from `workflow`, `orchestrate`, `worktree`, `agents` or `sandbox` (`boundary.test.ts`); it talks to `worktree` through events and uses `../shared` only.
+`workflow` stays installed and standalone for manual control. Relay imports nothing from `workflow`, `worktree`, `agents` or `sandbox` (`boundary.test.ts`); it talks to `worktree` through events and uses `../shared` only.
 
 ## Roles
 
@@ -20,7 +20,7 @@ An autonomous lead / worker / judge extension for hands-off work. Your session i
 2. Dispatch: validate, assign a job id (`r` + 6 base36 characters), write `brief.md` and `job.json`, take the job lock, snapshot your uncommitted edits, create the set (W1 with `launch: "none"`), cherry-pick the snapshot as the job's first commit ("relay: lead edits"), revert your checkout, start the worker.
 3. The worker works, asks (`ask_lead`) when it must, and finishes with `report_done`. The judge reviews `base..HEAD`. FAIL: the worker gets the findings (one notice, the lead is not woken). PASS: the lead is woken and delivery starts. After `caps.judge` (3) failed rounds the worker is switched to the escalate model for `caps.escalate` (2) more; then the lead is woken to re-plan (`relay_replan`, up to `caps.replans`, 1); then the job stops and is reported.
 4. Delivery rebases onto `origin/<target>` per repo, pushes, opens the PR (with GitHub), and merges within Authority.
-5. `report.md` is written; the lead gets 3 lines and the path; `relay:job-end` is emitted; the worker exits; the set is removed if everything merged.
+5. `report.md` is written; the lead gets 3 lines and the path; the worker exits; the set is removed if everything merged.
 
 The lead is woken (a turn starts) only for: a worker question or approval request, the judge cap or a re-plan wait, a `[plan]` finding, a worker crash or stall that restarting did not fix, PASS, and the final report.
 
@@ -76,7 +76,7 @@ Sensitive categories: `merge` (merge or push to a protected branch), `publish`, 
 
 - The worker's guard (`worker-guard.ts`, in `worker.ts`) always refuses `git push`, any `gh` write, publishing, branch deletion, and checkout/switch/reset to a ref other than the job's branch or base. It refuses dependency installs and edits of sensitive paths unless Authority or an approval covers them. Every refusal says to use `ask_lead`.
 - `ask_lead {question, approval?: {category, item, why}}` appends to `outbox.jsonl` and polls `inbox.jsonl` once a second.
-- The lead answers with `relay_approve {job, askId, approve, reason}` (for a plain question `reason` is the answer). A category in `askUser` is refused ("ask the user first"). An approval adds an amendment, updates `approvals` and emits `relay:approval`. The report starts with an Approvals section.
+- The lead answers with `relay_approve {job, askId, approve, reason}` (for a plain question `reason` is the answer). A category in `askUser` is refused ("ask the user first"). An approval adds an amendment, updates `approvals`. The report starts with an Approvals section.
 - Default sensitive paths: `**/package.json`, `**/package-lock.json`, `**/pnpm-lock.yaml`, `**/*.csproj`, `**/Packages/manifest.json`, `.github/workflows/**`, `**/.env*`.
 
 ## Files
@@ -85,7 +85,7 @@ Sensitive categories: `merge` (merge or push to a protected branch), `publish`, 
 
 | File | Responsibility |
 |---|---|
-| `index.ts` | Entry; inert when `RELAY_ROLE` is set. The logic is in `lead.ts` (testable with a fake `pi`): K16 listener, `leadOn`, the prompt, typed "go", edit budget, action log, tools, commands. |
+| `index.ts` | Entry; inert when `RELAY_ROLE` is set. The logic is in `lead.ts` (testable with a fake `pi`): `leadOn`, the prompt, typed "go", edit budget, action log, tools, commands. |
 | `worker.ts`, `worker-guard.ts` | Worker entry (`ask_lead`, `report_done`, the guard) and its pure checks. |
 | `reviewer.ts` | Critic and judge entry; refuses every non-reading tool. |
 | `config.ts` | `relay.json`: defaults, validation, warnings, `repoPolicy`. |
@@ -93,7 +93,7 @@ Sensitive categories: `merge` (merge or push to a protected branch), `publish`, 
 | `brief.ts`, `job.ts`, `lock.ts`, `mailbox.ts` | Brief parse/validate/amend, `job.json` store, the generation lock, JSONL mailboxes with cursors. |
 | `engine.ts`, `types.ts`, `steps/*` | The step runner and the steps: `dispatch`, `work`, `judge`, `deliver`, `report`, `cleanup` (+ `critic`). A new step is one module plus one entry in `engine.ts` `STEPS`. |
 | `rpc.ts` | The RPC client (strict LF JSONL on bytes, responses by id). |
-| `snapshot.ts`, `budget.ts`, `authority.ts`, `events.ts` | Lead-edit snapshot, edit/job budgets, categories, K16 and `relay:*` payloads. |
+| `snapshot.ts`, `budget.ts`, `authority.ts`, `events.ts` | Lead-edit snapshot, edit/job budgets, categories, lead-mode activation. |
 | `subagent.ts`, `mcp-forward.ts`, `repo-diff.ts`, `merge-gate.ts`, `push-guard.ts` | Copies of the workflow modules, adapted (see below). |
 | `prompts/{lead,critic,worker,judge}.md` | Prompts. |
 | `test/fake-pi.mjs`, `e2e/live.mjs` | The scripted pi and the live test. |
@@ -152,8 +152,8 @@ The numbers are starting values, to be tuned after first use.
 - **W1 `worktree:create`** with `launch: "none"`: relay's dispatch sends `{v:1, name: <job id>, launch:"none", bases: {<repo top>: "origin/<target>"}, folders}` (`folders`: the lead's added folders that are Targets). The reply carries `branch`, `cwd` and `repos: [{top, cwd}]`; relay never builds a branch name itself.
 - **W2 `worktree:remove`** `{v:1, name, force?}`: used after a merge (no force) and to undo a failed dispatch (force). Never shows a dialog; refuses in-use or broken sets; a refusal or a kept branch is reported.
 - **K1 `session-folders`**: the lead's added folders, read from the session entries.
-- **K16 `flow:active`**: one owner per session with workflow. `{v:1, from:"workflow"|"relay", claim}`; each extension ignores its own `from`. Relay's listener is registered at load; while its activation is undecided it claims `{owner:"relay"}` when `active` is true. `leadOn(ctx)` decides once, on the first of `input`, `before_agent_start` or any relay tool or command: it emits `{from:"relay"}`; an `owner:"workflow"` answer keeps lead mode off with a notice, anything else (nobody, a timeout, `{error}`) turns it on. A restored workflow flow wins; otherwise relay wins over workflow's `startPhase`. `/relay on` asks again and refuses while workflow claims.
-- **Job-set sessions.** A session whose cwd is inside a `.pi-set.json` folder named like a job set (`r1a2b3c`, `r1a2b3c-f1`) (a worker, a `/wt open` takeover) never claims and keeps lead mode off: no edit budget, no "go" hook, no dispatch.
+- **Relay and flow are switched by hand.** Relay does not ask workflow, and workflow does not ask relay. Lead mode is decided by `relay.json` `active`, `RELAY_ROLE` and the job-set rule; `/relay on|off` switch it. Both can be on in one session, and a typed "go" is then handled by both (relay's kickoff and workflow's plan approval), so turn one of them off first.
+- **Job-set sessions.** A session whose cwd is inside a `.pi-set.json` folder named like a job set (`r1a2b3c`, `r1a2b3c-f1`) (a worker, a `/wt open` takeover) keeps lead mode off: no edit budget, no "go" hook, no dispatch.
 
 ## Parallel and stacked jobs, add-repo, widget and log
 
@@ -165,33 +165,13 @@ The numbers are starting values, to be tuned after first use.
 
 **Dock and log.** The right column of the shared dock below the editor (worktree's session list is the left one) shows the unfinished jobs of this session, published every 2 s as `dock:lines {v:1, key:"relay", side:"right", lines}` (`Engine.dockLines`; nothing is read from disk). Per job a header: id, state, round (`e` once escalated), wall minutes used/budget, tokens used, `<- dependsOn`; under it, always (also when collapsed), the model line `  <role> <model id>[:thinking]` (provider dropped) of who works on the job now: `critic` or `judge` while they review, else `worker` (`worker (escalated)` with the escalate model; the running worker's own model when it was started with another one) (`Engine.activeModel`). While `working`: the judge's latest verdict (`judge round N: PASS|FAIL (k findings)`) until the worker's next tool call, then the last 3 worker tool calls, newest first (`▸ tool arg 6m12s` running, `· tool arg` finished). While `judging`: `judge reviewing round N`. Other states: the header only; with more than 2 unfinished jobs every job is its header only. With lead mode on and no unfinished job the column is one line, `relay lead · no jobs running`; it leaves when lead mode goes off. Relay publishes full lines; the dock truncates (layout rule in `../shared/README.md`). It attaches the dock at `session_start` when the session has a UI. **Footer status** (key `relay`): `relay ready` from `session_start` until lead mode is decided (at the first prompt) when it can still come on, then `relay lead` while lead mode is on, with ` · n jobs` for the unfinished jobs this lead owns; set when lead mode is decided or toggled (`/relay on|off`), refreshed every 2 s, cleared at `session_shutdown`. `/relay log <job> [n]` shows the last n lines of `log.jsonl` (tool names with a short first argument, verdicts, amendments, approvals, overlaps, restacks) and the job's paths.
 
-## Events
-
-All payloads are `v: 1`. Fields marked optional are additive.
-
-**Emitted**
-
-- `relay:job-start {v, job, title, repos, tag?}`
-- `relay:job-progress {v, job, tag?, state, round, used: {tokens, wallMs}}`: emitted whenever a job is saved with a `(state, round)` different from the last one emitted for it, never before that job's `relay:job-start`. Order per job: `job-start` -> `job-progress`* -> `job-end`. A follow-up is its own cycle: it emits `job-start` again when its worker starts, then progress, then `job-end`. A job adopted or restacked by a new lead already had its `job-start`, so it emits progress and `job-end` only.
-- `relay:job-end {v, job, how: "delivered"|"stopped"|"failed", report, tag?, used?: {tokens, wallMs}, repos?: [{key, pr?, merged}], reason?}`: `used.tokens` is weighted, as in job.json; `reason` is the job's `endReason` (e.g. `budget: ...`, `stopped by the lead`) when it has one.
-- `relay:approval {v, job, category, item, by: "brief"|"lead", reason, tag?}`
-
-**The tag.** `tag: {run, package}` is given at `relay:dispatch`, stored in job.json and echoed in the events above. Every wake text of a tagged job starts with `[<package>] `.
-
-**Contracts relay answers** (claim pattern, `shared/claims.ts`: the listener calls `claim(promise)` synchronously; the answer is `{error}` on refusal). Relay unsubscribes them at `session_shutdown`.
-
-- `relay:dispatch {v:1, brief, size?, tag?: {run, package}, claim}` -> `{id, queued}` or `{error}`. Dispatches exactly like `relay_dispatch`. Answers `{error}` in a job-set session, in a relay worker/reviewer, outside a git repo, when lead mode is refused (K16) and before the first `session_start` (no session context).
-- `relay:control {v:1, job, action: "stop"|"followup", text?, claim}` -> `{ok: true, job, n?, queued?}` or `{error}`. Runs the same code as `relay_stop` / `relay_followup`; `n` and `queued` come with a follow-up (the job id stays the same); `followup` requires `text`.
-- `relay:job-query {v:1, ids: string[], claim}` -> `{jobs: [{id, state, tag?, used: {tokens, wallMs}, repos: [{key, pr?, merged}], report?, reason?}]}` or `{error}` (no session context, or not a git repo). Jobs are found in memory or in their job.json (earlier sessions and adopted jobs included); an id neither knows has `state: "unknown"`. `report` is the report.md path when it exists (the same value as `relay:job-end.report`); `reason` is the job's `endReason`. Lead mode is not needed; an engine is started if there is none.
-- `relay:hosted {v:1, on: boolean, claim?}`: hosted mode for a session an orchestrator drives. While on, relay decides lead mode at once (engine, wakes and K16 ready), the typed "go" hook passes input through and the lead prompt section is not added; tools, engine, wakes, adoption and the edit budget keep working. Off restores the prompt section and the "go" hook. With a `claim` the answer is `{on, mode: "on"|"off", reason?}` (e.g. workflow owns the session). Before the first `session_start` the flag is set, the answer is `{on, mode: "off", reason: "no session context"}` and lead mode is decided at `session_start`.
-
 ## Tools and commands
 
 `relay_critic {brief, draft?}`, `relay_dispatch {brief, size?, draft?, overrides?}`, `relay_status {job?}`, `relay_approve {job, askId, approve, reason}`, `relay_stop {job}`, `relay_deliver {job}`, `relay_send {job, text, mode, reset?, from?}`, `relay_replan {job, brief}`, `relay_resume {job}`, `relay_followup {job, text}`, `relay_add_repo {job, folder, target, askId?}`. Commands: `/relay` (status), `/relay on|off` (off is refused while this lead owns running jobs), `/relay go`, `/relay stop <job>`, `/relay pause <job>`, `/relay resume <job>`, `/relay followup <job> <text>`, `/relay log <job> [n]`, `/relay model <role> <spec>`.
 
 ## Copies from workflow
 
-`subagent.ts`, `mcp-forward.ts`, `repo-diff.ts`, `merge-gate.ts` and `push-guard.ts` are copies with their tests, adapted: `subagent.ts` starts `--mode json -p --no-session -ne -ns -np` plus `-a`/`-na` from the lead's trust and spawns through `pi-bin.ts`; `merge-gate.ts` drops `midFlowMergeProblem`; `push-guard.ts` gains the `lease` option; `mcp-forward.ts` reads `PI_RELAY_MCP`. `knowledge.ts` and `folders.ts` are small copies of the agents and orchestrate helpers.
+`subagent.ts`, `mcp-forward.ts`, `repo-diff.ts`, `merge-gate.ts` and `push-guard.ts` are copies with their tests, adapted: `subagent.ts` starts `--mode json -p --no-session -ne -ns -np` plus `-a`/`-na` from the lead's trust and spawns through `pi-bin.ts`; `merge-gate.ts` drops `midFlowMergeProblem`; `push-guard.ts` gains the `lease` option; `mcp-forward.ts` reads `PI_RELAY_MCP`. `knowledge.ts` and `folders.ts` are small copies of agents helpers.
 
 ## Tests
 

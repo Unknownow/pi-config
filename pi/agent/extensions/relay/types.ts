@@ -83,7 +83,6 @@ export interface StepCtx {
 	setWorkerModel(model: string): Promise<boolean>;
 	stopWorker(): Promise<void>;
 	review(role: "critic" | "judge", task: string, cwd: string): Promise<RunResult>;
-	emit(name: string, payload: object): void;
 	now(): number;
 	relayDir: string;
 	leadCwd: string;
