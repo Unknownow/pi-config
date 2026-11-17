@@ -9,7 +9,9 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { readJob } from "./job.ts";
 import { append, inboxPath, newMsgId, outboxPath } from "./mailbox.ts";
-import { loadFacts, waitReply, workerCommandProblem, workerPathProblem } from "./worker-guard.ts";
+import { APPROVAL_CATEGORIES } from "./config.ts";
+import { porcelainPaths } from "./files.ts";
+import { filesWarning, loadFacts, waitReply, workerCommandProblem, workerPathProblem } from "./worker-guard.ts";
 
 const jobDir = () => process.env.RELAY_JOB_DIR ?? "";
 
@@ -35,23 +37,42 @@ export default function worker(pi: ExtensionAPI): void {
 		return undefined;
 	});
 
+	// ## Files: after each bash call, changed paths outside the job's globs are appended to the result as a warning
+	pi.on("tool_result", async (event) => {
+		if (!/(^|__)bash$/.test(event.toolName)) return undefined;
+		const facts = loadFacts(jobDir());
+		if (!facts.files) return undefined;
+		const changed: { repo: string; paths: string[] }[] = [];
+		for (const r of readJob(jobDir())?.repos ?? []) {
+			if (!fs.existsSync(r.worktree)) continue;
+			const st = await git(r.worktree, ["status", "--porcelain", "-uall"]);
+			if (st.code === 0) changed.push({ repo: r.key, paths: porcelainPaths(st.out) });
+		}
+		const warning = filesWarning(changed, facts);
+		if (!warning) return undefined;
+		return { content: [...(event.content ?? []), { type: "text" as const, text: warning }] };
+	});
+
 	pi.registerTool({
 		name: "ask_lead",
 		label: "Ask the lead",
 		description:
-			"Ask the lead (the session that gave you this job) a question, or ask it to approve a sensitive action (merge, publish, comments, delete, formats/schemas/CI/secrets, dependencies). Blocks until the lead answers. Use it instead of guessing; never ask for something the brief already decides.",
+			"Ask the lead (the session that gave you this job) a question, or ask it to approve a sensitive action (merge, publish, comments, delete, formats/schemas/CI/secrets, dependencies) or a path outside the brief's Files (category files, item: a glob relative to the repo root). Blocks until the lead answers. Use it instead of guessing; never ask for something the brief already decides.",
 		promptSnippet: "ask_lead: ask the lead a question or ask for approval of a sensitive action",
 		parameters: Type.Object({
 			question: Type.String({ description: "The question, or the reason for the approval" }),
 			approval: Type.Optional(
 				Type.Object({
-					category: Type.String({ description: "merge | publish | comments | delete | formats | deps" }),
+					category: Type.String({ description: APPROVAL_CATEGORIES.join(" | ") }),
 					item: Type.String({ description: "The exact path or command to approve" }),
 					why: Type.String(),
 				}),
 			),
 		}),
 		async execute(_id, params, signal) {
+			if (params.approval && !(APPROVAL_CATEGORIES as readonly string[]).includes(params.approval.category)) {
+				return { content: [{ type: "text", text: `unknown approval category "${params.approval.category}" (one of ${APPROVAL_CATEGORIES.join(", ")})` }], details: {} };
+			}
 			const id = newMsgId();
 			const dir = jobDir();
 			append(outboxPath(dir), params.approval ? { type: "approval", id, category: params.approval.category, item: params.approval.item, why: params.approval.why || params.question } : { type: "ask", id, question: params.question });

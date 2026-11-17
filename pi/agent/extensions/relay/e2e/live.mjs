@@ -1,7 +1,8 @@
 // Live end-to-end run of relay with real models (15-25 min, costs tokens):
 //   node pi/agent/extensions/relay/e2e/live.mjs
 //
-// Scratch repo with a local bare origin -> temp relay.json (merge after-pass for the scratch repo, RELAY_CONFIG) ->
+// Scratch repo with a local bare origin -> temp relay.json (active, merge after-pass for the scratch repo, RELAY_CONFIG; the judge and critic
+// use agents.json) ->
 // `pi --mode rpc -ne -e relay -e worktree -e sandbox` in the scratch repo -> a short discussion, then "go" ->
 // wait up to 30 min for the job to end -> assert report.md (Approvals, Done when), the change on the bare remote's main,
 // the set removed. Prints the job id and "delivered"; exit 0 on success.
@@ -38,7 +39,7 @@ git(repo, "push", "-q", "-u", "origin", "main");
 
 const cfgFile = path.join(base, "relay.json");
 const provider = process.env.RELAY_E2E_PROVIDER ?? path.join(os.homedir(), ".pi", "agent", "npm", "node_modules", "pi-claude-bridge", "src", "index.ts");
-fs.writeFileSync(cfgFile, JSON.stringify({ repos: { [fwd(repo)]: { merge: "after-pass" } }, caps: { critic: 2 }, worker: { extensions: [provider] }, reviewer: { extensions: [provider] } }));
+fs.writeFileSync(cfgFile, JSON.stringify({ repos: { [fwd(repo)]: { merge: "after-pass" } }, active: true, caps: { critic: 2 }, worker: { extensions: [provider] } }));
 
 const pi = spawn(process.env.RELAY_E2E_PI ?? "pi", ["--mode", "rpc", "-ne", "-a", "--model", model, "-e", provider, "-e", path.join(ext, "relay", "index.ts"), "-e", path.join(ext, "worktree", "index.ts"), "-e", path.join(ext, "sandbox", "index.ts")], {
 	cwd: repo,

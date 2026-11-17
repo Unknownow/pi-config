@@ -1,4 +1,4 @@
-// node --experimental-strip-types --test commands.test.ts
+// node --experimental-strip-types --import ../agents/test-hooks.ts --test commands.test.ts
 // /relay: the subcommand table, its completions, and the handler called with every entry.
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -15,7 +15,7 @@ const st = (over: Partial<Parameters<typeof relayCompletions>[1]> = {}) => ({
 
 test("the table values are the documented subcommands, in order", () => {
 	assert.deepEqual(RELAY_SUBS.map((s) => s.value), ["status", "on", "off", "go", "stop", "pause", "resume", "followup", "log", "model"]);
-	assert.deepEqual([...RELAY_ROLES], ["critic", "judge", "escalate", "worker.small", "worker.normal", "worker.large"]);
+	assert.deepEqual([...RELAY_ROLES], ["escalate", "worker.small", "worker.normal", "worker.large"]);
 	assert.ok(RELAY_SUBS.every((s) => s.description && !s.description.includes("\n")));
 	assert.match(relayDescription(), /^relay: status \| on \| off \| go \| stop <job> \|/);
 });
@@ -38,9 +38,11 @@ test("job subcommands list this session's jobs with their state; model walks rol
 	assert.equal(relayCompletions("on ", st()), null);
 	assert.equal(relayCompletions("stop ", st({ jobs: () => { throw new Error("x"); } })), null);
 	assert.deepEqual(relayCompletions("model w", st())!.map((i) => i.value), ["model worker.small ", "model worker.normal ", "model worker.large "]);
-	assert.deepEqual(relayCompletions("model critic ", st())!.map((i) => i.value), ["model critic a/c"]);
-	assert.equal(relayCompletions("model critic a/c:h", st())!.length, 1);
-	assert.equal(relayCompletions("model critic ", st({ models: () => [] })), null);
+	assert.deepEqual(relayCompletions("model escalate ", st())!.map((i) => i.value), ["model escalate a/c"]);
+	assert.equal(relayCompletions("model escalate a/c:h", st())!.length, 1);
+	assert.equal(relayCompletions("model escalate ", st({ models: () => [] })), null);
+	// the judge and critic are agents roles: /relay model does not offer them
+	assert.equal(relayCompletions("model critic ", st()), null);
 });
 
 test("the handler takes every table entry, and /relay completes this session's jobs", async () => {

@@ -1,4 +1,4 @@
-// node --experimental-strip-types --test running.test.ts
+// node --experimental-strip-types --import ../agents/test-hooks.ts --test running.test.ts
 // Stage 3: mid-run input, escalation and re-plan, stalls and tool timeouts, pause, adoption, PR-only cleanup and follow-ups.
 // Engine tests with the fake pi, real git repos with a bare origin, and a fake clock where time matters.
 import assert from "node:assert/strict";
@@ -7,9 +7,8 @@ import * as path from "node:path";
 import { test } from "node:test";
 import { listJobs, readJob, writeJob } from "./job.ts";
 import { run } from "./sh.ts";
-import { runSubagent } from "./subagent.ts";
 import { git, tmpDir } from "./test/helpers.ts";
-import { brief, type World, waitFor, world } from "./test/env.ts";
+import { brief, reviewerRole, scriptedReviewer, type World, waitFor, world } from "./test/env.ts";
 
 const FAIL = "- major - [bug] `greeting.txt:1` wrong greeting fix: auto\n  Why: it should say hello.\n  Fix: say hello.\n\nVERDICT: FAIL";
 const PASS = "VERDICT: PASS";
@@ -261,6 +260,8 @@ test("a stall (no events, no tool) aborts and restarts the worker with -c; a sec
 		assert.ok(w.notices.some((n) => /stalled/.test(n)));
 		assert.equal(jr.job.restarts, 1);
 		await waitFor(() => w.cmds().filter((c) => c.type === "prompt").length === 2, 30_000, "the restart prompt");
+		// the restart is over once the worker answered its prompt: activity after the clock jump would hide the stall
+		await waitFor(() => !jr.recovering, 30_000, "the restart to finish");
 		clock.t += 11 * 60_000;
 		await w.engine.tick();
 		await waitFor(() => jr.job.state === "paused", 30_000, "the pause");
@@ -425,8 +426,8 @@ function followWorld(cfg: object = {}, script: object) {
 	const tasks: string[] = [];
 	const w = world(cfg, undefined, {
 		runReviewer: (o) => {
-			if (/relay-role: judge/.test(o.systemPrompts.join("\n"))) tasks.push(o.task);
-			return runSubagent(o);
+			if (reviewerRole(o) === "judge") tasks.push(o.task);
+			return scriptedReviewer(o);
 		},
 	});
 	w.write(script);

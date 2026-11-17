@@ -1,4 +1,4 @@
-// node --experimental-strip-types --test deliver.test.ts
+// node --experimental-strip-types --import ../agents/test-hooks.ts --test deliver.test.ts
 // Delivery (D14) on temp repos with bare remotes: rebase, accept, push rule, merge.
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -6,7 +6,7 @@ import * as path from "node:path";
 import { test } from "node:test";
 import { defaultShell } from "./engine.ts";
 import { emptyJob, type Job } from "./job.ts";
-import { gateCheck } from "./merge-gate.ts";
+import { gateCheck } from "../shared/git/merge-gate.ts";
 import { parseConfig } from "./config.ts";
 import { run } from "./sh.ts";
 import { deliverStep, mergeAllowed, pushJobBranch, verifyCommands } from "./steps/deliver.ts";

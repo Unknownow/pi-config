@@ -1,4 +1,4 @@
-/** Relay's lead-mode activation: relay.json `active`, `RELAY_ROLE` and job-set detection. Relay and flow are switched by hand; they do not ask each other. */
+/** Relay's lead-mode activation: relay.json `active` (the default, off unless set), `/relay on`, `RELAY_ROLE` and job-set detection. Relay and flow are switched by hand; they do not ask each other. */
 
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -18,7 +18,7 @@ export function inJobSet(cwd: string): boolean {
 export type Mode = "undecided" | "on" | "off";
 
 export interface ActivationDeps {
-	/** relay.json `active`. */
+	/** relay.json `active`: whether lead mode starts on (default false; `/relay on` turns it on anyway). */
 	active: () => boolean;
 	cwd: string;
 	role: string | undefined;
@@ -48,7 +48,7 @@ export class Activation {
 	decide(): Promise<boolean> {
 		if (this.mode === "undecided") {
 			if (this.d.role) this.set("off", "a relay worker or reviewer process");
-			else if (!this.d.active()) this.set("off", "relay.json active is false");
+			else if (!this.d.active()) this.set("off", "relay is off by default; /relay on turns it on");
 			else if (this.jobSet) this.set("off", "relay: this is a job's worktree; lead mode off");
 			else this.set("on", "");
 		}
@@ -60,11 +60,10 @@ export class Activation {
 		this.reason = reason;
 	}
 
-	/** `/relay on`: refused for workers and job worktrees, or when relay.json active is false. */
+	/** `/relay on`: turns lead mode on for this session whatever relay.json `active` says; refused for workers and job worktrees. */
 	async turnOn(): Promise<{ ok: true } | { ok: false; why: string }> {
 		if (this.d.role) return { ok: false, why: "relay workers do not run a lead" };
 		if (this.jobSet) return { ok: false, why: "this is a job's worktree" };
-		if (!this.d.active()) return { ok: false, why: "relay.json active is false" };
 		this.set("on", "");
 		return { ok: true };
 	}

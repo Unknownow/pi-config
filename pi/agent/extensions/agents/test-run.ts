@@ -78,8 +78,11 @@ export function callDir(roundDir: string, fsx: { mkdirSync(p: string): unknown; 
 	}
 }
 
-/** Takes the cross-process lock of a resource; see lock.ts. */
-export type ResourceLock = (resource: string, signal?: AbortSignal) => Promise<{ release(): void }>;
+/** Takes the cross-process lock of a resource; see lock.ts. `signal` of the held lock aborts when the lock is lost. */
+export type ResourceLock = (resource: string, signal?: AbortSignal) => Promise<{ release(): void; signal?: AbortSignal }>;
+
+/** The message of a task stopped because another process took its resource lock over. */
+export const LOCK_LOST = "resource lock lost";
 
 const abortError = () => Object.assign(new Error("aborted"), { name: "AbortError" });
 
@@ -107,9 +110,10 @@ function untilAbort<T>(p: Promise<T>, signal?: AbortSignal): Promise<T> {
  * Shared by all test_run calls of a process: one runner at a time per resource, and at most `limit()`
  * runners in all. Order: the in-process resource wait, then the cross-process file lock (`lock`), then a
  * runner slot, so a task that waits for its resource never holds a slot. Every wait stops when `signal`
- * aborts; an aborted waiter still passes the in-process lock on in chain order.
+ * aborts; an aborted waiter still passes the in-process lock on in chain order. `fn` gets the held file
+ * lock's signal (aborted when the lock is lost), to stop its task.
  */
-export function runnerGate(limit: () => number, lock?: ResourceLock): <R>(resource: string, fn: () => Promise<R>, signal?: AbortSignal) => Promise<R> {
+export function runnerGate(limit: () => number, lock?: ResourceLock): <R>(resource: string, fn: (lockSignal?: AbortSignal) => Promise<R>, signal?: AbortSignal) => Promise<R> {
 	const locks = new Map<string, Promise<void>>();
 	const waiting: (() => void)[] = [];
 	let running = 0;
@@ -122,7 +126,7 @@ export function runnerGate(limit: () => number, lock?: ResourceLock): <R>(resour
 			waiting.shift()!();
 		}
 	}
-	return async function hold<R>(resource: string, fn: () => Promise<R>, signal?: AbortSignal): Promise<R> {
+	return async function hold<R>(resource: string, fn: (lockSignal?: AbortSignal) => Promise<R>, signal?: AbortSignal): Promise<R> {
 		const k = resourceKey(resource);
 		const shared = !!k && k !== "none";
 		let release = () => {};
@@ -142,7 +146,7 @@ export function runnerGate(limit: () => number, lock?: ResourceLock): <R>(resour
 			void prev.then(release); // the next waiter still goes after the one before this one
 			throw e;
 		}
-		let file: { release(): void } | undefined;
+		let file: { release(): void; signal?: AbortSignal } | undefined;
 		try {
 			if (shared && lock) file = await lock(resource, signal);
 			if (running >= max()) {
@@ -159,7 +163,7 @@ export function runnerGate(limit: () => number, lock?: ResourceLock): <R>(resour
 				}
 			} else running++;
 			try {
-				return await fn();
+				return await fn(file?.signal);
 			} finally {
 				freeSlot();
 			}

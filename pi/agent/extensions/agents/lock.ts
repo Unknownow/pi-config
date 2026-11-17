@@ -2,12 +2,16 @@
  * Cross-process resource lock for test_run: one file per resource under `os.tmpdir()/pi-agents-locks/`,
  * so runners of different pi processes (sessions, workers) never share a device or a Unity project.
  *
- * Protocol: the lock file is created with `wx`; its content is the owner token (pid + random) and a
- * heartbeat time. Waiters poll every 250-500 ms (jittered). The owner rewrites the heartbeat every 30 s,
- * only while the file still holds its token; release deletes the file only when it holds its token.
- * A stale lock (owner pid dead, or heartbeat older than 2 min) is taken over under a `<name>.takeover`
- * guard file created with `wx` (itself stale after 30 s): holding the guard, the taker re-reads the lock
- * and only if it still has the stale token deletes it and creates its own with `wx`.
+ * Protocol: the lock file is created with `wx` and written once: the owner token (pid + random) and its pid.
+ * Waiters poll every 250-500 ms (jittered). The heartbeat never rewrites the file: every 30 s it checks the
+ * file still holds the owner's token and only then touches its mtime. A lock whose token is no longer the
+ * owner's is lost: `HeldLock.lost` is set, its `signal` aborts and the heartbeat stops. Release skips a lost
+ * lock and re-checks the token right before deleting. A stale lock (owner pid dead, or mtime older than
+ * 2 min) is taken over under a `<name>.takeover` guard file created with `wx` (content: the taker's token,
+ * stale after 30 s): holding the guard, the taker re-reads the lock and only if it still has the stale token
+ * deletes it and creates its own with `wx`. A stale guard is removed only by renaming it to a unique name and
+ * checking the renamed file is the guard judged stale (same content and mtime); a guard taken meanwhile is
+ * put back with `linkSync` (which fails if yet another guard exists) and the renamed name is unlinked.
  */
 
 import { createHash, randomBytes } from "node:crypto";
@@ -23,9 +27,9 @@ export interface LockOptions {
 	signal?: AbortSignal;
 	/** Poll interval: a wait of `pollMs` to `2 × pollMs` between tries. Default 250. */
 	pollMs?: number;
-	/** Heartbeat refresh. Default 30 s. */
+	/** Heartbeat refresh (the lock file's mtime). Default 30 s. */
 	heartbeatMs?: number;
-	/** A heartbeat older than this is stale. Default 2 min. */
+	/** A lock file whose mtime is older than this is stale. Default 2 min. */
 	staleMs?: number;
 	/** A takeover guard older than this is stale. Default 30 s. */
 	guardStaleMs?: number;
@@ -33,20 +37,30 @@ export interface LockOptions {
 	isAlive?: (pid: number) => boolean;
 	/** Test hook: the owner's pid written into the token. */
 	pid?: number;
+	/** Test hooks that run inside the race windows, to simulate another process acting there. */
+	testHooks?: {
+		/** After a takeover guard was judged stale, before it is removed. */
+		staleGuard?: (guard: string) => void;
+		/** In a heartbeat, after the token check, before the mtime is touched. */
+		beat?: (file: string) => void;
+	};
 }
 
 export interface HeldLock {
 	/** The lock file. */
 	file: string;
 	token: string;
-	/** Stops the heartbeat and deletes the file if it still holds this token. */
+	/** Set once the heartbeat found another token in the file (the lock was taken over); the holder must stop. */
+	readonly lost: boolean;
+	/** Aborts when the lock is lost. */
+	signal: AbortSignal;
+	/** Stops the heartbeat and, unless the lock was lost, deletes the file if it still holds this token. */
 	release(): void;
 }
 
 interface LockContent {
 	token: string;
 	pid: number;
-	at: number;
 }
 
 /** The key a resource is locked under: kind lowercased, the path part with forward slashes (lowercased on win32), no trailing slash. */
@@ -85,7 +99,7 @@ function readLock(file: string): { content?: LockContent; mtimeMs: number } | nu
 		}
 		try {
 			const c = JSON.parse(text) as LockContent;
-			if (typeof c?.token === "string" && typeof c.pid === "number" && typeof c.at === "number") return { content: c, mtimeMs };
+			if (typeof c?.token === "string" && typeof c.pid === "number") return { content: c, mtimeMs };
 		} catch {
 			// half written, or foreign
 		}
@@ -135,19 +149,47 @@ export async function acquireLock(resource: string, opts: LockOptions = {}): Pro
 	const file = lockFile(resource, dir);
 	const guard = `${file}.takeover`;
 	const token = `${pid}-${randomBytes(8).toString("hex")}`;
-	const body = () => JSON.stringify({ token, pid, at: Date.now(), resource: normaliseResource(resource) });
+	const body = JSON.stringify({ token, pid, resource: normaliseResource(resource) });
 	fs.mkdirSync(dir, { recursive: true });
 
 	const isStale = (r: { content?: LockContent; mtimeMs: number }): boolean => {
-		if (!r.content) return Date.now() - r.mtimeMs > staleMs;
-		return !isAlive(r.content.pid) || Date.now() - r.content.at > staleMs;
+		if (r.content && !isAlive(r.content.pid)) return true;
+		return Date.now() - r.mtimeMs > staleMs;
+	};
+
+	/** Removes the takeover guard if it is still the stale one that was judged (`seen`); a guard taken meanwhile is put back. */
+	const dropStaleGuard = (seen: { text: string; mtimeMs: number }): void => {
+		const moved = `${guard}.${token}.stale`;
+		try {
+			fs.renameSync(guard, moved);
+		} catch {
+			return; // gone, or renamed by another taker
+		}
+		let same = false;
+		try {
+			same = fs.readFileSync(moved, "utf8") === seen.text && fs.statSync(moved).mtimeMs === seen.mtimeMs;
+		} catch {
+			// unreadable: treat as another's
+		}
+		if (!same) {
+			try {
+				fs.linkSync(moved, guard); // fails when yet another guard exists: that one wins
+			} catch {
+				// a newer guard exists
+			}
+		}
+		fs.rmSync(moved, { force: true });
 	};
 
 	/** Under the guard: replace the stale lock if it still holds `staleToken`. */
 	const takeOver = (staleToken: string | undefined): boolean => {
-		if (!tryCreate(guard, String(pid))) {
+		if (!tryCreate(guard, token)) {
 			try {
-				if (Date.now() - fs.statSync(guard).mtimeMs > guardStaleMs) fs.rmSync(guard, { force: true });
+				const seen = { text: fs.readFileSync(guard, "utf8"), mtimeMs: fs.statSync(guard).mtimeMs };
+				if (Date.now() - seen.mtimeMs > guardStaleMs) {
+					opts.testHooks?.staleGuard?.(guard);
+					dropStaleGuard(seen);
+				}
 			} catch {
 				// the guard went away
 			}
@@ -158,15 +200,20 @@ export async function acquireLock(resource: string, opts: LockOptions = {}): Pro
 			if (now && now.content?.token !== staleToken) return false;
 			if (now && !isStale(now)) return false;
 			if (now) fs.rmSync(file, { force: true });
-			return tryCreate(file, body());
+			return tryCreate(file, body);
 		} finally {
-			fs.rmSync(guard, { force: true });
+			// only our own guard is removed
+			try {
+				if (fs.readFileSync(guard, "utf8") === token) fs.rmSync(guard, { force: true });
+			} catch {
+				// gone
+			}
 		}
 	};
 
 	for (;;) {
 		if (opts.signal?.aborted) throw abortError();
-		let got = tryCreate(file, body());
+		let got = tryCreate(file, body);
 		if (!got) {
 			const r = readLock(file);
 			if (r === null) continue; // released between the two calls
@@ -177,14 +224,21 @@ export async function acquireLock(resource: string, opts: LockOptions = {}): Pro
 	}
 
 	let released = false;
+	let lost = false;
+	const lostCtl = new AbortController();
+	const holds = (): boolean => readLock(file)?.content?.token === token;
 	const beat = setInterval(() => {
 		try {
-			const r = readLock(file);
-			if (r?.content?.token !== token) {
-				clearInterval(beat); // taken over: never write over the new owner
+			if (!holds()) {
+				// taken over: never touch the new owner's file; the holder is told
+				lost = true;
+				clearInterval(beat);
+				lostCtl.abort(Object.assign(new Error("resource lock lost"), { name: "AbortError" }));
 				return;
 			}
-			fs.writeFileSync(file, body());
+			opts.testHooks?.beat?.(file);
+			const now = new Date();
+			fs.utimesSync(file, now, now);
 		} catch {
 			// try again next beat
 		}
@@ -193,12 +247,17 @@ export async function acquireLock(resource: string, opts: LockOptions = {}): Pro
 	return {
 		file,
 		token,
+		get lost() {
+			return lost;
+		},
+		signal: lostCtl.signal,
 		release() {
 			if (released) return;
 			released = true;
 			clearInterval(beat);
+			if (lost) return;
 			try {
-				if (readLock(file)?.content?.token === token) fs.rmSync(file, { force: true });
+				if (holds()) fs.rmSync(file, { force: true });
 			} catch {
 				// nothing to release
 			}

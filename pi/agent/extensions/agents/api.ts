@@ -6,6 +6,9 @@
 // Running a subagent process.
 export { addUsage, emptyUsage, expandHome, mapLimit, type RunOptions, type RunResult, runSubagent, type SubagentEvent, type ToolCall } from "./subagent.ts";
 export { type EventSink, knowledgeFor, type McpServer, type RoleRun, type RoleRunResult, runRole } from "./run-role.ts";
+export { AGENTS_EXTENSION, FORWARD_EXTENSION } from "./run-role.ts";
+export { FORWARD_ENV } from "./mcp-forward.ts";
+export { ADVISOR_CAP_ENV, TOOLS_ENV, USAGE_FILE_ENV, type UsageLine } from "./env.ts";
 
 // The reviewer roles.
 export { collectDiffParts, type CriticRequest, criticPrompt, type DiffPart, fitDiffs, type JudgeRequest, judgePrompt, type ReviewResult, reviewVerdict, runCritic, runJudge } from "./review.ts";

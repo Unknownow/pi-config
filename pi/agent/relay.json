@@ -1,15 +1,7 @@
 {
-  "_comment": "Config for ~/.pi/agent/extensions/relay. Missing keys fall back to the defaults in relay/config.ts. Edit here or with `/relay model <role> <provider/id[:thinking]>`. Synced by pi-config.",
-  "active": true,
+  "_comment": "Config for ~/.pi/agent/extensions/relay. Missing keys fall back to the defaults in relay/config.ts. Edit here or with `/relay model <escalate|worker.small|worker.normal|worker.large> <provider/id[:thinking]>`; the judge and critic are agents roles (agents.json, `/agents model`). Off by default: `/relay on` turns lead mode on. Synced by pi-config.",
+  "active": false,
   "roles": {
-    "critic": {
-      "model": "claude-bridge/claude-opus-5-5",
-      "thinking": "medium"
-    },
-    "judge": {
-      "model": "claude-bridge/claude-opus-5-5",
-      "thinking": "medium"
-    },
     "escalate": {
       "model": "claude-bridge/claude-opus-5-5",
       "thinking": "high"
@@ -50,11 +42,6 @@
   "bashTimeoutMin": 60,
   "toolTimeouts": [],
   "worker": {
-    "extensions": [
-      "~/.pi/agent/npm/node_modules/pi-claude-bridge/src/index.ts"
-    ]
-  },
-  "reviewer": {
     "extensions": [
       "~/.pi/agent/npm/node_modules/pi-claude-bridge/src/index.ts"
     ]

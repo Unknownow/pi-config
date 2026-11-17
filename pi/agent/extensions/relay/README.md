@@ -2,16 +2,18 @@
 
 An autonomous lead / worker / judge extension for hands-off work. Your session is the **lead**: it discusses the what and the how with you, does small work itself, and hands real work to headless **workers**. A **critic** checks each brief before dispatch; a **judge** checks each result. Relay delivers within the Authority you agreed, then writes a report. "go" is the only input relay needs from you; the report is the only output you need to read.
 
-`workflow` stays installed and standalone for manual control. Relay imports nothing from `workflow`, `worktree`, `agents` or `sandbox` (`boundary.test.ts`); it talks to `worktree` through events and uses `../shared` only.
+**Relay is off by default** (`relay.json` `active: false`): `/relay on` turns lead mode on for the session (`active: true` makes it start on).
+
+`workflow` stays installed and standalone for manual control. Relay uses the **agents** library: the judge and critic are agents roles (`runJudge`, `runCritic`; models, diff limit and reviewer knowledge in `agents.json`, set with `/agents model`), and workers load the agents extension for `explore`, `advisor` and `test_run`. Relay imports agents only through `agents/api.ts`, and the git rules (merge gate, push guard, repo diff) and the session folders from `../shared`; nothing from `workflow`, `worktree` or `sandbox` (`boundary.test.ts`). It talks to `worktree` through events.
 
 ## Roles
 
 | Role | What it is |
 |---|---|
 | lead | Your session (Opus). Always on in lead mode, takes input at any time. Reads, searches, runs bash, tests and builds, commits, pushes, opens PRs, and takes sensitive actions without asking (all logged). Edits up to the **edit budget** itself. |
-| critic | One-shot, read-only (`reviewer.ts`). Reads the brief against the code: efficiency at the stated scale, a path for the named extensions, fit with the repo's patterns, no duplication, neither under- nor over-engineered, Authority covered. Up to 3 rounds per draft. |
-| worker | A `pi --mode rpc -ne -ns -np -e worker.ts` process (Sonnet by default, per-job size) in a worktree set. Never pushes, merges or publishes. |
-| judge | One-shot, read-only. Judges the diff against the **current brief version**. Any change Authority does not cover is a blocker. |
+| critic | Agents `runCritic` (read-only, agents' `reviewer.ts`), document = the brief (or an amendment), about "relay brief", relay's brief rules as `criteria` (`reviews.ts`): completeness, efficiency at the stated scale, a path for the named extensions, fit with the repo's patterns, no duplication, Authority covered (`[authority]`), locked decisions (`[locked]`). Up to 3 rounds per draft. |
+| worker | A `pi --mode rpc -ne -ns -np -e worker.ts -e <agents index.ts>` process (Sonnet by default, per-job size) in a worktree set, with the agents tools `explore`, `advisor` (3 calls per job) and `test_run` (no `judge` or `critic`). Never pushes, merges or publishes. |
+| judge | Agents `runJudge` in **full** mode every round: spec = the **current brief version**, `criteria` = relay's rules plus the brief's Done when, Non-goals, Decisions and Authority (`reviews.ts`: Authority gaps are blockers, `[plan]` for a brief flaw), `previousFindings` = the last round's, the diff as per-repo parts (fitted to agents.json `judge.maxDiffChars`). |
 | escalate | A stronger model that takes over the worker after the judge rounds. |
 
 ## The flow
@@ -66,7 +68,17 @@ The lead may edit up to 40 uncommitted lines or 3 files (`editBudget`), counted 
 - Required: `Goal`, `Done when` (bullets), `Non-goals`, `Constraints`, `Decisions (locked)`, `Design`, `Scale` (numbers; the lead assumes numbers when none are given), `Verify` (commands, one per line; `<repo key>: <cmd>` runs in that repo, any other line in the first repo).
 - `Targets`: one line per repo, `<repo dir or name>: <branch>`.
 - `Authority`: one line each for `merge`, `publish`, `comments`, `delete`, `formats`, `deps`: `yes (<specifics>)`, `no` or `n/a`. A `yes` without specifics is invalid for `merge`, `publish`, `delete` and `formats`.
-- Optional: `Budget` (`wall: 120m; tokens: 4M; size: small|normal|large`), `Files` (globs), `Depends on` (stage 4), `Publish` (exact commands, only with `publish: yes`).
+- Optional: `Budget` (`wall: 120m; tokens: 8M; size: small|normal|large`), `Files` (globs, see below), `Depends on` (stage 4), `Publish` (exact commands, only with `publish: yes`).
+
+### Files enforcement
+
+A brief with a `## Files` section limits the job to those globs, relative to each job repo's root (no section: no limit). Dispatch writes `files.json` in the job dir: the globs plus the paths of the lead's snapshot commit (the worker is never failed for files it did not change); `relay_replan` rewrites the globs from the new brief. The globs in force are `files.json` plus every approved `files` item, read on every check, so an approval applies at once.
+
+- `worker-guard` refuses an `edit`/`write` of a path outside the globs and tells the worker to `ask_lead` with `approval {category: "files", item: <glob>, why}`.
+- After each worker `bash` call, the changed paths (`git status --porcelain -uall` per job repo) outside the globs are appended to the tool result as a warning.
+- Before the judge runs, a job diff with paths outside the globs fails the round without a judge call; the paths are the round's finding (`judge/round-N.md`, so the next judge sees them) and the round counts as a judge round.
+
+`files` is an approval category only (`APPROVAL_CATEGORIES`), never an Authority line: the brief's Authority keeps its six categories.
 
 Amendments are appended as `## Amendment N (lead|user|approval): ...`; the version is 1 plus the number of amendments. An approval is an amendment, so the judge sees it. `validateBrief` refuses an incomplete brief at dispatch.
 
@@ -75,27 +87,27 @@ Amendments are appended as `## Amendment N (lead|user|approval): ...`; the versi
 Sensitive categories: `merge` (merge or push to a protected branch), `publish`, `comments` (`gh issue|pr comment|close|review`, issue writes through `gh api`), `delete` (`git branch -D`, `push --delete`, `rm -rf` outside the set), `formats` (CI, schemas, migrations, secrets: `sensitivePaths`), `deps` (installs, manifests and lockfiles). `authority.ts` classifies commands and paths; `allowed` is true when the brief's Authority or an approval covers the item.
 
 - The worker's guard (`worker-guard.ts`, in `worker.ts`) always refuses `git push`, any `gh` write, publishing, branch deletion, and checkout/switch/reset to a ref other than the job's branch or base. It refuses dependency installs and edits of sensitive paths unless Authority or an approval covers them. Every refusal says to use `ask_lead`.
-- `ask_lead {question, approval?: {category, item, why}}` appends to `outbox.jsonl` and polls `inbox.jsonl` once a second.
+- `ask_lead {question, approval?: {category, item, why}}` appends to `outbox.jsonl` and polls `inbox.jsonl` once a second. `category` is one of the six or `files` (a path outside `## Files`).
 - The lead answers with `relay_approve {job, askId, approve, reason}` (for a plain question `reason` is the answer). A category in `askUser` is refused ("ask the user first"). An approval adds an amendment, updates `approvals`. The report starts with an Approvals section.
 - Default sensitive paths: `**/package.json`, `**/package-lock.json`, `**/pnpm-lock.yaml`, `**/*.csproj`, `**/Packages/manifest.json`, `.github/workflows/**`, `**/.env*`.
 
 ## Files
 
-`<git common dir of the lead's cwd repo>/pi/relay/<id>/`: `brief.md`, `job.json`, `owner.<gen>.lock`, `outbox.jsonl`, `inbox.jsonl` (+ cursors), `log.jsonl`, `critic/round-N.md`, `judge/round-N.md`, `guard.json`, `sessions/`, `report.md`. Critic drafts live in `.../pi/relay/drafts/<draft>/`. `lead-actions.jsonl` is in the same root (or `<agent dir>/relay/` outside a git repo). `relay_dispatch` and `relay_critic` refuse outside a git repo. Other Target repos are referenced from `job.json` by path.
+`<git common dir of the lead's cwd repo>/pi/relay/<id>/`: `brief.md`, `job.json`, `owner.<gen>.lock`, `outbox.jsonl`, `inbox.jsonl` (+ cursors), `log.jsonl`, `critic/round-N.md` (+ `round-N.json` with its `weightedCost`), `judge/round-N.md`, `guard.json`, `files.json` (with a `## Files` section), `agents-usage.jsonl` (the worker's agents-tool runs), `sessions/`, `report.md`. Critic drafts live in `.../pi/relay/drafts/<draft>/`. `lead-actions.jsonl` is in the same root (or `<agent dir>/relay/` outside a git repo). `relay_dispatch` and `relay_critic` refuse outside a git repo. Other Target repos are referenced from `job.json` by path.
 
 | File | Responsibility |
 |---|---|
 | `index.ts` | Entry; inert when `RELAY_ROLE` is set. The logic is in `lead.ts` (testable with a fake `pi`): `leadOn`, the prompt, typed "go", edit budget, action log, tools, commands. |
 | `worker.ts`, `worker-guard.ts` | Worker entry (`ask_lead`, `report_done`, the guard) and its pure checks. |
-| `reviewer.ts` | Critic and judge entry; refuses every non-reading tool. |
+| `reviews.ts` | Relay's `criteria` for the agents judge and critic (brief rules, `[plan]`, `[locked]`, `[authority]`). |
+| `files.ts`, `usage.ts` | `## Files` globs (`files.json`); the token sources read from files (`agents-usage.jsonl`, draft critic rounds). |
 | `config.ts` | `relay.json`: defaults, validation, warnings, `repoPolicy`. |
 | `pi-bin.ts` | `piCommand(args)`; `RELAY_PI_BIN` for tests. |
 | `brief.ts`, `job.ts`, `lock.ts`, `mailbox.ts` | Brief parse/validate/amend, `job.json` store, the generation lock, JSONL mailboxes with cursors. |
 | `engine.ts`, `types.ts`, `steps/*` | The step runner and the steps: `dispatch`, `work`, `judge`, `deliver`, `report`, `cleanup` (+ `critic`). A new step is one module plus one entry in `engine.ts` `STEPS`. |
 | `rpc.ts` | The RPC client (strict LF JSONL on bytes, responses by id). |
 | `snapshot.ts`, `budget.ts`, `authority.ts`, `events.ts` | Lead-edit snapshot, edit/job budgets, categories, lead-mode activation. |
-| `subagent.ts`, `mcp-forward.ts`, `repo-diff.ts`, `merge-gate.ts`, `push-guard.ts` | Copies of the workflow modules, adapted (see below). |
-| `prompts/{lead,critic,worker,judge}.md` | Prompts. |
+| `prompts/{lead,worker}.md` | Prompts (the judge and critic base prompts are agents'). |
 | `test/fake-pi.mjs`, `e2e/live.mjs` | The scripted pi and the live test. |
 
 ### Step contract
@@ -116,7 +128,7 @@ Per repo, in Targets order: `git fetch`, then `git rebase origin/<target>`. A cl
 
 - **First push:** `git push origin HEAD:<remoteBranch>`; the branch must not exist on origin (otherwise delivery stops and the lead is woken). `remoteBranch` is set to the branch name at this push.
 - **Later pushes** (after a delivery rebase): `git push --force-with-lease=<remoteBranch>:<remotePushed> origin HEAD:<remoteBranch>`, only on the job's own branch, never the target or a protected branch. After each push `remotePushed` is the sha pushed. A lease failure means someone else pushed (for example you after `/wt open`): delivery stops, the lead is woken, nothing is overwritten.
-- `push-guard.ts` (copy) lets these pushes through only when the delivery step passes a `lease`; the worker guard refuses every push.
+- `../shared/git/push-guard.ts` lets these pushes through only when the delivery step passes a `lease`; the worker guard refuses every push.
 - With a GitHub `origin` relay checks it with `gh repo view <owner/name> --json name` and creates a PR when none is open. When that check fails (auth, network, CLI change) or no PR could be opened, delivery stops with an error (`relay_deliver` retries); it never falls back to a direct push to the target. **Merge** when Authority `merge` is yes (or approved), or when the repo's `merge` is `after-pass` and Authority is not `no`: `gateCheck` on the accepted tree, then `gh pr merge --squash --match-head-commit <sha>`; only when `origin` is not GitHub at all, a fast-forward `git push origin <sha>:<target>` (if the target moved, rebase again, up to 3 times). Merging after PASS is the default (`defaultMerge` is `after-pass`), also for `merge: n/a`. To opt out put `merge: no` in a brief, or `pr-only` for the repo in relay.json `repos`. Otherwise (`pr-only`, or Authority `no`) the set is kept until the PR merges; the PR-only cleanup (below) removes it later.
 - After all merges the `Publish` commands run, only with `publish: yes`.
 
@@ -126,24 +138,28 @@ The path is `RELAY_CONFIG`, or else `<agent dir>/relay.json`. Invalid keys fall 
 
 | Key | Default |
 |---|---|
-| `active` | `true` (`false` makes relay inert) |
-| `roles` | critic, judge, escalate: Opus 5.5 high; worker `{small: Haiku 5.5, normal: Sonnet 5.5, large: Opus 5.5}` medium; critic and judge also take `prompt` and `tools` |
+| `active` | `false`: lead mode starts off; `/relay on` turns it on (`true` starts it on) |
+| `roles` | escalate: Opus 5.5 high; worker `{small: Haiku 5.5, normal: Sonnet 5.5, large: Opus 5.5}` medium. The judge and critic are agents roles (`agents.json`, `/agents model judge|critic`) |
 | `editBudget` | `{lines: 40, files: 3}` |
 | `maxJobs` | `3` |
 | `caps` | `{critic: 3, judge: 3, escalate: 2, replans: 1}` |
-| `budget` | `{wallMin: 120, tokens: 4000000, graceMin: 30, graceTokenShare: 0.1}` |
+| `budget` | `{wallMin: 120, tokens: 8000000, graceMin: 30, graceTokenShare: 0.1}`; see "Token cap" |
 | `stallMin`, `bashTimeoutMin` | `10`, `60` |
 | `toolTimeouts` | `[]` (`[{pattern, minutes}]`); a pattern longer than the wall budget warns on load, and a job whose Verify or Design matches gets at least timeout x 2 + 60 min |
-| `reviewer.extensions` | `[]`; the critic and judge load these next to `reviewer.ts` (normally the model provider, e.g. `~/.pi/agent/npm/node_modules/pi-claude-bridge/src/index.ts`) |
-| `worker.extensions` | `[]` (the worker's `-e` list is `worker.ts` plus these, plus `builtin:mcp` and `mcp-forward.ts` only when the knowledge server is registered) |
+| `worker.extensions` | `[]` (the worker's `-e` list is `worker.ts`, the agents extension, these, plus `builtin:mcp` and agents' `mcp-forward.ts` only when the knowledge server is registered) |
 | `repos` | `{"<path glob or owner/name>": {merge: "after-pass"\|"pr-only", protectedBranches, sensitivePaths}}` |
 | `defaultMerge` | `"after-pass"` (`"pr-only"` opts out for all repos; a brief with `merge: no` opts out for one job) |
 | `askUser` | `[]` (categories the lead must ask you about before approving) |
-| `knowledge` | as in `workflow.json` |
-| `judge.maxDiffChars` | `400000` |
-| `tokenWeights`, `approvePattern` | as in `workflow.json` |
+| `knowledge` | `{server: "knowledge", tools: [search, get_entry, get_rule_pack, get_schema, status], env: {KNOWLEDGE_OFFLINE: "1"}}`: the **worker's** knowledge tools only (the judge's and critic's come from agents.json `knowledge`) |
+| `approvePattern` | as in `workflow.json` |
 
-`/relay model <role> <provider/id[:thinking]>` (roles: critic, judge, escalate, worker.small, worker.normal, worker.large) rewrites the file.
+Moved to agents.json: `roles.judge`, `roles.critic`, `reviewer`, `judge.maxDiffChars`, `tokenWeights`, `knowledge.roles`, `knowledge.judgeCheck`. An old relay.json with any of them loads with one warning and they are ignored.
+
+`/relay model <role> <provider/id[:thinking]>` (roles: escalate, worker.small, worker.normal, worker.large) rewrites the file; for the judge and critic it points to `/agents model`.
+
+**Token cap.** `job.used.tokens` is agents `costOf` units (weighted tokens x the model's agents.json `modelCost` multiplier: Haiku 0.2, Sonnet 0.6, Opus 1.0) and counts every source: the worker (priced by the model it runs on, the escalate model once escalated), every judge run, every critic run of the job (restart and follow-up amendments), the `relay_critic` rounds of the dispatched draft (each round's `weightedCost` in `critic/round-N.json`, added at dispatch), and the worker's agents-tool runs (`weightedCost` of each line of `agents-usage.jsonl`; the counted byte offset is `job.json` `usageOffset`, so no line counts twice, also after a lead takeover). The default cap is 8M (`budget.tokens`, or the brief's `Budget`).
+
+**Worker tools.** The worker process loads the agents extension with `PI_AGENTS_TOOLS=explore,advisor,test_run`, `PI_AGENTS_USAGE_FILE=<job dir>/agents-usage.jsonl` and `PI_AGENTS_ADVISOR_CAP` = 3 minus the advisor runs already in that file (failed ones too), so the cap holds per job across restarts and escalation (a run killed mid-flight leaves no line: a restart may overshoot by one). The worker prompt says when to use each.
 
 The numbers are starting values, to be tuned after first use.
 
@@ -152,7 +168,7 @@ The numbers are starting values, to be tuned after first use.
 - **W1 `worktree:create`** with `launch: "none"`: relay's dispatch sends `{v:1, name: <job id>, launch:"none", bases: {<repo top>: "origin/<target>"}, folders}` (`folders`: the lead's added folders that are Targets). The reply carries `branch`, `cwd` and `repos: [{top, cwd}]`; relay never builds a branch name itself.
 - **W2 `worktree:remove`** `{v:1, name, force?}`: used after a merge (no force) and to undo a failed dispatch (force). Never shows a dialog; refuses in-use or broken sets; a refusal or a kept branch is reported.
 - **K1 `session-folders`**: the lead's added folders, read from the session entries.
-- **Relay and flow are switched by hand.** Relay does not ask workflow, and workflow does not ask relay. Lead mode is decided by `relay.json` `active`, `RELAY_ROLE` and the job-set rule; `/relay on|off` switch it. Both can be on in one session, and a typed "go" is then handled by both (relay's kickoff and workflow's plan approval), so turn one of them off first.
+- **Relay and flow are switched by hand.** Relay does not ask workflow, and workflow does not ask relay. Lead mode is decided by `relay.json` `active` (default off), `RELAY_ROLE` and the job-set rule; `/relay on|off` switch it. Both can be on in one session, and a typed "go" is then handled by both (relay's kickoff and workflow's plan approval), so turn one of them off first.
 - **Job-set sessions.** A session whose cwd is inside a `.pi-set.json` folder named like a job set (`r1a2b3c`, `r1a2b3c-f1`) (a worker, a `/wt open` takeover) keeps lead mode off: no edit budget, no "go" hook, no dispatch.
 
 ## Parallel and stacked jobs, add-repo, widget and log
@@ -169,21 +185,22 @@ The numbers are starting values, to be tuned after first use.
 
 `relay_critic {brief, draft?}`, `relay_dispatch {brief, size?, draft?, overrides?}`, `relay_status {job?}`, `relay_approve {job, askId, approve, reason}`, `relay_stop {job}`, `relay_deliver {job}`, `relay_send {job, text, mode, reset?, from?}`, `relay_replan {job, brief}`, `relay_resume {job}`, `relay_followup {job, text}`, `relay_add_repo {job, folder, target, askId?}`. Commands: `/relay` (status), `/relay on|off` (off is refused while this lead owns running jobs), `/relay go`, `/relay stop <job>`, `/relay pause <job>`, `/relay resume <job>`, `/relay followup <job> <text>`, `/relay log <job> [n]`, `/relay model <role> <spec>`.
 
-## Copies from workflow
+## Dependencies
 
-`subagent.ts`, `mcp-forward.ts`, `repo-diff.ts`, `merge-gate.ts` and `push-guard.ts` are copies with their tests, adapted: `subagent.ts` starts `--mode json -p --no-session -ne -ns -np` plus `-a`/`-na` from the lead's trust and spawns through `pi-bin.ts`; `merge-gate.ts` drops `midFlowMergeProblem`; `push-guard.ts` gains the `lease` option; `mcp-forward.ts` reads `PI_RELAY_MCP`. `knowledge.ts` and `folders.ts` are small copies of agents helpers.
+- **agents** (`../agents/api.ts` only): `runJudge`, `runCritic` (relay passes `timeoutMs` 30 min, `idleTimeoutMs` 10 min, the lead's trust, the registered MCP servers and, in tests, `EngineDeps.runReviewer` as the runner), `costOf`, the knowledge helpers, `AGENTS_EXTENSION`, `FORWARD_EXTENSION`, `FORWARD_ENV` and the `PI_AGENTS_*` env names. The RPC worker (`rpc.ts`) stays relay's own.
+- **shared**: `git/merge-gate.ts`, `git/push-guard.ts` (with the `lease` option), `git/repo-diff.ts`, `session-folders.ts` (`newestFolders`), findings, tokens, roles, dock, claims, the bash parser.
 
 ## Tests
 
-`node --experimental-strip-types --test *.test.ts` in this folder (about 2 min; `running.test.ts` covers the running-job behaviour with a fake clock where time matters; `stage4.test.ts` the queue, stacked jobs with a faked `gh`, add-repo, widget and log). The engine tests use `RELAY_PI_BIN=test/fake-pi.mjs`, one scripted file that serves the RPC worker and the json-mode critic and judge (it switches on `--mode`), with real git repos and bare remotes. `e2e/live.mjs` runs the whole thing with real models (15-25 min): `node pi/agent/extensions/relay/e2e/live.mjs`.
+`node --experimental-strip-types --import ../agents/test-hooks.ts --test *.test.ts` in this folder (about 2 min; agents' hooks stub the pi packages and point `getAgentDir` at a temp folder, so no test reads your `agents.json`; `running.test.ts` covers the running-job behaviour with a fake clock where time matters; `stage4.test.ts` the queue, stacked jobs with a faked `gh`, add-repo, widget and log). The engine tests use `RELAY_PI_BIN=test/fake-pi.mjs` as the scripted RPC worker, and `test/env.ts` `scriptedReviewer` as the agents runner that plays the script's judge and critic replies, with real git repos and bare remotes. `e2e/live.mjs` runs the whole thing with real models (15-25 min): `node pi/agent/extensions/relay/e2e/live.mjs`.
 
 ## Limits
 
-- The judge rechecks the whole diff each round (plus the previous findings), not only the delta.
+- The judge rechecks the whole diff each round (full mode, plus the previous findings), not only the delta.
 - Closing the lead session kills its workers; the jobs stay on disk and the next lead session adopts them (after 2 min if the pid is alive, at once if the pid is dead or the session is the same). Killing a surviving worker by pid assumes the pid was not reused.
 - A restart or follow-up critic check costs one model run; a critic failure twice refuses the change rather than skipping the check.
 - Escalation switches the model with `set_model`; the thinking level of the escalate role is not applied to a running worker.
-- File locks are reliable on one host only; about 10 workers at once at roughly 300 MB per process; a diff larger than `judge.maxDiffChars` gives the judge the file list plus the diffs that fit.
+- File locks are reliable on one host only; about 10 workers at once at roughly 300 MB per process; a diff larger than agents.json `judge.maxDiffChars` gives the judge the file list plus the diffs that fit.
 - Stacking needs GitHub: the predecessor counts as merged when its PR is `MERGED` (the PR-only scan) or relay merged it; without a PR a stacked job stays stacked.
 - A stacked job assumes the predecessor's branch is not rewritten after the dependent started; if it is, the plain rebase onto it can conflict and becomes a fix round. Overlap detection is by file names and globs only, per repo name.
 - Bash is not blocked against the edit budget up front.

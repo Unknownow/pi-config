@@ -1,4 +1,4 @@
-// node --experimental-strip-types --test authority.test.ts
+// node --experimental-strip-types --import ../agents/test-hooks.ts --test authority.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { allowed, classifyCommand, pathCategory, unauthorized } from "./authority.ts";

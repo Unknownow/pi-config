@@ -1,4 +1,4 @@
-// node --experimental-strip-types --test index.test.ts
+// node --experimental-strip-types --import ../agents/test-hooks.ts --test index.test.ts
 // The lead (lead.ts) through a fake pi: typed "go", the edit budget, tools, the job root, job-set sessions.
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -88,6 +88,33 @@ test("sensitive bash actions are logged to lead-actions.jsonl; plain commands ar
 	const log = path.join(dir, ".git", "pi", "relay", "lead-actions.jsonl");
 	const rows = fs.readFileSync(log, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
 	assert.deepEqual(rows.map((x) => x.category).sort(), ["delete", "deps"]);
+	cleanup(dir);
+});
+
+test("relay is off by default (no relay.json); /relay on turns lead mode on", async () => {
+	const { dir } = makeRepo();
+	const r = relayOn(makeBus(), dir, { env: {} });
+	const ctx = fakeCtx(dir);
+	const ev = { systemPromptOptions: { sections: {} as Record<string, string> } };
+	await r.hooks.get("before_agent_start")!(ev, ctx);
+	assert.match(ev.systemPromptOptions.sections.relay, /Relay lead mode is off/);
+	assert.equal((await input(r, "go", ctx)).action, "continue");
+	assert.ok(!ctx.notes.some((n) => /off by default/.test(n)), "no notice for the default");
+	await r.commands.get("relay").handler("on", ctx);
+	assert.ok(ctx.notes.includes("relay: lead mode on"), ctx.notes.join("|"));
+	const ev2 = { systemPromptOptions: { sections: {} as Record<string, string> } };
+	await r.hooks.get("before_agent_start")!(ev2, ctx);
+	assert.match(ev2.systemPromptOptions.sections.relay, /you are the lead/);
+	cleanup(dir);
+});
+
+test("the lead's own gh pr merge and git push are logged, never blocked", async () => {
+	const { dir } = makeRepo();
+	const r = relayOn(makeBus(), dir);
+	const ctx = fakeCtx(dir);
+	for (const command of ["gh pr merge 12 --squash", "git push origin main"]) assert.equal(await r.hooks.get("tool_call")!({ toolName: "bash", input: { command } }, ctx), undefined, command);
+	const rows = fs.readFileSync(path.join(dir, ".git", "pi", "relay", "lead-actions.jsonl"), "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
+	assert.ok(rows.some((x) => x.category === "merge" && /gh pr merge 12/.test(x.item)));
 	cleanup(dir);
 });
 

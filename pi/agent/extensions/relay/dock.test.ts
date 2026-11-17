@@ -1,4 +1,4 @@
-// node --experimental-strip-types --test dock.test.ts
+// node --experimental-strip-types --import ../agents/test-hooks.ts --test dock.test.ts
 // The relay column of the dock: Engine.dockLines (stream model) and the lead publishing it on dock:lines.
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -61,15 +61,15 @@ test("dockLines: header, running and finished tools (newest first, 3 at most), j
 		jr.ring[jr.ring.length - 1].endedAt = 1250;
 		assert.ok(!w.engine.dockLines(1300).some((l) => l.startsWith("judge round")), "an ended tool call is newer too");
 
-		// judging: one line; other states: header only
+		// judging: one line; other states: header only. The judge and critic models are agents roles (agents.json; its defaults here)
 		jr.job.state = "judging";
 		jr.job.round = 1;
-		assert.deepEqual(w.engine.dockLines(1300), [w.engine.widgetLines()[0].replace(/^relay /, ""), "  judge claude-opus-5-5:high", "judge reviewing round 2"]);
+		assert.deepEqual(w.engine.dockLines(1300), [w.engine.widgetLines()[0].replace(/^relay /, ""), "  judge claude-opus-5-5:medium", "judge reviewing round 2"]);
 		for (const s of ["queued", "paused", "delivering", "critic"] as const) {
 			(jr.job as { state: string }).state = s;
 			assert.equal(w.engine.dockLines(1300).length, 2, s);
 		}
-		assert.equal(w.engine.dockLines(1300)[1], "  critic claude-opus-5-5:high");
+		assert.equal(w.engine.dockLines(1300)[1], "  critic claude-opus-5-5:medium");
 		jr.job.state = "working";
 		jr.job.escalated = 1;
 		assert.equal(w.engine.dockLines(1300)[1], "  worker (escalated) claude-opus-5-5:high");

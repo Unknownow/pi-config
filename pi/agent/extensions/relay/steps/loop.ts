@@ -3,11 +3,13 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { amendmentsSince, parseBrief } from "../brief.ts";
-import { countTokens } from "../../shared/tokens.ts";
-import { judgeVerdict, parseFindings, type Finding } from "../../shared/findings.ts";
-import { collectRepoDiff } from "../repo-diff.ts";
+import { parseFindings, type Finding } from "../../shared/findings.ts";
+import { collectRepoDiff } from "../../shared/git/repo-diff.ts";
+import type { DiffPart } from "../../agents/api.ts";
+import { fileGlobs, FILES_HINT, outsideFiles } from "../files.ts";
 import type { Job } from "../job.ts";
-import type { Step, StepCtx } from "../types.ts";
+import { judgeCriteria } from "../reviews.ts";
+import type { JudgeCall, Step, StepCtx } from "../types.ts";
 
 const MAX_NUDGES = 2;
 
@@ -47,61 +49,31 @@ export const workStep: Step = {
 	},
 };
 
-/** Per-repo diffs as one text, within `max` characters: past it only the file list plus the diffs that fit. */
-export function fitDiffs(parts: { key: string; base: string; full: string; names: string[] }[], max: number): string {
-	const total = parts.reduce((n, p) => n + p.full.length, 0);
-	if (total <= max) return parts.map((p) => `### Repo ${p.key} (base ${p.base.slice(0, 10)})\n\n${p.full || "(no changes)"}`).join("\n\n");
-	let left = max;
-	const out: string[] = [`The diff is ${total} characters, over the limit of ${max}: the file list of every repo comes first, then as many diffs as fit. Read the rest with the read tool.`];
-	for (const p of parts) out.push(`### Repo ${p.key} files\n${p.names.map((n) => `- ${n}`).join("\n")}`);
-	for (const p of [...parts].sort((a, b) => a.full.length - b.full.length)) {
-		if (p.full.length > left) continue;
-		left -= p.full.length;
-		out.push(`### Repo ${p.key} diff (base ${p.base.slice(0, 10)})\n\n${p.full}`);
+/** The diff of every repo against its base (the follow-up base for a follow-up), as agents DiffParts. */
+export async function jobDiffParts(job: Job, ctx: StepCtx): Promise<DiffPart[]> {
+	const parts: DiffPart[] = [];
+	for (const r of job.repos) {
+		const base = r.followBase ?? r.base;
+		const d = await collectRepoDiff((cwd, ...args) => ctx.run("git", args, cwd), r.worktree, base);
+		parts.push({ key: r.key, base, full: d?.full ?? "", names: d?.rootNames ?? [] });
 	}
-	return out.join("\n\n");
+	return parts;
 }
 
-/** The judge's task: the current brief and version, the diffs, and the findings of the last round. */
-export async function judgeTask(job: Job, ctx: StepCtx): Promise<string> {
+/** The judge call: the current brief (with its version) as spec, relay's criteria, the last round's findings and the diff parts. */
+export function judgeCall(job: Job, ctx: StepCtx, diff: DiffPart[]): JudgeCall {
 	const brief = ctx.brief();
 	const parsed = parseBrief(brief);
 	const version = "errors" in parsed ? job.briefVersion : parsed.version;
-	const parts: { key: string; base: string; full: string; names: string[] }[] = [];
-	for (const r of job.repos) {
-		const d = await collectRepoDiff((cwd, ...args) => ctx.run("git", args, cwd), r.worktree, r.followBase ?? r.base);
-		parts.push({ key: r.key, base: r.followBase ?? r.base, full: d?.full ?? "", names: d?.rootNames ?? [] });
-	}
-	let prev = "";
+	let prev: Finding[] | undefined;
 	if (job.round > 0) {
 		try {
-			prev = fs.readFileSync(path.join(ctx.dir, "judge", `round-${job.round}.md`), "utf8");
+			prev = parseFindings(fs.readFileSync(path.join(ctx.dir, "judge", `round-${job.round}.md`), "utf8"));
 		} catch {
 			// no previous round on disk
 		}
 	}
-	return [
-		`Judge the result of job ${job.id} against brief version ${version}.`,
-		`## Brief (version ${version})\n\n${brief}`,
-		`## Diff\n\n${fitDiffs(parts, ctx.cfg.judge.maxDiffChars)}`,
-		prev ? `## Findings of the previous round (check each is fixed; report new problems and unfixed ones)\n\n${prev}` : "",
-		"End with a `VERDICT: PASS` or `VERDICT: FAIL` line.",
-	]
-		.filter(Boolean)
-		.join("\n\n");
-}
-
-export interface Verdict {
-	verdict: "PASS" | "FAIL";
-	findings: Finding[];
-	text: string;
-}
-
-/** PASS only when the judge says so and no blocker or major finding is left. */
-export function verdictOf(text: string): Verdict {
-	const findings = parseFindings(text);
-	const hard = findings.some((f) => f.severity === "blocker" || f.severity === "major");
-	return { verdict: judgeVerdict(text) === "PASS" && !hard ? "PASS" : "FAIL", findings, text };
+	return { spec: `Job ${job.id}, brief version ${version}:\n\n${brief}`, criteria: judgeCriteria(brief), previousFindings: prev?.length ? prev : undefined, diff, cwd: job.cwd ?? job.repos[0].worktree };
 }
 
 const count = (f: Finding[], s: Finding["severity"]) => f.filter((x) => x.severity === s).length;
@@ -175,6 +147,19 @@ export async function backToWork(job: Job, ctx: StepCtx, since: number): Promise
 	return "work";
 }
 
+/**
+ * A round that changed paths outside the brief's Files: no judge call, the paths are the round's finding (saved as
+ * the round's file, so the next judge checks them again), and the round counts like a judge FAIL.
+ */
+async function filesFail(job: Job, ctx: StepCtx, briefVersion: number, outside: string[]): Promise<"work" | "report" | "wait"> {
+	const finding = (p: string) => `- major - [files] \`${p}\` - changed outside the brief's Files fix: auto\n  Why: the brief's ## Files (and the approved files items) do not cover this path.\n  Fix: revert the change, or ${FILES_HINT}.`;
+	fs.mkdirSync(path.join(ctx.dir, "judge"), { recursive: true });
+	fs.writeFileSync(path.join(ctx.dir, "judge", `round-${job.round + 1}.md`), `${outside.map(finding).join("\n")}\nVERDICT: FAIL\n`);
+	job.lastVerdict = { round: job.round + 1, briefVersion, verdict: "FAIL", blockers: 0, majors: outside.length, minors: 0 };
+	ctx.log("files", `round ${job.round + 1}: ${outside.length} path(s) outside the brief's Files: ${outside.join(", ")}`);
+	return failRound(job, ctx, `The Files check failed (round ${job.round + 1}): paths outside the brief's Files`, `${outside.map((p) => `- ${p}`).join("\n")}\n\nRevert these changes, or ${FILES_HINT}.`);
+}
+
 /** Step "judge": reviews the diff against the current brief version. */
 export const judgeStep: Step = {
 	name: "judge",
@@ -201,15 +186,20 @@ export const judgeStep: Step = {
 		// the tree the judge sees is recorded before it reviews, and checked again after
 		const treeOf = async (r: Job["repos"][number]) => (await ctx.run("git", ["rev-parse", "HEAD^{tree}"], r.worktree)).stdout.trim();
 		const seen = await Promise.all(job.repos.map(treeOf));
-		const task = await judgeTask(job, ctx);
-		const cwd = job.cwd ?? job.repos[0].worktree;
-		const addUsage = (u: unknown) => void (job.used.tokens += countTokens(u as Parameters<typeof countTokens>[0], ctx.cfg.tokenWeights).cost);
-		let res = await ctx.review("judge", task, cwd);
-		addUsage(res.usage);
+		const diff = await jobDiffParts(job, ctx);
+		// ## Files: a change outside the job's globs fails the round before the judge runs
+		const globs = fileGlobs(ctx.dir, job.approvals);
+		if (globs) {
+			const outside = diff.flatMap((p) => outsideFiles(p.names, globs).map((n) => (job.repos.length > 1 ? `${p.key}: ${n}` : n)));
+			if (outside.length) return filesFail(job, ctx, briefVersion, outside);
+		}
+		const call = judgeCall(job, ctx, diff);
+		let res = await ctx.judge(call);
+		job.used.tokens += res.weightedCost;
 		if (!res.ok && !ctx.stopped()) {
 			ctx.log("judge-error", res.error ?? "no output");
-			res = await ctx.review("judge", task, cwd);
-			addUsage(res.usage);
+			res = await ctx.judge(call);
+			job.used.tokens += res.weightedCost;
 		}
 		if (ctx.stopped()) return "report";
 		if (!res.ok) {
@@ -235,7 +225,7 @@ export const judgeStep: Step = {
 			ctx.log("moved", "the branch changed while the judge ran; judging again");
 			return "judge";
 		}
-		const v = verdictOf(res.text);
+		const v = { verdict: res.verdict, findings: res.findings };
 		fs.mkdirSync(path.join(ctx.dir, "judge"), { recursive: true });
 		fs.writeFileSync(path.join(ctx.dir, "judge", `round-${job.round + 1}.md`), `${res.text}\n`);
 		job.repos.forEach((r, i) => {

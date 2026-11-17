@@ -16,10 +16,10 @@ import { type RelayConfig, configPath, loadConfig, repoPolicy, saveRole } from "
 import { RELAY_ROLES, relayCompletions, relayDescription } from "./commands.ts";
 import { Engine } from "./engine.ts";
 import { Activation } from "./events.ts";
-import { foldersFromEntries } from "./folders.ts";
+import { newestFolders } from "../shared/session-folders.ts";
 import { jobRoot } from "./job.ts";
 import { type Run, run as realRun } from "./sh.ts";
-import { runCritic } from "./steps/critic.ts";
+import { criticRound } from "./steps/critic.ts";
 import type { EngineDeps } from "./engine.ts";
 import type { Size } from "./config.ts";
 import type { Wt } from "./types.ts";
@@ -91,7 +91,7 @@ export function createLead(pi: ExtensionAPI, d: LeadDeps) {
 
 	const foldersOf = (ctx: any): string[] => {
 		try {
-			return foldersFromEntries(ctx.sessionManager.getBranch());
+			return newestFolders(ctx.sessionManager.getBranch());
 		} catch {
 			return [];
 		}
@@ -115,7 +115,7 @@ export function createLead(pi: ExtensionAPI, d: LeadDeps) {
 			void scan(ctx);
 		}
 		paintWidget();
-		if (was === "undecided" && !on && act.reason && !/relay json|worker or reviewer/.test(act.reason)) ctx.ui?.notify?.(act.reason.startsWith("relay") ? act.reason : `relay: ${act.reason}`, "info");
+		if (was === "undecided" && !on && act.reason && !/off by default|worker or reviewer/.test(act.reason)) ctx.ui?.notify?.(act.reason.startsWith("relay") ? act.reason : `relay: ${act.reason}`, "info");
 		return on;
 	}
 
@@ -330,7 +330,7 @@ export function createLead(pi: ExtensionAPI, d: LeadDeps) {
 			if (refuse) return refuse;
 			const eng = await engineFor(ctx);
 			if ("error" in eng) return text(`relay_critic: ${eng.error.replace("relay_dispatch", "relay_critic")}`);
-			const r = await runCritic({ cfg, root: eng.root, review: (task, cwd) => eng.review("critic", task, cwd), cwd: ctx.cwd }, p.brief, p.draft);
+			const r = await criticRound({ cfg, root: eng.root, critic: (req) => eng.critic(req), cwd: ctx.cwd }, p.brief, p.draft);
 			if ("error" in r) return text(`relay_critic: ${r.error}`);
 			const head = r.ran ? `draft ${r.draft}, round ${r.round} of ${cfg.caps.critic}: ${r.counts?.blocker} blocker, ${r.counts?.major} major, ${r.counts?.minor} minor${r.counts?.locked ? `, ${r.counts.locked} about locked decisions` : ""}${r.counts?.authority ? `, ${r.counts.authority} authority` : ""}` : `draft ${r.draft}`;
 			return text(`${head}\n\n${r.text}`, { draft: r.draft, round: r.round });
@@ -506,7 +506,7 @@ export function createLead(pi: ExtensionAPI, d: LeadDeps) {
 		getArgumentCompletions: (prefix: string) =>
 			relayCompletions(prefix, {
 				jobs: () => engine?.jobList() ?? [],
-				specOf: (role) => (role.startsWith("worker.") ? cfg.roles.worker[role.slice(7) as Size] : cfg.roles[role as "critic" | "judge" | "escalate"]),
+				specOf: (role) => (role.startsWith("worker.") ? cfg.roles.worker[role.slice(7) as Size] : cfg.roles.escalate),
 				models: () => lastCtx?.modelRegistry?.getAvailable() ?? [],
 			}),
 		handler: async (args: string, ctx: any) => {
@@ -561,7 +561,8 @@ export function createLead(pi: ExtensionAPI, d: LeadDeps) {
 				const [role, spec] = rest;
 				const roles: readonly string[] = RELAY_ROLES;
 				const parsed = spec ? parseRoleSpec(spec) : "usage: /relay model <role> <provider/id[:thinking]>";
-				if (!role || !roles.includes(role) || typeof parsed === "string") note(typeof parsed === "string" ? parsed : `roles: ${roles.join(", ")}`, "warning");
+				if (role === "judge" || role === "critic") note(`relay: the ${role} is an agents role (agents.json): /agents model ${role} <provider/id[:thinking]>`, "warning");
+				else if (!role || !roles.includes(role) || typeof parsed === "string") note(typeof parsed === "string" ? parsed : `roles: ${roles.join(", ")}`, "warning");
 				else {
 					saveRole(file, role as any, parsed);
 					loaded = loadConfig(file);

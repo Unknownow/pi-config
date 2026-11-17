@@ -1,6 +1,10 @@
 // A fake pi extension API and event bus, enough to drive relay's lead.ts.
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import type { LeadDeps } from "../lead.ts";
 import { createLead } from "../lead.ts";
+import { scriptedReviewer } from "./env.ts";
 
 export function makeBus() {
 	const handlers = new Map<string, ((d: any) => void)[]>();
@@ -49,9 +53,14 @@ export function fakeCtx(cwd: string, folders: string[] = []) {
 	};
 }
 
+/** A relay.json with `active: true` (relay is off by default), shared by the lead tests. */
+const ACTIVE_CONFIG = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "relay-cfg-")), "relay.json");
+fs.writeFileSync(ACTIVE_CONFIG, JSON.stringify({ active: true }));
+
+/** A lead with lead mode on (relay.json `active: true`); pass `env` to use another config. Its engine's judge and critic are the scripted reviewer. */
 export function relayOn(bus: Bus, cwd: string, over: Partial<LeadDeps> = {}) {
 	const api = fakePi(bus);
-	const lead = createLead(api.pi, { Type: FakeType, getAgentDir: () => cwd, cwd, relayDir: new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"), env: {}, ...over });
+	const lead = createLead(api.pi, { Type: FakeType, getAgentDir: () => cwd, cwd, relayDir: new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"), env: { RELAY_CONFIG: ACTIVE_CONFIG }, ...over, engine: { runReviewer: scriptedReviewer, ...over.engine } });
 	return { ...api, lead };
 }
 

@@ -20,6 +20,8 @@ import { noContextFilesFor, type RunOptions, type RunResult, runSubagent } from 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 /** Subagent-only extension that registers forwarded MCP servers (see mcp-forward.ts). */
 export const FORWARD_EXTENSION = path.join(HERE, "mcp-forward.ts");
+/** The agents extension itself (index.ts), for another pi process to load with `-e` (a relay worker). */
+export const AGENTS_EXTENSION = path.join(HERE, "index.ts");
 /** Subagent-only extension that guards the runners' bash (see runner-guard.ts). */
 export const RUNNER_GUARD_EXTENSION = path.join(HERE, "runner-guard.ts");
 /** Subagent-only extension that keeps judge and critic read-only (see reviewer.ts). */
@@ -57,6 +59,10 @@ export interface RoleRun {
 	/** Added after agents.json `subagent.extensions`. */
 	extensions?: string[];
 	timeoutMs?: number;
+	/** Idle limit of the run; default agents.json `subagent.idleTimeoutMs`. */
+	idleTimeoutMs?: number;
+	/** The caller's project trust, passed to the subagent (`-a` / `-na`); unset passes neither. */
+	trusted?: boolean;
 	/** `pi.events`; the finished run is emitted on it as `agents:subagent-finished`. */
 	events?: EventSink;
 	/** `pi.getMcpServers()`; without it the role gets no knowledge tools. */
@@ -103,7 +109,8 @@ export async function runRole(o: RoleRun): Promise<RoleRunResult> {
 		role: spec,
 		extensions: o.extensions ? [...cfg.subagent.extensions, ...o.extensions] : cfg.subagent.extensions,
 		timeoutMs: o.timeoutMs ?? cfg.subagent.timeoutMs,
-		idleTimeoutMs: cfg.subagent.idleTimeoutMs,
+		idleTimeoutMs: o.idleTimeoutMs ?? cfg.subagent.idleTimeoutMs,
+		...(o.trusted !== undefined ? { trusted: o.trusted } : {}),
 		onEvent: (e) => {
 			applyEvent(run, e, o.cwd, DEFAULT_TOKEN_WEIGHTS);
 			o.onRun?.(run);
