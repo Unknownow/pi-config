@@ -42,7 +42,7 @@
   },
   "budget": {
     "wallMin": 120,
-    "tokens": 4000000,
+    "tokens": 8000000,
     "graceMin": 30,
     "graceTokenShare": 0.1
   },
