@@ -16,6 +16,7 @@ import { stageNote } from "../stages.ts";
 import { type DiffPart, mapLimit, emptyUsage, addUsage } from "../../agents/api.ts";
 import type { FlowRun } from "../view.ts";
 import { type Diff, execFileAsync, type Flow, type FlowState, type JudgeResult, type RepoRef, type ReviewPlan, type Snaps } from "./context.ts";
+import { gitEnv, planDirFor, planFilePath } from "./plan-files.ts";
 import { modelOf } from "./roles.ts";
 
 export async function git(fl: Flow, cwd: string, ...args: string[]) {
@@ -69,8 +70,8 @@ export function existingFolders(fl: Flow): string[] {
 export async function collectBoard(fl: Flow, ctx: ExtensionContext) {
 	const dirs = new Set<string>(readRegistry(path.join(getAgentDir(), "workflow", "board.json")));
 	try {
-		dirs.add(await fl.legacy.planDirFor(null));
-		for (const r of await flowRepos(fl, ctx)) dirs.add(await fl.legacy.planDirFor(r.root));
+		dirs.add(await planDirFor(fl, null));
+		for (const r of await flowRepos(fl, ctx)) dirs.add(await planDirFor(fl, r.root));
 	} catch {}
 	const entries: BoardEntry[] = [];
 	for (const dir of dirs) {
@@ -350,7 +351,7 @@ export async function setReviewBase(fl: Flow, ctx: ExtensionContext, ref: RepoRe
 	fl.state.reviewBase = { ...(fl.state.reviewBase ?? {}), [key]: commit };
 	const flowId = fl.state.planDoc?.flowId;
 	if (!flowId) return;
-	if (await writeReviewRef(fl.legacy.gitEnv, ref.dir, flowId, commit)) fl.reviewRefs.set(key, { dir: ref.dir, flowId });
+	if (await writeReviewRef(gitEnv, ref.dir, flowId, commit)) fl.reviewRefs.set(key, { dir: ref.dir, flowId });
 	else ctx.ui.notify(`workflow: review base kept in memory only (could not write refs/pi/review-base/${flowId} in ${ref.root})`, "warning");
 }
 
@@ -408,10 +409,10 @@ export async function advanceReviewBase(fl: Flow, ctx: ExtensionContext): Promis
 export async function dropReviewRefs(fl: Flow, ctx: ExtensionContext): Promise<void> {
 	const written = [...fl.reviewRefs.values()];
 	fl.reviewRefs.clear();
-	for (const v of written) await deleteReviewRef(fl.legacy.gitEnv, v.dir, v.flowId);
+	for (const v of written) await deleteReviewRef(gitEnv, v.dir, v.flowId);
 	const flowId = fl.state.planDoc?.flowId;
 	if (!flowId) return;
-	for (const ref of await flowRepos(fl, ctx)) await deleteReviewRef(fl.legacy.gitEnv, ref.dir, flowId);
+	for (const ref of await flowRepos(fl, ctx)) await deleteReviewRef(gitEnv, ref.dir, flowId);
 }
 
 /** A resumed flow takes back its review state. A review base git no longer has falls back to HEAD with a warning. */
@@ -460,7 +461,7 @@ export function nextAmendmentNumber(fl: Flow): number {
 
 /** `planCardText` once the plan file is written: waits for the plan write queue, at most 10 s, so the card can name the file. */
 export async function planCardReady(fl: Flow): Promise<string> {
-	if (!fl.legacy.planFilePath()) {
+	if (!planFilePath(fl)) {
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		await Promise.race([fl.plan.planChain, new Promise<void>((resolve) => (timer = setTimeout(resolve, 10_000)))]);
 		clearTimeout(timer);
@@ -471,7 +472,7 @@ export async function planCardReady(fl: Flow): Promise<string> {
 /** The short plan sent after a compaction in place of the full plan. Without a plan file it carries the (trimmed) plan itself. */
 export function planCardText(fl: Flow): string {
 	const staged = fl.legacy.currentStages();
-	const file = fl.legacy.planFilePath();
+	const file = planFilePath(fl);
 	const plan = fl.state.approvedPlan ?? "";
 	return planCard(file ? plan : fl.legacy.trimPlan(plan), fl.state.checklist, staged?.current, staged?.stages.length, file, fl.state.waiting?.reason);
 }

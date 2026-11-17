@@ -5,6 +5,7 @@ import { subagentMetric } from "../metrics.ts";
 import { loadConfig as loadAgentsConfig, forwardedServers, roleTools, knowledgeFor as agentsKnowledgeFor, type RunResult, runSubagent } from "../../agents/api.ts";
 import type { SubRole, FlowRun } from "../view.ts";
 import { type Flow, FORWARD_EXTENSION } from "./context.ts";
+import { recordMetric } from "./plan-files.ts";
 
 /** The model of a role from workflow.json or, for explore, advisor and runner, agents.json. */
 export const roleSpecOf = (fl: Flow, r: string): RoleSpec => (fl.cfg.roles as Record<string, RoleSpec>)[r];
@@ -57,7 +58,7 @@ export async function runRole(fl: Flow,
 			onChange?.(run);
 		},
 	});
-	fl.legacy.recordMetric(subagentMetric(role, label, run.stage, result.model ?? spec.model, started, Date.now(), result));
+	recordMetric(fl, subagentMetric(role, label, run.stage, result.model ?? spec.model, started, Date.now(), result));
 	if (!result.ok) fl.view.finish(run, false, result.error ?? "failed");
 	return { result, run };
 }
