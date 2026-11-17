@@ -63,7 +63,7 @@ export function clearWait(fl: Flow, ctx: ExtensionContext): void {
 
 /** Sets the wait; a wait set over an open one stops the old one's poll timer. */
 export function setWaiting(fl: Flow, next: FlowState["waiting"]): void {
-	replaceWait(fl.state.waiting, { stopTimer: ((...a: any[]) => (stopWaitTimer as any)(fl, ...a)) });
+	replaceWait(fl.state.waiting, { stopTimer: () => stopWaitTimer(fl) });
 	fl.state.waiting = next;
 }
 
