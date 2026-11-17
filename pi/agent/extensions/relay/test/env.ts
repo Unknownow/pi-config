@@ -120,7 +120,7 @@ export function makeWt(sets: string, repo: string, wtCalls: { create: any[]; rem
 }
 
 /** A ReviewResult as agents runJudge / runCritic return it (for step tests that stub the engine's judge or critic). */
-export const reviewOf = (text: string, weightedCost = 100, ok = true): ReviewResult => ({ ok, text, ...(ok ? reviewVerdict(text) : { verdict: "FAIL" as const, findings: [] }), usage: emptyUsage(), weightedCost, model: "fake", ...(ok ? {} : { error: "boom" }) });
+export const reviewOf = (text: string, weightedCost = 100, ok = true): ReviewResult => ({ ok, text, ...(ok ? reviewVerdict(text) : { verdict: "FAIL" as const, findings: [] }), usage: emptyUsage(), weightedCost, model: "fake", toolCalls: [], ...(ok ? {} : { error: "boom" }) });
 
 /** The role of an agents reviewer run, from its base prompt (agents JUDGE / CRITIC). */
 export const reviewerRole = (o: RunOptions): string => {

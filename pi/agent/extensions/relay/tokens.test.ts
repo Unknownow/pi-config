@@ -89,7 +89,8 @@ test("agents-usage.jsonl: complete lines count once by byte offset (saved in job
 		const jr = w.engine.get(r.id)!;
 		await waitFor(() => jr.job.state === "working" && jr.ws.alive, 30_000, "the worker to start");
 		const file = path.join(jr.dir, "agents-usage.jsonl");
-		await waitFor(() => rpcCalls(w).length === 1, 30_000, "the worker process");
+		// dispatch is over once the worker took its first prompt (a shutdown before that fails the job)
+		await waitFor(() => rpcCalls(w).length === 1 && w.cmds().some((c) => c.type === "prompt") && !jr.driving, 30_000, "the worker to take its prompt");
 		assert.equal(rpcCalls(w)[0].env.PI_AGENTS_ADVISOR_CAP, "3");
 		const line = (role: string, weightedCost: number, ok = true) => `${JSON.stringify({ role, model: "m", usage: emptyUsage(), weightedCost, ok, at: "" })}\n`;
 		const first = line("advisor", 1000, false) + line("explore", 500);
