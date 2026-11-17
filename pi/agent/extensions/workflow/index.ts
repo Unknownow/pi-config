@@ -113,17 +113,12 @@ import {
 	summaryLines,
 } from "./view.ts";
 import { shortModel } from "../shared/runs.ts";
-import { APPROVED_FINAL, assistantText, citedPaths, countFindings, createFlow, type Diff, execFileAsync, type FlowState, FOLDERS_ENTRY, FORWARD_EXTENSION, GIT_GUARD_EXTENSION, type JudgeResult, type LastKnowledge, MAX_PLAN_CHARS, MODEL_ROLES, OWN_TOOLS, type Phase, type PlanSnap, type RepoRef, type ReviewPlan, type Snaps, STATE_ENTRY, SUMMARY_ENTRY, type ToolReply } from "./flow/context.ts";
+import { APPROVED_FINAL, assistantText, citedPaths, countFindings, createFlow, type Diff, execFileAsync, type FlowState, FOLDERS_ENTRY, GIT_GUARD_EXTENSION, type JudgeResult, type LastKnowledge, MAX_PLAN_CHARS, MODEL_ROLES, OWN_TOOLS, type Phase, type PlanSnap, type RepoRef, type ReviewPlan, type Snaps, STATE_ENTRY, SUMMARY_ENTRY, type ToolReply } from "./flow/context.ts";
 import { abortGate, askUser, lastAssistantText, notifyUser, scheduleIdleNotice } from "./flow/notify.ts";
+import { judgeKnowledgeServer, modelOf, roleSpecOf, runRole } from "./flow/roles.ts";
 
 export default function workflow(pi: ExtensionAPI) {
 	const fl = createFlow(pi);
-
-	/** The model of a role from workflow.json or, for explore, advisor and runner, agents.json. */
-	const roleSpecOf = (r: string): RoleSpec => (fl.cfg.roles as Record<string, RoleSpec>)[r];
-
-	/** The model of a workflow role, or of agents' judge or critic (agents.json, `/agents model`). */
-	const modelOf = (role: Role | "judge" | "critic"): RoleSpec => (role === "judge" || role === "critic" ? loadAgentsConfig().config.roles[role] : fl.cfg.roles[role]);
 
 	const autopilotOn = (): boolean => fl.autopilotOverride ?? fl.cfg.autopilot;
 	/** An autopilot choice for the final card. */
@@ -224,7 +219,7 @@ export default function workflow(pi: ExtensionAPI) {
 	function updateStatus(ctx: ExtensionContext): void {
 		fl.lastCtx = ctx;
 		fl.view.roles = fl.cfg.roles;
-		fl.view.judge = modelOf("judge");
+		fl.view.judge = modelOf(fl, "judge");
 		fl.view.weights = fl.cfg.tokenWeights;
 		fl.view.phase = fl.state.phase;
 		fl.view.escalated = fl.state.escalated;
@@ -498,56 +493,6 @@ export default function workflow(pi: ExtensionAPI) {
 		ctx.ui.notify(`workflow: back to ${fl.state.phase}${fl.state.phase === "off" ? "" : ` on ${describeRole(fl.cfg.roles[fl.state.phase])}`}`, "info");
 	}
 
-	// ----------------------------------------------------------------------
-	// Subagent helpers
-	// ----------------------------------------------------------------------
-
-	/** The knowledge tools and server config a workflow subagent role (the arbiter) gets, or undefined when knowledge is off for it. */
-	function knowledgeFor(role: string): { tools: string[]; servers: Record<string, Record<string, unknown>> } | undefined {
-		const k = { ...fl.cfg.knowledge, judgeCheck: false };
-		if (!k.server || !k.roles.includes(role) || !fs.existsSync(FORWARD_EXTENSION)) return undefined;
-		const servers = forwardedServers(pi.getMcpServers(), k);
-		return servers[k.server] ? { tools: roleTools(role, k), servers } : undefined;
-	}
-
-	/** The knowledge server whose check agents' judge runs (agents.json `knowledge`, with `judgeCheck` on), or undefined. */
-	function judgeKnowledgeServer(): string | undefined {
-		const k = agentsKnowledgeFor("judge", pi.getMcpServers());
-		return k && loadAgentsConfig().config.knowledge.judgeCheck ? k.server : undefined;
-	}
-
-	/** Runs a workflow role (arbiter, commit) as a subagent with a live row in the view; `onChange` fires on every update. */
-	async function runRole(
-		role: Role & SubRole,
-		label: string,
-		opts: { systemPrompts: string[]; tools: string[]; task: string; cwd: string; signal?: AbortSignal; env?: Record<string, string>; extensions?: string[]; timeoutMs?: number },
-		onChange?: (run: FlowRun) => void,
-	): Promise<{ result: RunResult; run: FlowRun }> {
-		const spec = fl.cfg.roles[role];
-		const run = fl.view.start(role, label, spec.model);
-		onChange?.(run);
-		const { extensions, timeoutMs, ...rest } = opts;
-		const k = knowledgeFor(role);
-		const started = Date.now();
-		const result = await runSubagent({
-			...rest,
-			tools: k ? [...rest.tools, ...k.tools] : rest.tools,
-			systemPrompts: k ? [...rest.systemPrompts, prompts.knowledgeTools(k.tools)] : rest.systemPrompts,
-			mcp: k ? { servers: k.servers, extension: FORWARD_EXTENSION } : undefined,
-			role: spec,
-			extensions: extensions ? [...fl.cfg.subagent.extensions, ...extensions] : fl.cfg.subagent.extensions,
-			timeoutMs: timeoutMs ?? fl.cfg.subagent.timeoutMs,
-			idleTimeoutMs: fl.cfg.subagent.idleTimeoutMs,
-			onEvent: (e) => {
-				fl.view.event(run, e, opts.cwd);
-				onChange?.(run);
-			},
-		});
-		recordMetric(subagentMetric(role, label, run.stage, result.model ?? spec.model, started, Date.now(), result));
-		if (!result.ok) fl.view.finish(run, false, result.error ?? "failed");
-		return { result, run };
-	}
-
 	async function git(cwd: string, ...args: string[]) {
 		return pi.exec("git", ["-C", cwd, ...args], { timeout: 30_000 });
 	}
@@ -769,7 +714,7 @@ export default function workflow(pi: ExtensionAPI) {
 	async function judge(ctx: ExtensionContext, diff: Diff, focus: string | undefined, signal?: AbortSignal, onChange?: (run: FlowRun) => void, full = false, disputes?: string): Promise<JudgeResult & { run: FlowRun }> {
 		// A minor-fix round that touched only the cited files needs no review: the tree counts as passed.
 		if (!full && !disputes && (await minorFixOnly(diff))) {
-			const run = fl.view.start("judge", "minor fixes in the cited files", modelOf("judge").model);
+			const run = fl.view.start("judge", "minor fixes in the cited files", modelOf(fl, "judge").model);
 			fl.view.finish(run, true, "PASS · only the cited files changed, no re-review");
 			onChange?.(run);
 			fl.seenDiffs.add(diff.hash);
@@ -787,7 +732,7 @@ export default function workflow(pi: ExtensionAPI) {
 		// Disputes need a fresh look at the code, so they never get the "no changes" shortcut (a recheck still applies).
 		const plan = await reviewPlan(diff, full, Boolean(disputes));
 		if (plan.kind === "same") {
-			const run = fl.view.start("judge", "no changes since the last round", modelOf("judge").model);
+			const run = fl.view.start("judge", "no changes since the last round", modelOf(fl, "judge").model);
 			fl.view.finish(run, plan.prev.verdict === "PASS", `${plan.prev.verdict} · unchanged, previous result`);
 			onChange?.(run);
 			fl.seenDiffs.add(diff.hash);
@@ -1620,7 +1565,7 @@ export default function workflow(pi: ExtensionAPI) {
 		disputes?: string,
 	): Promise<JudgeResult & { run: FlowRun }> {
 		const recheck = plan.kind === "recheck";
-		const server = judgeKnowledgeServer();
+		const server = judgeKnowledgeServer(fl);
 		// After a round whose knowledge check passed, only the files changed since are checked again.
 		const prevKnowledge = recheck && fl.state.lastKnowledge?.status === "checked" && fl.state.lastKnowledge.hash === plan.prev.hash ? fl.state.lastKnowledge : undefined;
 		const scoped = prevKnowledge ? diff.checkNames.filter((f) => covers(plan.changed, f)) : [];
@@ -1697,7 +1642,7 @@ export default function workflow(pi: ExtensionAPI) {
 	// ----------------------------------------------------------------------
 
 	const title = (theme: Theme, name: string, role: Role | "judge" | "critic") =>
-		theme.fg("toolTitle", theme.bold(`${name} `)) + theme.fg("muted", shortModel(modelOf(role).model));
+		theme.fg("toolTitle", theme.bold(`${name} `)) + theme.fg("muted", shortModel(modelOf(fl, role).model));
 
 	// ----------------------------------------------------------------------
 	// Wait points
@@ -2036,7 +1981,7 @@ export default function workflow(pi: ExtensionAPI) {
 			let text: string;
 			try {
 				ctx.ui.setWorkingMessage("git_task running…");
-				const ran = await runRole(
+				const ran = await runRole(fl,
 					"commit",
 					"git task",
 					{ systemPrompts: [prompts.COMMIT], tools: ["bash", "read"], task, cwd, signal, env: { [GIT_GUARD_ENV]: JSON.stringify(spec) }, extensions: [GIT_GUARD_EXTENSION] },
@@ -2239,7 +2184,7 @@ export default function workflow(pi: ExtensionAPI) {
 					const openIds = gateOpenSteps(fl.state.approvedPlan ?? "", fl.state.checklist, staged ? { current: staged.current, total: staged.stages.length } : undefined);
 					const open = (fl.state.checklist ?? []).filter((i) => openIds.includes(i.id));
 					const position = staged ? `Stage ${staged.current} of ${staged.stages.length}: ${staged.stages[staged.current - 1].title}` : "No stages";
-					const { result, run } = await runRole("arbiter", "merge", {
+					const { result, run } = await runRole(fl, "arbiter", "merge", {
 						systemPrompts: [
 							prompts.MERGE_ARBITER,
 							`## Approved plan\n\n${planForJudge()}`,
@@ -3481,7 +3426,7 @@ export default function workflow(pi: ExtensionAPI) {
 		}
 		if (!manual && (fl.cfg.autoJudge === "off" || fl.seenDiffs.has(diff.hash))) return;
 		if (!manual && fl.cfg.autoJudge === "ask" && !autopilotOn()) {
-			const run = (await askUser(fl, ctx, `Diff ready: run the judge (${describeRole(modelOf("judge"))}) on ${diff.files} changed file(s)?`, ["Run the judge", "Skip"])) === "Run the judge";
+			const run = (await askUser(fl, ctx, `Diff ready: run the judge (${describeRole(modelOf(fl, "judge"))}) on ${diff.files} changed file(s)?`, ["Run the judge", "Skip"])) === "Run the judge";
 			if (!run) {
 				fl.seenDiffs.add(diff.hash);
 				return;
@@ -3643,7 +3588,7 @@ export default function workflow(pi: ExtensionAPI) {
 		ctx.ui.setWorkingMessage("arbiter checking the plan…");
 		let text: string;
 		try {
-			const { result, run } = await runRole("arbiter", "plan-flaw", {
+			const { result, run } = await runRole(fl, "arbiter", "plan-flaw", {
 				systemPrompts: [...(diff.multi ? [prompts.repoNote(repoRoots(diff))] : []), prompts.ARBITER, `## Approved plan\n\n${planForJudge()}`, `## Judge report\n\n${report}`, `## Diff\n\n${fitDiffs(diff.parts, loadAgentsConfig().config.judge.maxDiffChars)}`],
 				tools: fl.cfg.arbiter.tools,
 				task: "Decide on the [plan] findings of the judge report in your system prompt.",
@@ -4043,8 +3988,8 @@ export default function workflow(pi: ExtensionAPI) {
 			`guard     compact at ${fl.cfg.contextGuardTokens || "off"} tokens`,
 			`tokens    ${STAGES.filter((s) => !["discuss", "commit"].includes(s) || fl.view.sessionTokens(s).raw + fl.view.sessionTokens(s).cost > 0).map((s) => `${s} ${fmtTok(fl.view.sessionTokens(s))}`).join(" · ")} · session total ${fmtTok(STAGES.reduce((n, s) => ({ raw: n.raw + fl.view.sessionTokens(s).raw, cost: n.cost + fl.view.sessionTokens(s).cost }), { raw: 0, cost: 0 }))}`,
 			"",
-			...MODEL_ROLES.map((r) => `${r.padEnd(9)} ${describeRole(roleSpecOf(r))}`),
-			`${AGENT_ROLES.join(", ")}: /agents model (judge ${describeRole(modelOf("judge"))}, critic ${describeRole(modelOf("critic"))})`,
+			...MODEL_ROLES.map((r) => `${r.padEnd(9)} ${describeRole(roleSpecOf(fl, r))}`),
+			`${AGENT_ROLES.join(", ")}: /agents model (judge ${describeRole(modelOf(fl, "judge"))}, critic ${describeRole(modelOf(fl, "critic"))})`,
 			"",
 			`config    ${CONFIG_PATH}${fs.existsSync(CONFIG_PATH) ? "" : " (not created, using defaults)"}`,
 		];
@@ -4167,7 +4112,7 @@ export default function workflow(pi: ExtensionAPI) {
 
 	pi.registerCommand("flow", {
 		description: "Plan -> execute -> judge workflow with a model per role",
-		getArgumentCompletions: (prefix) => flowCompletions(prefix, { roles: MODEL_ROLES, specOf: roleSpecOf, models: () => fl.lastCtx?.modelRegistry.getAvailable() ?? [] }),
+		getArgumentCompletions: (prefix) => flowCompletions(prefix, { roles: MODEL_ROLES, specOf: (r) => roleSpecOf(fl, r), models: () => fl.lastCtx?.modelRegistry.getAvailable() ?? [] }),
 		handler: async (args, ctx) => {
 			const [sub = "status", ...rest] = args.trim().split(/\s+/).filter(Boolean);
 			switch (sub.toLowerCase()) {
@@ -4329,7 +4274,7 @@ export default function workflow(pi: ExtensionAPI) {
 						return;
 					}
 					if (!role && ctx.hasUI) {
-						const pick = await ctx.ui.select("Role", MODEL_ROLES.map((r) => `${r} (${describeRole(roleSpecOf(r))})`));
+						const pick = await ctx.ui.select("Role", MODEL_ROLES.map((r) => `${r} (${describeRole(roleSpecOf(fl, r))})`));
 						if (!pick) return;
 						role = pick.split(" ")[0];
 					}
@@ -4341,7 +4286,7 @@ export default function workflow(pi: ExtensionAPI) {
 						usage();
 						return;
 					}
-					const parsed = spec ? parseRoleSpec(spec) : await pickRoleSpec(ctx.ui, role, roleSpecOf(role), () => ctx.modelRegistry.getAvailable());
+					const parsed = spec ? parseRoleSpec(spec) : await pickRoleSpec(ctx.ui, role, roleSpecOf(fl, role), () => ctx.modelRegistry.getAvailable());
 					if (!parsed) return;
 					if (typeof parsed === "string") {
 						ctx.ui.notify(`workflow: ${parsed}`, "error");
@@ -4360,4 +4305,6 @@ export default function workflow(pi: ExtensionAPI) {
 			}
 		},
 	});
+
+	Object.assign(fl.legacy, { recordMetric });
 }
