@@ -115,10 +115,12 @@ import {
 import { shortModel } from "../shared/runs.ts";
 import { assistantText, createFlow, type Diff, type FlowState, FOLDERS_ENTRY, GIT_GUARD_EXTENSION, MODEL_ROLES, OWN_TOOLS, type Phase, STATE_ENTRY, SUMMARY_ENTRY, type ToolReply } from "./flow/context.ts";
 import { advanceReviewBase, collectBoard, collectFlowDiff, existingFolders, flowRepos, git, gitRoot, joinReviewBase, judge, markPassed, nextAmendmentNumber, planCardReady, planForJudge, refreshReviewBase, stageCheckpoints } from "./flow/diff.ts";
-import { endReview, fixOrAsk, markPassSummarized, resolvePlanFlaw, reviewDiff, settlePlanFlawOnPass, stageOutcomeText } from "./flow/judge.ts";
-import { abortGate, askUser, lastAssistantText, scheduleIdleNotice } from "./flow/notify.ts";
+import { askRestate, runDiscussionGate, startDiscussionGate } from "./flow/discussion-gate.ts";
+import { fixOrAsk, markPassSummarized, resolvePlanFlaw, reviewDiff, settlePlanFlawOnPass, stageOutcomeText } from "./flow/judge.ts";
+import { abortGate, askUser, scheduleIdleNotice } from "./flow/notify.ts";
 import { applyRole, approve, autopilotOn, blockPlanTools, currentStages, deescalate, deliverHintsText, deliverLine, endFlow, escalate, noteAuto, persist, publishFolders, publishRefuse, refilterTools, refreshChecklist, sendPlanKickoff, setPhase, summarizeFlow, updateStatus } from "./flow/phase.ts";
 import { planHousekeeping, planMilestone, recordMetric, rewritePlanFile, stopClaimTimer, stopLiveTimer } from "./flow/plan-files.ts";
+import { branchAssistantTexts, criticPlanNow, moveToPlan, offerPlan, runPlanGate } from "./flow/plan-gate.ts";
 import { resumeFlow } from "./flow/resume.ts";
 import { modelOf, roleSpecOf, runRole } from "./flow/roles.ts";
 import { finishWait, runWaitCheck, setWaiting, startWaitTimer, stopWaitTimer } from "./flow/wait-points.ts";
@@ -1078,7 +1080,7 @@ export default function workflow(pi: ExtensionAPI) {
 		}
 		// In discuss, a typed "go" only moves to planning: it never approves or executes.
 		if (fl.state.phase === "discuss" && event.source !== "extension" && !event.streamingBehavior && approveRe().test(event.text.trim())) {
-			if (await startDiscussionGate(ctx)) return { action: "handled" };
+			if (await startDiscussionGate(fl, ctx)) return { action: "handled" };
 			await setPhase(fl, ctx, "plan");
 			ctx.ui.notify(`workflow: planning on ${describeRole(fl.cfg.roles.plan)}`, "info");
 			return { action: "transform", text: `${event.text.trim()}\n\n${prompts.PLAN_KICKOFF}` };
@@ -1219,7 +1221,7 @@ export default function workflow(pi: ExtensionAPI) {
 			if (act === "recheck") {
 				fl.state.discussionReview = { ...dr, status: "idle" };
 				persist(fl);
-				void runDiscussionGate(ctx, "recheck", dr.restateLoop ?? true, false);
+				void runDiscussionGate(fl, ctx, "recheck", dr.restateLoop ?? true, false);
 			}
 			else {
 				fl.state.discussionReview = { ...dr, status: "paused" };
@@ -1258,7 +1260,7 @@ export default function workflow(pi: ExtensionAPI) {
 				const emitted = composePlan(fl.planDraft);
 				const decision = planGateDecide({ mode: fl.cfg.autoJudgePlan, plan: emitted, planHash: textHash(emitted), gate: fl.state.planGate, hasDisputes: wasFixing && planDisputes(text) !== undefined });
 				if (decision !== "off" && decision !== "reuse") {
-					void runPlanGate(ctx, emitted, text, decision);
+					void runPlanGate(fl, ctx, emitted, text, decision);
 					return;
 				}
 				const reused = decision === "reuse" ? fl.state.planGate : undefined;
@@ -1269,10 +1271,10 @@ export default function workflow(pi: ExtensionAPI) {
 					await approve(fl, fl.lastCtx ?? ctx);
 					return;
 				}
-				await offerPlan(ctx, blocked);
+				await offerPlan(fl, ctx, blocked);
 				return;
 			}
-			await offerPlan(ctx, blocked);
+			await offerPlan(fl, ctx, blocked);
 			return;
 		}
 
@@ -1449,343 +1451,6 @@ export default function workflow(pi: ExtensionAPI) {
 			ctx.ui.notify(`workflow: gh was not on PATH; added ${dir}`, "info");
 		}
 		return true;
-	}
-
-	/** The plan is complete and judged (or the judge is off): the approval menu. */
-	async function offerPlan(ctx: ExtensionContext, blocked: string | undefined): Promise<void> {
-		const approveLabel = PLAN_APPROVE;
-		const arbiterLabel = PLAN_ARBITER;
-		const menu = planMenuRequest({ blocked: !!blocked, planFlawAsk: fl.cfg.planFlaw === "ask", planPrompt: fl.cfg.planPrompt });
-		const choice = await askUser(fl, ctx, `Plan phase · execute on ${describeRole(fl.cfg.roles.execute)}`, menu.options, {
-			skipLocal: menu.skipLocal,
-			localNotice: () => {
-				if (!fl.cfg.planPrompt) ctx.ui.notify(`workflow: say "go" to execute on ${describeRole(fl.cfg.roles.execute)}, or keep discussing.`, "info");
-				else if (blocked) ctx.ui.notify(`workflow: can't approve: ${blocked}.`, "warning");
-			},
-		});
-		if (choice === PLAN_BACK) {
-			await setPhase(fl, ctx, "discuss");
-			ctx.ui.notify(`workflow: back to discussion on ${describeRole(fl.cfg.roles.discuss)}`, "info");
-			return;
-		}
-		if (choice === arbiterLabel && fl.cfg.planFlaw === "ask") {
-			await approve(fl, ctx, true);
-			return;
-		}
-		if (choice === approveLabel) await approve(fl, ctx);
-	}
-
-	/** The plan judge: one run on a complete plan, then fix (auto findings go to the planner), offer, or approve a queued "go". Runs detached from agent_end and the input hook. */
-	async function runPlanGate(ctx: ExtensionContext, plan: string, text: string, decision: "confirm" | "recheck" | "full"): Promise<void> {
-		abortGate(fl, "restart");
-		const gate0 = fl.state.planGate;
-		const run = { kind: "plan" as const, controller: new AbortController(), judgedHash: textHash(plan) } as NonNullable<typeof fl.gateRun>;
-		fl.gateRun = run;
-		if (ctx.hasUI) {
-			try {
-				run.offEsc = ctx.ui.onTerminalInput((d) => (isEscKey(d) ? (abortGate(fl, "esc"), { consume: true }) : undefined));
-			} catch {}
-		}
-		updateStatus(fl, ctx);
-		let specKind: SpecKind = "none";
-		let outcome: { text: string; findings: Finding[]; review: ReviewResult; ext?: RunView } | { error: string; review?: ReviewResult; ext?: RunView } | undefined;
-		const started = Date.now();
-		try {
-			const branch = ctx.sessionManager.getBranch();
-			const assistantTexts: string[] = [];
-			for (const entry of branch) {
-				const m = entry.type === "message" ? (entry as { message?: { role?: string; content?: unknown } }).message : undefined;
-				if (m?.role !== "assistant") continue;
-				const t = Array.isArray(m.content)
-					? m.content.filter((p: { type?: string }) => p?.type === "text").map((p: { text?: string }) => p.text ?? "").join("\n")
-					: typeof m.content === "string" ? m.content : "";
-				if (t.trim()) assistantTexts.push(t);
-			}
-			const agreed = lastAgreedList(assistantTexts);
-			const spec = agreed ? { kind: "agreed" as const, text: agreed } : undefined;
-			specKind = spec ? spec.kind : "none";
-			const recheck = decision !== "full" && gate0?.judgedPlan !== undefined ? { findings: [...gate0.autoFindings, ...gate0.userFindings], disputes: planDisputes(lastAssistantText(ctx)) } : undefined;
-			if (ctx.hasUI) ctx.ui.setWorkingMessage("critic reviewing the plan…");
-			let ext: RunView | undefined;
-			const review = await runCritic({
-				...planCriticRequest({ plan, spec, folders: fl.state.folders ?? [], recheck }),
-				cwd: ctx.cwd,
-				signal: run.controller.signal,
-				mcpServers: pi.getMcpServers(),
-				onRun: (r) => {
-					ext = r;
-					fl.view.mirror("critic", r);
-				},
-			});
-			outcome = review.ok ? { text: review.text, findings: review.findings, review, ext } : { error: review.error ?? "failed", review, ext };
-		} catch (e) {
-			outcome = { error: (e as Error).message };
-		} finally {
-			try {
-				run.offEsc?.();
-			} catch {}
-			if (fl.gateRun === run) fl.gateRun = undefined;
-			if (ctx.hasUI) ctx.ui.setWorkingMessage();
-			updateStatus(fl, ctx);
-			try {
-				if (ctx.isIdle()) scheduleIdleNotice(fl, ctx);
-			} catch {}
-		}
-		const blank: PlanGate = gate0 ?? { planHash: run.judgedHash, rounds: 0, autoFindings: [], userFindings: [], spec: specKind };
-		const stale = fl.state.phase !== "plan" || !fl.planReady || textHash(composePlan(fl.planDraft)) !== run.judgedHash;
-		if ((run.reason || stale || (outcome && "error" in outcome)) && outcome?.review) endReview(fl, "critic", outcome.ext, outcome.review, started, false, run.reason ? "cancelled · plan" : stale ? "discarded · plan changed" : `failed · ${outcome.review.error ?? "no result"}`);
-		if (run.reason) {
-			if (run.reason === "restart") return;
-			fl.planApproveQueued = false;
-			if ((run.reason === "esc" || run.reason === "command") && !stale) {
-				const g: PlanGate = { ...blank, planHash: run.judgedHash, verdict: "cancelled", spec: specKind };
-				fl.state.planGate = g;
-				persist(fl);
-				ctx.ui.notify("workflow: plan critic cancelled", "info");
-				await offerPlan(ctx, undefined);
-			}
-			return;
-		}
-		if (stale) return;
-		if (!outcome || "error" in outcome) {
-			const error = outcome && "error" in outcome ? outcome.error : "no result";
-			const g: PlanGate = { ...blank, planHash: run.judgedHash, verdict: "error", spec: specKind };
-			fl.state.planGate = g;
-			persist(fl);
-			fl.planApproveQueued = false;
-			ctx.ui.notify(`workflow: plan critic did not run: ${error}`, "warning");
-			await offerPlan(ctx, undefined);
-			return;
-		}
-		const findings = outcome.findings;
-		const verdict = discussionVerdict(outcome.text);
-		const confirm = decision === "confirm";
-		const rounds = (gate0?.rounds ?? 0) + (confirm ? 0 : 1);
-		const after = planGateAfterVerdict({ verdict, findings, rounds, max: fl.cfg.maxPlanJudgeRounds, confirm });
-		const clean = isClean(verdict, findings);
-		endReview(fl, "critic", outcome.ext, outcome.review, started, verdict === "PASS", `${verdict} · plan`);
-		recordMetric(fl, judgeMetric("plan", rounds, verdict, findings));
-		const g: PlanGate = {
-			planHash: run.judgedHash,
-			rounds,
-			verdict,
-			autoFindings: after.auto,
-			userFindings: after.user,
-			notes: after.notes,
-			judgedPlan: plan,
-			cappedHash: after.action === "offer" && !clean && (after.capped || confirm) ? run.judgedHash : undefined,
-			spec: specKind,
-		};
-		fl.state.planGate = g;
-		persist(fl);
-		pi.sendMessage({ customType: "workflow-plan-judge", content: `**Plan critic: ${verdict}** (run ${rounds}/${fl.cfg.maxPlanJudgeRounds})\n\n${outcome.text}`, display: true }, { triggerTurn: false });
-		const assume = autopilotOn(fl) && !confirm && !after.capped && !clean && after.user.length > 0;
-		if (assume) noteAuto(fl, `plan critic: ${after.user.length} finding(s) that needed a decision were settled by the planner as assumptions`);
-		if (after.action === "fix" || assume) {
-			fl.planFixing = true;
-			const listed = [...after.auto, ...after.user].map((f) => `- ${findingText(f).replace(/\n/g, "\n  ")}`).join("\n");
-			pi.sendMessage({ customType: "workflow-plan-fix", content: `${prompts.PLAN_FIX}${assume ? ` ${prompts.PLAN_ASSUME}` : ""}\n\n${listed}`, display: true }, { triggerTurn: true, deliverAs: "followUp" });
-			return;
-		}
-		const queued = fl.planApproveQueued;
-		fl.planApproveQueued = false;
-		if (planOfferAction({ clean, queuedGo: queued }) === "approve") {
-			ctx.ui.notify(`workflow: plan approved, executing on ${describeRole(fl.cfg.roles.execute)}`, "info");
-			await approve(fl, fl.lastCtx ?? ctx);
-			return;
-		}
-		await offerPlan(ctx, undefined);
-	}
-
-	/** `/flow critic` in plan: the critic reviews the plan on screen now, whatever the gate remembers. */
-	function criticPlanNow(ctx: ExtensionContext): void {
-		if (!fl.planReady || !fl.planDraft.full) {
-			ctx.ui.notify("workflow: no complete plan to review yet", "info");
-			return;
-		}
-		const plan = composePlan(fl.planDraft);
-		const hash = textHash(plan);
-		const decision = planGateDecide({ mode: "auto", plan, planHash: hash, gate: fl.state.planGate });
-		// The same plan again gets a full pass, not a recheck with an empty diff.
-		void runPlanGate(ctx, plan, lastAssistantText(ctx), fl.state.planGate?.planHash === hash || decision === "reuse" || decision === "off" ? "full" : decision);
-	}
-
-	function branchAssistantTexts(branch: readonly unknown[]): string[] {
-		const out: string[] = [];
-		for (const entry of branch) {
-			const e = entry as { type?: string; message?: { role?: string; content?: unknown } };
-			const m = e.type === "message" ? e.message : undefined;
-			if (m?.role !== "assistant") continue;
-			const t = Array.isArray(m.content)
-				? m.content.filter((p: { type?: string }) => p?.type === "text").map((p: { text?: string }) => p.text ?? "").join("\n")
-				: typeof m.content === "string" ? m.content : "";
-			if (t.trim()) out.push(t);
-		}
-		return out;
-	}
-
-	/** The transcript of the branch entries after `id`; undefined when that entry is not on the branch. */
-	function transcriptAfter(branch: readonly { id?: string }[], id: string, max: number): string | undefined {
-		const i = branch.findIndex((e) => e.id === id);
-		return i < 0 ? undefined : branchTranscript(branch.slice(i + 1), max);
-	}
-
-	/** Leaves discuss for plan after the discussion gate; `open` findings go into the kickoff. */
-	async function moveToPlan(ctx: ExtensionContext, open?: Finding[], notes?: Finding[]): Promise<void> {
-		if (fl.state.discussionReview) fl.state.discussionReview = { ...fl.state.discussionReview, status: "idle" };
-		await setPhase(fl, ctx, "plan");
-		ctx.ui.notify(`workflow: planning on ${describeRole(fl.cfg.roles.plan)}`, "info");
-		sendPlanKickoff(fl, open, notes);
-	}
-
-	/** A review already ran on this list and the list was not rewritten since: the judge would read the same text again, so the discuss model restates the conclusion first. True when it asked. */
-	function askRestate(ctx: ExtensionContext, loop: boolean): boolean {
-		const last = fl.state.discussionReview;
-		const list = lastAgreedList(branchAssistantTexts(ctx.sessionManager.getBranch()));
-		if (!last || !list || last.listHash !== textHash(list) || isClean(last.verdict, last.findings) || fl.restateAskedFor === last.listHash) return false;
-		fl.restateAskedFor = last.listHash;
-		fl.state.discussionReview = { ...last, status: "awaiting-fix", restateLoop: loop };
-		persist(fl);
-		ctx.ui.notify("workflow: the agreed list was not rewritten since the last review; asking for a restated conclusion first", "info");
-		pi.sendMessage({ customType: "workflow-discussion-restate", content: prompts.DISCUSSION_RESTATE, display: true }, { triggerTurn: true, deliverAs: "followUp" });
-		return true;
-	}
-
-	/** The move from discuss to plan. Returns true when the discussion judge started (the move happens after it); false when the caller moves now. */
-	async function startDiscussionGate(ctx: ExtensionContext): Promise<boolean> {
-		if (!ctx.hasUI) return false;
-		if (fl.gateRun?.kind === "discussion") {
-			ctx.ui.notify("workflow: discussion critic running (Esc or any other message cancels it)", "info");
-			return true;
-		}
-		const branch = ctx.sessionManager.getBranch();
-		const list = lastAgreedList(branchAssistantTexts(branch));
-		const last = fl.state.discussionReview;
-		let sinceChars = Number.POSITIVE_INFINITY;
-		if (last?.afterEntryId) {
-			const t = transcriptAfter(branch, last.afterEntryId, 10_000_000);
-			if (t !== undefined) sinceChars = t.length;
-		}
-		const d = discussionGateStart({ mode: fl.cfg.autoJudgeDiscussion, listHash: list ? textHash(list) : undefined, last, sinceChars, cap: 30_000 });
-		if (d === "warn-move") ctx.ui.notify("workflow: no Agreed so far: list: discussion critic skipped", "warning");
-		if (d === "move" || d === "warn-move") return false;
-		if (askRestate(ctx, true)) return true;
-		void runDiscussionGate(ctx, d, true);
-		return true;
-	}
-
-	/** The discussion critic: one run on the last agreed list. `loop` false is the manual `/flow critic`: it reports and stores the review but starts no fix loop. */
-	async function runDiscussionGate(ctx: ExtensionContext, decision: "full" | "recheck", loop: boolean, resetRounds = true): Promise<void> {
-		abortGate(fl, "restart");
-		const prev = fl.state.discussionReview;
-		const branch = ctx.sessionManager.getBranch();
-		const list = lastAgreedList(branchAssistantTexts(branch));
-		const listHash = list ? textHash(list) : "";
-		const sinceAll = decision === "recheck" && prev?.afterEntryId && list ? transcriptAfter(branch, prev.afterEntryId, 10_000_000) : undefined;
-		// Over the cap the recheck becomes a full pass.
-		const since = sinceAll !== undefined && sinceAll.length <= 30_000 ? sinceAll : undefined;
-		const transcript = since === undefined ? branchTranscript(branch, fl.cfg.judge.maxDiscussionChars) : "";
-		if (since === undefined && !transcript.trim()) {
-			ctx.ui.notify("workflow: nothing to review yet", "info");
-			if (loop) await moveToPlan(ctx);
-			return;
-		}
-		const run = { kind: "discussion" as const, controller: new AbortController(), judgedHash: listHash } as NonNullable<typeof fl.gateRun>;
-		fl.gateRun = run;
-		if (ctx.hasUI) {
-			try {
-				run.offEsc = ctx.ui.onTerminalInput((d) => (isEscKey(d) ? (abortGate(fl, "esc"), { consume: true }) : undefined));
-			} catch {}
-		}
-		updateStatus(fl, ctx);
-		let outcome: { text: string; findings: Finding[]; review: ReviewResult; ext?: RunView } | { error: string; review?: ReviewResult; ext?: RunView } | undefined;
-		const started = Date.now();
-		try {
-			ctx.ui.setWorkingMessage("critic reviewing the discussion…");
-			const recheck = since !== undefined && !!prev && !!list;
-			let ext: RunView | undefined;
-			const review = await runCritic({
-				...discussionCriticRequest({
-					list,
-					transcript: recheck ? since! : since === undefined ? transcript : branchTranscript(branch, fl.cfg.judge.maxDiscussionChars),
-					folders: fl.state.folders ?? [],
-					recheck: recheck ? { findings: prev!.findings } : undefined,
-					disputes: recheck ? planDisputes(lastAssistantText(ctx)) : undefined,
-				}),
-				cwd: ctx.cwd,
-				signal: run.controller.signal,
-				mcpServers: pi.getMcpServers(),
-				onRun: (r) => {
-					ext = r;
-					fl.view.mirror("critic", r);
-				},
-			});
-			outcome = review.ok ? { text: review.text, findings: review.findings, review, ext } : { error: review.error ?? "failed", review, ext };
-		} catch (e) {
-			outcome = { error: (e as Error).message };
-		} finally {
-			try {
-				run.offEsc?.();
-			} catch {}
-			if (fl.gateRun === run) fl.gateRun = undefined;
-			ctx.ui.setWorkingMessage();
-			updateStatus(fl, ctx);
-			try {
-				if (ctx.isIdle()) scheduleIdleNotice(fl, ctx);
-			} catch {}
-		}
-		const nowList = lastAgreedList(branchAssistantTexts(ctx.sessionManager.getBranch()));
-		const stale = fl.state.phase !== "discuss" || (nowList ? textHash(nowList) : "") !== listHash;
-		if ((run.reason || stale || (outcome && "error" in outcome)) && outcome?.review) endReview(fl, "critic", outcome.ext, outcome.review, started, false, run.reason ? "cancelled · discussion" : stale ? "discarded · list changed" : `failed · ${outcome.review.error ?? "no result"}`);
-		if (run.reason) {
-			if (run.reason === "restart" || run.reason === "phase") return;
-			if (fl.state.discussionReview) {
-				fl.state.discussionReview = { ...fl.state.discussionReview, status: "idle" };
-				persist(fl);
-			}
-			if (run.reason === "esc" || run.reason === "command") ctx.ui.notify("workflow: discussion critic cancelled; still in discuss", "info");
-			return;
-		}
-		if (stale) return;
-		if (!outcome || "error" in outcome) {
-			const error = outcome && "error" in outcome ? outcome.error : "no result";
-			if (!loop) {
-				ctx.ui.notify(`workflow: discussion review failed: ${error}`, "error");
-				return;
-			}
-			ctx.ui.notify(`workflow: discussion critic did not run: ${error}`, "warning");
-			await moveToPlan(ctx);
-			return;
-		}
-		const findings = outcome.findings;
-		const verdict = discussionVerdict(outcome.text);
-		const rounds = (resetRounds ? 0 : prev?.rounds ?? 0) + (loop ? 1 : 0);
-		endReview(fl, "critic", outcome.ext, outcome.review, started, verdict === "PASS", `${verdict} · discussion`);
-		recordMetric(fl, judgeMetric("discussion", rounds, verdict, findings));
-		pi.sendMessage({ customType: "workflow-discussion-review", content: `**Discussion review: ${verdict}**\n\n${outcome.text}`, display: true }, { triggerTurn: false });
-		const after = ctx.sessionManager.getBranch();
-		fl.state.discussionReview = { listHash, verdict, findings, afterEntryId: (after[after.length - 1] as { id?: string } | undefined)?.id, rounds, status: "idle" };
-		persist(fl);
-		if (!loop) {
-			ctx.ui.notify(`workflow: discussion review ${verdict}${list ? "" : " (no Agreed so far: list found)"}`, verdict === "PASS" ? "info" : "warning");
-			return;
-		}
-		const action = discussionGateAfterVerdict({ verdict, findings, rounds, max: fl.cfg.maxDiscussionJudgeRounds });
-		if (action === "move") await moveToPlan(ctx, undefined, minorFindings(findings));
-		else if (action === "move-open") {
-			ctx.ui.notify(`workflow: discussion critic: ${blockingFindings(findings).length} finding(s) still open after ${rounds} runs; planning with them noted`, "warning");
-			await moveToPlan(ctx, blockingFindings(findings), minorFindings(findings));
-		} else if (action === "fix") {
-			fl.state.discussionReview = { ...fl.state.discussionReview, status: "awaiting-fix" };
-			persist(fl);
-			ctx.ui.notify(`workflow: discussion critic: fixing ${blockingFindings(findings).length} finding(s) (run ${rounds}/${fl.cfg.maxDiscussionJudgeRounds})`, "info");
-			const listed = blockingFindings(findings).map((f) => `- ${findingText(f).replace(/\n/g, "\n  ")}`).join("\n");
-			pi.sendMessage({ customType: "workflow-discussion-fix", content: `${prompts.DISCUSSION_FIX}\n\n${listed}`, display: true }, { triggerTurn: true, deliverAs: "followUp" });
-		} else {
-			fl.state.discussionReview = { ...fl.state.discussionReview, status: "paused" };
-			persist(fl);
-			ctx.ui.notify(`workflow: discussion critic: ${blockingFindings(findings).filter((f) => f.route === "user").length} finding(s) need your decision; answer them, then say go again`, "warning");
-		}
 	}
 
 	/** Whether a merge is due at this point of the flow: the plan is not staged or this is its last stage, or a merge was planned or approved for this stage. */
@@ -2223,10 +1888,10 @@ export default function workflow(pi: ExtensionAPI) {
 						}
 						const list = lastAgreedList(branchAssistantTexts(ctx.sessionManager.getBranch()));
 						const hash = list ? textHash(list) : "";
-						await moveToPlan(ctx, forcedOpenFindings(fl.state.discussionReview, hash));
+						await moveToPlan(fl, ctx, forcedOpenFindings(fl.state.discussionReview, hash));
 						return;
 					}
-					if (sub.toLowerCase() === "plan" && fl.state.phase === "discuss" && (await startDiscussionGate(ctx))) return;
+					if (sub.toLowerCase() === "plan" && fl.state.phase === "discuss" && (await startDiscussionGate(fl, ctx))) return;
 					const from = fl.state.phase;
 					if (!(await setPhase(fl, ctx, sub.toLowerCase() as Phase))) return;
 					ctx.ui.notify(`workflow: ${fl.state.phase}`, "info");
@@ -2235,7 +1900,7 @@ export default function workflow(pi: ExtensionAPI) {
 				}
 				case "approve":
 					if (fl.state.phase === "discuss") {
-						if (await startDiscussionGate(ctx)) return;
+						if (await startDiscussionGate(fl, ctx)) return;
 						ctx.ui.notify("workflow: discuss phase; moving to planning first", "info");
 						await setPhase(fl, ctx, "plan");
 						sendPlanKickoff(fl);
@@ -2337,9 +2002,9 @@ export default function workflow(pi: ExtensionAPI) {
 						return;
 					}
 					if (fl.state.phase === "discuss") {
-						if (askRestate(ctx, false)) return;
-						await runDiscussionGate(ctx, "full", false);
-					} else if (fl.state.phase === "plan") criticPlanNow(ctx);
+						if (askRestate(fl, ctx, false)) return;
+						await runDiscussionGate(fl, ctx, "full", false);
+					} else if (fl.state.phase === "plan") criticPlanNow(fl, ctx);
 					else ctx.ui.notify("workflow: /flow critic reviews the discussion (discuss) or the plan (plan); to review code, use the judge tool", "info");
 					return;
 				case "tokens":

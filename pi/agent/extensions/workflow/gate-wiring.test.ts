@@ -52,17 +52,17 @@ test("K4 carries judging", () => {
 test("the critic command handles cancel before the phase dispatch, reviews the plan in plan and points to the judge tool in execute", () => {
 	const a = source.indexOf('case "critic":');
 	const cancel = source.indexOf('rest[0]?.toLowerCase() === "cancel"', a);
-	const dispatch = source.indexOf('await runDiscussionGate(ctx, "full", false)', a);
+	const dispatch = source.indexOf('await runDiscussionGate(fl, ctx, "full", false)', a);
 	assert.ok(a > 0 && cancel > a && cancel < dispatch);
-	assert.match(source.slice(dispatch, dispatch + 400), /fl\.state\.phase === "plan"\) criticPlanNow\(ctx\)[\s\S]*use the judge tool/);
+	assert.match(source.slice(dispatch, dispatch + 400), /fl\.state\.phase === "plan"\) criticPlanNow\(fl, ctx\)[\s\S]*use the judge tool/);
 	assert.equal(source.indexOf('case "judge":'), -1);
 });
 
 test("the plan branch decides with planGateDecide before offerPlan", () => {
 	const a = source.indexOf("planGateDecide({ mode: fl.cfg.autoJudgePlan");
 	assert.ok(a > 0);
-	assert.ok(source.indexOf("offerPlan(ctx, blocked", a) > a);
-	assert.ok(source.indexOf("void runPlanGate(ctx, emitted", a) > a);
+	assert.ok(source.indexOf("offerPlan(fl, ctx, blocked", a) > a);
+	assert.ok(source.indexOf("void runPlanGate(fl, ctx, emitted", a) > a);
 });
 
 test("the plan branch passes hasDisputes built from planDisputes", () => {
@@ -88,7 +88,7 @@ test("the input handler queues a go and cancels on other text while the plan jud
 });
 
 test("the three discuss-to-plan paths call startDiscussionGate", () => {
-	assert.equal(source.split("startDiscussionGate(ctx)").length - 1, 3);
+	assert.equal(source.split("startDiscussionGate(fl, ctx)").length - 1, 3);
 });
 
 test("runDiscussionGate passes the abort signal and clears Esc in a finally", () => {
@@ -107,7 +107,7 @@ test("/flow plan force moves to plan with the matching findings and never starts
 	assert.ok(a > 0);
 	const m = source.indexOf("moveToPlan(", a);
 	const b = source.slice(a, source.indexOf("return;", m));
-	assert.ok(b.includes("moveToPlan(ctx, forcedOpenFindings("));
+	assert.ok(b.includes("moveToPlan(fl, ctx, forcedOpenFindings("));
 	assert.ok(!b.includes("startDiscussionGate("));
 	assert.ok(fs.readFileSync(new URL("./commands.ts", import.meta.url), "utf8").includes('plan: [{ value: "force"'));
 });
