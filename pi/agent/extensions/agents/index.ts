@@ -31,7 +31,7 @@ import { collectDiffParts, runCritic, runJudge } from "./review.ts";
 import { type RoleRunResult, RUNNER_GUARD_EXTENSION, runRole } from "./run-role.ts";
 import { RUNNER_GUARD_ENV, type RunnerGuardSpec } from "./runner-guard.ts";
 import { addUsage, emptyUsage, mapLimit } from "./subagent.ts";
-import { callDir, formatTaskResult, parseRunnerReply, runnerGate, sanitizeIds, scheduleTasks, taskCard, taskRecord, type TestTask, verifyRun } from "./test-run.ts";
+import { callDir, formatTaskResult, LOCK_LOST, parseRunnerReply, runnerGate, sanitizeIds, scheduleTasks, taskCard, taskRecord, type TestTask, verifyRun } from "./test-run.ts";
 import { endRun, type RunView, shortModel } from "../shared/runs.ts";
 import { describeRole, parseRoleSpec, pickRoleSpec } from "../shared/roles.ts";
 import { foldersForCwd } from "../shared/session-folders.ts";
@@ -239,16 +239,21 @@ export default function agents(pi: ExtensionAPI) {
 			const sections = await scheduleTasks(tasks, cfg.test.concurrency, async (task) => {
 				const card = taskCard(task, ctx.cwd, dir);
 				let held: RoleRunResult;
+				let lost = false;
 				try {
 					held = await runnerSlots(
 						task.resource,
-						() =>
-							runAgent(
+						async (lockSignal) => {
+							// a lost resource lock (another process took it over) stops the runner
+							const r = await runAgent(
 								"runner",
 								`[${task.resource}] ${task.id}`,
-								{ systemPrompts: [prompts.RUNNER], tools: runnerTools, task: card, cwd: ctx.cwd, signal, env: { [RUNNER_GUARD_ENV]: JSON.stringify(spec) }, extensions: [RUNNER_GUARD_EXTENSION], timeoutMs: cfg.test.runnerTimeoutMs },
+								{ systemPrompts: [prompts.RUNNER], tools: runnerTools, task: card, cwd: ctx.cwd, signal: lockSignal ? AbortSignal.any([lockSignal, ...(signal ? [signal] : [])]) : signal, env: { [RUNNER_GUARD_ENV]: JSON.stringify(spec) }, extensions: [RUNNER_GUARD_EXTENSION], timeoutMs: cfg.test.runnerTimeoutMs },
 								progress.track,
-							),
+							);
+							lost = !!lockSignal?.aborted;
+							return r;
+						},
 						signal,
 					);
 				} catch (e) {
@@ -257,6 +262,11 @@ export default function agents(pi: ExtensionAPI) {
 				}
 				const { result, run } = held;
 				addUsage(usage, result.usage);
+				if (lost) {
+					endRun(run, false, LOCK_LOST);
+					progress.track(run);
+					return formatTaskResult({ id: task.id, resource: task.resource, status: `ERROR: ${LOCK_LOST}`, ran: [] });
+				}
 				const reply = parseRunnerReply(result.ok ? result.text : "");
 				const verified = verifyRun(reply, result.toolCalls);
 				const status = result.ok ? verified.status : `ERROR: ${result.error ?? "the runner failed"}`;

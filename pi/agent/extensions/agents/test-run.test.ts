@@ -1,7 +1,11 @@
 // node --test test-run.test.ts
 import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { test } from "node:test";
-import { callDir, formatTaskResult, parseRunnerReply, runnerGate, sanitizeIds, scheduleTasks, verifyRun } from "./test-run.ts";
+import { acquireLock, lockFile } from "./lock.ts";
+import { callDir, formatTaskResult, LOCK_LOST, parseRunnerReply, runnerGate, sanitizeIds, scheduleTasks, verifyRun } from "./test-run.ts";
 import type { ToolCall } from "./subagent.ts";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -218,4 +222,22 @@ test("runnerGate: the file lock is taken after the resource wait and before the 
 	assert.deepEqual(events.filter((e) => e.includes("device")), ["lock device:A", "unlock device:A", "lock device:A", "unlock device:A"]);
 	assert.equal(events.filter((e) => e.startsWith("run")).length, 3);
 	assert.ok(!events.includes("lock none"));
+});
+
+test("runnerGate: the task gets the held file lock's signal; a lock taken over by another process aborts it (resource lock lost)", async () => {
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-agents-gate-lock-"));
+	const gate = runnerGate(() => 2, (resource, signal) => acquireLock(resource, { dir, signal, pollMs: 5, heartbeatMs: 10 }));
+	const out = await gate("device:Z", async (lockSignal) => {
+		assert.ok(lockSignal, "a shared resource has a file lock");
+		assert.equal(lockSignal.aborted, false);
+		// another process takes the lock file over
+		const file = lockFile("device:Z", dir);
+		fs.rmSync(file);
+		fs.writeFileSync(file, JSON.stringify({ token: "other", pid: process.pid }));
+		await new Promise<void>((r) => lockSignal.addEventListener("abort", () => r(), { once: true }));
+		return `stopped: ${(lockSignal.reason as Error).message}`;
+	});
+	assert.equal(out, `stopped: ${LOCK_LOST}`);
+	assert.equal(JSON.parse(fs.readFileSync(lockFile("device:Z", dir), "utf8")).token, "other", "the new owner's lock is kept");
+	assert.equal(await gate("none", async (lockSignal) => lockSignal), undefined, "no file lock for a task without a resource");
 });
