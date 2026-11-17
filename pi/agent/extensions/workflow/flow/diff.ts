@@ -16,6 +16,7 @@ import { stageNote } from "../stages.ts";
 import { type DiffPart, mapLimit, emptyUsage, addUsage } from "../../agents/api.ts";
 import type { FlowRun } from "../view.ts";
 import { type Diff, execFileAsync, type Flow, type FlowState, type JudgeResult, type RepoRef, type ReviewPlan, type Snaps } from "./context.ts";
+import { judgeOnce, trimPlan } from "./judge.ts";
 import { currentStages, persist } from "./phase.ts";
 import { gitEnv, planDirFor, planFilePath } from "./plan-files.ts";
 import { modelOf } from "./roles.ts";
@@ -265,14 +266,14 @@ export async function judge(fl: Flow, ctx: ExtensionContext, diff: Diff, focus: 
 		fl.seenDiffs.add(diff.hash);
 		return { verdict: plan.prev.verdict, text: `No changes since the last judge round; its result stands.\n\n${plan.prev.text}`, findings: parseFindings(plan.prev.text), hash: diff.hash, usage: emptyUsage(), run };
 	}
-	let r = await fl.legacy.judgeOnce(ctx, diff, focus, plan, signal, onChange, disputes);
+	let r = await judgeOnce(fl, ctx, diff, focus, plan, signal, onChange, disputes);
 	const limit = fl.cfg.judge.finalFullReviewOverChars;
 	if (r.verdict === "PASS" && plan.kind === "recheck" && limit > 0 && diff.chars > limit && needsFinalFullReview(fl.cfg.judge.finalFullReviewNewFilesOnly, plan.prev.text, plan.cites)) {
 		const share = await repeatShare(fl, diff, plan.snaps);
 		if (share !== undefined) {
 			r = { ...r, text: `${r.text}\n\nFinal full review skipped: a full review passed this stage and the changes since are ${Math.round(share * 100)}% of the diff.` };
 		} else {
-			const final = await fl.legacy.judgeOnce(ctx, diff, focus, { kind: "full", snaps: plan.snaps }, signal, onChange, disputes);
+			const final = await judgeOnce(fl, ctx, diff, focus, { kind: "full", snaps: plan.snaps }, signal, onChange, disputes);
 			r = { ...final, usage: addUsage(addUsage(emptyUsage(), r.usage), final.usage) };
 		}
 	}
@@ -441,7 +442,7 @@ export function planForJudge(fl: Flow): string {
 	const staged = currentStages(fl);
 	const note = staged ? `\n\n${stageNote(staged.stages, staged.current)}` : "";
 	const list = fl.state.checklist?.length ? `\n\n## Executor's checklist (claims, not proof)\n${fl.state.checklist.map((i) => `- [${i.done ? "x" : " "}] ${i.id} ${i.text}`).join("\n")}` : "";
-	return fl.legacy.trimPlan(plan) + note + list + checkpointSection(fl);
+	return trimPlan(plan) + note + list + checkpointSection(fl);
 }
 
 /** Checkpoints delivered earlier: this stage's in a staged plan, all of them otherwise. */
@@ -475,5 +476,5 @@ export function planCardText(fl: Flow): string {
 	const staged = currentStages(fl);
 	const file = planFilePath(fl);
 	const plan = fl.state.approvedPlan ?? "";
-	return planCard(file ? plan : fl.legacy.trimPlan(plan), fl.state.checklist, staged?.current, staged?.stages.length, file, fl.state.waiting?.reason);
+	return planCard(file ? plan : trimPlan(plan), fl.state.checklist, staged?.current, staged?.stages.length, file, fl.state.waiting?.reason);
 }
