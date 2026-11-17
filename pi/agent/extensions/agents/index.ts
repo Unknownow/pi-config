@@ -4,9 +4,11 @@
  *   explore    cheap read-only model answers open questions about the code (parallel)
  *   advisor    stronger model reads the whole transcript at a decision point
  *   test_run   cheap runners execute test task cards, results verified against the commands run
+ *   judge      adversarial read-only review of the session's diff (can be taken over: agents:judge-call)
+ *   critic     adversarial read-only review of a document against the code
  *
  * Models, thinking levels and limits come from ~/.pi/agent/agents.json. Each finished run emits
- * `agents:subagent-finished` on pi.events; the workflow extension counts it while a flow is active.
+ * `agents:subagent-finished` on pi.events. Other extensions use the library through api.ts.
  */
 
 import * as fs from "node:fs";
@@ -18,91 +20,64 @@ import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { agentsCompletions, agentsDescription, agentsUnknown } from "./commands.ts";
 import { branchTranscript } from "../shared/transcript.ts";
+import { emitClaims } from "../shared/claims.ts";
+import { type Finding } from "../shared/findings.ts";
 import { AGENT_ROLES, type AgentRole, CONFIG_PATH, loadConfig, saveRole } from "./config.ts";
+import { ADVISOR_CAP_ENV, advisorGate, parseCap, toolEnabled, TOOLS_ENV } from "./env.ts";
+import { acquireLock } from "./lock.ts";
 import * as prompts from "./prompts.ts";
 import { renderRuns, toolProgress } from "./render.ts";
+import { collectDiffParts, runCritic, runJudge } from "./review.ts";
+import { type RoleRunResult, RUNNER_GUARD_EXTENSION, runRole } from "./run-role.ts";
 import { RUNNER_GUARD_ENV, type RunnerGuardSpec } from "./runner-guard.ts";
-import { addUsage, emptyUsage, mapLimit, noContextFilesFor, type RunResult, runSubagent } from "./subagent.ts";
+import { addUsage, emptyUsage, mapLimit } from "./subagent.ts";
 import { callDir, formatTaskResult, parseRunnerReply, runnerGate, sanitizeIds, scheduleTasks, taskCard, taskRecord, type TestTask, verifyRun } from "./test-run.ts";
-import { applyEvent, endRun, newRun, type RunView, shortModel } from "../shared/runs.ts";
-import { DEFAULT_TOKEN_WEIGHTS } from "../shared/tokens.ts";
+import { endRun, type RunView, shortModel } from "../shared/runs.ts";
 import { describeRole, parseRoleSpec, pickRoleSpec } from "../shared/roles.ts";
-import { forwardedServers, roleTools } from "./knowledge.ts";
-import { foldersForCwd } from "./session-folders.ts";
-import { knowledgeTools } from "./prompts.ts";
+import { foldersForCwd } from "../shared/session-folders.ts";
 import { uniqueRoots } from "../shared/repos.ts";
 
 const EXPLORE_REASONS = ["question", "broad_search", "timeout", "too_much_output", "location_unknown", "parallel_lookups"] as const;
 
-/** Subagent-only extension that registers forwarded MCP servers (see mcp-forward.ts). */
-const FORWARD_EXTENSION = path.join(path.dirname(CONFIG_PATH), "extensions", "agents", "mcp-forward.ts");
-/** Subagent-only extension that guards the runners' bash (see runner-guard.ts). */
-const RUNNER_GUARD_EXTENSION = path.join(path.dirname(CONFIG_PATH), "extensions", "agents", "runner-guard.ts");
-/** The workflow publishes the session's added folders as a custom entry of this type. */
+/** A document argument this short, on one line, naming an existing file is read from that file. */
+const MAX_PATH_CHARS = 400;
+
+/** The critic's document: the file's text when `arg` is one short line naming an existing file (relative to `cwd`), else `arg` itself. */
+export function readDocument(arg: string, cwd: string): string {
+	const p = arg.trim();
+	if (!p || /[\r\n]/.test(p) || p.length > MAX_PATH_CHARS) return arg;
+	try {
+		const file = path.resolve(cwd, p);
+		if (fs.statSync(file).isFile()) return fs.readFileSync(file, "utf8");
+	} catch {
+		// not a file: the text itself
+	}
+	return arg;
+}
 
 export default function agents(pi: ExtensionAPI) {
-	// Ids of this extension's own run rows; the workflow widget is not involved.
-	let nextRunId = 1;
 	/** Models with auth, for the `/agents model` completions; set once a session starts. */
 	let availableModels: () => { provider: string; id: string; name?: string }[] = () => [];
+	/** The last own judge review's findings per session, passed to the next call. */
+	const lastFindings = new Map<string, Finding[]>();
 	pi.on("session_start", (_e, ctx) => {
 		availableModels = () => ctx.modelRegistry.getAvailable();
-		const error = loadConfig().error;
-		if (error) ctx.ui.notify(`agents: ${error}`, "warning");
+		const { error, warning } = loadConfig();
+		if (error || warning) ctx.ui.notify(`agents: ${error ?? warning}`, "warning");
 	});
-	const runnerSlots = runnerGate(() => loadConfig().config.test.concurrency);
-
-	/** The knowledge tools and server config a subagent role gets, or undefined when knowledge is off for it. */
-	function knowledgeFor(role: AgentRole) {
-		const k = loadConfig().config.knowledge;
-		if (!k.server || !k.roles.includes(role) || !fs.existsSync(FORWARD_EXTENSION)) return undefined;
-		const servers = forwardedServers(pi.getMcpServers(), k);
-		return servers[k.server] ? { tools: roleTools(role, k), servers } : undefined;
-	}
+	const runnerSlots = runnerGate(() => loadConfig().config.test.concurrency, (resource, signal) => acquireLock(resource, { signal }));
+	const enabled = (name: string) => toolEnabled(name, process.env[TOOLS_ENV]);
+	const advisorCalls = advisorGate(parseCap(process.env[ADVISOR_CAP_ENV]));
+	const sessionKey = (ctx: ExtensionContext) => ctx.sessionManager.getSessionFile?.() ?? `mem-${process.pid}`;
 
 	/** Runs a role as a subagent with a live row; `onChange` fires on every update. */
-	async function runAgent(
+	function runAgent(
 		role: AgentRole,
 		label: string,
 		opts: { systemPrompts: string[]; tools: string[]; task: string; cwd: string; signal?: AbortSignal; env?: Record<string, string>; extensions?: string[]; timeoutMs?: number },
 		onChange?: (run: RunView) => void,
-	): Promise<{ result: RunResult; run: RunView }> {
-		const cfg = loadConfig().config;
-		const spec = cfg.roles[role];
-		const run = newRun(nextRunId++, role, label, spec.model);
-		onChange?.(run);
-		const { extensions, timeoutMs, ...rest } = opts;
-		const k = knowledgeFor(role);
-		const started = Date.now();
-		const result = await runSubagent({
-			...rest,
-			noContextFiles: noContextFilesFor(role, cfg.explore.contextFiles),
-			tools: k ? [...rest.tools, ...k.tools] : rest.tools,
-			systemPrompts: k ? [...rest.systemPrompts, knowledgeTools(k.tools)] : rest.systemPrompts,
-			mcp: k ? { servers: k.servers, extension: FORWARD_EXTENSION } : undefined,
-			role: spec,
-			extensions: extensions ? [...cfg.subagent.extensions, ...extensions] : cfg.subagent.extensions,
-			timeoutMs: timeoutMs ?? cfg.subagent.timeoutMs,
-			idleTimeoutMs: cfg.subagent.idleTimeoutMs,
-			onEvent: (e) => {
-				applyEvent(run, e, opts.cwd, DEFAULT_TOKEN_WEIGHTS);
-				onChange?.(run);
-			},
-		});
-		if (!result.ok) endRun(run, false, result.error ?? "failed");
-		pi.events.emit("agents:subagent-finished", {
-			role,
-			label,
-			ms: Date.now() - started,
-			usage: result.usage,
-			model: result.model ?? spec.model,
-			ok: result.ok,
-			error: result.error,
-			bootMs: result.bootMs,
-			turns: result.turns,
-			tools: result.toolCalls.length,
-		});
-		return { result, run };
+	): Promise<RoleRunResult> {
+		return runRole({ ...opts, role, label, events: pi.events, mcpServers: pi.getMcpServers(), onRun: onChange });
 	}
 
 	const title = (theme: { fg: (c: string, s: string) => string; bold: (s: string) => string }, name: string, role: AgentRole) =>
@@ -113,7 +88,7 @@ export default function agents(pi: ExtensionAPI) {
 		return branchTranscript(ctx.sessionManager.getBranch(), loadConfig().config.advisor.maxTranscriptChars);
 	}
 
-	/** Folders the workflow extension added to this session (newest `session-folders` entry for this working folder) that still exist. */
+	/** Folders added to this session (newest `session-folders` entry for this working folder) that still exist. */
 	function sessionFolders(ctx: ExtensionContext): string[] {
 		return foldersForCwd(ctx.sessionManager.getBranch(), ctx.cwd).filter((f) => {
 			try {
@@ -131,7 +106,7 @@ export default function agents(pi: ExtensionAPI) {
 		return r.code === 0 && r.stdout.trim() ? r.stdout.trim() : null;
 	}
 
-	pi.registerTool({
+	if (enabled("explore")) pi.registerTool({
 		name: "explore",
 		label: "Explore",
 		description:
@@ -178,7 +153,7 @@ export default function agents(pi: ExtensionAPI) {
 		renderResult: (result, opts, theme) => renderRuns(result, opts, theme, 0),
 	});
 
-	pi.registerTool({
+	if (enabled("advisor")) pi.registerTool({
 		name: "advisor",
 		label: "Advisor",
 		description:
@@ -191,6 +166,8 @@ export default function agents(pi: ExtensionAPI) {
 			question: Type.String({ description: "The decision or question, with the options you are weighing" }),
 		}),
 		async execute(_id, params, signal, onUpdate, ctx) {
+			const refused = advisorCalls.take();
+			if (refused) throw new Error(refused);
 			const progress = toolProgress(onUpdate);
 			const { result, run } = await runAgent(
 				"advisor",
@@ -214,7 +191,7 @@ export default function agents(pi: ExtensionAPI) {
 		renderResult: (result, opts, theme) => renderRuns(result, opts, theme, 8),
 	});
 
-	pi.registerTool({
+	if (enabled("test_run")) pi.registerTool({
 		name: "test_run",
 		label: "Test run",
 		description:
@@ -261,14 +238,24 @@ export default function agents(pi: ExtensionAPI) {
 			const runnerTools = cfg.test.runnerTools.filter((t) => !/^(edit|write)$/.test(t));
 			const sections = await scheduleTasks(tasks, cfg.test.concurrency, async (task) => {
 				const card = taskCard(task, ctx.cwd, dir);
-				const { result, run } = await runnerSlots(task.resource, () =>
-					runAgent(
-						"runner",
-						`[${task.resource}] ${task.id}`,
-						{ systemPrompts: [prompts.RUNNER], tools: runnerTools, task: card, cwd: ctx.cwd, signal, env: { [RUNNER_GUARD_ENV]: JSON.stringify(spec) }, extensions: [RUNNER_GUARD_EXTENSION], timeoutMs: cfg.test.runnerTimeoutMs },
-						progress.track,
-					),
-				);
+				let held: RoleRunResult;
+				try {
+					held = await runnerSlots(
+						task.resource,
+						() =>
+							runAgent(
+								"runner",
+								`[${task.resource}] ${task.id}`,
+								{ systemPrompts: [prompts.RUNNER], tools: runnerTools, task: card, cwd: ctx.cwd, signal, env: { [RUNNER_GUARD_ENV]: JSON.stringify(spec) }, extensions: [RUNNER_GUARD_EXTENSION], timeoutMs: cfg.test.runnerTimeoutMs },
+								progress.track,
+							),
+						signal,
+					);
+				} catch (e) {
+					// Aborted while waiting for the resource, another process's lock or a runner slot.
+					return formatTaskResult({ id: task.id, resource: task.resource, status: `ERROR: ${(e as Error).message || "not run"}`, ran: [] });
+				}
+				const { result, run } = held;
 				addUsage(usage, result.usage);
 				const reply = parseRunnerReply(result.ok ? result.text : "");
 				const verified = verifyRun(reply, result.toolCalls);
@@ -290,6 +277,99 @@ export default function agents(pi: ExtensionAPI) {
 			return new Text(`${title(theme, "test_run", "runner")}${theme.fg("accent", ` ${n} task${n === 1 ? "" : "s"}`)}`, 0, 0);
 		},
 		renderResult: (result, opts, theme) => renderRuns(result, opts, theme, 0),
+	});
+
+	/** The git roots of the session: the working folder's repo and every repo of the session's added folders. */
+	async function sessionRepos(ctx: ExtensionContext): Promise<string[]> {
+		const tops = (await Promise.all([ctx.cwd, ...sessionFolders(ctx)].map(gitRoot))).filter((r): r is string => !!r);
+		return uniqueRoots(tops.map((r) => r.replace(/\\/g, "/")));
+	}
+
+	const WHEN = "Run it when the user asks for a review, or when your current instructions (e.g. an active workflow) require it.";
+
+	if (enabled("judge")) pi.registerTool({
+		name: "judge",
+		label: "Judge",
+		description: `Adversarial read-only review of the current change by a stronger model that assumes it is wrong: the diff of the working folder's repo and of every repo added to this session, against the merge-base with the origin default branch (or \`base\`), plus uncommitted and untracked files. Returns findings (blocker, major, minor) and VERDICT: PASS or FAIL. ${WHEN} Fix blocker and major findings and call it again; the next call gets the previous findings.`,
+		promptSnippet: "judge: adversarial review of the current diff (findings + VERDICT); run it when asked or when your instructions require it",
+		parameters: Type.Object({
+			base: Type.Optional(Type.String({ description: "Git ref to diff against. Default: the merge-base of HEAD with the origin default branch" })),
+			focus: Type.Optional(Type.String({ description: "What the change is meant to do, or areas to scrutinize" })),
+			disputes: Type.Optional(Type.String({ description: "Findings from the last review you believe are wrong, with file:line evidence. The judge verifies them against the code." })),
+			full: Type.Optional(Type.Boolean({ description: "Review the whole diff. A takeover may use it; the built-in judge always reviews in full." })),
+		}),
+		async execute(_id, params, signal, onUpdate, ctx) {
+			// Another extension may take the call over (e.g. one that runs its own review rounds).
+			const claims = emitClaims((d) => pi.events.emit("agents:judge-call", d), { v: 1, params, ctx, signal, onUpdate }, 0);
+			if (claims.claimed) {
+				const answer = await claims.answer;
+				if (answer && typeof answer === "object" && "error" in answer && !("content" in answer)) throw new Error(String((answer as { error: unknown }).error));
+				if (answer !== null && answer !== undefined) return answer as never;
+			}
+			const git = async (cwd: string, ...args: string[]) => {
+				const r = await pi.exec("git", ["-C", cwd, ...args], { timeout: 120_000 });
+				return { code: r.code, stdout: r.stdout };
+			};
+			const repos = await sessionRepos(ctx);
+			if (!repos.length) throw new Error("no git work tree in this session (working folder or added folders); the judge reviews git diffs");
+			const parts = await collectDiffParts(git, repos, params.base);
+			if (!parts.some((p) => p.full.trim())) return { content: [{ type: "text", text: "No changes to review." }], details: undefined };
+			const progress = toolProgress(onUpdate);
+			const key = sessionKey(ctx);
+			const r = await runJudge({
+				diff: parts,
+				focus: params.focus,
+				disputes: params.disputes,
+				previousFindings: lastFindings.get(key),
+				mode: "full",
+				cwd: ctx.cwd,
+				signal,
+				onRun: progress.track,
+				events: pi.events,
+				mcpServers: pi.getMcpServers(),
+			});
+			if (!r.ok) throw new Error(`judge failed: ${r.error}`);
+			lastFindings.set(key, r.findings);
+			return { content: [{ type: "text", text: r.text }], details: { runs: progress.snapshot(), verdict: r.verdict }, usage: r.usage };
+		},
+		renderCall(args, theme) {
+			return new Text(`${title(theme, "judge", "judge")} ${theme.fg("dim", String(args.focus ?? "current diff"))}`, 0, 0);
+		},
+		renderResult: (result, opts, theme) => renderRuns(result, opts, theme, 40),
+	});
+
+	if (enabled("critic")) pi.registerTool({
+		name: "critic",
+		label: "Critic",
+		description: `Adversarial read-only review of a document (a plan, a brief, a design) against the code by a stronger model that assumes it is wrong: false assumptions about the code, gaps, requirements that cannot be checked, risks. Returns findings (blocker, major, minor) and VERDICT: PASS or FAIL. ${WHEN}`,
+		promptSnippet: "critic: adversarial review of a document against the code (findings + VERDICT); run it when asked or when your instructions require it",
+		parameters: Type.Object({
+			document: Type.String({ description: "The document's text, or the path of a file holding it" }),
+			about: Type.String({ description: "One line: what the document is and what it is for" }),
+			criteria: Type.Optional(Type.String({ description: "What else to check" })),
+			output: Type.Optional(Type.String({ description: "Extra sections the critic adds after its findings" })),
+		}),
+		async execute(_id, params, signal, onUpdate, ctx) {
+			const document = readDocument(params.document, ctx.cwd);
+			const progress = toolProgress(onUpdate);
+			const r = await runCritic({
+				document,
+				about: params.about,
+				criteria: params.criteria,
+				output: params.output,
+				cwd: ctx.cwd,
+				signal,
+				onRun: progress.track,
+				events: pi.events,
+				mcpServers: pi.getMcpServers(),
+			});
+			if (!r.ok) throw new Error(`critic failed: ${r.error}`);
+			return { content: [{ type: "text", text: r.text }], details: { runs: progress.snapshot(), verdict: r.verdict }, usage: r.usage };
+		},
+		renderCall(args, theme) {
+			return new Text(`${title(theme, "critic", "critic")} ${theme.fg("dim", String(args.about ?? "document"))}`, 0, 0);
+		},
+		renderResult: (result, opts, theme) => renderRuns(result, opts, theme, 40),
 	});
 
 	// ----------------------------------------------------------------------

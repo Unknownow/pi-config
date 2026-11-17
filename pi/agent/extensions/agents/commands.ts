@@ -8,7 +8,7 @@ export const AGENTS_SUBS: Sub[] = [
 	{ value: "model", arg: "[role] [provider/id[:thinking]]", next: true, description: "set a role's model (pickers when left out)" },
 ];
 
-export const agentsDescription = () => `Models of the explore, advisor and test_run helpers: ${usageLine(AGENTS_SUBS).replaceAll(" | ", ", ")}`;
+export const agentsDescription = () => `Models of the explore, advisor, test_run, judge and critic helpers: ${usageLine(AGENTS_SUBS).replaceAll(" | ", ", ")}`;
 export const agentsUnknown = (sub: string) => `agents: unknown ${sub}. Try: ${valueList(AGENTS_SUBS)}`;
 
 export interface AgentsState {

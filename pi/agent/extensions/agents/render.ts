@@ -1,4 +1,4 @@
-/** Live rows and result rendering shared by the tools that run subagents (agents and workflow). */
+/** Live rows and result rendering shared by the tools that run subagents (agents and its callers). */
 
 import type { Component } from "@earendil-works/pi-tui";
 import { Text } from "@earendil-works/pi-tui";

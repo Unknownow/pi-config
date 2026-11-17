@@ -1,8 +1,8 @@
 /**
- * Subagent-only extension: the guard of test runners. The workflow passes its settings in
- * PI_WORKFLOW_RUNNER_GUARD (JSON, see RunnerGuardSpec). Runners may run builds, tests and device
+ * Subagent-only extension: the guard of test runners. The test_run tool passes its settings in
+ * PI_AGENTS_RUNNER_GUARD (JSON, see RunnerGuardSpec). Runners may run builds, tests and device
  * commands, but not change git or GitHub, run the denied commands, or point a project path outside
- * the flow's folders. A guard against drift, not a sandbox: a `cd` inside the text does not move
+ * the session's folders. A guard against drift, not a sandbox: a `cd` inside the text does not move
  * the base of relative paths. pi loads only index.ts from this folder, so the main session never
  * runs it.
  */
@@ -11,10 +11,10 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { commandReadOnlyProblem, KEYWORDS, parseCommands, unwrapCommand } from "../shared/readonly-bash.ts";
 import { repoKey } from "../shared/repos.ts";
 
-export const RUNNER_GUARD_ENV = "PI_WORKFLOW_RUNNER_GUARD";
+export const RUNNER_GUARD_ENV = "PI_AGENTS_RUNNER_GUARD";
 
 export interface RunnerGuardSpec {
-	/** The flow's repos and added folders. */
+	/** The session's repos and added folders. */
 	roots: string[];
 	/** Regexes over a command's words (or the whole text). */
 	deny: string[];
@@ -99,7 +99,7 @@ export function runnerProblem(text: string, spec: RunnerGuardSpec, cwd: string, 
 				else if (words[i].startsWith(`${flag}=`)) value = words[i].slice(flag.length + 1);
 				if (value === undefined) continue;
 				if (/[$`%]/.test(value)) return `project path ${value} can't be checked; write it out`;
-				if (!value || !insideRoots(value, spec.roots, cwd, platform)) return `project path ${value || "(empty)"} is outside this flow's folders`;
+				if (!value || !insideRoots(value, spec.roots, cwd, platform)) return `project path ${value || "(empty)"} is outside this session's folders`;
 			}
 		}
 		// 4. Names that would move the project.

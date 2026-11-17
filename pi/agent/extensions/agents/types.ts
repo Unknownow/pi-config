@@ -1,4 +1,4 @@
-/** Types of agents.json that the workflow extension reads too. Role specs live in ../shared/roles.ts. */
+/** Types of agents.json that other extensions read too (through api.ts). Role specs live in ../shared/roles.ts. */
 
 export interface KnowledgeConfig {
 	/** MCP server a pi package registers (IEC: "knowledge"). "" turns it off; off too when nothing registered it. */

@@ -1,6 +1,6 @@
 # Shared code
 
-Code that more than one extension uses. The folder has no `index.ts`, so pi does not load it as an extension; the extensions import its files directly. It imports nothing from any extension (`boundary.test.ts`), so the agents, workflow and worktree extensions can each work without the others.
+Code that more than one extension uses. The folder has no `index.ts`, so pi does not load it as an extension; the extensions import its files directly. It imports nothing from any extension (`boundary.test.ts`, subfolders included: a `../` import must resolve inside `shared/`), so the agents, workflow and worktree extensions can each work without the others.
 
 | File | What | Used by |
 |---|---|---|
@@ -12,7 +12,12 @@ Code that more than one extension uses. The folder has no `index.ts`, so pi does
 | `roles.ts` | Role specs `provider/id[:thinking]` (`parseRoleSpec`, `describeRole`, `THINKING_LEVELS`), the model list, Tab completions and the model picker. | `/agents model`, `/flow model` |
 | `notify.ts` | Desktop notification command per platform (`notifyCommand`). | workflow, orchestrate |
 | `dock.ts` | The dock: one `dock` widget below the editor with two columns. `layoutDock` (pure layout), `attachDock` (owner: subscribes to `dock:lines`, draws, repaints), `publishDock` / `unpublishDock` (producers). | worktree (left: `wt-sessions`), relay (right: `relay`) |
-| `claims.ts` | The claim pattern over the event bus (`emitClaims`, `gatherClaims`): listeners call `claim(promise)` during the emit; the first non-null answer wins. | workflow K9-K11, orchestrate |
+| `claims.ts` | The claim pattern over the event bus (`emitClaims`, `gatherClaims`): listeners call `claim(promise)` during the emit; the first non-null answer wins. | workflow K9-K11, orchestrate, agents (`agents:judge-call`) |
+| `findings.ts` | Reviewer findings: `parseFindings`, `judgeVerdict`, `isClean`, `blockingFindings`, `findingsBlock`. | workflow, relay, agents |
+| `session-folders.ts` | Readers of the `session-folders` entry: `foldersForCwd(branch, cwd)` (newest entry, only when it names the cwd) and `newestFolders(branch)` (newest entry for any cwd), `FOLDERS_ENTRY`, `SessionFoldersData`. | agents (relay and worktree to follow) |
+| `git/merge-gate.ts` | The judge gate for merges, protected pushes and publishing (`gateCheck`, `recordJudged`, `noMerge`, `midFlowMergeProblem`, …). One copy of the workflow and relay versions. | none yet (workflow and relay switch later) |
+| `git/push-guard.ts` | The git command guard (`pushProblem`, `shellProblem`, `mergeTarget`, …), with the optional force-with-lease `lease` of a delivery step. | none yet |
+| `git/repo-diff.ts` | Per-repo diff with untracked files (`collectRepoDiff`), the default review base (`defaultReviewBase`: merge-base with the origin default branch), citation helpers (`uncitedFiles`, `citeNames`, …). | agents (judge tool) |
 
 ## Dock contracts and owner election
 
@@ -24,7 +29,7 @@ Layout (`width` = terminal width): right empty: left lines full width. Left empt
 
 Changing an export's name, signature or meaning changes every extension that uses it; run all their tests.
 
-Tests: `node --experimental-strip-types --test claims.test.ts readonly-bash.test.ts readonly-tools.test.ts tokens.test.ts runs.test.ts dock.test.ts roles.test.ts boundary.test.ts notify.test.ts completions.test.ts`
+Tests: `node --experimental-strip-types --test *.test.ts git/*.test.ts`
 
 ## Completions
 

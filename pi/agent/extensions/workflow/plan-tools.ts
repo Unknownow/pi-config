@@ -18,7 +18,7 @@ export function refilterPlanTools(
 }
 
 /** Tools of the agents extension: a phase never removes them (test_run is refused by the tool_call hook while planning). */
-export const KEPT_TOOLS = ["explore", "advisor", "test_run"];
+export const KEPT_TOOLS = ["explore", "advisor", "test_run", "critic"];
 
 /** Workflow tools that only mean something inside a flow; normal mode does not declare them to the model. */
 export const FLOW_ONLY_TOOLS = ["plan_check", "deliver", "wait_for_user", "publish_packages", "request_merge"];

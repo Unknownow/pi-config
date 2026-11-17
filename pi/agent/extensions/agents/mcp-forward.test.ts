@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import mcpForward, { FORWARD_ENV } from "./mcp-forward.ts";
 
-/** Runs the extension with PI_WORKFLOW_MCP set to `raw` (unset when undefined); returns the registrations. */
+/** Runs the extension with PI_AGENTS_MCP set to `raw` (unset when undefined); returns the registrations. */
 function run(raw: string | undefined, fail: string[] = []): [string, unknown][] {
 	const calls: [string, unknown][] = [];
 	const pi = {
