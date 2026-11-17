@@ -1,6 +1,6 @@
 # workflow
 
-Each kind of work gets its own model. Every model and thinking level is set in `~/.pi/agent/workflow.json`; the `explore`, `advisor` and `runner` roles are in `~/.pi/agent/agents.json` (agents extension).
+Each kind of work gets its own model. The workflow's roles (`discuss`, `plan`, `execute`, `commit`, `arbiter`, `escalate`) are set in `~/.pi/agent/workflow.json`; the `explore`, `advisor`, `runner`, `judge` and `critic` roles are in `~/.pi/agent/agents.json` (agents extension, `/agents model`). Every review goes through the agents library (`../agents/api.ts`): the code judge is agents' `runJudge`, the plan and discussion reviews are agents' `runCritic`.
 The workflow is for software: system design, architecture and code. (The name stays `workflow`: the
 pi-config sync never deletes, so renaming the folder would leave the old extension loaded beside the new one.)
 
@@ -23,13 +23,11 @@ plan is read-only:   bash refuses commands that change files, git or GitHub
 | `execute` | main session model | after you approve the plan; when the flow ends (delivered, passed without a commit, or stopped) it goes back to `discuss` (`returnTo`: `discuss`, `plan` or `off`) |
 | `explore` | `explore` tool of the agents extension | open questions and multi-file searches, in every mode (see `../agents/README.md`) |
 | `advisor` | `advisor` tool of the agents extension | choosing an approach, after an error repeats (auto-nudged after `repeatedErrorThreshold` failures), before "done" (see `../agents/README.md`) |
-| `judge` | `judge` tool (registered by the agents extension; while a flow is on the workflow takes its calls over through `agents:judge-call`, `judge-claim.ts`), sub-`pi` with the git diff | the diff is ready; when a run ends with an unreviewed diff it asks (`autoJudge`). `/flow model judge` sets this workflow role; the agents `judge` role (`/agents model judge`) is used only outside a flow |
+| `judge` | `judge` tool (registered by the agents extension; while a flow is on the workflow takes its calls over through `agents:judge-call`, `judge-claim.ts`) and runs agents' `runJudge` with the approved plan as its spec | the diff is ready; when a run ends with an unreviewed diff it asks (`autoJudge`). Its model is agents.json's (`/agents model judge`) |
 | `arbiter` | sub-`pi` with the plan, the judge's report and the diff | the judge questions the plan and `planFlaw` is `auto`, or a passed review has a major plan flaw (whatever `planFlaw` is) (or you pick "Let the arbiter decide", or you picked *Approve, arbiter solves plan flaws* for this flow) |
 | `git_task` (`commit` role) | sub-`pi` with bash only, a git helper prompt, and its own git guard (`git-guard.ts`) with the same judge gate as the main session | when the executor (or normal mode, where the gate is off) calls `git_task` to delegate commit, push, pull request or merge work; default model `claude-bridge/claude-haiku-5-5`, thinking `medium` |
 | `escalate` | main session model | `/flow escalate` |
-| `quick` | main session model; same read-only rules as `plan` | the scope card of a quick flow (`/flow quick`); default Sonnet 5.5, medium |
-| `quick-judge` | the `judge` tool in a quick flow | one review, blockers and majors only; default Opus 5.5, medium |
-| `critic` | `critic` tool of the agents extension | reviews a document (a plan, a brief) against the code when asked; kept in every phase (read-only) |
+| `critic` | agents' `runCritic` for the plan gate and the discussion gate (`/flow critic`); also the agents `critic` tool | reviews the plan before the approval menu and the discussion's conclusion before planning; the tool is kept in every phase (read-only). Its model is agents.json's (`/agents model critic`) |
 | `runner` | `test_run` tool of the agents extension; refused in discuss and plan (runner bash is not read-only) | one per test task card; reports facts only (see `../agents/README.md`) |
 
 ## Hands-off run
@@ -60,28 +58,27 @@ after approval runs on its own:
 - **Mid-flow merges:** a merge or a protected push before the end of the flow is refused by the merge gate (in the executor's bash and in `git_task`) unless the plan or a decision allows it: the plan has an open `Deliver: merge — <why>` step in the current stage (the planner lists these under `Merge points:` so you approve them with the plan), or a merge was approved in this stage. At the end of the flow (an unstaged plan or the last stage, all steps ticked) the merge is allowed as before, after the judge passes. When a later step needs a merge earlier and the plan does not say so, the executor calls `request_merge {reason}`: the arbiter reviews the plan, the open steps and the repos and answers MERGE, NO_MERGE or ASK_USER. MERGE and NO_MERGE take effect at once and are recorded in the plan as an amendment (`(arbiter: merge)` or `(arbiter: no merge)`), shown in chat and listed in the flow outcome; ASK_USER (or a failed arbiter) asks you with a menu, even on autopilot, and records your answer as `(user: …)`. A merge still needs a judge pass on its exact tree.
 - **Delivery:** the executor delivers its own work; there is no commit step and no delivery question at approval.
   - **Free:** `git commit`, `git push` to a non-protected branch, `gh pr create`, `git pull`, `git merge`, `git rebase` and `git cherry-pick` are never refused (commits are split by function with `splitCommits`; on a protected branch or detached HEAD it works on a new branch, `branchPrefix` + a slug of the plan title; `base`, `mergeMethod` and `deleteBranch` apply to the merge).
-  - **Gated:** `gh pr merge`, a push to a protected branch and `publish_packages` are refused until the judge has passed the exact tree being merged, pushed or published (`merge-gate.ts`). A later commit that changes the tree needs another pass. The refusal says to run `judge`, then retry.
+  - **Gated:** `gh pr merge`, a push to a protected branch and `publish_packages` are refused until the judge has passed the exact tree being merged, pushed or published (`../shared/git/merge-gate.ts`). A later commit that changes the tree needs another pass. The refusal says to run `judge`, then retry.
   - **`Delivery: no merge`:** a plan line of that form turns merge, protected pushes and publish off for the flow.
   - **Hand-offs:** the executor never asks you to commit, push, open or merge a pull request, or publish. It stops only for failing CI, a required human review, or missing credentials or registry token.
   - **`git_task {task, repo?}`:** delegates messy git work (conflicts, rebases, long split-commit sequences; plain commits, pushes and pull requests go through bash) to the `commit` role (default `claude-bridge/claude-haiku-5-5`, thinking `medium`). It runs in a fresh subagent under the same guard and gate (`git-guard.ts`, settings in `PI_WORKFLOW_GIT_GUARD`), returns in the same turn with the report and a line per repo (`<repo>: branch <b>, <n> commits since review base, PR #<n> <STATE> <url>`), and a failure comes back as the tool result.
 - **Review base:** the judge diffs from a per-repo review base, a commit taken when the flow enters execute (a repo that joins later gets the fork point or its HEAD then), kept in the local ref `refs/pi/review-base/<flowId>`. The ref is never pushed, is deleted when the flow ends and is swept by the plan prune. Commits do not change what was judged. When `origin/<base>` has been merged into the branch, the base moves forward with an in-memory `git merge-tree`, so the merged `main` does not show up in the review; if that fails the base stays and the judge gets a note.
-- **Push guard:** it never force-pushes, deletes or mirrors, uses `+`/`:` refspecs, `--all` or `--no-verify`, and changes to `core.hooksPath` / `GIT_CONFIG_*` are refused (`push-guard.ts`). `gh pr merge --admin` / `--auto` and `gh pr review --approve` are always refused. A merge or protected push must be its own command line. Like the plan-phase checks it reads the command text: a guard against a drifting executor, not a sandbox.
-- **Removed config keys:** `delivery.ask`, `delivery.default`, `delivery.runner` (and `/flow delivery`) are ignored if still in `workflow.json`; the other `delivery` keys (`splitCommits`, `branchPrefix`, `base`, `mergeMethod`, `deleteBranch`) stay.
+- **Push guard:** it never force-pushes, deletes or mirrors, uses `+`/`:` refspecs, `--all` or `--no-verify`, and changes to `core.hooksPath` / `GIT_CONFIG_*` are refused (`../shared/git/push-guard.ts`). `gh pr merge --admin` / `--auto` and `gh pr review --approve` are always refused. A merge or protected push must be its own command line. Like the plan-phase checks it reads the command text: a guard against a drifting executor, not a sandbox.
+- **Removed config keys:** `delivery.ask`, `delivery.default`, `delivery.runner` (and `/flow delivery`) are ignored if still in `workflow.json`; the other `delivery` keys (`splitCommits`, `branchPrefix`, `base`, `mergeMethod`, `deleteBranch`) stay. The keys of the removed judge role and quick flow (`roles.judge`, `roles.quick`, `roles.quick-judge`, the `quick` block, `judge.tools`, `judge.maxDiffChars`, `judge.recheckThinking`, `knowledge.judgeCheck`; `LEGACY_KEYS` in `config.ts`) are ignored with one warning: the judge's and the critic's model, tools, diff limit (`judge.maxDiffChars`) and knowledge step (`knowledge.judgeCheck`) are agents.json's. A saved session of a quick flow resumes as a normal flow.
 - **Minor findings:** a passed review with fixable minor findings goes back to the executor for up to `maxMinorRounds`
-  (default 1, `0` ends the stage at once) fix rounds, then the stage ends anyway; the review after a minor-fix round reports only blockers and majors. Fix them, or dispute a wrong one. `[knowledge ...]` and
-  `[plan-flaw]` findings never start a round.
+  (default 1, `0` ends the stage at once) fix rounds, then the stage ends anyway; the review after a minor-fix round reports only blockers and majors. Fix them, or dispute a wrong one. `[knowledge ...]` deviations,
+  `[plan]` findings and late findings that are not blockers never start a round.
 - **Where it stops for you:** when the judge fails `maxJudgeRounds` (5; 0 means no limit) times in a
   row it asks: keep fixing, escalate and keep fixing, or stop. It also stops when something errors.
-- **Judge rounds after the first** review only what changed since the last round: a fresh judge gets
-  that round's findings, the changes since, and the names of every file in the change, at
-  `judge.recheckThinking` (medium). Calling it again with no changes returns the last result. It
+- **Judge rounds after the first** run agents' judge in incremental mode: a fresh judge gets
+  that round's findings, the changes since, and the names of every file in the change (the first round and the final full review run in full mode). Calling it again with no changes returns the last result. It
   falls back to a full review after a commit, rebase or branch switch, or when the changes since are
   over `judge.recheckMaxShare` (half) of the whole diff. A change over
   `judge.finalFullReviewOverChars` (80,000 characters) that passes a re-review gets one final full
   review only when the changes since the last round touched a file its findings did not cite
   (`judge.finalFullReviewNewFilesOnly: false` runs it every time); the judge tool's `full: true` forces one. That final review is skipped when a full review already passed in this stage and the changes since are at most `judge.finalFullReviewRepeatMaxShare` (10%) of the whole diff; `0` turns the skip off. `"judge": { "recheck": false }` turns it off.
-- **Knowledge on re-reviews:** when the last round's knowledge check passed, a re-review runs `get_rule_pack` only for the files changed since that round and carries over the other files' deviation notes. Otherwise it checks the whole change. Full reviews always check everything.
-- **Judge read budget:** the judge prompts ask for about 15 read/grep/find/ls calls on a full review and about 8 on a re-review (knowledge calls excluded). A soft aim, not a limit.
+- **Knowledge on re-reviews:** when the last round's knowledge check passed, a re-review passes agents' judge only the files changed since that round as its knowledge `files`, and keeps the last round's deviation notes of the other files. Otherwise it checks the whole change. Full reviews always check everything.
+- **Judge prompt:** agents' `JUDGE` (plus `JUDGE_INCREMENTAL` on a re-review and its knowledge step) is the base; flow passes the approved plan as `spec`, the diff as per-repo parts that agents fits to agents.json `judge.maxDiffChars`, and its own rules (`JUDGE_CRITERIA`: the plan's target, `[plan]` findings, tests, security, the long run, design; the multi-repo note; the whole-change file list) as `criteria`, with the previous findings and the executor's disputes. Flow recomputes the verdict (`codeVerdict`): PASS is a stated PASS with no blocker and no major that is not late, leaving out `[plan]` findings.
 - **Commit calls:** the `git_task` helper prompt asks the model to chain dependent steps with `&&` to keep the call count low.
 - **Handover compaction:** when a run hands over to the start of execute or of the next stage and the context is over `handoverCompactTokens` (30,000; `0` turns it off), the session is compacted first and the handover message carries a plan card (goal, user decisions, done-when, amendments and the open steps) instead of the full plan. The 140k context guard sends the same card after its compaction. A failed compaction still sends the message. An aborted run holds the handover: nothing is sent.
 - **Disputes:** if the executor thinks a finding is wrong it passes the finding and its file:line
@@ -90,21 +87,6 @@ after approval runs on its own:
 - **Turning steps back to manual:** set `"autoJudge": "ask"`
   and `"planPrompt": false` for a "say go" hint instead of the Approve menu.
   `"autopilot": true` skips the routine menus and lets the agent resolve waits itself (see "Autopilot"). `"handoverCompactTokens": 0` turns off compaction at handovers. `"addedFolderRules": "full"` loads the rules files of added folders into the prompt (default `"paths"`: only their paths and sizes are listed). In agents.json, `"explore": { "contextFiles": true }` gives explore subagents the context files. `"returnTo": "off"` stays in execute after a flow ends. `"stageAdvance": "auto"` (default) starts the next stage at once, even after an incomplete delivery or a stage with no changes, with a warning (not after a run you aborted, and never while the stage has open steps, no changes and no judge call); `"ask"` asks first. When `gh` is not on PATH, the workflow looks in the standard GitHub CLI install folders and adds the one it finds to pi's PATH; when there is none, outcomes say the PR state is unknown.
-
-## Quick flow
-
-For small changes such as game features (a popup, a gameplay tweak), where the full flow takes too long. `/flow quick [request]` (or `/flow quick`, then type the request) starts it from normal mode, discuss or plan; it is refused while a flow is executing.
-
-| Step | Quick flow |
-|---|---|
-| Plan | No discuss. The `quick` role writes a scope card in the plan phase (read-only): a `## Plan:` of about 15 lines with goal, steps, the narrowest check, Verify steps and done-when. A change too big for quick (more than about 6 files, a new shared system or API, save-data or network formats, a migration, stages) gets no card but a recommendation of `/flow plan`. |
-| Approval | The usual menu or a typed "go". *Full flow instead* (or `/flow plan`) switches to the planner model for a full plan, keeping the conversation. |
-| Execute | The execute role, as in a full flow, with `QUICK_EXECUTE`: only the narrowest checks (compile, clean Unity console, the tests of the changed files when fast); no slow suites and no `test_run`. Visual checks are Verify steps, listed after the flow. |
-| Judge | The `quick-judge` role, reporting only blockers and majors. `quick.maxJudgeRounds` (2) failed rounds in a row before it asks; `quick.maxMinorRounds` (0) minor-fix rounds; no final full review; the knowledge check runs when `quick.knowledgeCheck` (true) and `knowledge.judgeCheck` are on. Plan flaws never go to the arbiter: at a pass they are noted in the plan, at a fail you are asked. |
-| Delivery | The same as a full flow: branch, commits, push, pull request, merge after the judge's pass. |
-| End | Back to the phase it started from (normal mode when started from execute). The status bar shows `quick`; the `flow` line in `metrics.jsonl` has `profile: "quick"`. |
-
-Config: `"quick": { "maxJudgeRounds": 2, "maxMinorRounds": 0, "knowledgeCheck": true }`; models with `/flow model quick` and `/flow model quick-judge`. Limit: `/flow resume` brings a quick flow back as a full one (the profile is not in the plan ref).
 
 ## The plan, the judge and the arbiter
 
@@ -116,12 +98,12 @@ Config: `"quick": { "maxJudgeRounds": 2, "maxMinorRounds": 0, "knowledgeCheck": 
 - **Execute** follows the plan in order and writes the code within its contracts.
   It stops and says so when a step cannot be done as written. It does the delivery itself: commits as it goes, pushes, opens the pull request and, after a judge PASS on the exact tree, merges it (see "Delivery"). It never asks you to commit, push, open or merge a pull request, or publish; it stops only for failing CI, a required human review or missing credentials.
   When the flow ends it switches to the phase `returnTo` names (default `"discuss"`; `"plan"` or `"off"`).
-- **The judge** runs in its own session. It sees the approved plan and the diff, not the discussion,
-  and assumes the change is wrong. It is asked to stay within about 15 read/grep/find/ls calls on a full review and about 8 on a re-review (knowledge calls excluded), a soft aim, not a limit. What it trusts:
+- **The judge** (agents' `runJudge`) runs in its own session. It sees the approved plan and the diff, not the discussion,
+  and assumes the change is wrong. Agents' prompt asks it to stay within about 15 read/grep/find/ls calls, a soft aim, not a limit. What it trusts:
 
   | Input | Trust |
   |---|---|
-  | Goal, non-goals, your decisions, "done when" | **Trusted** as the target. It does not reopen them (unless unsafe or self-contradicting: `[plan-flaw]`) |
+  | Goal, non-goals, your decisions, "done when" | **Trusted** as the target. It does not reopen them (unless unsafe or self-contradicting: `[plan]`) |
   | The plan's steps, file:line facts, design reasoning | **Claims to verify** against the code. "The plan says so" is never evidence. Code that follows the plan but misses the target is a finding |
   | The diff, comments, test names, "tests pass", the executor's disputes, the `focus` line | **Assumed wrong / framing only** |
   | The previous judge round | **Untrusted too**: re-checked, dropped when the code disproves it |
@@ -130,7 +112,7 @@ Config: `"quick": { "maxJudgeRounds": 2, "maxMinorRounds": 0, "knowledgeCheck": 
   It checks correctness, the plan, security, the long run (scale, drift, platforms), and design
   (coupling, interfaces, migrations), and each finding has a `Why:` and a `Fix:` a weaker model can follow.
   Limits: it reads but cannot run code, and it shares a model with the planner by default.
-- **`[plan-flaw]`** findings mean the approved plan itself is wrong. They do not count toward FAIL and
+- **`[plan]`** findings (agents' tag for a problem with the spec, not the code) mean the approved plan itself is wrong. They do not count toward FAIL and
   are never fixed by the executor. `planFlaw: "ask"` shows a menu: back to planning, let the
   arbiter decide, ignore and continue, stop. `"auto"` (the shipped `workflow.json`) lets the **arbiter** (Fable 5.1 by default, a
   different model from the planner) decide from the code: `REVISE` appends a numbered amendment to the
@@ -144,29 +126,29 @@ Config: `"quick": { "maxJudgeRounds": 2, "maxMinorRounds": 0, "knowledgeCheck": 
 
 ### Discussion gate
 
-When you move from discuss to plan ("go", `/flow plan`, `/flow approve`) and `autoJudgeDiscussion` is `"auto"`, the judge first checks the last `Agreed so far:` list. Without a list the gate warns and moves on.
+When you move from discuss to plan ("go", `/flow plan`, `/flow approve`) and `autoJudgeDiscussion` is `"auto"`, agents' critic (`runCritic`, about "flow discussion") first checks the last `Agreed so far:` list. Its document is the list plus the transcript (clipped to `judge.maxDiscussionChars`, default 400000); its criteria are flow's discussion rules (`DISCUSSION_CRITERIA`) and the added folders. Without a list the gate warns and moves on.
 
-- `/flow plan force` skips the judge and carries the matching open findings into planning. It is the way out of a repeated `fix: user` pause.
-- Findings use the same `fix: auto|user` tags as the plan judge. A clean PASS on an unchanged list skips the gate; with an earlier review the judge rechecks (previous findings plus the discussion since, up to 30k characters) instead of a full pass.
+- `/flow plan force` skips the critic and carries the matching open findings into planning. It is the way out of a repeated `fix: user` pause.
+- Findings use the same `fix: auto|user` tags as the plan critic. A clean PASS on an unchanged list skips the gate; with an earlier review the critic rechecks (the previous findings and the disputes, with the discussion since the last review, up to 30k characters, as the transcript) instead of a full pass.
 - When every finding is `fix: auto` the discuss model gets them as a `workflow-discussion-fix` message and answers with a new list, which is rechecked (at most `maxDiscussionJudgeRounds`, default 2). At the cap with only auto findings the flow moves to plan and the open findings go into the plan kickoff.
 - Any `fix: user` finding pauses the gate (also at the cap): answer it, then say go again. A reply with no new list, or one that ends in a question, also pauses.
-- A second "go" while it runs only shows a notice; other typed text, Esc or `/flow judge cancel` stops it and you stay in discuss. A judge error moves on with a note.
-- `/flow judge` in discuss still only reports, but it stores its review so a later "go" can skip or recheck.
+- A second "go" while it runs only shows a notice; other typed text, Esc or `/flow critic cancel` stops it and you stay in discuss. A critic error moves on with a note.
+- `/flow critic` in discuss still only reports, but it stores its review so a later "go" can skip or recheck.
 
-### Plan judge
+### Plan critic
 
-Before the approval menu every complete plan goes to the judge, unless `autoJudgePlan` is `"off"` or the flow is quick.
+Before the approval menu every complete plan goes to agents' critic (`runCritic`, about "flow plan"), unless `autoJudgePlan` is `"off"`.
 
-- The judge checks the plan against its spec (the last `Agreed so far:` list, else none) and against the code, with read-only tools. Its findings are `- blocker|major|minor - [category] fix: auto|user - text`; a finding without a `fix:` tag counts as `user`.
-- `fix: auto` findings (blocker and major; minors become notes) go to the planner as a `workflow-plan-fix` message; the planner replies with the whole plan again, and may put a `Disputes:` block before the `## Plan` heading for a finding it holds wrong. The judge then rechecks: it gets its previous findings, the disputes, a diff of the plan and the whole plan. At most `maxPlanJudgeRounds` (3) runs; after the cap a changed plan gets one confirm run without a fix loop.
+- The critic checks the whole plan against its spec (the last `Agreed so far:` list, else none; passed in its criteria with flow's plan rules, `PLAN_CRITERIA`, and the added folders) and against the code, with read-only tools. Its findings are agents' `- blocker|major|minor - [category] \`where\` - title fix: auto|user`; a finding without a `fix:` tag counts as `user`.
+- `fix: auto` findings (blocker and major; minors become notes) go to the planner as a `workflow-plan-fix` message; the planner replies with the whole plan again, and may put a `Disputes:` block before the `## Plan` heading for a finding it holds wrong. The critic then rechecks: it gets the whole plan again with its previous findings and the disputes. A plan whose text changed too much to diff (`planTextDiff`) gets a full review instead; the same text is reused. At most `maxPlanJudgeRounds` (3) runs; after the cap a changed plan gets one confirm run without a fix loop.
 - `fix: user` findings are never sent to the planner. They, and whatever is still open at the cap, are shown in the menu ("Needs your decision").
 - Minor findings are notes, in every judge (B16): a PASS with only minors is clean and never starts another review. The plan judge's minors are appended to the approved plan as `## Notes for the executor` (the menus show a count); the discussion's and the proposal's go into the next kickoff. After a code PASS the executor fixes its minors; a fix that changes only the files the findings cite passes without a re-review (`state.minorFix`), anything else goes back to the judge.
 - Severity (B17): blocker is a security hole, data loss, a crash or a broken build; major is a visible bug, a failing test, a broken contract, going against a User decision or breaking a `required` knowledge rule; minor is everything else, including a `recommended` rule. A gap is blocker or major only when it needs a decision from the user, a false claim about the code changes the design, two decisions contradict each other, or it risks data loss or a visible break.
-- A recheck blocks only on earlier findings still open and on new blockers or majors in the changed lines. Anything else new is tagged `[late]`: it is listed (the final card, the pull request body) and never blocks, unless it is a blocker. The code verdict is recomputed from the finding lines (`codeVerdict`).
-- Before a discussion review of a list nobody rewrote since the last review, the discuss model is asked to restate the conclusion under `Agreed so far:` (D57). Every judge verdict is written to `metrics.jsonl` as a `judge` event (D58).
-- A verdict counts only for the plan text it judged. A judge error never blocks: the plan is offered with a notice that the judge did not run.
-- Typing "go" while the judge runs queues the approval: a clean PASS (no findings) approves, anything else opens the menu. Other typed text, Esc, or `/flow judge cancel` stops the judge without counting a run; the menu then opens after a "plan judge cancelled" notice.
-- `/flow judge` in plan judges the plan on screen now. No idle notice while a judge runs.
+- A code re-review blocks only on earlier findings still open and on new blockers or majors in the changed lines. Anything else new is tagged `[late]`: it is listed (the final card, the pull request body) and never blocks, unless it is a blocker. The code verdict is recomputed from the parsed findings (`codeVerdict`).
+- Before a discussion review of a list nobody rewrote since the last review, the discuss model is asked to restate the conclusion under `Agreed so far:` (D57). Every judge and critic verdict is written to `metrics.jsonl` as a `judge` event (D58).
+- A verdict counts only for the plan text it reviewed. A critic error never blocks: the plan is offered with a notice that the critic did not run.
+- Typing "go" while the critic runs queues the approval: a clean PASS (no findings) approves, anything else opens the menu. Other typed text, Esc, or `/flow critic cancel` stops the critic without counting a run; the menu then opens after a "plan critic cancelled" notice.
+- `/flow critic` in plan reviews the plan on screen now; in execute it points to the `judge` tool. No idle notice while a critic runs. The critic's runs show in the widget under the stage they review (plan or discuss).
 - Settings: `autoJudgePlan` and `autoJudgeDiscussion` (`"off"` | `"auto"`, default `"auto"`), `maxPlanJudgeRounds` (3), `maxDiscussionJudgeRounds` (2). `autoJudgeDiscussion` switches the discussion gate.
 
 ## Wait points, checkpoints and tags
@@ -212,7 +194,7 @@ A session shows a desktop notification (Windows toast, `osascript` on macOS, `no
 
 The discuss phase uses exactly the same rules as plan.
 
-`/flow judge` in discuss sends the last `Agreed so far:` list and the session transcript to the judge model for an adversarial review. It posts the findings with PASS/FAIL as a message without starting a turn, and blocks nothing. The transcript is clipped to `judge.maxDiscussionChars` (default 400000).
+`/flow critic` in discuss sends the last `Agreed so far:` list and the session transcript to agents' critic for an adversarial review. It posts the findings with PASS/FAIL as a message without starting a turn, and blocks nothing. The transcript is clipped to `judge.maxDiscussionChars` (default 400000).
 
 **Tools per phase:** normal mode does not declare `plan_check`, `deliver`, `wait_for_user` and `publish_packages`; execute declares everything; discuss and plan declare only the reading tools below. `explore`, `advisor` and `test_run` are never removed from the active list; the `tool_call` hook refuses `test_run` in discuss and plan (`plan-tools.ts`).
 
@@ -255,7 +237,7 @@ its plan and hand over, even when you said "fix it" or "do it for me".
 - It is a guard against the planner drifting into execution, not a sandbox. The code checks are
   regexes: a determined disguise (a computed lookup on an alias of `require('fs')`, say) can still get
   past them.
-- Tests: `node --experimental-strip-types --test agent-end.test.ts hooks.test.ts delivery.test.ts merge-gate.test.ts folder-add.test.ts plan-tools.test.ts push-guard.test.ts knowledge.test.ts registry-publish.test.ts agent-events.test.ts notify.test.ts asks.test.ts ui-guard.test.ts repos.test.ts stages.test.ts git-guard.test.ts repo-diff.test.ts prompts.test.ts config.test.ts metrics.test.ts plan-store.test.ts gate-wiring.test.ts boundary.test.ts plan-doc.test.ts  flow-report.test.ts view.test.ts waits.test.ts checkpoints.test.ts tags.test.ts commands.test.ts judge-claim.test.ts`.
+- Tests: `node --experimental-strip-types --test *.test.ts` in this folder (tests that load `../agents/api.ts` stub the pi packages with `test-hooks.ts`).
 
 ## Test phase (removed)
 
@@ -278,13 +260,14 @@ Other extensions (the worktree extension in this repo) may rely on exactly these
 ## Team knowledge
 
 When a pi package registers the MCP server named by `knowledge.server` (IEC game repos: `knowledge`),
-the subagents in `knowledge.roles` get its read tools (`knowledge.tools`; never `propose_entry`). Each
+the workflow's subagents in its `knowledge.roles` (the arbiter) get its read tools (`knowledge.tools`; never `propose_entry`). Each
 subagent starts its own copy through `../agents/mcp-forward.ts`, with `knowledge.env` added
 (`KNOWLEDGE_OFFLINE=1`: use the team index the main session fetched).
 
-With `knowledge.judgeCheck`, the judge's last step is the knowledge check: `get_rule_pack` for every
-changed file, then each rule. The workflow verifies the judge's tool calls; a skipped check gets a
-separate knowledge pass. Broken required rules are major (security: blocker). Deviations from
+The judge's knowledge server, roles and `judgeCheck` are agents.json's `knowledge`. With `judgeCheck`, agents' judge
+runs the knowledge check as its last step: `get_rule_pack` for every changed file, then each rule. The workflow
+verifies the judge's tool calls (agents' `ReviewResult.toolCalls`): a check that did not cover every file is
+"skipped", shown on the result and warned about at the end of the stage (there is no separate pass). Broken required rules are major (security: blocker). Deviations from
 recommended rules are minor, documented (Rule, Code, Reason, Impact, To follow it) and listed in the
 commit message under `Knowledge deviations:`. When the server is unavailable the result ends with
 "Knowledge: not checked" and the commit asks first. Elsewhere nothing changes; `"server": ""` turns
@@ -369,15 +352,14 @@ next run starts.
 |---|---|
 | `/flow` | status: phase, the model for each role, config path |
 | `/flow board` | live view of every flow on this machine (overlay, read-only) |
-| `/flow quick [request]` | start a quick flow (see "Quick flow") |
-| `/flow plan force` | in discuss only: move to plan without the discussion judge; the open findings of the current `Agreed so far:` list go to the planner |
+| `/flow plan force` | in discuss only: move to plan without the discussion critic; the open findings of the current `Agreed so far:` list go to the planner |
 | `/flow discuss` / `plan` / `execute` / `off` | switch phase (`off` restores the model and thinking level from before the flow). `/flow plan` from discuss also asks the planner for the `Plan:`; `/flow approve` in discuss does the same |
 | `/flow approve` | approve the plan: switch to execute and start (also offered when a plan ends) |
 | `/flow escalate` (`fable`) / `/flow back` (`opusplan`) | manual escalation and return |
-| `/flow judge cancel` | stop a running judge gate (no run is counted) |
-| `/flow judge` | review the current diff now (in plan: the plan on screen, with the plan-judge loop; in discuss: reviews the discussion's conclusion, the last `Agreed so far:` list and the transcript; findings and PASS/FAIL, starts no fix loop) |
+| `/flow critic cancel` | stop a running critic gate (no run is counted) |
+| `/flow critic` | agents' critic now: in plan the plan on screen, with the plan-critic loop; in discuss the discussion's conclusion, the last `Agreed so far:` list and the transcript (findings and PASS/FAIL, starts no fix loop); in execute it says to use the `judge` tool |
 | `/flow tokens` | token breakdown of the current flow so far |
-| `/flow model [role] [provider/id[:thinking]]` | set a workflow role's model (discuss, plan, execute, judge, commit, arbiter, escalate, quick, quick-judge) and save it to workflow.json; left out, it lists the roles, the models with auth and the thinking levels (Tab completes model IDs). explore, advisor and runner are set with `/agents model` |
+| `/flow model [role] [provider/id[:thinking]]` | set a workflow role's model (discuss, plan, execute, commit, arbiter, escalate) and save it to workflow.json; left out, it lists the roles, the models with auth and the thinking levels (Tab completes model IDs). explore, advisor, runner, judge and critic are set with `/agents model` |
 | `/flow reload` | re-read workflow.json |
 | `pi --flow execute` (`plan`, `off`) | start a session in a given phase |
 | `/folders add <path>` / `remove <path\|n>` / `list` | folders that are part of this session (reloads Pi); Tab completes folder paths after `add` and folder numbers after `remove`; other extensions may replace or refuse the folder on `add` (K6) |
@@ -391,7 +373,7 @@ and any repo where the executor changed a file with `edit` or `write`.
 
 - The agent's prompt lists the extra folders and says to use absolute paths there. Their
   `AGENTS.md`/`CLAUDE.md` files are not loaded: the prompt lists their paths and sizes and tells the agent to read a folder's files before it plans or changes anything there (`addedFolderRules: "full"` loads them as before). Skills and prompts are loaded.
-- The judge reviews every repo of the flow in one diff, each part headed `=== repo: <root> ===`, and
+- The judge reviews every repo of the flow in one diff, each repo's part headed `### Repo <root>` (agents' `fitDiffs`), and
   re-reviews compare each repo with its last round.
 - The executor commits, pushes and opens a pull request per repo; a merge or protected push is gated on that repo's own passed tree. Each command
   is checked against the branch of the repo it runs in: the one named by `git -C` or the last `cd`,
@@ -422,4 +404,4 @@ Ns`. The idle timer pauses while a tool runs, so a long build is not cut off. `0
 
 ## Completions
 
-`/flow ` offers every subcommand with a description (`commands.ts`), then the second level: `plan force`, `autopilot on|off`, `judge cancel`, and `model <role> <provider/id>[:thinking]` (roles, models with auth, thinking levels). `/folders ` offers `add` (folders of the typed path), `remove` (the added folders by number) and `list`.
+`/flow ` offers every subcommand with a description (`commands.ts`), then the second level: `plan force`, `autopilot on|off`, `critic cancel`, and `model <role> <provider/id>[:thinking]` (roles, models with auth, thinking levels). `/folders ` offers `add` (folders of the typed path), `remove` (the added folders by number) and `list`.

@@ -2,36 +2,39 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { recordFindings, reportFindings, reportLines, type FlowFinding, type ReportFinding } from "./flow-report.ts";
 
+await import("./test-hooks.ts");
+const { parseFindings } = await import("../agents/api.ts");
+
 const strip = (l: FlowFinding[]) => l.map((f) => ({ line: f.line, open: f.open }));
 
-test("recordFindings marks findings missing from the next report as fixed", () => {
-	const a = recordFindings(undefined, undefined, "a.ts:1 - major - [bug] x\na.ts:2 - minor - [bug] y\nVERDICT: FAIL");
+test("recordFindings marks findings missing from the next report as fixed (agents' findings format)", () => {
+	const a = recordFindings(undefined, undefined, parseFindings("- major - [bug] `a.ts:1` - x fix: auto\n  Why: w\n- minor - [bug] `a.ts:2` - y fix: auto\nVERDICT: FAIL"));
 	const before = JSON.stringify(a);
-	const b = recordFindings(a, undefined, "a.ts:2 - minor - [bug] y\nVERDICT: PASS");
+	const b = recordFindings(a, undefined, parseFindings("- minor - [bug] `a.ts:2` - y fix: auto\nVERDICT: PASS"));
 	assert.deepEqual(strip(b), [
-		{ line: "a.ts:1 - major - [bug] x", open: false },
-		{ line: "a.ts:2 - minor - [bug] y", open: true },
+		{ line: "major - [bug] `a.ts:1` - x fix: auto", open: false },
+		{ line: "minor - [bug] `a.ts:2` - y fix: auto", open: true },
 	]);
 	assert.equal(JSON.stringify(a), before);
 });
 
 test("recordFindings keeps other stages untouched and caps at 50", () => {
-	let l = recordFindings(undefined, 1, "a.ts:1 - major - [bug] one");
-	l = recordFindings(l, 2, "b.ts:1 - major - [bug] two");
+	let l = recordFindings(undefined, 1, parseFindings("- major - [bug] `a.ts:1` - one"));
+	l = recordFindings(l, 2, parseFindings("- major - [bug] `b.ts:1` - two"));
 	assert.equal(l.find((f) => f.stage === 1)?.open, true);
 	let m: FlowFinding[] | undefined;
-	for (let i = 1; i <= 60; i++) m = recordFindings(m, 3, `f.ts:${i} - minor - [bug] n${i}`);
+	for (let i = 1; i <= 60; i++) m = recordFindings(m, 3, parseFindings(`- minor - [bug] f.ts:${i} - n${i}`));
 	assert.equal(m!.length, 50);
-	assert.equal(m![49].line, "f.ts:60 - minor - [bug] n60");
+	assert.equal(m![49].line, "minor - [bug] f.ts:60 - n60");
 });
 
-test("reportFindings marks noted plan flaws", () => {
+test("reportFindings marks [plan] findings written into the plan as noted", () => {
 	const list: FlowFinding[] = [
-		{ line: "a.ts:1 - minor - [plan-flaw] p", open: true },
-		{ line: "b.ts:1 - minor - [bug] q", open: true },
-		{ line: "c.ts:1 - major - [bug] r", open: false },
+		{ line: "minor - [plan] `plan S3` - p", open: true },
+		{ line: "minor - [bug] `b.ts:1` - q", open: true },
+		{ line: "major - [bug] `c.ts:1` - r", open: false },
 	];
-	assert.deepEqual(reportFindings(list, "...\na.ts:1 - minor - [plan-flaw] p").map((f) => f.status), ["noted", "open", "fixed"]);
+	assert.deepEqual(reportFindings(list, "...\n- minor - [plan] `plan S3` - p").map((f) => f.status), ["noted", "open", "fixed"]);
 	assert.equal(reportFindings(list, undefined)[0].status, "open");
 });
 

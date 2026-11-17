@@ -1,12 +1,9 @@
 /**
- * Team knowledge (an MCP server such as IEC's `knowledge`) for the workflow's subagents, and the
- * check that the judge really ran its knowledge step. Pure functions; index.ts wires them in.
+ * The workflow's side of the judge's team-knowledge step (agents' runJudge runs it): whether the judge
+ * really checked every changed file, and the recommended-rule deviations that go into the pull request.
+ * Pure functions; index.ts wires them in.
  */
-import type { KnowledgeConfig } from "../agents/types.ts";
-import { toolPrefix } from "../agents/knowledge.ts";
-import type { ToolCall } from "../agents/subagent.ts";
-
-export { forwardedServers, roleTools, toolPrefix } from "../agents/knowledge.ts";
+import { type Finding, type ToolCall, toolPrefix } from "../agents/api.ts";
 
 export type KnowledgeStatus = { status: "checked" } | { status: "skipped" | "unavailable"; reason: string };
 
@@ -21,22 +18,13 @@ export interface Deviation {
 }
 
 const norm = (p: string) => p.replace(/\\/g, "/").replace(/^\.\//, "");
-function covers(paths: string[], file: string): boolean {
+/** Whether `file` is one of `paths` (either may be a suffix of the other). */
+export function covers(paths: string[], file: string): boolean {
 	const f = norm(file);
 	return paths.some((raw) => {
 		const p = norm(raw);
 		return p === f || f.endsWith(`/${p}`) || p.endsWith(`/${f}`);
 	});
-}
-
-/**
- * The files a judge run must knowledge-check. On a re-review after a round whose knowledge check passed,
- * only the files changed since that round (that are still in the change); otherwise all of them.
- */
-export function recheckKnowledgeFiles(prevChecked: boolean, changed: string[], all: string[]): { files: string[]; scoped: boolean } {
-	if (!prevChecked) return { files: all, scoped: false };
-	const files = all.filter((f) => covers(changed, f));
-	return files.length > 0 ? { files, scoped: true } : { files: all, scoped: false };
 }
 
 /** Whether the judge's tool calls show a real knowledge check of every changed file. */
@@ -61,19 +49,19 @@ export function judgeKnowledge(calls: ToolCall[], text: string, files: string[],
 	return { status: "skipped", reason: claimed ? `"unavailable - ${claimed}" without a failed knowledge call` : "no get_rule_pack call" };
 }
 
-/** Recommended-rule deviation findings, in the judge's five-field format; deduplicated by id and place. */
-export function parseDeviations(text: string): Deviation[] {
-	const labels = { rule: "Rule", code: "Code", reason: "Reason", impact: "Impact", follow: "To follow it" } as const;
-	const lines = text.split(/\r?\n/);
+const FIELDS = { rule: "Rule", code: "Code", reason: "Reason", impact: "Impact", follow: "To follow it" } as const;
+
+/** The recommended-rule deviations among a judge's findings (`[knowledge <id>]`, five fields), deduplicated by id and place. */
+export function parseDeviations(findings: Finding[]): Deviation[] {
 	const out: Deviation[] = [];
-	for (let i = 0; i < lines.length; i++) {
-		const m = lines[i].match(/^(\S.*?) - minor - \[knowledge ([^\]\s]+)\] deviation from a recommended rule/i);
-		if (!m) continue;
-		const d: Deviation = { where: m[1].trim(), id: m[2], rule: "", code: "", reason: "", impact: "", follow: "" };
-		for (let j = i + 1; j < lines.length && /^\s+\S/.test(lines[j]); j++) {
-			for (const [key, label] of Object.entries(labels)) {
-				const f = lines[j].match(new RegExp(`^\\s+${label}:\\s*(.*)$`, "i"));
-				if (f) d[key as keyof typeof labels] = f[1].trim();
+	for (const f of findings) {
+		const id = /^knowledge\s+(\S+)$/i.exec(f.category)?.[1];
+		if (f.severity !== "minor" || !id || !/deviation from a recommended rule/i.test(f.head)) continue;
+		const d: Deviation = { where: /`([^`]+)`/.exec(f.head)?.[1] ?? "", id, rule: "", code: "", reason: "", impact: "", follow: "" };
+		for (const line of f.body.split("\n")) {
+			for (const [key, label] of Object.entries(FIELDS)) {
+				const m = new RegExp(`^${label}:\\s*(.*)$`, "i").exec(line.trim());
+				if (m) d[key as keyof typeof FIELDS] = m[1].trim();
 			}
 		}
 		if (!out.some((o) => o.id === d.id && o.where === d.where)) out.push(d);
@@ -86,14 +74,6 @@ export function deviationBlock(devs: Deviation[]): string {
 	if (devs.length === 0) return "";
 	const t = (s: string) => s.replace(/[.\s]+$/, "") || "not stated";
 	return ["Knowledge deviations:", ...devs.map((d) => `- ${d.id} at ${d.where}: ${t(d.code)}; reason: ${t(d.reason)}; impact: ${t(d.impact)}`)].join("\n");
-}
-
-/** The judge's text plus the knowledge pass, under one verdict: FAIL when either says FAIL or has none. */
-export function mergeKnowledgePass(first: string, pass: string): string {
-	const passed = (t: string) => /VERDICT:\s*PASS/i.test(t) && !/VERDICT:\s*FAIL/i.test(t);
-	const strip = (t: string) => t.replace(/^\s*VERDICT:\s*(PASS|FAIL)\s*$/gim, "").trim();
-	const verdict = passed(first) && passed(pass) ? "PASS" : "FAIL";
-	return [strip(first), "## Knowledge check (separate pass; the judge skipped it)", strip(pass), `VERDICT: ${verdict}`].filter(Boolean).join("\n\n");
 }
 
 /** The line appended to every judge result when knowledge is active. */

@@ -9,9 +9,10 @@
  *   context guard        compact at ~140k tokens on every model, once the run settles
  *
  * plan and execute switch the main session's model. explore, advisor and judge
- * are tools that run their role in a separate `pi` process (see subagent.ts).
- * Every model and thinking level comes from ~/.pi/agent/workflow.json, which
- * pi-config syncs between machines; `/flow model` edits it.
+ * are tools of the agents extension that run in a separate `pi` process; the
+ * flow's code review is agents' runJudge, its plan and discussion reviews agents'
+ * runCritic (all through ../agents/api.ts). The workflow roles' models come from
+ * ~/.pi/agent/workflow.json (`/flow model`); judge and critic from agents.json.
  *
  * view.ts draws it live: the pipeline above the editor with the active stage
  * and its model, plus a row per running subagent with what it is doing now.
@@ -44,14 +45,14 @@ import {
 	saveRole,
 	type WorkflowConfig,
 } from "./config.ts";
-import { describeRole, parseRoleSpec, pickRoleSpec, type Thinking } from "../shared/roles.ts";
-import { judgeAddenda, profileRole, nextProfile, handoverAction, handoverKind, preFlowModelAction, gitTaskAllowed, migrateSavedState, afterPass, noChangeStage, arbiterFirst, fixableFindings, codeVerdict, lateFindingLines, findingLines, canApprove, approvalBlock, addPlanReply, composePlan, type PlanDraft, hasPlanFlaw, planFlawLines, planFlawOnPass,  judgeCapReached, minorFixOpen, passPending, stageEndAction, parseArbiter, parseMergeArbiter, phaseAfterFlow, shouldResume, skipJudge } from "./agent-end.ts";
+import { describeRole, parseRoleSpec, pickRoleSpec } from "../shared/roles.ts";
+import { judgeAddenda, handoverAction, handoverKind, preFlowModelAction, gitTaskAllowed, migrateSavedState, afterPass, noChangeStage, arbiterFirst, fixableFindings, codeVerdict, lateFindingLines, canApprove, approvalBlock, addPlanReply, composePlan, type PlanDraft, planFlaws, planFlawOnPass, judgeCapReached, minorFixOpen, passPending, stageEndAction, parseArbiter, parseMergeArbiter, phaseAfterFlow, shouldResume, skipJudge } from "./agent-end.ts";
 import { countTokens, fmtTok, type Tok } from "../shared/tokens.ts";
 import { idleReason, notifyCommand, notifyDue } from "./notify.ts";
 import * as prompts from "./prompts.ts";
-import { discussionReviewPrompts, discussionVerdict, lastAgreedList } from "./discussion-review.ts";
+import { discussionCriticRequest, discussionVerdict, lastAgreedList } from "./discussion-review.ts";
 import { branchTranscript } from "../shared/transcript.ts";
-import { type DiscussionReview, type Finding, type PlanGate, type SpecKind, discussionGateAfterFixReply, discussionGateAfterVerdict, discussionGateOnInput, discussionGateStart, discussionRecheckPrompts, findingText, forcedOpenFindings, blockingFindings, isClean, minorFindings, isEscKey, parseFindings, planDisputes, planGateAfterVerdict, planGateDecide, planGateReset, planOfferAction, planReviewPrompts, planTextDiff, textHash } from "./gates.ts";
+import { type DiscussionReview, type Finding, type PlanGate, type SpecKind, discussionGateAfterFixReply, discussionGateAfterVerdict, discussionGateOnInput, discussionGateStart, findingText, forcedOpenFindings, blockingFindings, isClean, minorFindings, isEscKey, parseFindings, planCriticRequest, planDisputes, planGateAfterVerdict, planGateDecide, planGateReset, planOfferAction, textHash } from "./gates.ts";
 import { planTitle } from "./delivery.ts";
 import { FLOW_UNKNOWN, FOLDERS_SUBS, flowCompletions, foldersCompletions, foldersDescription, foldersUsage } from "./commands.ts";
 import { isKnown } from "../shared/completions.ts";
@@ -73,26 +74,32 @@ import { pushArgs, tagDecision } from "./tags.ts";
 import { type CheckVerdict, autopilotAmendment, autopilotReply, checkTitle, checkVerdict, cleanCheck, waitCheckProblem, type HumanCheck, humanChecks, parseVerifyStep, parseWaitStep, pollDecision, waitKindProblem, autopilotSkipsWait, replaceWait, resumePrefix, verifyAmendment, waitAmendment } from "./waits.ts";
 import { nextStage, parseStages, planWaitProblems, stageLine, stageNote, stageStart, stagesOutcome } from "./stages.ts";
 import { planToolProblem, planToolRefused, phaseToolRefusal } from "../shared/readonly-tools.ts";
-import { PLAN_ARBITER, PLAN_APPROVE, PLAN_BACK, PLAN_FULL, askMenu, planMenuRequest, resumeContent } from "./asks.ts";
+import { PLAN_ARBITER, PLAN_APPROVE, PLAN_BACK, askMenu, planMenuRequest, resumeContent } from "./asks.ts";
 import { refilterPlanTools, hiddenInPhase, syncFlowOnlyTools } from "./plan-tools.ts";
-import { AGENT_ROLES } from "../agents/config.ts";
-import { agentsOnlyRoles, claimJudgeCall, type JudgeParams } from "./judge-claim.ts";
+import { claimJudgeCall, type JudgeParams } from "./judge-claim.ts";
 import { countSubagent } from "./agent-events.ts";
 import { MetricsQueue, type MetricEvent, subagentMetric, judgeMetric } from "./metrics.ts";
-import { addUsage, emptyUsage, mapLimit, type RunResult, runSubagent } from "../agents/subagent.ts";
-import { renderRuns, toolProgress } from "../agents/render.ts";
 import {
-	type Deviation,
-	deviationBlock,
+	AGENT_ROLES,
+	addUsage,
+	type DiffPart,
+	emptyUsage,
+	fitDiffs,
 	forwardedServers,
-	judgeKnowledge,
-	type KnowledgeStatus,
-	knowledgeFooter,
-	mergeKnowledgePass,
-	parseDeviations,
-	recheckKnowledgeFiles,
+	knowledgeFor as agentsKnowledgeFor,
+	loadConfig as loadAgentsConfig,
+	mapLimit,
+	type ReviewResult,
+	type RunResult,
 	roleTools,
-} from "./knowledge.ts";
+	runCritic,
+	runJudge,
+	runSubagent,
+	renderRuns,
+	toolProgress,
+} from "../agents/api.ts";
+import type { RunView } from "../shared/runs.ts";
+import { covers, type Deviation, deviationBlock, judgeKnowledge, knowledgeFooter, parseDeviations } from "./knowledge.ts";
 import {
 	emptyFlowUsage,
 	emptyStageTokens,
@@ -145,10 +152,6 @@ interface FlowState {
 	flowStarted?: number;
 	/** Plan flaws go straight to the arbiter in this flow, chosen at approval; unset means `cfg.planFlaw`. */
 	planFlaw?: "auto";
-	/** A quick flow (`/flow quick`): scope card on the `quick` role, judge on `quick-judge` with `cfg.quick` limits. Kept from plan into execute. */
-	profile?: "quick";
-	/** The phase `/flow quick` started from; a quick flow goes back there when it ends. */
-	quickFrom?: Phase;
 	/** Passed diffs whose flow already ended (or will, at the stage's end). */
 	summarizedPasses?: string[];
 	/** The plan the user approved (the final plan, plus arbiter amendments); the judge and the arbiter read it. */
@@ -204,13 +207,14 @@ interface LastJudge {
 	repos?: Record<string, { tree: string; head: string }>;
 	base: string;
 	verdict: "PASS" | "FAIL";
+	/** The judge's reply, in agents' findings format; text saved by older versions parses as no findings. */
 	text: string;
 }
 
 interface LastKnowledge {
 	/** Hash of the diff it checked. */
 	hash: string;
-	status: "checked" | "unavailable";
+	status: "checked" | "skipped" | "unavailable";
 	reason?: string;
 	deviations: Deviation[];
 }
@@ -223,11 +227,9 @@ const SUMMARY_ENTRY = "workflow-summary";
 const APPROVED_FINAL = "The final plan is approved. Execute it exactly, step by step, following the workflow rules.";
 /** The judge reads at most this much of the plan; the end (the arbiter's amendments) is kept. */
 const MAX_PLAN_CHARS = 60_000;
-/** Roles `/flow model` sets (workflow.json); explore, advisor and runner are the agents extension's (`/agents model`). */
+/** Roles `/flow model` sets (workflow.json); explore, advisor, runner, judge and critic are the agents extension's (`/agents model`). */
 const MODEL_ROLES: readonly string[] = ROLES;
 const OWN_TOOLS = new Set(["explore", "advisor", "judge", "critic"]);
-/** Agents roles `/flow model` refers to `/agents model`; judge and critic stay the workflow's own until flow uses the agents reviewers. */
-const AGENTS_ONLY_ROLES = agentsOnlyRoles(AGENT_ROLES, MODEL_ROLES);
 const execFileAsync = promisify(execFile);
 /** Subagent-only extension that registers forwarded MCP servers (see mcp-forward.ts). */
 const FORWARD_EXTENSION = path.join(path.dirname(CONFIG_PATH), "extensions", "agents", "mcp-forward.ts");
@@ -236,10 +238,12 @@ const GIT_GUARD_EXTENSION = path.join(path.dirname(CONFIG_PATH), "extensions", "
 
 
 interface Diff {
+	/** The whole diff (several repos: each section headed `=== repo: <root> ===`); hashed, never sent as is. */
 	text: string;
+	/** The diff per repo, as agents' judge takes it (fitted to agents.json `judge.maxDiffChars`). */
+	parts: DiffPart[];
 	hash: string;
 	files: number;
-	truncated: boolean;
 	base: string;
 	/** Every changed or new file. */
 	names: string[];
@@ -270,17 +274,16 @@ function assistantText(m: AgentMessage | undefined): string {
 		.join("\n");
 }
 
-function countFindings(text: string): { total: number; late: number } {
-	const lines = text.split("\n").filter((l) => /\s-\s*(blocker|major|minor)\s*-/i.test(l));
-	const late = lines.filter((l) => /\[late\]/i.test(l)).length;
-	return { total: lines.length - late, late };
+function countFindings(findings: Finding[]): { total: number; late: number } {
+	const late = findings.filter((f) => f.late).length;
+	return { total: findings.length - late, late };
 }
 
-/** The paths a judge report's finding lines cite (`path:line`), with `/` separators. */
-function citedPaths(text: string): string[] {
+/** The paths a judge report's findings cite (`` `path:line` `` in their heads), with `/` separators. */
+function citedPaths(findings: Finding[]): string[] {
 	const out = new Set<string>();
-	for (const l of findingLines(text)) {
-		const m = /^\s*(.+?):\d/.exec(l);
+	for (const f of findings) {
+		const m = /`([^`]+?):\d+(?:-\d+)?`/.exec(f.head);
 		if (m) out.add(m[1].replace(/\\/g, "/"));
 	}
 	return [...out];
@@ -288,13 +291,13 @@ function citedPaths(text: string): string[] {
 
 export default function workflow(pi: ExtensionAPI) {
 	let { config: cfg, error: configError } = loadConfig();
+	/** The old-keys warning of workflow.json already shown this session. */
+	let configWarning: string | undefined;
 	/** The model of a role from workflow.json or, for explore, advisor and runner, agents.json. */
 	const roleSpecOf = (r: string): RoleSpec => (cfg.roles as Record<string, RoleSpec>)[r];
 	let state: FlowState = { phase: "off", escalated: false, judgeRounds: 0 };
-	/** The model a role runs on in this flow (a quick flow has its own plan and judge roles). */
-	const flowSpec = (role: Role): RoleSpec => cfg.roles[profileRole(state.profile, role)];
-	/** The judge round limits of this flow. */
-	const judgeLimits = (): { maxJudgeRounds: number; maxMinorRounds: number } => (state.profile === "quick" ? cfg.quick : cfg);
+	/** The model of a workflow role, or of agents' judge or critic (agents.json, `/agents model`). */
+	const modelOf = (role: Role | "judge" | "critic"): RoleSpec => (role === "judge" || role === "critic" ? loadAgentsConfig().config.roles[role] : cfg.roles[role]);
 	/** Diffs already judged or declined this session, so agent_end doesn't ask twice. */
 	const seenDiffs = new Set<string>();
 	let consecutiveErrors = 0;
@@ -447,14 +450,14 @@ export default function workflow(pi: ExtensionAPI) {
 		if (!view.hasFlowUsage() && !steps && !findings && !lateFindings && !autopilot.length && !human.length) {
 			if (flowId) {
 				const empty = view.peekFlow(outcome, ok);
-				recordMetric({ kind: "flow", at: new Date().toISOString(), flowId, outcome, ok, started: empty.started, ended: empty.ended, stages: empty.stages, ...(state.profile ? { profile: state.profile } : {}) });
+				recordMetric({ kind: "flow", at: new Date().toISOString(), flowId, outcome, ok, started: empty.started, ended: empty.ended, stages: empty.stages });
 			}
 			persist();
 			return false;
 		}
 		const summary = view.endFlow(outcome, ok);
 		pi.appendEntry(SUMMARY_ENTRY, { ...summary, steps, findings, ...(lateFindings ? { lateFindings } : {}), ...(autopilot.length ? { autopilot } : {}), ...(human.length ? { humanChecks: human } : {}) });
-		if (flowId) recordMetric({ kind: "flow", at: new Date().toISOString(), flowId, outcome, ok, started: summary.started, ended: summary.ended, stages: summary.stages, ...(state.profile ? { profile: state.profile } : {}) });
+		if (flowId) recordMetric({ kind: "flow", at: new Date().toISOString(), flowId, outcome, ok, started: summary.started, ended: summary.ended, stages: summary.stages });
 		persist();
 		return true;
 	}
@@ -469,12 +472,6 @@ export default function workflow(pi: ExtensionAPI) {
 		state.waiting = undefined;
 		stopWaitTimer();
 		updateStatus(ctx);
-		if (state.profile === "quick") {
-			const back = state.quickFrom ?? "off";
-			await setPhase(ctx, back);
-			ctx.ui.notify(`workflow: quick flow done, back to ${back === "off" ? "normal mode" : back}`, "info");
-			return;
-		}
 		const next = phaseAfterFlow(cfg.returnTo, state.phase);
 		if (!next) {
 			if (cfg.returnTo === "off" && state.phase === "execute") await setPhase(ctx, "off"); // restores the model from before the flow
@@ -487,6 +484,7 @@ export default function workflow(pi: ExtensionAPI) {
 	function updateStatus(ctx: ExtensionContext): void {
 		lastCtx = ctx;
 		view.roles = cfg.roles;
+		view.judge = modelOf("judge");
 		view.weights = cfg.tokenWeights;
 		view.phase = state.phase;
 		view.escalated = state.escalated;
@@ -498,8 +496,7 @@ export default function workflow(pi: ExtensionAPI) {
 		const cl = state.checklist;
 		if (ctx.hasUI) ctx.ui.setStatus("workflow-plan", cl?.length && state.phase === "execute" ? `plan ${cl.filter((i) => !isHuman(i) && i.done).length}/${cl.filter((i) => !isHuman(i)).length}` : undefined);
 		if (ctx.hasUI) ctx.ui.setStatus("workflow-wait", state.waiting && state.phase === "execute" ? `waiting: ${state.waiting.reason.slice(0, 40)}` : undefined);
-		if (ctx.hasUI) ctx.ui.setStatus("workflow-judge", gateRun ? (gateRun.kind === "plan" ? `judging plan (run ${(state.planGate?.rounds ?? 0) + 1}/${cfg.maxPlanJudgeRounds})` : "judging discussion") : undefined);
-		if (ctx.hasUI) ctx.ui.setStatus("workflow-quick", state.profile === "quick" && state.phase !== "off" ? "quick" : undefined);
+		if (ctx.hasUI) ctx.ui.setStatus("workflow-judge", gateRun ? (gateRun.kind === "plan" ? `critic on the plan (run ${(state.planGate?.rounds ?? 0) + 1}/${cfg.maxPlanJudgeRounds})` : "critic on the discussion") : undefined);
 		if (ctx.hasUI) ctx.ui.setStatus("workflow-autopilot", autopilotOn() ? "autopilot" : undefined);
 		if (ctx.hasUI) ctx.ui.setStatus("workflow-folders", n ? `+${n} folder${n === 1 ? "" : "s"}` : undefined);
 		if (state.approvedPlan && cl?.length && state.phase === "execute") {
@@ -544,7 +541,7 @@ export default function workflow(pi: ExtensionAPI) {
 
 	/** Switches the main session to a role's model and thinking level. */
 	async function applyRole(ctx: ExtensionContext, role: Role): Promise<boolean> {
-		const spec = flowSpec(role);
+		const spec = cfg.roles[role];
 		const slash = spec.model.indexOf("/");
 		const model = slash > 0 ? ctx.modelRegistry.find(spec.model.slice(0, slash), spec.model.slice(slash + 1)) : undefined;
 		if (!model) {
@@ -604,8 +601,8 @@ export default function workflow(pi: ExtensionAPI) {
 		state.toolsBeforePlan = undefined;
 	}
 
-	/** `profile`: "quick" starts a quick flow (plan phase only); see nextProfile. The result is always true. */
-	async function setPhase(ctx: ExtensionContext, phase: Phase, profile?: "quick"): Promise<boolean> {
+	/** The result is always true. */
+	async function setPhase(ctx: ExtensionContext, phase: Phase): Promise<boolean> {
 		const leavingFlow = state.phase === "execute" && phase !== state.phase;
 		if (phase !== state.phase) {
 			abortGate("phase");
@@ -634,7 +631,6 @@ export default function workflow(pi: ExtensionAPI) {
 		const modelAction = preFlowModelAction(state.phase, phase);
 		if (modelAction === "save" && ctx.model) state.preFlowModel = { model: `${ctx.model.provider}/${ctx.model.id}`, thinking: pi.getThinkingLevel() };
 		const restoreModel = modelAction === "restore" ? state.preFlowModel : undefined;
-		const profileNext = nextProfile(state.phase, phase, profile, state.profile);
 		if (leavingFlow) await dropReviewRefs(ctx);
 		state.phase = phase;
 		state.escalated = false;
@@ -665,8 +661,6 @@ export default function workflow(pi: ExtensionAPI) {
 			state.planDoc = undefined;
 			state.planFlaw = undefined;
 		}
-		state.profile = profileNext;
-		if (!state.profile) state.quickFrom = undefined;
 		consecutiveErrors = 0;
 		if (phase === "execute" && !(samePhase && state.reviewBase)) await initReviewBase(ctx);
 		if (phase !== "off") await applyRole(ctx, phase);
@@ -680,28 +674,6 @@ export default function workflow(pi: ExtensionAPI) {
 	function sendPlanKickoff(open?: Finding[], notes?: Finding[]): void {
 		const extra = (open?.length ? "\n\nOpen discussion-judge findings the plan must address:\n" + open.map((f) => `- ${f.head}`).join("\n") : "") + (notes?.length ? "\n\nMinor discussion-judge notes (take them into the plan where they fit; they are not blockers):\n" + notes.map((f) => `- ${f.head}`).join("\n") : "");
 		pi.sendMessage({ customType: "workflow-plan-kickoff", content: prompts.PLAN_KICKOFF + extra, display: true }, { triggerTurn: true, deliverAs: "followUp" });
-	}
-
-	/** Starts a quick flow at its scope card; `request` (optional) is sent as the user's message. */
-	async function startQuick(ctx: ExtensionContext, request: string): Promise<void> {
-		if (state.phase === "execute" && state.approvedPlan) {
-			ctx.ui.notify("workflow: a flow is running; finish it or /flow off first", "warning");
-			return;
-		}
-		const from = state.profile === "quick" ? state.quickFrom : state.phase === "execute" ? "off" : state.phase;
-		if (!(await setPhase(ctx, "plan", "quick"))) return;
-		state.quickFrom = from;
-		persist();
-		updateStatus(ctx);
-		ctx.ui.notify(`workflow: quick flow, scope card on ${describeRole(flowSpec("plan"))}, judge on ${describeRole(flowSpec("judge"))}${request ? "" : ". Type the request."}`, "info");
-		if (request) pi.sendUserMessage(request, { deliverAs: "followUp" });
-	}
-
-	/** Turns a quick flow's scope card into a full flow: the planner model writes a full plan. */
-	async function toFullFlow(ctx: ExtensionContext): Promise<void> {
-		await setPhase(ctx, "plan");
-		ctx.ui.notify(`workflow: full flow, planning on ${describeRole(cfg.roles.plan)}`, "info");
-		pi.sendMessage({ customType: "workflow-plan-kickoff", content: prompts.QUICK_TO_FULL, display: true }, { triggerTurn: true, deliverAs: "followUp" });
 	}
 
 	/** Re-reads the steps from the approved plan (after an amendment too), keeping the ticks of the steps still in it. */
@@ -787,46 +759,46 @@ export default function workflow(pi: ExtensionAPI) {
 		if (state.phase !== "off") await applyRole(ctx, state.phase);
 		persist();
 		updateStatus(ctx);
-		ctx.ui.notify(`workflow: back to ${state.phase}${state.phase === "off" ? "" : ` on ${describeRole(flowSpec(state.phase))}`}`, "info");
+		ctx.ui.notify(`workflow: back to ${state.phase}${state.phase === "off" ? "" : ` on ${describeRole(cfg.roles[state.phase])}`}`, "info");
 	}
 
 	// ----------------------------------------------------------------------
 	// Subagent helpers
 	// ----------------------------------------------------------------------
 
-	/** The knowledge tools and server config a subagent role gets, or undefined when knowledge is off for it. */
+	/** The knowledge tools and server config a workflow subagent role (the arbiter) gets, or undefined when knowledge is off for it. */
 	function knowledgeFor(role: string): { tools: string[]; servers: Record<string, Record<string, unknown>> } | undefined {
-		const k = cfg.knowledge;
+		const k = { ...cfg.knowledge, judgeCheck: false };
 		if (!k.server || !k.roles.includes(role) || !fs.existsSync(FORWARD_EXTENSION)) return undefined;
 		const servers = forwardedServers(pi.getMcpServers(), k);
 		return servers[k.server] ? { tools: roleTools(role, k), servers } : undefined;
 	}
 
-	/** The server whose check the judge must run, or undefined. */
+	/** The knowledge server whose check agents' judge runs (agents.json `knowledge`, with `judgeCheck` on), or undefined. */
 	function judgeKnowledgeServer(): string | undefined {
-		if (state.profile === "quick" && !cfg.quick.knowledgeCheck) return undefined;
-		return cfg.knowledge.judgeCheck && knowledgeFor("judge") ? cfg.knowledge.server : undefined;
+		const k = agentsKnowledgeFor("judge", pi.getMcpServers());
+		return k && loadAgentsConfig().config.knowledge.judgeCheck ? k.server : undefined;
 	}
 
-	/** Runs a role as a subagent with a live row in the view; `onChange` fires on every update. */
+	/** Runs a workflow role (arbiter, commit) as a subagent with a live row in the view; `onChange` fires on every update. */
 	async function runRole(
 		role: Role & SubRole,
 		label: string,
-		opts: { systemPrompts: string[]; tools: string[]; task: string; cwd: string; signal?: AbortSignal; thinking?: Thinking; env?: Record<string, string>; extensions?: string[]; timeoutMs?: number },
+		opts: { systemPrompts: string[]; tools: string[]; task: string; cwd: string; signal?: AbortSignal; env?: Record<string, string>; extensions?: string[]; timeoutMs?: number },
 		onChange?: (run: FlowRun) => void,
 	): Promise<{ result: RunResult; run: FlowRun }> {
-		const spec = flowSpec(role);
+		const spec = cfg.roles[role];
 		const run = view.start(role, label, spec.model);
 		onChange?.(run);
-		const { thinking, extensions, timeoutMs, ...rest } = opts;
+		const { extensions, timeoutMs, ...rest } = opts;
 		const k = knowledgeFor(role);
 		const started = Date.now();
 		const result = await runSubagent({
 			...rest,
 			tools: k ? [...rest.tools, ...k.tools] : rest.tools,
-			systemPrompts: k && role !== "judge" ? [...rest.systemPrompts, prompts.knowledgeTools(k.tools)] : rest.systemPrompts,
+			systemPrompts: k ? [...rest.systemPrompts, prompts.knowledgeTools(k.tools)] : rest.systemPrompts,
 			mcp: k ? { servers: k.servers, extension: FORWARD_EXTENSION } : undefined,
-			role: thinking ? { ...spec, thinking } : spec,
+			role: spec,
 			extensions: extensions ? [...cfg.subagent.extensions, ...extensions] : cfg.subagent.extensions,
 			timeoutMs: timeoutMs ?? cfg.subagent.timeoutMs,
 			idleTimeoutMs: cfg.subagent.idleTimeoutMs,
@@ -849,12 +821,10 @@ export default function workflow(pi: ExtensionAPI) {
 		return collectRepoDiffImpl(git, cwd, base);
 	}
 
-	/** A Diff from untruncated text: hash over all of it, text cut at the judge's limit. */
-	function makeDiff(full: string, files: number, names: string[], checkNames: string[], base: string, repos: RepoRef[], multi: boolean): Diff {
+	/** A Diff from the whole text (hashed) and its per-repo parts; agents' fitDiffs fits the parts to the judge's limit. */
+	function makeDiff(full: string, parts: DiffPart[], files: number, names: string[], checkNames: string[], base: string, repos: RepoRef[], multi: boolean): Diff {
 		const hash = createHash("sha1").update(full).digest("hex");
-		const truncated = full.length > cfg.judge.maxDiffChars;
-		const text = truncated ? `${full.slice(0, cfg.judge.maxDiffChars)}\n\n[diff truncated; read the files for the rest]` : full;
-		return { text, hash, files, truncated, base, names, checkNames, chars: full.length, repos, multi };
+		return { text: full, parts, hash, files, base, names, checkNames, chars: full.length, repos, multi };
 	}
 
 	/** One repo's diff, or null outside a git work tree. `baseKey` identifies the base(s) the diff was taken against. */
@@ -862,7 +832,7 @@ export default function workflow(pi: ExtensionAPI) {
 		const r = await collectRepoDiff(cwd, base);
 		if (!r) return null;
 		const root = (await gitRoot(cwd)) ?? cwd;
-		return makeDiff(r.full, r.files, r.names, r.checkNames, baseKey, [{ root, dir: cwd, changed: r.full.length > 0 }], false);
+		return makeDiff(r.full, [{ key: root, base, full: r.full, names: r.names }], r.files, r.names, r.checkNames, baseKey, [{ root, dir: cwd, changed: r.full.length > 0 }], false);
 	}
 
 	const rootCache = new Map<string, string>();
@@ -956,6 +926,7 @@ export default function workflow(pi: ExtensionAPI) {
 		if (refs.length === 1 && refs[0].dir === ctx.cwd) return collectDiff(ctx.cwd, bases[0], baseKey);
 		const per = await mapLimit(refs, 4, async (ref) => collectRepoDiff(ref.dir, bases[refs.indexOf(ref)]));
 		const parts: { root: string; text: string }[] = [];
+		const diffParts: DiffPart[] = [];
 		const names: string[] = [];
 		const checkNames: string[] = [];
 		let files = 0;
@@ -963,13 +934,14 @@ export default function workflow(pi: ExtensionAPI) {
 			const r = per[i];
 			if (r) {
 				parts.push({ root: ref.root, text: r.full });
+				if (r.full) diffParts.push({ key: ref.root, base: bases[i], full: r.full, names: r.rootNames });
 				names.push(...r.rootNames.map((n) => `${ref.root}/${n}`));
 				for (const n of r.checkNames) if (!checkNames.includes(n)) checkNames.push(n);
 				files += r.files;
 			}
 			return { ...ref, changed: !!r && r.full.length > 0 };
 		});
-		return makeDiff(combineRepoTexts(parts), files, names, checkNames, baseKey, repos, true);
+		return makeDiff(combineRepoTexts(parts), diffParts, files, names, checkNames, baseKey, repos, true);
 	}
 
 	function repoRoots(diff: Diff): string[] {
@@ -979,6 +951,8 @@ export default function workflow(pi: ExtensionAPI) {
 	interface JudgeResult {
 		verdict: "PASS" | "FAIL" | "ERROR";
 		text: string;
+		/** The findings of `text` (agents' format); [] for an error or a pass without a review. */
+		findings: Finding[];
 		hash: string;
 		usage: ReturnType<typeof emptyUsage>;
 	}
@@ -1002,7 +976,7 @@ export default function workflow(pi: ExtensionAPI) {
 
 	type ReviewPlan =
 		| { kind: "full"; snaps: Snaps | null }
-		| { kind: "recheck"; snaps: Snaps; prev: LastJudge; delta: string; changed: string[]; cites: string[] }
+		| { kind: "recheck"; snaps: Snaps; prev: LastJudge; delta: string; parts: DiffPart[]; changed: string[]; cites: string[] }
 		| { kind: "same"; prev: LastJudge };
 
 	/** Each repo's working tree and HEAD, or null when a tree cannot be built. */
@@ -1057,7 +1031,7 @@ export default function workflow(pi: ExtensionAPI) {
 					git(r.dir, "diff", "--no-color", before[k].tree, snaps[k].tree),
 					git(r.dir, "diff", "--name-only", "-z", "--diff-filter=d", before[k].tree, snaps[k].tree),
 				]);
-				return { root: r.root, text: d.stdout, names: n.stdout.split("\0").filter(Boolean) };
+				return { root: r.root, base: before[k].tree, text: d.stdout, names: n.stdout.split("\0").filter(Boolean) };
 			}),
 		);
 		const delta = diff.multi ? combineRepoTexts(per) : per[0].text;
@@ -1065,7 +1039,8 @@ export default function workflow(pi: ExtensionAPI) {
 		if (!delta.trim() || delta.length > diff.chars * cfg.judge.recheckMaxShare) return fullPlan;
 		const changed: string[] = [];
 		for (const p of per) for (const n of p.names) if (!changed.includes(n)) changed.push(n);
-		return { kind: "recheck", snaps, prev, delta, changed, cites: citeNames(per, diff.multi) };
+		const parts = per.filter((p) => p.text).map((p) => ({ key: p.root, base: p.base, full: p.text, names: p.names }));
+		return { kind: "recheck", snaps, prev, delta, parts, changed, cites: citeNames(per, diff.multi) };
 	}
 
 	/**
@@ -1076,7 +1051,7 @@ export default function workflow(pi: ExtensionAPI) {
 	async function judge(ctx: ExtensionContext, diff: Diff, focus: string | undefined, signal?: AbortSignal, onChange?: (run: FlowRun) => void, full = false, disputes?: string): Promise<JudgeResult & { run: FlowRun }> {
 		// A minor-fix round that touched only the cited files needs no review: the tree counts as passed.
 		if (!full && !disputes && (await minorFixOnly(diff))) {
-			const run = view.start("judge", "minor fixes in the cited files");
+			const run = view.start("judge", "minor fixes in the cited files", modelOf("judge").model);
 			view.finish(run, true, "PASS · only the cited files changed, no re-review");
 			onChange?.(run);
 			seenDiffs.add(diff.hash);
@@ -1084,7 +1059,7 @@ export default function workflow(pi: ExtensionAPI) {
 			state.minorFix = undefined;
 			state.lastJudge = snaps ? { hash: diff.hash, repos: snaps, base: diff.base, verdict: "PASS", text: "The fix touched only the files the minor findings cite; it is passed without another review." } : state.lastJudge;
 			markPassed(diff.hash);
-			return { verdict: "PASS", text: "The fix touched only the files the minor findings cite; it is passed without another review.", hash: diff.hash, usage: emptyUsage(), run };
+			return { verdict: "PASS", text: "The fix touched only the files the minor findings cite; it is passed without another review.", findings: [], hash: diff.hash, usage: emptyUsage(), run };
 		}
 		// A real review is running: the minor-fix shortcut is gone for good.
 		if (state.minorFix) {
@@ -1094,15 +1069,15 @@ export default function workflow(pi: ExtensionAPI) {
 		// Disputes need a fresh look at the code, so they never get the "no changes" shortcut (a recheck still applies).
 		const plan = await reviewPlan(diff, full, Boolean(disputes));
 		if (plan.kind === "same") {
-			const run = view.start("judge", "no changes since the last round");
+			const run = view.start("judge", "no changes since the last round", modelOf("judge").model);
 			view.finish(run, plan.prev.verdict === "PASS", `${plan.prev.verdict} · unchanged, previous result`);
 			onChange?.(run);
 			seenDiffs.add(diff.hash);
-			return { verdict: plan.prev.verdict, text: `No changes since the last judge round; its result stands.\n\n${plan.prev.text}`, hash: diff.hash, usage: emptyUsage(), run };
+			return { verdict: plan.prev.verdict, text: `No changes since the last judge round; its result stands.\n\n${plan.prev.text}`, findings: parseFindings(plan.prev.text), hash: diff.hash, usage: emptyUsage(), run };
 		}
 		let r = await judgeOnce(ctx, diff, focus, plan, signal, onChange, disputes);
 		const limit = cfg.judge.finalFullReviewOverChars;
-		if (r.verdict === "PASS" && plan.kind === "recheck" && limit > 0 && state.profile !== "quick" && diff.chars > limit && needsFinalFullReview(cfg.judge.finalFullReviewNewFilesOnly, plan.prev.text, plan.cites)) {
+		if (r.verdict === "PASS" && plan.kind === "recheck" && limit > 0 && diff.chars > limit && needsFinalFullReview(cfg.judge.finalFullReviewNewFilesOnly, plan.prev.text, plan.cites)) {
 			const share = await repeatShare(diff, plan.snaps);
 			if (share !== undefined) {
 				r = { ...r, text: `${r.text}\n\nFinal full review skipped: a full review passed this stage and the changes since are ${Math.round(share * 100)}% of the diff.` };
@@ -1112,7 +1087,7 @@ export default function workflow(pi: ExtensionAPI) {
 			}
 		}
 		// A pass that questions the plan is not a pass yet: resolvePlanFlaw decides.
-		if (r.verdict === "PASS" && !hasPlanFlaw(r.text)) markPassed(diff.hash);
+		if (r.verdict === "PASS" && !planFlaws(r.findings).length) markPassed(diff.hash);
 		return r;
 	}
 
@@ -1940,44 +1915,25 @@ export default function workflow(pi: ExtensionAPI) {
 		return `${plan.slice(0, 45_000)}\n\n[... middle of the plan omitted ...]\n\n${plan.slice(-15_000)}`;
 	}
 
-	/** D4: a knowledge-only judge run, when the judge skipped its knowledge step. */
-	async function knowledgePass(
-		ctx: ExtensionContext,
-		diff: Diff,
-		findings: string,
-		server: string,
-		files: string[],
-		signal?: AbortSignal,
-		onChange?: (run: FlowRun) => void,
-	): Promise<{ text?: string; status: { status: "checked" } | { status: "unavailable"; reason: string }; usage: ReturnType<typeof emptyUsage> }> {
-		const { result, run } = await runRole(
-			"judge",
-			"knowledge check",
-			{
-				systemPrompts: [
-					...(diff.multi ? [prompts.repoNote(repoRoots(diff))] : []),
-					prompts.JUDGE_KNOWLEDGE_ONLY,
-					prompts.judgeKnowledge(server, false, files),
-					`## Approved plan\n\n${planForJudge()}`,
-					`## The judge's findings\n\n${findings}`,
-					`## Diff (${diff.files} file(s)${diff.truncated ? ", truncated" : ""})\n\n${diff.text}`,
-				],
-				tools: cfg.judge.tools,
-				task: "Run the knowledge check described in your system prompt.",
-				cwd: ctx.cwd,
-				signal,
-			},
-			onChange,
-		);
-		if (!result.ok) return { status: { status: "unavailable", reason: `knowledge check failed: ${result.error}` }, usage: result.usage };
-		const s = judgeKnowledge(result.toolCalls, result.text, files, server);
-		view.finish(run, s.status === "checked", s.status === "checked" ? "knowledge checked" : "knowledge not checked");
-		onChange?.(run);
-		const status = s.status === "checked" ? s : { status: "unavailable" as const, reason: s.status === "skipped" ? `the knowledge step was skipped twice (${s.reason})` : s.reason };
-		return { text: result.text, status, usage: result.usage };
+	/**
+	 * Ends the view row of a review agents ran for flow (runJudge, runCritic) with flow's outcome, and records its
+	 * usage and metric. A run that never reported a row gets one now, so the stage still counts it.
+	 */
+	function endReview(role: "judge" | "critic", ext: RunView | undefined, r: ReviewResult, started: number, ok: boolean, outcome: string): FlowRun {
+		const row = (ext && view.endMirror(ext, ok, outcome, r.model, r.usage)) ?? (() => {
+			const run = view.start(role, role === "judge" ? "review" : "document review", r.model);
+			view.finish(run, ok, outcome);
+			view.addFinished(role, r.model, r.usage);
+			return run;
+		})();
+		recordMetric(subagentMetric(role, row.label, row.stage, r.model, started, Date.now(), r));
+		return row;
 	}
 
-	/** One judge run: the whole diff, or for a re-review the changes since the last round with its findings. */
+	/**
+	 * One run of agents' judge with the approved plan as its spec: the whole diff ("full"), or for a re-review the changes
+	 * since the last round with its findings ("incremental"). Flow recomputes the verdict and checks the knowledge step.
+	 */
 	async function judgeOnce(
 		ctx: ExtensionContext,
 		diff: Diff,
@@ -1989,86 +1945,83 @@ export default function workflow(pi: ExtensionAPI) {
 	): Promise<JudgeResult & { run: FlowRun }> {
 		const recheck = plan.kind === "recheck";
 		const server = judgeKnowledgeServer();
-		const prevChecked = plan.kind === "recheck" && state.lastKnowledge?.status === "checked" && state.lastKnowledge.hash === plan.prev.hash;
-		const { files: knowledgeFiles, scoped } = plan.kind === "recheck" ? recheckKnowledgeFiles(prevChecked, plan.changed, diff.checkNames) : { files: diff.checkNames, scoped: false };
-		const max = cfg.judge.maxDiffChars;
-		const testJudge = judgeAddenda(state.minorRounds ?? 0, state.profile === "quick");
-		const systemPrompts = recheck
-			? [
-					prompts.JUDGE + testJudge,
-					prompts.JUDGE_RECHECK,
-					`## Approved plan\n\n${planForJudge()}`,
-					`## Findings of the last round (${plan.prev.verdict})\n\n${plan.prev.text}`,
-					`## Every file in the whole change (${diff.names.length})\n\n${diff.names.join("\n")}`,
-					`## Changes since the last round\n\n${plan.delta.length > max ? `${plan.delta.slice(0, max)}\n\n[truncated; read the files for the rest]` : plan.delta}`,
-				]
-			: [prompts.JUDGE + testJudge, `## Approved plan\n\n${planForJudge()}`, `## Diff under review (${diff.files} file(s)${diff.truncated ? ", truncated" : ""})\n\n${diff.text}`];
-		if (server) systemPrompts.splice(recheck ? 2 : 1, 0, prompts.judgeKnowledge(server, recheck, knowledgeFiles, scoped));
-		if (diff.multi) systemPrompts.splice(1, 0, prompts.repoNote(repoRoots(diff)));
-		if (disputes) systemPrompts.push(`## Executor's disputes (claims; verify each against the code)\n\n${disputes}`);
-		const focusNote = focus ? ` Focus: ${focus}` : "";
+		// After a round whose knowledge check passed, only the files changed since are checked again.
+		const prevKnowledge = recheck && state.lastKnowledge?.status === "checked" && state.lastKnowledge.hash === plan.prev.hash ? state.lastKnowledge : undefined;
+		const scoped = prevKnowledge ? diff.checkNames.filter((f) => covers(plan.changed, f)) : [];
+		const files = scoped.length ? scoped : diff.checkNames;
+		const prev = recheck ? plan.prev : state.lastJudge?.base === diff.base ? state.lastJudge : undefined;
+		const criteria = [
+			prompts.JUDGE_CRITERIA,
+			judgeAddenda(state.minorRounds ?? 0),
+			diff.multi ? prompts.repoNote(repoRoots(diff)) : "",
+			`Every file in the whole change (${diff.names.length}):\n${diff.names.join("\n")}`,
+		]
+			.filter(Boolean)
+			.join("\n\n");
 		view.stage = "judge";
-		const { result, run } = await runRole(
-			"judge",
-			recheck ? `re-review: changes since the last round${focus ? ` · ${focus}` : ""}` : focus || `${diff.files} changed file(s)`,
-			{
-				systemPrompts,
-				tools: cfg.judge.tools,
-				thinking: recheck ? cfg.judge.recheckThinking : undefined,
-				task: recheck ? `Re-review the changes in your system prompt against the last round's findings.${focusNote}` : `Review the diff in your system prompt.${focusNote}`,
-				cwd: ctx.cwd,
-				signal,
+		let ext: RunView | undefined;
+		const started = Date.now();
+		const r = await runJudge({
+			mode: recheck ? "incremental" : "full",
+			diff: recheck ? plan.parts : diff.parts,
+			files,
+			spec: state.approvedPlan ? planForJudge() : undefined,
+			focus,
+			criteria,
+			previousFindings: prev ? parseFindings(prev.text) : undefined,
+			disputes,
+			cwd: ctx.cwd,
+			signal,
+			mcpServers: pi.getMcpServers(),
+			onRun: (run) => {
+				ext = run;
+				onChange?.(view.mirror("judge", run));
 			},
-			onChange,
-		);
+		});
 		seenDiffs.add(diff.hash);
-		if (!result.ok) {
+		if (!r.ok) {
+			const run = endReview("judge", ext, r, started, false, r.error ?? "failed");
+			onChange?.(run);
 			view.stage = phaseStage();
-			return { verdict: "ERROR", text: `judge failed: ${result.error}`, hash: diff.hash, usage: result.usage, run };
+			return { verdict: "ERROR", text: `judge failed: ${r.error}`, findings: [], hash: diff.hash, usage: r.usage, run };
 		}
-		let text = result.text;
-		let usage = result.usage;
+		let text = r.text;
+		const findings = r.findings;
 		let knowledge: LastKnowledge | undefined;
 		if (server) {
-			let status: KnowledgeStatus = judgeKnowledge(result.toolCalls, text, knowledgeFiles, server);
-			if (status.status === "skipped") {
-				// The fallback pass checks the whole change: it cannot carry over the last round's notes.
-				const pass = await knowledgePass(ctx, diff, text, server, diff.checkNames, signal, onChange);
-				usage = addUsage(addUsage(emptyUsage(), usage), pass.usage);
-				if (pass.text !== undefined) text = mergeKnowledgePass(text, pass.text);
-				status = pass.status;
-			}
-			const final = status.status === "checked" ? { status: "checked" as const } : { status: "unavailable" as const, reason: status.reason };
-			const deviations = parseDeviations(text);
-			text += `\n\n${knowledgeFooter(final, deviations.length)}`;
-			knowledge = { hash: diff.hash, ...final, deviations };
+			const status = judgeKnowledge(r.toolCalls, text, files, server);
+			// A scoped check did not look at the other files again: their deviations of the last round still stand.
+			const fresh = parseDeviations(findings);
+			const kept = scoped.length ? (prevKnowledge?.deviations ?? []).filter((d) => !covers(scoped, d.where.replace(/:\d.*$/, "")) && !fresh.some((n) => n.id === d.id && n.where === d.where)) : [];
+			const deviations = [...fresh, ...kept];
+			text += `\n\n${knowledgeFooter(status, deviations.length)}`;
+			knowledge = { hash: diff.hash, status: status.status, ...(status.status === "checked" ? {} : { reason: status.reason }), deviations };
 		}
-		const verdict = codeVerdict(text);
-		const counted = countFindings(text);
-		const findings = counted.total;
+		const verdict = codeVerdict(r.text, findings);
+		const counted = countFindings(findings);
 		const lateNote = counted.late ? ` + ${counted.late} late` : "";
 		const knowledgeNote = knowledge ? ` · knowledge ${knowledge.status === "checked" ? "checked" : "not checked"}` : "";
-		view.finish(run, verdict === "PASS", `${verdict} · ${findings} finding${findings === 1 ? "" : "s"}${lateNote}${recheck ? " · re-review" : ""}${knowledgeNote}`);
-		recordMetric(judgeMetric("code", state.judgeRounds + 1, verdict, text));
-		const late = lateFindingLines(text);
+		const run = endReview("judge", ext, r, started, verdict === "PASS", `${verdict} · ${counted.total} finding${counted.total === 1 ? "" : "s"}${lateNote}${recheck ? " · re-review" : ""}${knowledgeNote}`);
+		recordMetric(judgeMetric("code", state.judgeRounds + 1, verdict, findings));
+		const late = lateFindingLines(findings);
 		if (late.length) state.lateFindings = [...new Set([...(state.lateFindings ?? []), ...late])].slice(-30);
 		onChange?.(run);
 		// Back to the phase's stage either way.
 		view.stage = phaseStage();
 		state.lastJudge = plan.snaps ? { hash: diff.hash, repos: plan.snaps, base: diff.base, verdict, text } : undefined;
-		if (plan.kind === "full") state.lastFullPass = plan.snaps && verdict === "PASS" && !hasPlanFlaw(text) ? { repos: plan.snaps, base: diff.base } : undefined;
-		if (state.phase === "execute") state.flowFindings = recordFindings(state.flowFindings, state.stage, text);
+		if (plan.kind === "full") state.lastFullPass = plan.snaps && verdict === "PASS" && !planFlaws(findings).length ? { repos: plan.snaps, base: diff.base } : undefined;
+		if (state.phase === "execute") state.flowFindings = recordFindings(state.flowFindings, state.stage, findings);
 		state.lastKnowledge = knowledge;
 		persist();
-		return { verdict, text, hash: diff.hash, usage, run };
+		return { verdict, text, findings, hash: diff.hash, usage: r.usage, run };
 	}
 
 	// ----------------------------------------------------------------------
 	// Tools
 	// ----------------------------------------------------------------------
 
-	const title = (theme: Theme, name: string, role: Role) =>
-		theme.fg("toolTitle", theme.bold(`${name} `)) + theme.fg("muted", shortModel(flowSpec(role).model));
+	const title = (theme: Theme, name: string, role: Role | "judge" | "critic") =>
+		theme.fg("toolTitle", theme.bold(`${name} `)) + theme.fg("muted", shortModel(modelOf(role).model));
 
 	// ----------------------------------------------------------------------
 	// Wait points
@@ -2683,7 +2636,8 @@ export default function workflow(pi: ExtensionAPI) {
 			if (r.verdict === "ERROR") throw new Error(r.text);
 			if (r.verdict === "FAIL") state.judgeRounds++;
 			let text = r.text;
-			if (r.verdict === "PASS" && state.phase === "execute" && !hasPlanFlaw(r.text) && !noMerge(state.approvedPlan ?? "") && (await flowHasRemote(ctx))) {
+			const flawed = planFlaws(r.findings).length > 0;
+			if (r.verdict === "PASS" && state.phase === "execute" && !flawed && !noMerge(state.approvedPlan ?? "") && (await flowHasRemote(ctx))) {
 				text += mergeDue()
 					? "\n\nTick any finished steps not ticked yet with plan_check. Now deliver this exact tree: commit, push, open or update the pull request and merge it with gh pr merge (as its own command), then end your turn."
 					: "\n\nNow commit and push this exact tree to the flow branch (no merge: the pull request is merged at the end of the flow), tick any finished steps not ticked yet with plan_check, then end your turn.";
@@ -2697,7 +2651,7 @@ export default function workflow(pi: ExtensionAPI) {
 			const reminder = state.phase === "execute" ? openStepsReminder(state.checklist, currentStages()?.current) : undefined;
 			if (reminder) text += `\n\n${reminder}${state.phase === "execute" ? deliverHintsText(currentStages()?.current) : ""}`;
 			// Every call replaces the pending report, so a stale one never outlives a clean review.
-			state.pendingPlanFlaw = hasPlanFlaw(r.text) ? r.text : undefined;
+			state.pendingPlanFlaw = flawed ? r.text : undefined;
 			if (state.pendingPlanFlaw) {
 				text += "\n\nThis review questions the plan. Do not change the plan's design yourself: end your turn now; the workflow resolves it.";
 			}
@@ -2861,7 +2815,6 @@ export default function workflow(pi: ExtensionAPI) {
 		if (publishCache?.key !== publishKey) publishCache = { key: publishKey, value: (await flowRepos(ctx)).some((r) => fs.existsSync(path.join(r.root, "scripts", "update-packages.mjs"))) };
 		const canPublish = (state.phase === "plan" || state.phase === "execute") && publishCache.value;
 		const phaseText = prompts.phaseSection(state.phase, {
-			quick: state.profile === "quick",
 			publish: canPublish,
 			stage: staged ? stageLine(staged.stages, staged.current) : undefined,
 			delivery: state.phase === "execute" ? prompts.deliveryGuidance(cfg.delivery) + (noMerge(state.approvedPlan ?? "") ? "\n- This plan says Delivery: no merge: do not merge, push to a protected branch or publish; commit, push your branch and open the pull request, then stop there." : "") : undefined,
@@ -3119,7 +3072,7 @@ export default function workflow(pi: ExtensionAPI) {
 		// The discussion judge is running: a second "go" only shows a notice, other text cancels it.
 		if (state.phase === "discuss" && event.source !== "extension" && typed && !typed.startsWith("/") && gateRun?.kind === "discussion") {
 			if (discussionGateOnInput({ running: true, isGo: approveRe().test(typed) }) === "notice") {
-				ctx.ui.notify("workflow: discussion judge running (Esc or any other message cancels it)", "info");
+				ctx.ui.notify("workflow: discussion critic running (Esc or any other message cancels it)", "info");
 				return { action: "handled" };
 			}
 			abortGate("message");
@@ -3136,7 +3089,7 @@ export default function workflow(pi: ExtensionAPI) {
 		if (state.phase === "plan" && event.source !== "extension" && typed && !typed.startsWith("/") && (gateRun?.kind === "plan" || planFixing)) {
 			if (approveRe().test(typed)) {
 				planApproveQueued = true;
-				ctx.ui.notify(gateRun ? `workflow: approval queued: plan judge running (run ${(state.planGate?.rounds ?? 0) + 1}/${cfg.maxPlanJudgeRounds})` : "workflow: approval queued: the planner is fixing the judge's findings", "info");
+				ctx.ui.notify(gateRun ? `workflow: approval queued: plan critic running (run ${(state.planGate?.rounds ?? 0) + 1}/${cfg.maxPlanJudgeRounds})` : "workflow: approval queued: the planner is fixing the critic's findings", "info");
 				return { action: "handled" };
 			}
 			abortGate("message");
@@ -3276,7 +3229,7 @@ export default function workflow(pi: ExtensionAPI) {
 			else {
 				state.discussionReview = { ...dr, status: "paused" };
 				persist();
-				ctx.ui.notify("workflow: discussion judge paused: answer its findings, then say go again", "info");
+				ctx.ui.notify("workflow: discussion critic paused: answer its findings, then say go again", "info");
 			}
 		}
 
@@ -3308,7 +3261,7 @@ export default function workflow(pi: ExtensionAPI) {
 			if (!planReady || blocked) planApproveQueued = false;
 			if (planReady && !blocked) {
 				const emitted = composePlan(planDraft);
-				const decision = planGateDecide({ mode: cfg.autoJudgePlan, quick: state.profile === "quick", planHash: textHash(emitted), gate: state.planGate, hasDisputes: wasFixing && planDisputes(text) !== undefined });
+				const decision = planGateDecide({ mode: cfg.autoJudgePlan, plan: emitted, planHash: textHash(emitted), gate: state.planGate, hasDisputes: wasFixing && planDisputes(text) !== undefined });
 				if (decision !== "off" && decision !== "reuse") {
 					void runPlanGate(ctx, emitted, text, decision);
 					return;
@@ -3363,7 +3316,7 @@ export default function workflow(pi: ExtensionAPI) {
 			const flawed = await collectFlowDiff(ctx);
 			if (flawed) {
 				if (state.lastJudge?.hash === flawed.hash) {
-					const route = planFlawOnPass(report, state.lastJudge.verdict === "PASS" ? "PASS" : "FAIL");
+					const route = planFlawOnPass(parseFindings(report), state.lastJudge.verdict === "PASS" ? "PASS" : "FAIL");
 					const outcome = route === "stop" ? await resolvePlanFlaw(ctx, report, flawed) : await settlePlanFlawOnPass(ctx, report, flawed, route);
 					if (outcome !== "continue") return;
 					if (state.lastJudge.verdict === "PASS") markPassed(flawed.hash);
@@ -3509,20 +3462,14 @@ export default function workflow(pi: ExtensionAPI) {
 	async function offerPlan(ctx: ExtensionContext, blocked: string | undefined): Promise<void> {
 		const approveLabel = PLAN_APPROVE;
 		const arbiterLabel = PLAN_ARBITER;
-		const quick = state.profile === "quick";
-		const fullLabel = PLAN_FULL;
-		const menu = planMenuRequest({ blocked: !!blocked, quick, planFlawAsk: cfg.planFlaw === "ask", planPrompt: cfg.planPrompt });
-		const choice = await askUser(ctx, `${quick ? "Quick flow" : "Plan phase"} · execute on ${describeRole(cfg.roles.execute)}`, menu.options, {
+		const menu = planMenuRequest({ blocked: !!blocked, planFlawAsk: cfg.planFlaw === "ask", planPrompt: cfg.planPrompt });
+		const choice = await askUser(ctx, `Plan phase · execute on ${describeRole(cfg.roles.execute)}`, menu.options, {
 			skipLocal: menu.skipLocal,
 			localNotice: () => {
 				if (!cfg.planPrompt) ctx.ui.notify(`workflow: say "go" to execute on ${describeRole(cfg.roles.execute)}, or keep discussing.`, "info");
 				else if (blocked) ctx.ui.notify(`workflow: can't approve: ${blocked}.`, "warning");
 			},
 		});
-		if (choice === fullLabel) {
-			await toFullFlow(ctx);
-			return;
-		}
 		if (choice === PLAN_BACK) {
 			await setPhase(ctx, "discuss");
 			ctx.ui.notify(`workflow: back to discussion on ${describeRole(cfg.roles.discuss)}`, "info");
@@ -3548,7 +3495,8 @@ export default function workflow(pi: ExtensionAPI) {
 		}
 		updateStatus(ctx);
 		let specKind: SpecKind = "none";
-		let outcome: { text: string; run: FlowRun } | { error: string } | undefined;
+		let outcome: { text: string; findings: Finding[]; review: ReviewResult; ext?: RunView } | { error: string; review?: ReviewResult; ext?: RunView } | undefined;
+		const started = Date.now();
 		try {
 			const branch = ctx.sessionManager.getBranch();
 			const assistantTexts: string[] = [];
@@ -3563,18 +3511,20 @@ export default function workflow(pi: ExtensionAPI) {
 			const agreed = lastAgreedList(assistantTexts);
 			const spec = agreed ? { kind: "agreed" as const, text: agreed } : undefined;
 			specKind = spec ? spec.kind : "none";
-			const diff = decision !== "full" && gate0?.judgedPlan !== undefined ? planTextDiff(gate0.judgedPlan, plan) : null;
-			const recheck = diff !== null && gate0 ? { findings: [...gate0.autoFindings, ...gate0.userFindings], disputes: planDisputes(lastAssistantText(ctx)), diff } : undefined;
-			if (ctx.hasUI) ctx.ui.setWorkingMessage("judge reviewing the plan…");
-			const { result, run: fr } = await runRole("judge", "plan review", {
-				systemPrompts: planReviewPrompts({ plan, spec, folders: state.folders ?? [], recheck }),
-				tools: cfg.judge.tools,
-				task: "Review the plan as described in your system prompt.",
+			const recheck = decision !== "full" && gate0?.judgedPlan !== undefined ? { findings: [...gate0.autoFindings, ...gate0.userFindings], disputes: planDisputes(lastAssistantText(ctx)) } : undefined;
+			if (ctx.hasUI) ctx.ui.setWorkingMessage("critic reviewing the plan…");
+			let ext: RunView | undefined;
+			const review = await runCritic({
+				...planCriticRequest({ plan, spec, folders: state.folders ?? [], recheck }),
 				cwd: ctx.cwd,
 				signal: run.controller.signal,
-				thinking: recheck ? cfg.judge.recheckThinking : undefined,
+				mcpServers: pi.getMcpServers(),
+				onRun: (r) => {
+					ext = r;
+					view.mirror("critic", r);
+				},
 			});
-			outcome = result.ok ? { text: result.text, run: fr } : { error: result.error ?? "failed" };
+			outcome = review.ok ? { text: review.text, findings: review.findings, review, ext } : { error: review.error ?? "failed", review, ext };
 		} catch (e) {
 			outcome = { error: (e as Error).message };
 		} finally {
@@ -3590,7 +3540,7 @@ export default function workflow(pi: ExtensionAPI) {
 		}
 		const blank: PlanGate = gate0 ?? { planHash: run.judgedHash, rounds: 0, autoFindings: [], userFindings: [], spec: specKind };
 		const stale = state.phase !== "plan" || !planReady || textHash(composePlan(planDraft)) !== run.judgedHash;
-		if ((run.reason || stale) && outcome && "run" in outcome) view.finish(outcome.run, false, run.reason ? "cancelled · plan" : "discarded · plan changed");
+		if ((run.reason || stale || (outcome && "error" in outcome)) && outcome?.review) endReview("critic", outcome.ext, outcome.review, started, false, run.reason ? "cancelled · plan" : stale ? "discarded · plan changed" : `failed · ${outcome.review.error ?? "no result"}`);
 		if (run.reason) {
 			if (run.reason === "restart") return;
 			planApproveQueued = false;
@@ -3598,7 +3548,7 @@ export default function workflow(pi: ExtensionAPI) {
 				const g: PlanGate = { ...blank, planHash: run.judgedHash, verdict: "cancelled", spec: specKind };
 				state.planGate = g;
 				persist();
-				ctx.ui.notify("workflow: plan judge cancelled", "info");
+				ctx.ui.notify("workflow: plan critic cancelled", "info");
 				await offerPlan(ctx, undefined);
 			}
 			return;
@@ -3610,18 +3560,18 @@ export default function workflow(pi: ExtensionAPI) {
 			state.planGate = g;
 			persist();
 			planApproveQueued = false;
-			ctx.ui.notify(`workflow: plan judge did not run: ${error}`, "warning");
+			ctx.ui.notify(`workflow: plan critic did not run: ${error}`, "warning");
 			await offerPlan(ctx, undefined);
 			return;
 		}
-		const findings = parseFindings(outcome.text);
+		const findings = outcome.findings;
 		const verdict = discussionVerdict(outcome.text);
 		const confirm = decision === "confirm";
 		const rounds = (gate0?.rounds ?? 0) + (confirm ? 0 : 1);
 		const after = planGateAfterVerdict({ verdict, findings, rounds, max: cfg.maxPlanJudgeRounds, confirm });
 		const clean = isClean(verdict, findings);
-		view.finish(outcome.run, verdict === "PASS", `${verdict} · plan`);
-		recordMetric(judgeMetric("plan", rounds, verdict, outcome.text));
+		endReview("critic", outcome.ext, outcome.review, started, verdict === "PASS", `${verdict} · plan`);
+		recordMetric(judgeMetric("plan", rounds, verdict, findings));
 		const g: PlanGate = {
 			planHash: run.judgedHash,
 			rounds,
@@ -3635,9 +3585,9 @@ export default function workflow(pi: ExtensionAPI) {
 		};
 		state.planGate = g;
 		persist();
-		pi.sendMessage({ customType: "workflow-plan-judge", content: `**Plan judge: ${verdict}** (run ${rounds}/${cfg.maxPlanJudgeRounds})\n\n${outcome.text}`, display: true }, { triggerTurn: false });
+		pi.sendMessage({ customType: "workflow-plan-judge", content: `**Plan critic: ${verdict}** (run ${rounds}/${cfg.maxPlanJudgeRounds})\n\n${outcome.text}`, display: true }, { triggerTurn: false });
 		const assume = autopilotOn() && !confirm && !after.capped && !clean && after.user.length > 0;
-		if (assume) noteAuto(`plan judge: ${after.user.length} finding(s) that needed a decision were settled by the planner as assumptions`);
+		if (assume) noteAuto(`plan critic: ${after.user.length} finding(s) that needed a decision were settled by the planner as assumptions`);
 		if (after.action === "fix" || assume) {
 			planFixing = true;
 			const listed = [...after.auto, ...after.user].map((f) => `- ${findingText(f).replace(/\n/g, "\n  ")}`).join("\n");
@@ -3654,15 +3604,15 @@ export default function workflow(pi: ExtensionAPI) {
 		await offerPlan(ctx, undefined);
 	}
 
-	/** `/flow judge` in plan: judge the plan on screen now, whatever the gate remembers. */
-	function judgePlanNow(ctx: ExtensionContext): void {
+	/** `/flow critic` in plan: the critic reviews the plan on screen now, whatever the gate remembers. */
+	function criticPlanNow(ctx: ExtensionContext): void {
 		if (!planReady || !planDraft.full) {
-			ctx.ui.notify("workflow: no complete plan to judge yet", "info");
+			ctx.ui.notify("workflow: no complete plan to review yet", "info");
 			return;
 		}
 		const plan = composePlan(planDraft);
 		const hash = textHash(plan);
-		const decision = planGateDecide({ mode: "auto", quick: false, planHash: hash, gate: state.planGate });
+		const decision = planGateDecide({ mode: "auto", plan, planHash: hash, gate: state.planGate });
 		// The same plan again gets a full pass, not a recheck with an empty diff.
 		void runPlanGate(ctx, plan, lastAssistantText(ctx), state.planGate?.planHash === hash || decision === "reuse" || decision === "off" ? "full" : decision);
 	}
@@ -3715,7 +3665,7 @@ export default function workflow(pi: ExtensionAPI) {
 	async function startDiscussionGate(ctx: ExtensionContext): Promise<boolean> {
 		if (!ctx.hasUI) return false;
 		if (gateRun?.kind === "discussion") {
-			ctx.ui.notify("workflow: discussion judge running (Esc or any other message cancels it)", "info");
+			ctx.ui.notify("workflow: discussion critic running (Esc or any other message cancels it)", "info");
 			return true;
 		}
 		const branch = ctx.sessionManager.getBranch();
@@ -3726,15 +3676,15 @@ export default function workflow(pi: ExtensionAPI) {
 			const t = transcriptAfter(branch, last.afterEntryId, 10_000_000);
 			if (t !== undefined) sinceChars = t.length;
 		}
-		const d = discussionGateStart({ mode: cfg.autoJudgeDiscussion, quick: state.profile === "quick", listHash: list ? textHash(list) : undefined, last, sinceChars, cap: 30_000 });
-		if (d === "warn-move") ctx.ui.notify("workflow: no Agreed so far: list: discussion judge skipped", "warning");
+		const d = discussionGateStart({ mode: cfg.autoJudgeDiscussion, listHash: list ? textHash(list) : undefined, last, sinceChars, cap: 30_000 });
+		if (d === "warn-move") ctx.ui.notify("workflow: no Agreed so far: list: discussion critic skipped", "warning");
 		if (d === "move" || d === "warn-move") return false;
 		if (askRestate(ctx, true)) return true;
 		void runDiscussionGate(ctx, d, true);
 		return true;
 	}
 
-	/** The discussion judge: one run on the last agreed list. `loop` false is the manual `/flow judge`: it reports and stores the review but starts no fix loop. */
+	/** The discussion critic: one run on the last agreed list. `loop` false is the manual `/flow critic`: it reports and stores the review but starts no fix loop. */
 	async function runDiscussionGate(ctx: ExtensionContext, decision: "full" | "recheck", loop: boolean, resetRounds = true): Promise<void> {
 		abortGate("restart");
 		const prev = state.discussionReview;
@@ -3758,19 +3708,29 @@ export default function workflow(pi: ExtensionAPI) {
 			} catch {}
 		}
 		updateStatus(ctx);
-		let outcome: { text: string; run: FlowRun } | { error: string } | undefined;
+		let outcome: { text: string; findings: Finding[]; review: ReviewResult; ext?: RunView } | { error: string; review?: ReviewResult; ext?: RunView } | undefined;
+		const started = Date.now();
 		try {
-			ctx.ui.setWorkingMessage("judge reviewing the discussion…");
+			ctx.ui.setWorkingMessage("critic reviewing the discussion…");
 			const recheck = since !== undefined && !!prev && !!list;
-			const { result, run: fr } = await runRole("judge", "discussion review", {
-				systemPrompts: recheck ? discussionRecheckPrompts(prev!.findings, since!, list!, state.folders ?? []) : discussionReviewPrompts(list, since === undefined ? transcript : branchTranscript(branch, cfg.judge.maxDiscussionChars), state.folders ?? []),
-				tools: cfg.judge.tools,
-				task: "Review the discussion's conclusion as described in your system prompt.",
+			let ext: RunView | undefined;
+			const review = await runCritic({
+				...discussionCriticRequest({
+					list,
+					transcript: recheck ? since! : since === undefined ? transcript : branchTranscript(branch, cfg.judge.maxDiscussionChars),
+					folders: state.folders ?? [],
+					recheck: recheck ? { findings: prev!.findings } : undefined,
+					disputes: recheck ? planDisputes(lastAssistantText(ctx)) : undefined,
+				}),
 				cwd: ctx.cwd,
 				signal: run.controller.signal,
-				thinking: recheck ? cfg.judge.recheckThinking : undefined,
+				mcpServers: pi.getMcpServers(),
+				onRun: (r) => {
+					ext = r;
+					view.mirror("critic", r);
+				},
 			});
-			outcome = result.ok ? { text: result.text, run: fr } : { error: result.error ?? "failed" };
+			outcome = review.ok ? { text: review.text, findings: review.findings, review, ext } : { error: review.error ?? "failed", review, ext };
 		} catch (e) {
 			outcome = { error: (e as Error).message };
 		} finally {
@@ -3786,14 +3746,14 @@ export default function workflow(pi: ExtensionAPI) {
 		}
 		const nowList = lastAgreedList(branchAssistantTexts(ctx.sessionManager.getBranch()));
 		const stale = state.phase !== "discuss" || (nowList ? textHash(nowList) : "") !== listHash;
-		if ((run.reason || stale) && outcome && "run" in outcome) view.finish(outcome.run, false, run.reason ? "cancelled · discussion" : "discarded · list changed");
+		if ((run.reason || stale || (outcome && "error" in outcome)) && outcome?.review) endReview("critic", outcome.ext, outcome.review, started, false, run.reason ? "cancelled · discussion" : stale ? "discarded · list changed" : `failed · ${outcome.review.error ?? "no result"}`);
 		if (run.reason) {
 			if (run.reason === "restart" || run.reason === "phase") return;
 			if (state.discussionReview) {
 				state.discussionReview = { ...state.discussionReview, status: "idle" };
 				persist();
 			}
-			if (run.reason === "esc" || run.reason === "command") ctx.ui.notify("workflow: discussion judge cancelled; still in discuss", "info");
+			if (run.reason === "esc" || run.reason === "command") ctx.ui.notify("workflow: discussion critic cancelled; still in discuss", "info");
 			return;
 		}
 		if (stale) return;
@@ -3803,15 +3763,15 @@ export default function workflow(pi: ExtensionAPI) {
 				ctx.ui.notify(`workflow: discussion review failed: ${error}`, "error");
 				return;
 			}
-			ctx.ui.notify(`workflow: discussion judge did not run: ${error}`, "warning");
+			ctx.ui.notify(`workflow: discussion critic did not run: ${error}`, "warning");
 			await moveToPlan(ctx);
 			return;
 		}
-		const findings = parseFindings(outcome.text);
+		const findings = outcome.findings;
 		const verdict = discussionVerdict(outcome.text);
 		const rounds = (resetRounds ? 0 : prev?.rounds ?? 0) + (loop ? 1 : 0);
-		view.finish(outcome.run, verdict === "PASS", `${verdict} · discussion`);
-		recordMetric(judgeMetric("discussion", rounds, verdict, outcome.text));
+		endReview("critic", outcome.ext, outcome.review, started, verdict === "PASS", `${verdict} · discussion`);
+		recordMetric(judgeMetric("discussion", rounds, verdict, findings));
 		pi.sendMessage({ customType: "workflow-discussion-review", content: `**Discussion review: ${verdict}**\n\n${outcome.text}`, display: true }, { triggerTurn: false });
 		const after = ctx.sessionManager.getBranch();
 		state.discussionReview = { listHash, verdict, findings, afterEntryId: (after[after.length - 1] as { id?: string } | undefined)?.id, rounds, status: "idle" };
@@ -3823,18 +3783,18 @@ export default function workflow(pi: ExtensionAPI) {
 		const action = discussionGateAfterVerdict({ verdict, findings, rounds, max: cfg.maxDiscussionJudgeRounds });
 		if (action === "move") await moveToPlan(ctx, undefined, minorFindings(findings));
 		else if (action === "move-open") {
-			ctx.ui.notify(`workflow: discussion judge: ${blockingFindings(findings).length} finding(s) still open after ${rounds} runs; planning with them noted`, "warning");
+			ctx.ui.notify(`workflow: discussion critic: ${blockingFindings(findings).length} finding(s) still open after ${rounds} runs; planning with them noted`, "warning");
 			await moveToPlan(ctx, blockingFindings(findings), minorFindings(findings));
 		} else if (action === "fix") {
 			state.discussionReview = { ...state.discussionReview, status: "awaiting-fix" };
 			persist();
-			ctx.ui.notify(`workflow: discussion judge: fixing ${blockingFindings(findings).length} finding(s) (run ${rounds}/${cfg.maxDiscussionJudgeRounds})`, "info");
+			ctx.ui.notify(`workflow: discussion critic: fixing ${blockingFindings(findings).length} finding(s) (run ${rounds}/${cfg.maxDiscussionJudgeRounds})`, "info");
 			const listed = blockingFindings(findings).map((f) => `- ${findingText(f).replace(/\n/g, "\n  ")}`).join("\n");
 			pi.sendMessage({ customType: "workflow-discussion-fix", content: `${prompts.DISCUSSION_FIX}\n\n${listed}`, display: true }, { triggerTurn: true, deliverAs: "followUp" });
 		} else {
 			state.discussionReview = { ...state.discussionReview, status: "paused" };
 			persist();
-			ctx.ui.notify(`workflow: discussion judge: ${blockingFindings(findings).filter((f) => f.route === "user").length} finding(s) need your decision; answer them, then say go again`, "warning");
+			ctx.ui.notify(`workflow: discussion critic: ${blockingFindings(findings).filter((f) => f.route === "user").length} finding(s) need your decision; answer them, then say go again`, "warning");
 		}
 	}
 
@@ -3864,7 +3824,7 @@ export default function workflow(pi: ExtensionAPI) {
 		}
 		if (!manual && (cfg.autoJudge === "off" || seenDiffs.has(diff.hash))) return;
 		if (!manual && cfg.autoJudge === "ask" && !autopilotOn()) {
-			const run = (await askUser(ctx, `Diff ready: run the judge (${describeRole(flowSpec("judge"))}) on ${diff.files} changed file(s)?`, ["Run the judge", "Skip"])) === "Run the judge";
+			const run = (await askUser(ctx, `Diff ready: run the judge (${describeRole(modelOf("judge"))}) on ${diff.files} changed file(s)?`, ["Run the judge", "Skip"])) === "Run the judge";
 			if (!run) {
 				seenDiffs.add(diff.hash);
 				return;
@@ -3902,8 +3862,8 @@ export default function workflow(pi: ExtensionAPI) {
 		state.autoRetries = 0;
 		// The verdict travels with the next instruction, so they reach the transcript in order.
 		const report = `**Judge: ${r.verdict}**\n\n${r.text}`;
-		if (hasPlanFlaw(r.text)) {
-			const route = planFlawOnPass(r.text, r.verdict);
+		if (planFlaws(r.findings).length) {
+			const route = planFlawOnPass(r.findings, r.verdict);
 			const outcome = route === "stop" ? await resolvePlanFlaw(ctx, report, diff) : await settlePlanFlawOnPass(ctx, report, diff, route);
 			if (outcome !== "continue") return;
 			if (r.verdict === "PASS") markPassed(diff.hash);
@@ -3921,7 +3881,7 @@ export default function workflow(pi: ExtensionAPI) {
 
 	/** After a failed judge round: send the executor back to fix, or ask what to do once the round cap is hit. */
 	async function fixOrAsk(ctx: ExtensionContext, report: string | undefined): Promise<void> {
-		if (judgeCapReached(state.judgeRounds, judgeLimits().maxJudgeRounds)) {
+		if (judgeCapReached(state.judgeRounds, cfg.maxJudgeRounds)) {
 			if (report) pi.sendMessage({ customType: "workflow-judge", content: report, display: true }, { triggerTurn: false });
 			const autoCap = autopilotOn() ? ((state.autoCaps ?? 0) === 0 ? "Escalate and keep fixing" : "Stop") : undefined;
 			if (autoCap) {
@@ -3955,7 +3915,7 @@ export default function workflow(pi: ExtensionAPI) {
 	 * "stop": back to planning, or the flow ended.
 	 */
 	async function resolvePlanFlaw(ctx: ExtensionContext, report: string, diff: Diff): Promise<"continue" | "amended" | "stop"> {
-		let arbiter = state.profile !== "quick" && arbiterFirst(autopilotOn() ? "auto" : state.planFlaw, cfg.planFlaw);
+		let arbiter = arbiterFirst(autopilotOn() ? "auto" : state.planFlaw, cfg.planFlaw);
 		let canAsk = true;
 		for (;;) {
 			if (arbiter) {
@@ -3995,7 +3955,7 @@ export default function workflow(pi: ExtensionAPI) {
 
 	/** Appends the report's plan-flaw lines to the approved plan under the heading; returns how many. */
 	function notePlanFlaws(ctx: ExtensionContext, report: string, heading: string): number {
-		const lines = planFlawLines(report).filter((l) => !(state.approvedPlan ?? "").includes(l));
+		const lines = planFlaws(parseFindings(report)).map((f) => `- ${f.head}`).filter((l) => !(state.approvedPlan ?? "").includes(l));
 		if (!lines.length) return 0;
 		state.approvedPlan = `${state.approvedPlan ?? ""}\n\n## ${heading}\n${lines.join("\n")}`;
 		refreshChecklist();
@@ -4004,10 +3964,10 @@ export default function workflow(pi: ExtensionAPI) {
 		return lines.length;
 	}
 
-	/** A pass that questions the plan, without a blocker: minor flaws are noted, major ones go to the arbiter (a quick flow notes them too). Never asks the user. */
+	/** A pass that questions the plan, without a blocker: minor flaws are noted, major ones go to the arbiter. Never asks the user. */
 	async function settlePlanFlawOnPass(ctx: ExtensionContext, report: string, diff: Diff, route: "arbiter" | "note"): Promise<"continue" | "amended"> {
 		const heading = "Plan choices upheld at a pass";
-		if (route === "arbiter" && state.profile !== "quick") {
+		if (route === "arbiter") {
 			const outcome = await runArbiter(ctx, report, diff, false);
 			if (outcome !== "ask") return outcome;
 			const n = notePlanFlaws(ctx, report, heading);
@@ -4026,11 +3986,10 @@ export default function workflow(pi: ExtensionAPI) {
 		ctx.ui.setWorkingMessage("arbiter checking the plan…");
 		let text: string;
 		try {
-			const max = cfg.judge.maxDiffChars;
 			const { result, run } = await runRole("arbiter", "plan-flaw", {
-				systemPrompts: [...(diff.multi ? [prompts.repoNote(repoRoots(diff))] : []), prompts.ARBITER, `## Approved plan\n\n${planForJudge()}`, `## Judge report\n\n${report}`, `## Diff\n\n${diff.text.length > max ? diff.text.slice(0, max) : diff.text}`],
+				systemPrompts: [...(diff.multi ? [prompts.repoNote(repoRoots(diff))] : []), prompts.ARBITER, `## Approved plan\n\n${planForJudge()}`, `## Judge report\n\n${report}`, `## Diff\n\n${fitDiffs(diff.parts, loadAgentsConfig().config.judge.maxDiffChars)}`],
 				tools: cfg.arbiter.tools,
-				task: "Decide on the [plan-flaw] findings in your system prompt.",
+				task: "Decide on the [plan] findings of the judge report in your system prompt.",
 				cwd: ctx.cwd,
 			});
 			if (!result.ok) {
@@ -4082,15 +4041,16 @@ export default function workflow(pi: ExtensionAPI) {
 
 	/** A pass with findings goes back for a fix round, up to maxMinorRounds. True if it sent the fix message. */
 	function fixMinorFindings(text: string, hash: string, report?: string): boolean {
-		const findings = fixableFindings(text);
+		const parsed = parseFindings(text);
+		const findings = fixableFindings(parsed);
 		// Same diff as the last fix message: the executor skipped the findings, so don't ask again.
 		if (state.minorSentFor === hash) return false;
-		if (afterPass(findings, state.minorRounds ?? 0, judgeLimits().maxMinorRounds) !== "fix") return false;
+		if (afterPass(findings, state.minorRounds ?? 0, cfg.maxMinorRounds) !== "fix") return false;
 		state.minorRounds = (state.minorRounds ?? 0) + 1;
 		state.minorSentFor = hash;
 		// Remember the passed tree: a fix that touches only the cited files passes without another review.
 		const passedRepos = state.lastJudge?.hash === hash ? state.lastJudge.repos : undefined;
-		state.minorFix = passedRepos ? { trees: Object.fromEntries(Object.entries(passedRepos).map(([k, v]) => [k, v.tree])), cited: citedPaths(text), text } : undefined;
+		state.minorFix = passedRepos ? { trees: Object.fromEntries(Object.entries(passedRepos).map(([k, v]) => [k, v.tree])), cited: citedPaths(parsed), text } : undefined;
 		persist();
 		const shown = report ?? `**Judge: PASS**\n\n${text}`;
 		handover(
@@ -4247,7 +4207,7 @@ export default function workflow(pi: ExtensionAPI) {
 			return;
 		}
 		const knowledge = state.lastKnowledge?.hash === hash ? state.lastKnowledge : undefined;
-		if (knowledge?.status === "unavailable") ctx.ui.notify(`workflow: judge passed without the knowledge check: ${knowledge.reason}`, "warning");
+		if (knowledge && knowledge.status !== "checked") ctx.ui.notify(`workflow: judge passed without the knowledge check: ${knowledge.reason}`, "warning");
 		let outcome = { text: await stageOutcomeText(ctx, diff), ok: true };
 		const cps = stageCheckpoints();
 		if (cps.length) outcome = { text: withCheckpoints(cps.map((c) => c.text), outcome.text), ok: cps.every((c) => c.ok) };
@@ -4337,6 +4297,9 @@ export default function workflow(pi: ExtensionAPI) {
 		cfg = loaded.config;
 		configError = loaded.error;
 		if (configError) ctx.ui.notify(`workflow: bad config, using defaults: ${configError}`, "error");
+		// One warning per session for old keys (the removed judge role and quick flow); a /flow reload shows it again.
+		if (loaded.warning && loaded.warning !== configWarning) ctx.ui.notify(`workflow: ${loaded.warning}`, "warning");
+		configWarning = loaded.warning;
 		void ensureGh(ctx).catch(() => false);
 
 		const saved = ctx.sessionManager
@@ -4417,7 +4380,7 @@ export default function workflow(pi: ExtensionAPI) {
 
 	function statusText(): string {
 		const lines = [
-			`phase      ${state.phase}${state.escalated ? " (escalated)" : ""}${state.profile === "quick" ? " (quick flow)" : ""}`,
+			`phase      ${state.phase}${state.escalated ? " (escalated)" : ""}`,
 			`judge     ${state.judgeRounds} failed round(s); auto=${cfg.autoJudge}; ${noMerge(state.approvedPlan ?? "") ? "no merge (the plan says so)" : "merge and publish after a judge pass"}`,
 			...(currentStages() ? [`stage     ${currentStages()!.current} of ${currentStages()!.stages.length}: ${currentStages()!.stages[currentStages()!.current - 1].title}`] : []),
 			state.planFlaw === "auto" ? "flaws     arbiter (this flow)" : `flaws     ${cfg.planFlaw === "auto" ? "arbiter" : "ask"} (config)`,
@@ -4426,7 +4389,7 @@ export default function workflow(pi: ExtensionAPI) {
 			`tokens    ${STAGES.filter((s) => !["discuss", "commit"].includes(s) || view.sessionTokens(s).raw + view.sessionTokens(s).cost > 0).map((s) => `${s} ${fmtTok(view.sessionTokens(s))}`).join(" · ")} · session total ${fmtTok(STAGES.reduce((n, s) => ({ raw: n.raw + view.sessionTokens(s).raw, cost: n.cost + view.sessionTokens(s).cost }), { raw: 0, cost: 0 }))}`,
 			"",
 			...MODEL_ROLES.map((r) => `${r.padEnd(9)} ${describeRole(roleSpecOf(r))}`),
-			`${AGENTS_ONLY_ROLES.join(", ")}: /agents model`,
+			`${AGENT_ROLES.join(", ")}: /agents model (judge ${describeRole(modelOf("judge"))}, critic ${describeRole(modelOf("critic"))})`,
 			"",
 			`config    ${CONFIG_PATH}${fs.existsSync(CONFIG_PATH) ? "" : " (not created, using defaults)"}`,
 		];
@@ -4556,9 +4519,6 @@ export default function workflow(pi: ExtensionAPI) {
 				case "status":
 					ctx.ui.notify(statusText(), "info");
 					return;
-				case "quick":
-					await startQuick(ctx, args.trim().replace(/^quick\b\s*/i, ""));
-					return;
 				case "discuss":
 				case "plan":
 				case "execute":
@@ -4571,10 +4531,6 @@ export default function workflow(pi: ExtensionAPI) {
 						const list = lastAgreedList(branchAssistantTexts(ctx.sessionManager.getBranch()));
 						const hash = list ? textHash(list) : "";
 						await moveToPlan(ctx, forcedOpenFindings(state.discussionReview, hash));
-						return;
-					}
-					if (sub.toLowerCase() === "plan" && state.phase === "plan" && state.profile === "quick") {
-						await toFullFlow(ctx);
 						return;
 					}
 					if (sub.toLowerCase() === "plan" && state.phase === "discuss" && (await startDiscussionGate(ctx))) return;
@@ -4681,16 +4637,17 @@ export default function workflow(pi: ExtensionAPI) {
 				case "opusplan":
 					await deescalate(ctx);
 					return;
-				case "judge":
+				case "critic":
 					if (rest[0]?.toLowerCase() === "cancel") {
 						if (gateRun) abortGate("command");
-						else ctx.ui.notify("workflow: no judge running", "info");
+						else ctx.ui.notify("workflow: no critic review running", "info");
 						return;
 					}
-					if (state.phase === "discuss" && askRestate(ctx, false)) return;
-					if (state.phase === "discuss") await runDiscussionGate(ctx, "full", false);
-					else if (state.phase === "plan") judgePlanNow(ctx);
-					else await reviewDiff(ctx, true);
+					if (state.phase === "discuss") {
+						if (askRestate(ctx, false)) return;
+						await runDiscussionGate(ctx, "full", false);
+					} else if (state.phase === "plan") criticPlanNow(ctx);
+					else ctx.ui.notify("workflow: /flow critic reviews the discussion (discuss) or the plan (plan); to review code, use the judge tool", "info");
 					return;
 				case "tokens":
 					if (!view.hasFlowUsage()) {
@@ -4703,6 +4660,8 @@ export default function workflow(pi: ExtensionAPI) {
 					const loaded = loadConfig();
 					cfg = loaded.config;
 					configError = loaded.error;
+					configWarning = loaded.warning;
+					if (configWarning) ctx.ui.notify(`workflow: ${configWarning}`, "warning");
 					updateStatus(ctx);
 					ctx.ui.notify(configError ? `workflow: ${configError}` : statusText(), configError ? "error" : "info");
 					return;
@@ -4710,7 +4669,7 @@ export default function workflow(pi: ExtensionAPI) {
 				case "model": {
 					let [role, spec] = rest;
 					const usage = () => ctx.ui.notify(`Usage: /flow model <${MODEL_ROLES.join("|")}> <provider/id[:thinking]>`, "warning");
-					if (role && AGENTS_ONLY_ROLES.includes(role)) {
+					if (role && (AGENT_ROLES as readonly string[]).includes(role)) {
 						ctx.ui.notify(`workflow: ${role} belongs to the agents extension; use /agents model ${role}`, "warning");
 						return;
 					}
@@ -4735,7 +4694,7 @@ export default function workflow(pi: ExtensionAPI) {
 					}
 					saveRole(role as Role, parsed);
 					cfg = loadConfig().config;
-					const live = state.escalated ? role === "escalate" : state.phase !== "off" && role === profileRole(state.profile, state.phase);
+					const live = state.escalated ? role === "escalate" : state.phase !== "off" && role === state.phase;
 					if (live) await applyRole(ctx, role as Role);
 					updateStatus(ctx);
 					ctx.ui.notify(`workflow: ${role} -> ${describeRole(parsed)} (saved to workflow.json)`, "info");

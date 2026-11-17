@@ -8,8 +8,7 @@ export const FLOW_SUBS: Sub[] = [
 	{ value: "status", description: "phase, models, config path" },
 	{ value: "board", description: "live view of every flow on this machine" },
 	{ value: "discuss", description: "discuss phase (read-only, talk before planning)" },
-	{ value: "plan", arg: "[force]", next: true, description: "plan phase (read-only, planner model); from a quick scope card, a full flow" },
-	{ value: "quick", arg: "[request]", description: "quick flow: short scope card, execute, one review, full delivery" },
+	{ value: "plan", arg: "[force]", next: true, description: "plan phase (read-only, planner model)" },
 	{ value: "approve", description: "approve the plan, switch to execute and start" },
 	{ value: "execute", description: "execute phase without sending anything" },
 	{ value: "off", description: "leave the workflow; restore the model from before the flow" },
@@ -17,7 +16,7 @@ export const FLOW_SUBS: Sub[] = [
 	{ value: "fable", description: "same as escalate" },
 	{ value: "back", description: "return to the phase's own model" },
 	{ value: "opusplan", description: "same as back" },
-	{ value: "judge", arg: "[cancel]", next: true, description: "review the current diff now (in discuss: the conclusion; in plan: the plan)" },
+	{ value: "critic", arg: "[cancel]", next: true, description: "critic review now: the conclusion in discuss, the plan in plan (in execute use the judge tool)" },
 	{ value: "tokens", description: "token breakdown of the current flow so far" },
 	{ value: "model", arg: "[role] [provider/id[:thinking]]", next: true, description: "set a role's model (lists when left out)" },
 	{ value: "autopilot", arg: "[on|off]", next: true, description: "resolve waits and routine menus without asking (no argument toggles)" },
@@ -26,12 +25,12 @@ export const FLOW_SUBS: Sub[] = [
 ];
 
 const FLOW_SECOND: Record<string, Sub[]> = {
-	plan: [{ value: "force", description: "from discuss, move to plan without the discussion judge" }],
+	plan: [{ value: "force", description: "from discuss, move to plan without the discussion critic" }],
 	autopilot: [
 		{ value: "on", description: "resolve waits and routine menus without asking" },
 		{ value: "off", description: "ask again" },
 	],
-	judge: [{ value: "cancel", description: "stop a running judge" }],
+	critic: [{ value: "cancel", description: "stop a running critic review" }],
 };
 
 export const FLOW_UNKNOWN = (sub: string) => `Unknown: ${sub}. Try: ${valueList(FLOW_SUBS)}`;

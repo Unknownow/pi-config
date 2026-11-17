@@ -29,11 +29,10 @@ export function resumeContent(prefix: string, held: string | undefined, text: st
 
 export const PLAN_APPROVE = "Approve";
 export const PLAN_ARBITER = "Approve, arbiter solves plan flaws →";
-export const PLAN_FULL = "Full flow instead";
 export const PLAN_BACK = "Back to discussion";
 
 /** The plan menu: its options. `skipLocal`: with planPrompt off no menu shows. */
-export function planMenuRequest(o: { blocked: boolean; quick: boolean; planFlawAsk: boolean; planPrompt: boolean }): { options: string[]; skipLocal: boolean } {
-	const options = [...(o.blocked ? [] : [PLAN_APPROVE, ...(o.planFlawAsk && !o.quick ? [PLAN_ARBITER] : [])]), o.quick ? PLAN_FULL : PLAN_BACK, "Keep discussing"];
+export function planMenuRequest(o: { blocked: boolean; planFlawAsk: boolean; planPrompt: boolean }): { options: string[]; skipLocal: boolean } {
+	const options = [...(o.blocked ? [] : [PLAN_APPROVE, ...(o.planFlawAsk ? [PLAN_ARBITER] : [])]), PLAN_BACK, "Keep discussing"];
 	return { options, skipLocal: !o.planPrompt };
 }

@@ -13,6 +13,7 @@ const { emptyUsage } = await import("./subagent.ts");
 const { REVIEWER_EXTENSION } = await import("./run-role.ts");
 const { USAGE_FILE_ENV } = await import("./env.ts");
 type RunOptions = import("./subagent.ts").RunOptions;
+type ToolCall = import("./subagent.ts").ToolCall;
 
 const part = (key: string, full: string, names: string[]) => ({ key, base: "abcdef0123456789", full, names });
 
@@ -99,12 +100,12 @@ test("reviewVerdict: a late major does not block; without [late] it equals PASS-
 });
 
 /** A runner stub that records its options and replies `text`. */
-function stub(text: string, ok = true) {
+function stub(text: string, ok = true, toolCalls: ToolCall[] = []) {
 	const seen: RunOptions[] = [];
 	const runner = async (o: RunOptions) => {
 		seen.push(o);
 		const usage = { ...emptyUsage(), input: 1000, output: 100 };
-		return { ok, text: ok ? text : "", error: ok ? undefined : "boom", model: "claude-sonnet-x", turns: 1, usage, toolCalls: [] };
+		return { ok, text: ok ? text : "", error: ok ? undefined : "boom", model: "claude-sonnet-x", turns: 1, usage, toolCalls };
 	};
 	return { seen, runner };
 }
@@ -162,5 +163,13 @@ test("runCritic: same shape and verdict rule; a failed run is FAIL with its erro
 	assert.equal(f.ok, false);
 	assert.equal(f.verdict, "FAIL");
 	assert.equal(f.error, "boom");
-	for (const k of ["ok", "text", "findings", "verdict", "usage", "weightedCost", "model"]) assert.ok(k in f, k);
+	for (const k of ["ok", "text", "findings", "verdict", "usage", "weightedCost", "model", "toolCalls"]) assert.ok(k in f, k);
+	assert.deepEqual(f.toolCalls, []);
+});
+
+test("ReviewResult.toolCalls: the run's tool calls, for the caller's own checks", async () => {
+	const calls: ToolCall[] = [{ id: "1", name: "mcp__knowledge__get_rule_pack", args: { paths: ["a.ts"] }, isError: false, result: "{}" }];
+	const { runner } = stub("VERDICT: PASS", true, calls);
+	const r = await runJudge({ diff: "D", mode: "full", cwd: ".", runner });
+	assert.deepEqual(r.toolCalls, calls);
 });

@@ -1,8 +1,12 @@
 // node --experimental-strip-types --test gates.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { type Finding, type PlanGate, findingText, forcedOpenFindings, isClean, isEscKey, parseFindings, planDisputes, planGateAfterVerdict, planGateDecide, planGateReset, planOfferAction, planReviewPrompts, planTextDiff, textHash } from "./gates.ts";
-import { JUDGE_PLAN, JUDGE_PLAN_RECHECK, NO_SPEC_NOTE } from "./prompts.ts";
+import type { Finding, PlanGate, DiscussionReview } from "./gates.ts";
+
+// gates.ts reads findings through agents/api.ts, which loads the pi packages: stub them first.
+await import("./test-hooks.ts");
+const { findingText, forcedOpenFindings, isClean, isEscKey, parseFindings, planCriticRequest, planDisputes, planGateAfterVerdict, planGateDecide, planGateReset, planOfferAction, planTextDiff, textHash, discussionGateAfterFixReply, discussionGateAfterVerdict, discussionGateOnInput, discussionGateStart } = await import("./gates.ts");
+const { NO_SPEC_NOTE, PLAN_CRITERIA } = await import("./prompts.ts");
 
 const f = (route: "auto" | "user", severity: Finding["severity"] = "major", head = "x"): Finding => ({ severity, category: "gap", route, head: `${severity} - [gap] fix: ${route} - ${head}`, body: "Why: w\nFix: f" });
 const gate = (o: Partial<PlanGate> = {}): PlanGate => ({ planHash: "h1", rounds: 1, verdict: "FAIL", autoFindings: [], userFindings: [], spec: "agreed", ...o });
@@ -67,9 +71,8 @@ test("isEscKey", () => {
 });
 
 test("planGateDecide", () => {
-	const base = { mode: "auto" as const, quick: false, planHash: "h2" };
+	const base = { mode: "auto" as const, plan: "P2", planHash: "h2" };
 	assert.equal(planGateDecide({ ...base, mode: "off" }), "off");
-	assert.equal(planGateDecide({ ...base, quick: true }), "off");
 	assert.equal(planGateDecide({ ...base, gate: gate({ planHash: "h2" }) }), "reuse");
 	assert.equal(planGateDecide({ ...base, gate: gate({ planHash: "h2", verdict: "cancelled" }) }), "full");
 	assert.equal(planGateDecide({ ...base, gate: gate({ planHash: "h2", verdict: "error" }) }), "full");
@@ -84,6 +87,10 @@ test("planGateDecide", () => {
 	assert.equal(planGateDecide({ ...same, hasDisputes: true, gate: { ...same.gate, cappedHash: "h2" } }), "reuse");
 	assert.equal(planGateDecide({ ...same, hasDisputes: true, gate: { ...same.gate, autoFindings: [], verdict: "PASS" } }), "reuse");
 	assert.equal(planGateDecide(base), "full");
+	// planTextDiff decides: the same text under another hash is reused; a plan rewritten past the diff cap gets a full review
+	assert.equal(planGateDecide({ ...base, plan: "p", gate: gate({ judgedPlan: "p" }) }), "reuse");
+	const long = (tag: string) => Array.from({ length: 500 }, (_, i) => `${tag} ${i}`).join("\n");
+	assert.equal(planGateDecide({ ...base, plan: long("new"), gate: gate({ judgedPlan: long("old") }) }), "full");
 });
 
 test("planGateAfterVerdict", () => {
@@ -114,31 +121,27 @@ test("planGateReset", () => {
 	assert.equal(planGateReset(undefined, "enter-plan"), undefined);
 });
 
-test("planReviewPrompts", () => {
-	const none = planReviewPrompts({ plan: "P", folders: [] });
-	assert.deepEqual(none, [JUDGE_PLAN, NO_SPEC_NOTE, "## Plan under review", "P"]);
-	const brief = planReviewPrompts({ plan: "P", spec: { kind: "agreed", text: "do X" }, folders: ["/a"] });
-	assert.match(brief[1], /the agreed list[\s\S]*do X/);
-	assert.match(brief[2], /\/a/);
-	const re = planReviewPrompts({ plan: "P", folders: [], recheck: { findings: [f("auto", "major", "needs caller")], disputes: "Disputes: no", diff: "+new" } });
-	assert.equal(re[0], JUDGE_PLAN_RECHECK);
-	const all = re.join("\n");
-	assert.match(all, /needs caller/);
-	assert.match(all, /Disputes: no/);
-	assert.match(all, /\+new/);
-	assert.equal(re[re.length - 1], "P");
+test("planCriticRequest: always the whole plan; the agreed list and folders in the criteria; previous findings and disputes on a recheck", () => {
+	const none = planCriticRequest({ plan: "P", folders: [] });
+	assert.deepEqual(none, { about: "flow plan", document: "P", criteria: `${PLAN_CRITERIA}\n\n${NO_SPEC_NOTE}` });
+	const brief = planCriticRequest({ plan: "P", spec: { kind: "agreed", text: "do X" }, folders: ["/a"] });
+	assert.match(brief.criteria!, /The agreed list \(the spec\):\n\ndo X/);
+	assert.match(brief.criteria!, /- \/a/);
+	const findings = [f("auto", "major", "needs caller")];
+	const re = planCriticRequest({ plan: "P", folders: [], recheck: { findings, disputes: "Disputes: no" } });
+	assert.equal(re.document, "P");
+	assert.deepEqual(re.previousFindings, findings);
+	assert.equal(re.disputes, "Disputes: no");
+	assert.equal("disputes" in planCriticRequest({ plan: "P", folders: [], recheck: { findings } }), false);
 });
 
 // ---- discussion gate ----
-import { type DiscussionReview, discussionGateAfterFixReply, discussionGateAfterVerdict, discussionGateOnInput, discussionGateStart, discussionRecheckPrompts } from "./gates.ts";
-import { JUDGE_DISCUSSION, JUDGE_DISCUSSION_RECHECK } from "./prompts.ts";
 
 const rev = (o: Partial<DiscussionReview> = {}): DiscussionReview => ({ listHash: "L1", verdict: "FAIL", findings: [f("auto")], afterEntryId: "e1", rounds: 1, status: "idle", ...o });
-const startBase = { mode: "auto" as const, quick: false, listHash: "L2", sinceChars: 100, cap: 30000 };
+const startBase = { mode: "auto" as const, listHash: "L2", sinceChars: 100, cap: 30000 };
 
 test("discussionGateStart", () => {
 	assert.equal(discussionGateStart({ ...startBase, mode: "off" }), "move");
-	assert.equal(discussionGateStart({ ...startBase, quick: true }), "move");
 	assert.equal(discussionGateStart({ ...startBase, listHash: undefined }), "warn-move");
 	assert.equal(discussionGateStart({ ...startBase, listHash: "L1", last: rev({ verdict: "PASS", findings: [] }) }), "move");
 	// a PASS with only a minor finding moves on: minors never start another review
@@ -171,12 +174,6 @@ test("discussionGateOnInput", () => {
 	assert.equal(discussionGateOnInput({ running: true, isGo: true }), "notice");
 	assert.equal(discussionGateOnInput({ running: true, isGo: false }), "cancel");
 	assert.equal(discussionGateOnInput({ running: false, isGo: false }), "pass");
-});
-
-test("discussionRecheckPrompts carries findings, since-text and list; the format has fix tags", () => {
-	const p = discussionRecheckPrompts([f("auto", "major", "needle")], "SINCE-TEXT", "Agreed so far: NEWLIST", ["D:/x"]).join("\n");
-	assert.ok(p.includes(JUDGE_DISCUSSION_RECHECK) && p.includes("needle") && p.includes("SINCE-TEXT") && p.includes("NEWLIST") && p.includes("D:/x"));
-	assert.ok(JUDGE_DISCUSSION.includes("fix: auto|user"));
 });
 
 test("forcedOpenFindings: only the findings of the current list", () => {

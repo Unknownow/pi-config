@@ -2,7 +2,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { branchName, planTitle } from "./delivery.ts";
-import { planPhase } from "./prompts.ts";
+await import("./test-hooks.ts");
+const { planPhase } = await import("./prompts.ts");
 
 const d = new Date(2026, 9, 14, 9, 5);
 

@@ -1,25 +1,14 @@
 /** Pure decisions behind the agent_end handler, kept apart so node tests can reach them. */
 
-import { JUDGE_MAJOR_ONLY, JUDGE_QUICK } from "./prompts.ts";
+import { type Finding, isClean, judgeVerdict } from "../agents/api.ts";
+import { LEGACY_KEYS } from "./config.ts";
+import { JUDGE_MAJOR_ONLY } from "./prompts.ts";
 
 export const MAX_RESUMES = 2;
 
-/** Extra judge system text: a quick flow's review, and any review after a minor-fix round, reports only blocker and major findings. */
-export function judgeAddenda(minorRounds: number, quick = false): string {
-	return quick ? "\n" + JUDGE_QUICK : minorRounds > 0 ? "\n" + JUDGE_MAJOR_ONLY : "";
-}
-
-/** The profile after a phase switch: `/flow quick` sets it in plan, only the approval (plan to execute) carries it on, every other switch clears it. */
-export function nextProfile(prev: string, phase: string, requested: "quick" | undefined, current: "quick" | undefined): "quick" | undefined {
-	if (phase === "plan") return requested;
-	if (phase === "execute" && (prev === "plan" || prev === "execute")) return current;
-	return undefined;
-}
-
-/** The role whose model runs `role` in this flow: a quick flow plans on `quick` and reviews on `quick-judge`. */
-export function profileRole<R extends string>(profile: "quick" | undefined, role: R): R | "quick" | "quick-judge" {
-	if (profile !== "quick") return role;
-	return role === "plan" ? "quick" : role === "judge" ? "quick-judge" : role;
+/** Extra judge criteria: a review after a minor-fix round reports only blocker and major findings. */
+export function judgeAddenda(minorRounds: number): string {
+	return minorRounds > 0 ? JUDGE_MAJOR_ONLY : "";
 }
 
 /** True when the reply is an assistant reply with no content: the bridge's answer to a retry that ended on a tool result. */
@@ -163,9 +152,12 @@ export function gitTaskAllowed(phase: FlowPhase, hasPlan: boolean): { ok: boolea
 /**
  * A saved flow state from before the test phase was removed loads as normal mode; its test token row is dropped.
  * Fields that only the removed external-controller contracts used (open ask and its counter, extra plan tools, a plan brief, claimed-wait data) are dropped, and a saved acceptance wait is cleared: an old session resumes as an unclaimed one.
+ * A flow of the removed quick profile resumes as a normal flow: its keys (LEGACY_KEYS.state, and every key starting with LEGACY_KEYS.quickPrefix) are dropped.
  */
 export function migrateSavedState<T extends { phase: string; tokens?: unknown }>(data: T): T {
 	let out: Record<string, unknown> = data;
+	const legacy = Object.keys(data).filter((k) => (LEGACY_KEYS.state as readonly string[]).includes(k) || k.startsWith(LEGACY_KEYS.quickPrefix));
+	if (legacy.length) out = Object.fromEntries(Object.entries(out).filter(([k]) => !legacy.includes(k)));
 	const dr = (data as { discussionReview?: { status?: string } }).discussionReview;
 	// A discussion-gate fix round does not survive a restart.
 	if (dr?.status === "awaiting-fix") out = { ...out, discussionReview: { ...dr, status: "idle" } };
@@ -202,22 +194,15 @@ export function handoverAction(s: { aborted: boolean; kind: "start" | "continue"
 	return s.kind === "start" && s.idle && !s.compacting && s.hasPlan && s.threshold > 0 && s.tokens !== null && s.tokens > s.threshold ? "compact" : "send";
 }
 
-/** The judge reports that the approved plan itself is flawed: a finding line tagged [plan-flaw]. */
-export function hasPlanFlaw(text: string): boolean {
-	return /^\S.*\s-\s*(blocker|major|minor)\s*-\s*\[plan-flaw\]/im.test(text);
-}
-
-const PLAN_FLAW_LINE = /^\S.*\s-\s*(blocker|major|minor)\s*-\s*\[plan-flaw\]/i;
-
-/** The finding lines of a judge report tagged [plan-flaw]. */
-export function planFlawLines(text: string): string[] {
-	return text.split(/\r?\n/).filter((l) => PLAN_FLAW_LINE.test(l));
+/** The findings that say the approved plan itself is flawed: agents' `[plan]` tag (a problem with the spec, not the code). */
+export function planFlaws(findings: Finding[]): Finding[] {
+	return findings.filter((f) => f.category.toLowerCase() === "plan");
 }
 
 /** What a judge report with plan flaws does: "stop" (FAIL or a blocker flaw: the user or arbiter resolves it), "arbiter" (worst flaw is major, on a pass), "note" (all minor, on a pass). */
-export function planFlawOnPass(text: string, verdict: "PASS" | "FAIL"): "stop" | "arbiter" | "note" {
+export function planFlawOnPass(findings: Finding[], verdict: "PASS" | "FAIL"): "stop" | "arbiter" | "note" {
 	if (verdict !== "PASS") return "stop";
-	const sev = planFlawLines(text).map((l) => PLAN_FLAW_LINE.exec(l)![1].toLowerCase());
+	const sev = planFlaws(findings).map((f) => f.severity);
 	if (sev.includes("blocker")) return "stop";
 	return sev.includes("major") ? "arbiter" : "note";
 }
@@ -227,38 +212,30 @@ export function arbiterFirst(flow: "auto" | undefined, config: "ask" | "auto"): 
 	return (flow ?? config) === "auto";
 }
 
-/**
- * Findings of a judge report the executor should fix after a pass: finding lines (not the indented Why/Fix lines)
- * except [knowledge <id>] deviations from a recommended rule, which may stay with a reason, and [plan-flaw] findings, which the arbiter or the user decides.
- */
-export function fixableFindings(text: string): number {
-	return findingLines(text).filter((l) => !/-\s*(\[plan-flaw\]|\[knowledge\b[^\]]*\]\s*deviation from a recommended rule)/i.test(l) && !isLateNonBlocker(l)).length;
-}
-
-/** The finding head lines of a code-judge report (not the indented Why/Fix lines). */
-export function findingLines(text: string): string[] {
-	return text.split(/\r?\n/).filter((l) => /^\S.*\s-\s*(blocker|major|minor)\s*-/i.test(l));
-}
-
-/** A finding tagged [late] that is not a blocker: reported, never blocking. */
-export function isLateNonBlocker(line: string): boolean {
-	return /\[late\]/i.test(line) && !/\s-\s*blocker\s*-/i.test(line);
-}
-
-/** The late non-blocker finding heads of a report. */
-export function lateFindingLines(text: string): string[] {
-	return findingLines(text).filter(isLateNonBlocker).map((l) => l.trim());
+/** A `[knowledge <id>]` deviation from a recommended rule: it may stay with a reason, so it is never sent back to be fixed. */
+export function isDeviation(f: Finding): boolean {
+	return /^knowledge\b/i.test(f.category) && /deviation from a recommended rule/i.test(f.head);
 }
 
 /**
- * The verdict of a code-judge report. With finding lines: FAIL for a blocker or a major that is not late (plan flaws don't count);
- * a late major is a note. Without finding lines the VERDICT line decides.
+ * Findings of a judge report the executor should fix after a pass: all but knowledge deviations, `[plan]` findings
+ * (the arbiter or the user decides them) and late findings that are not blockers.
  */
-export function codeVerdict(text: string): "PASS" | "FAIL" {
-	const stated = /VERDICT:\s*PASS/i.test(text) && !/VERDICT:\s*FAIL/i.test(text) ? "PASS" : "FAIL";
-	const lines = findingLines(text).filter((l) => !/\[plan-flaw\]/i.test(l));
-	if (!lines.length) return stated;
-	return lines.some((l) => /\s-\s*blocker\s*-/i.test(l) || (/\s-\s*major\s*-/i.test(l) && !/\[late\]/i.test(l))) ? "FAIL" : "PASS";
+export function fixableFindings(findings: Finding[]): number {
+	return findings.filter((f) => f.category.toLowerCase() !== "plan" && !isDeviation(f) && !(f.late && f.severity !== "blocker")).length;
+}
+
+/** The heads of the late findings that are not blockers: reported, never blocking. */
+export function lateFindingLines(findings: Finding[]): string[] {
+	return findings.filter((f) => f.late && f.severity !== "blocker").map((f) => f.head);
+}
+
+/**
+ * The verdict of a code-judge report, recomputed by flow: PASS only for a stated PASS with no blocker and no major
+ * that is not late, leaving out `[plan]` findings (they go to the arbiter or the user, not the executor).
+ */
+export function codeVerdict(text: string, findings: Finding[]): "PASS" | "FAIL" {
+	return isClean(judgeVerdict(text), findings.filter((f) => f.category.toLowerCase() !== "plan")) ? "PASS" : "FAIL";
 }
 
 export interface ArbiterDecision {

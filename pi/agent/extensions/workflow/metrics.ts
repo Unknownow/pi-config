@@ -4,7 +4,7 @@
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { RunResult } from "../agents/subagent.ts";
+import type { Finding, RunResult } from "../agents/api.ts";
 import type { FlowUsage } from "./view.ts";
 
 type Tokens = { input: number; output: number; cacheRead: number; cacheWrite: number };
@@ -13,11 +13,12 @@ export type MetricEvent =
 	| { kind: "subagent"; at: string; flowId?: string; role: string; label: string; stage: string; model: string; ms: number; bootMs?: number; turns: number; tools: number; tokens: Tokens; cost: number; ok: boolean; error?: string }
 	| { kind: "compaction"; at: string; flowId?: string; reason: "handover" | "guard"; tokensBefore: number | null; ms: number; ok: boolean; error?: string }
 	| { kind: "judge"; at: string; flowId?: string; gate: "code" | "plan" | "discussion"; round: number; verdict: string; blocker: number; major: number; minor: number; late: number }
-	| { kind: "flow"; at: string; flowId?: string; outcome: string; ok: boolean; started?: number; ended: number; stages: FlowUsage; profile?: "quick" };
+	| { kind: "flow"; at: string; flowId?: string; outcome: string; ok: boolean; started?: number; ended: number; stages: FlowUsage };
 
 const MAX_QUEUED = 1000;
 
-export function subagentMetric(role: string, label: string, stage: string, model: string, started: number, ended: number, r: RunResult): MetricEvent {
+/** One subagent run; `r` is a RunResult, or a review's result (agents' ReviewResult has no boot time or turns). */
+export function subagentMetric(role: string, label: string, stage: string, model: string, started: number, ended: number, r: Pick<RunResult, "usage" | "ok" | "error" | "toolCalls"> & { bootMs?: number; turns?: number }): MetricEvent {
 	const u = r.usage;
 	return {
 		kind: "subagent",
@@ -28,7 +29,7 @@ export function subagentMetric(role: string, label: string, stage: string, model
 		model,
 		ms: ended - started,
 		bootMs: r.bootMs,
-		turns: r.turns,
+		turns: r.turns ?? 0,
 		tools: r.toolCalls.length,
 		tokens: { input: u.input, output: u.output, cacheRead: u.cacheRead, cacheWrite: u.cacheWrite },
 		cost: u.cost?.total ?? 0,
@@ -37,14 +38,12 @@ export function subagentMetric(role: string, label: string, stage: string, model
 	};
 }
 
-/** One judge verdict with its finding counts by severity; `late` counts the `[late]` findings (they are also counted by severity). */
-export function judgeMetric(gate: "code" | "plan" | "discussion", round: number, verdict: string, report: string): MetricEvent {
+/** One review verdict with its finding counts by severity; `late` counts the `[late]` findings (they are also counted by severity). */
+export function judgeMetric(gate: "code" | "plan" | "discussion", round: number, verdict: string, findings: Finding[]): MetricEvent {
 	const n = { blocker: 0, major: 0, minor: 0, late: 0 };
-	for (const line of report.split(/\r?\n/)) {
-		const m = /(?:^|\s)-\s*(blocker|major|minor)\s*-/i.exec(line);
-		if (!m || /^\s{2,}/.test(line)) continue;
-		n[m[1].toLowerCase() as "blocker" | "major" | "minor"]++;
-		if (/\[late\]/i.test(line)) n.late++;
+	for (const f of findings) {
+		n[f.severity]++;
+		if (f.late) n.late++;
 	}
 	return { kind: "judge", at: new Date().toISOString(), gate, round, verdict, ...n };
 }

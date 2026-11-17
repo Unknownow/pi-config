@@ -1,7 +1,7 @@
 // node --experimental-strip-types --test asks.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { PLAN_APPROVE, PLAN_ARBITER, PLAN_BACK, PLAN_FULL, askMenu, planMenuRequest, resumeContent } from "./asks.ts";
+import { PLAN_APPROVE, PLAN_ARBITER, PLAN_BACK, askMenu, planMenuRequest, resumeContent } from "./asks.ts";
 
 function harness(choice: string | undefined = "Local") {
 	const h = { selects: [] as string[], notices: [] as string[] };
@@ -37,13 +37,13 @@ test("localNotice runs before the menu; skipLocal shows no menu and no notificat
 	assert.equal(h.selects.length, 1);
 });
 
-test("plan-menu request: options for blocked, unblocked, quick and planPrompt off", () => {
-	const base = { blocked: false, quick: false, planFlawAsk: true, planPrompt: true };
+test("plan-menu request: options for blocked, unblocked and planPrompt off", () => {
+	const base = { blocked: false, planFlawAsk: true, planPrompt: true };
 	const open = planMenuRequest(base);
 	assert.deepEqual(open.options, [PLAN_APPROVE, PLAN_ARBITER, PLAN_BACK, "Keep discussing"]);
 	assert.equal(open.skipLocal, false);
 	assert.deepEqual(planMenuRequest({ ...base, blocked: true }).options, [PLAN_BACK, "Keep discussing"]);
-	assert.deepEqual(planMenuRequest({ ...base, quick: true }).options, [PLAN_APPROVE, PLAN_FULL, "Keep discussing"]);
+	assert.deepEqual(planMenuRequest({ ...base, planFlawAsk: false }).options, [PLAN_APPROVE, PLAN_BACK, "Keep discussing"]);
 	assert.equal(planMenuRequest({ ...base, planPrompt: false }).skipLocal, true);
 });
 

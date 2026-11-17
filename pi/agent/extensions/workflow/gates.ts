@@ -1,11 +1,13 @@
-/** Pure decisions of the automatic judge gates (the plan judge now, the discussion gate later). `index.ts` only runs judges, sends messages and keeps the runtime handle. */
+/** Pure decisions of the automatic review gates (the plan critic and the discussion critic). `index.ts` only runs the critic, sends messages and keeps the runtime handle. */
 
-import type { Finding } from "../shared/findings.ts";
-import { blockingFindings, findingText, findingsBlock, isClean, minorFindings, parseFindings, textHash } from "../shared/findings.ts";
-export type { Finding, Severity } from "../shared/findings.ts";
-export { blockingFindings, findingText, findingsBlock, isClean, isEscKey, minorFindings, parseFindings, textHash } from "../shared/findings.ts";
+import { type CriticRequest, type Finding, isClean } from "../agents/api.ts";
+import { blockingFindings, minorFindings } from "../shared/findings.ts";
+export { type Finding, isClean, parseFindings } from "../agents/api.ts";
+export type { Severity } from "../shared/findings.ts";
+export { blockingFindings, findingText, isEscKey, minorFindings, textHash } from "../shared/findings.ts";
 import { endsInQuestion } from "./agent-end.ts";
-import { JUDGE_DISCUSSION_RECHECK, JUDGE_PLAN, JUDGE_PLAN_RECHECK, NO_SPEC_NOTE } from "./prompts.ts";
+import { foldersNote } from "./discussion-review.ts";
+import { NO_SPEC_NOTE, PLAN_CRITERIA } from "./prompts.ts";
 
 export type GateVerdict = "PASS" | "FAIL" | "cancelled" | "error";
 export type SpecKind = "agreed" | "none";
@@ -73,15 +75,19 @@ export function planDisputes(reply: string): string | undefined {
 	return text || undefined;
 }
 
-/** What to do with a complete plan: skip the gate, reuse a verdict, or run the judge (confirm: one run, no fix loop). */
-export function planGateDecide(o: { mode: "off" | "auto"; quick: boolean; planHash: string; gate?: PlanGate; hasDisputes?: boolean }): "off" | "reuse" | "confirm" | "recheck" | "full" {
-	if (o.mode === "off" || o.quick) return "off";
+/**
+ * What to do with a complete plan: skip the gate, reuse a verdict, or run the critic (confirm: one run, no fix loop).
+ * A recheck carries the last findings; a plan whose text differs too much from the reviewed one (planTextDiff null) gets a full review.
+ */
+export function planGateDecide(o: { mode: "off" | "auto"; plan: string; planHash: string; gate?: PlanGate; hasDisputes?: boolean }): "off" | "reuse" | "confirm" | "recheck" | "full" {
+	if (o.mode === "off") return "off";
 	const g = o.gate;
-	// The planner disputed findings without changing the plan: the judge rules on the disputes (unless the cap is reached).
-	if (g && g.planHash === o.planHash && o.hasDisputes && g.judgedPlan !== undefined && g.autoFindings.length + g.userFindings.length > 0 && !g.cappedHash && (g.verdict === "PASS" || g.verdict === "FAIL")) return "recheck";
-	if (g && g.planHash === o.planHash && (g.verdict === "PASS" || g.verdict === "FAIL")) return "reuse";
+	const decided = g?.verdict === "PASS" || g?.verdict === "FAIL";
+	// The planner disputed findings without changing the plan: the critic rules on the disputes (unless the cap is reached).
+	if (g && g.planHash === o.planHash && o.hasDisputes && g.judgedPlan !== undefined && g.autoFindings.length + g.userFindings.length > 0 && !g.cappedHash && decided) return "recheck";
+	if (g && decided && (g.planHash === o.planHash || (g.judgedPlan !== undefined && planTextDiff(g.judgedPlan, o.plan) === ""))) return "reuse";
 	if (g?.cappedHash && g.cappedHash !== o.planHash) return "confirm";
-	if (g?.judgedPlan) return "recheck";
+	if (g?.judgedPlan) return planTextDiff(g.judgedPlan, o.plan) === null ? "full" : "recheck";
 	return "full";
 }
 
@@ -107,21 +113,16 @@ export function planGateReset(_gate: PlanGate | undefined, _why: "enter-plan"): 
 	return undefined;
 }
 
-/** The judge's system prompts for a plan: a full pass, or (with `recheck`) the previous findings, the disputes and the diff. */
-export function planReviewPrompts(o: { plan: string; spec?: { kind: "agreed"; text: string }; folders: string[]; recheck?: { findings: Finding[]; disputes?: string; diff: string } }): string[] {
-	const spec = o.spec ? `## Spec (the agreed list)\n\n${o.spec.text}` : NO_SPEC_NOTE;
-	const folders = o.folders.length ? [`## Other folders of this session\n\n${o.folders.map((f) => `- ${f}`).join("\n")}`] : [];
-	if (!o.recheck) return [JUDGE_PLAN, spec, ...folders, "## Plan under review", o.plan];
-	return [
-		JUDGE_PLAN_RECHECK,
-		spec,
-		...folders,
-		`## Your previous findings\n\n${findingsBlock(o.recheck.findings)}`,
-		`## Planner disputes\n\n${o.recheck.disputes ?? "(none)"}`,
-		`## Plan changes since your review\n\n${o.recheck.diff}`,
-		"## Current plan",
-		o.plan,
-	];
+/** The critic request of a plan review: always the whole plan, flow's plan criteria with the agreed list (the spec) and the folders; on a recheck the previous findings and the planner's disputes. */
+export function planCriticRequest(o: { plan: string; spec?: { kind: "agreed"; text: string }; folders: string[]; recheck?: { findings: Finding[]; disputes?: string } }): Pick<CriticRequest, "document" | "about" | "criteria" | "previousFindings" | "disputes"> {
+	const spec = o.spec ? `The agreed list (the spec):\n\n${o.spec.text}` : NO_SPEC_NOTE;
+	return {
+		about: "flow plan",
+		document: o.plan,
+		criteria: [PLAN_CRITERIA, spec, foldersNote(o.folders)].filter(Boolean).join("\n\n"),
+		...(o.recheck ? { previousFindings: o.recheck.findings } : {}),
+		...(o.recheck?.disputes ? { disputes: o.recheck.disputes } : {}),
+	};
 }
 
 /** What the discussion gate remembers about its last review; persisted in the state entry. */
@@ -133,7 +134,7 @@ export interface DiscussionReview {
 	afterEntryId?: string;
 	rounds: number;
 	status: "idle" | "awaiting-fix" | "paused";
-	/** Set by the restate request: false for a manual `/flow judge`, which starts no fix loop. */
+	/** Set by the restate request: false for a manual `/flow critic`, which starts no fix loop. */
 	restateLoop?: boolean;
 }
 
@@ -143,8 +144,8 @@ export function forcedOpenFindings(review: DiscussionReview | undefined, listHas
 }
 
 /** What to do when the user moves from discuss to plan. `sinceChars` is the length of the transcript since the last review (Infinity when its entry is gone). */
-export function discussionGateStart(o: { mode: "off" | "auto"; quick: boolean; listHash?: string; last?: DiscussionReview; sinceChars: number; cap: number }): "move" | "warn-move" | "full" | "recheck" {
-	if (o.mode === "off" || o.quick) return "move";
+export function discussionGateStart(o: { mode: "off" | "auto"; listHash?: string; last?: DiscussionReview; sinceChars: number; cap: number }): "move" | "warn-move" | "full" | "recheck" {
+	if (o.mode === "off") return "move";
 	if (!o.listHash) return "warn-move";
 	const l = o.last;
 	if (l && l.listHash === o.listHash && isClean(l.verdict, l.findings)) return "move";
@@ -171,13 +172,3 @@ export function discussionGateOnInput(o: { running: boolean; isGo: boolean }): "
 	return o.isGo ? "notice" : "cancel";
 }
 
-/** The judge's system prompts for a discussion recheck. */
-export function discussionRecheckPrompts(findings: Finding[], since: string, list: string, folders: string[]): string[] {
-	return [
-		JUDGE_DISCUSSION_RECHECK,
-		...(folders.length ? [`## Other folders of this session\n\n${folders.map((f) => `- ${f}`).join("\n")}`] : []),
-		`## Your previous findings\n\n${findingsBlock(findings)}`,
-		`## Discussion since your review\n\n${since}`,
-		`## New \`Agreed so far:\` list\n\n${list}`,
-	];
-}

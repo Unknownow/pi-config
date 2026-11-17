@@ -1,8 +1,12 @@
 // node --experimental-strip-types --test discussion-review.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { discussionReviewPrompts, discussionVerdict, lastAgreedList } from "./discussion-review.ts";
-import { JUDGE_DISCUSSION } from "./prompts.ts";
+
+// discussion-review.ts loads prompts.ts, which reads agents/api.ts: stub the pi packages first.
+await import("./test-hooks.ts");
+const { discussionCriticRequest, discussionVerdict, lastAgreedList } = await import("./discussion-review.ts");
+const { DISCUSSION_CRITERIA } = await import("./prompts.ts");
+const { parseFindings } = await import("../agents/api.ts");
 
 test("lastAgreedList: none", () => {
 	assert.equal(lastAgreedList(["hello", "world"]), undefined);
@@ -23,14 +27,22 @@ test("discussionVerdict", () => {
 	assert.equal(discussionVerdict("nothing"), "FAIL");
 });
 
-test("discussionReviewPrompts", () => {
-	const a = discussionReviewPrompts(undefined, "T", []);
-	assert.equal(a[0], JUDGE_DISCUSSION);
-	assert.ok(a[1].includes("No `Agreed so far:` list yet"));
-	assert.equal(a.length, 3);
-	assert.ok(a[a.length - 1].startsWith("## Discussion transcript"));
-	const b = discussionReviewPrompts("Agreed so far:\n- x", "T", ["D:/f"]);
-	assert.equal(b.length, 4);
-	assert.ok(b[2].includes("## Other folders of this session") && b[2].includes("D:/f"));
-	assert.ok(b[3].endsWith("T"));
+test("discussionCriticRequest: the agreed list plus the transcript as the document, flow's rules and folders as criteria", () => {
+	const a = discussionCriticRequest({ transcript: "T", folders: [] });
+	assert.equal(a.about, "flow discussion");
+	assert.ok(a.document.includes("No `Agreed so far:` list yet"));
+	assert.ok(a.document.endsWith("### Discussion transcript\n\nT"));
+	assert.equal(a.criteria, DISCUSSION_CRITERIA);
+	assert.equal("previousFindings" in a || "disputes" in a, false);
+	const b = discussionCriticRequest({ list: "Agreed so far:\n- x", transcript: "T", folders: ["D:/f"] });
+	assert.ok(b.document.startsWith("### Conclusion under review\n\nAgreed so far:\n- x"));
+	assert.ok(b.criteria!.startsWith(DISCUSSION_CRITERIA) && b.criteria!.includes("D:/f"));
+});
+
+test("discussionCriticRequest on a recheck: the transcript since the last review, the previous findings and the disputes", () => {
+	const findings = parseFindings("- major - [gap] `Agreed so far` - no migration fix: auto\n  Why: w");
+	const r = discussionCriticRequest({ list: "Agreed so far:\n- y", transcript: "SINCE", folders: [], recheck: { findings }, disputes: "Disputes: the migration is not needed" });
+	assert.ok(r.document.endsWith("### Discussion since the last review\n\nSINCE"));
+	assert.deepEqual(r.previousFindings, findings);
+	assert.equal(r.disputes, "Disputes: the migration is not needed");
 });
