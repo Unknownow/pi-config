@@ -1,4 +1,4 @@
-// node --experimental-strip-types --test dock.test.ts
+// node --experimental-strip-types --import ../agents/test-hooks.ts --test dock.test.ts
 // The relay column of the dock: Engine.dockLines (stream model) and the lead publishing it on dock:lines.
 import assert from "node:assert/strict";
 import { test } from "node:test";

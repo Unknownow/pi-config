@@ -1,4 +1,4 @@
-// node --experimental-strip-types --test pi-bin.test.ts
+// node --experimental-strip-types --import ../agents/test-hooks.ts --test pi-bin.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { piCommand, piInvocation } from "./pi-bin.ts";

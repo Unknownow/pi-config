@@ -1,4 +1,4 @@
-// node --experimental-strip-types --test rpc.test.ts
+// node --experimental-strip-types --import ../agents/test-hooks.ts --test rpc.test.ts
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { test } from "node:test";

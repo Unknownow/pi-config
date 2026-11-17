@@ -1,4 +1,4 @@
-// node --experimental-strip-types --test stage4.test.ts
+// node --experimental-strip-types --import ../agents/test-hooks.ts --test stage4.test.ts
 // Stage 4: queue and overlap, stacked jobs, add-repo, widget and log.
 import assert from "node:assert/strict";
 import * as fs from "node:fs";

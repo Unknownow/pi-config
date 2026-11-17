@@ -1,4 +1,4 @@
-// node --experimental-strip-types --test deliver.test.ts
+// node --experimental-strip-types --import ../agents/test-hooks.ts --test deliver.test.ts
 // Delivery (D14) on temp repos with bare remotes: rebase, accept, push rule, merge.
 import assert from "node:assert/strict";
 import * as fs from "node:fs";

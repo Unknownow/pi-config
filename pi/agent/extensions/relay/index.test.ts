@@ -1,4 +1,4 @@
-// node --experimental-strip-types --test index.test.ts
+// node --experimental-strip-types --import ../agents/test-hooks.ts --test index.test.ts
 // The lead (lead.ts) through a fake pi: typed "go", the edit budget, tools, the job root, job-set sessions.
 import assert from "node:assert/strict";
 import * as fs from "node:fs";

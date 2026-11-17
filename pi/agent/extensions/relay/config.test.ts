@@ -1,4 +1,4 @@
-// node --experimental-strip-types --test config.test.ts
+// node --experimental-strip-types --import ../agents/test-hooks.ts --test config.test.ts
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";

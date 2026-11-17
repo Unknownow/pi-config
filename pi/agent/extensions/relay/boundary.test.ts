@@ -1,4 +1,4 @@
-// node --experimental-strip-types --test boundary.test.ts
+// node --experimental-strip-types --import ../agents/test-hooks.ts --test boundary.test.ts
 // relay imports from ../shared, and from agents only through its public api.ts; never from workflow or the other extensions.
 import assert from "node:assert/strict";
 import * as fs from "node:fs";

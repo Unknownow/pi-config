@@ -1,4 +1,4 @@
-// node --experimental-strip-types --test commands.test.ts
+// node --experimental-strip-types --import ../agents/test-hooks.ts --test commands.test.ts
 // /relay: the subcommand table, its completions, and the handler called with every entry.
 import assert from "node:assert/strict";
 import { test } from "node:test";

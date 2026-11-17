@@ -1,4 +1,4 @@
-// node --experimental-strip-types --test brief.test.ts
+// node --experimental-strip-types --import ../agents/test-hooks.ts --test brief.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { amendmentsSince, appendAmendment, briefTitle, checkBrief, parseBrief, replaceBrief, stripAmendments, validateBrief } from "./brief.ts";

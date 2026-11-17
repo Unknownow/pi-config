@@ -1,4 +1,4 @@
-// node --experimental-strip-types --test running.test.ts
+// node --experimental-strip-types --import ../agents/test-hooks.ts --test running.test.ts
 // Stage 3: mid-run input, escalation and re-plan, stalls and tool timeouts, pause, adoption, PR-only cleanup and follow-ups.
 // Engine tests with the fake pi, real git repos with a bare origin, and a fake clock where time matters.
 import assert from "node:assert/strict";
