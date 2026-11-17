@@ -110,6 +110,16 @@ test("baseArgs adds --no-context-files only when asked", () => {
 	assert.ok(!baseArgs({ ...o, noContextFiles: false }).includes("--no-context-files"));
 });
 
+test("baseArgs: trusted true passes -a, false passes -na, unset passes neither", () => {
+	const o = { role: { model: "m" }, extensions: [], tools: ["read"] };
+	assert.ok(baseArgs({ ...o, trusted: true }).includes("-a"));
+	assert.ok(!baseArgs({ ...o, trusted: true }).includes("-na"));
+	assert.ok(baseArgs({ ...o, trusted: false }).includes("-na"));
+	assert.ok(!baseArgs({ ...o, trusted: false }).includes("-a"));
+	const none = baseArgs(o);
+	assert.ok(!none.includes("-a") && !none.includes("-na"));
+});
+
 test("noContextFilesFor: explore without the switch, no other role", () => {
 	assert.equal(noContextFilesFor("explore", false), true);
 	assert.equal(noContextFilesFor("judge", false), false);

@@ -12,6 +12,7 @@ const { parseFindings } = await import("../shared/findings.ts");
 const { emptyUsage } = await import("./subagent.ts");
 const { REVIEWER_EXTENSION } = await import("./run-role.ts");
 const { USAGE_FILE_ENV } = await import("./env.ts");
+const { DEFAULTS } = await import("./config.ts");
 type RunOptions = import("./subagent.ts").RunOptions;
 type ToolCall = import("./subagent.ts").ToolCall;
 
@@ -172,4 +173,20 @@ test("ReviewResult.toolCalls: the run's tool calls, for the caller's own checks"
 	const { runner } = stub("VERDICT: PASS", true, calls);
 	const r = await runJudge({ diff: "D", mode: "full", cwd: ".", runner });
 	assert.deepEqual(r.toolCalls, calls);
+});
+
+test("runJudge and runCritic pass timeoutMs, idleTimeoutMs and trusted to the run; unset keeps the agents.json limits and no trust flag", async () => {
+	const j = stub("VERDICT: PASS");
+	await runJudge({ diff: "D", mode: "full", cwd: ".", runner: j.runner, timeoutMs: 1_800_000, idleTimeoutMs: 600_000, trusted: false });
+	assert.equal(j.seen[0].timeoutMs, 1_800_000);
+	assert.equal(j.seen[0].idleTimeoutMs, 600_000);
+	assert.equal(j.seen[0].trusted, false);
+	const c = stub("VERDICT: PASS");
+	await runCritic({ document: "DOC", about: "a brief", cwd: ".", runner: c.runner, trusted: true });
+	assert.equal(c.seen[0].trusted, true);
+	const d = stub("VERDICT: PASS");
+	await runCritic({ document: "DOC", about: "a brief", cwd: ".", runner: d.runner });
+	assert.equal(d.seen[0].timeoutMs, DEFAULTS.subagent.timeoutMs);
+	assert.equal(d.seen[0].idleTimeoutMs, DEFAULTS.subagent.idleTimeoutMs);
+	assert.equal("trusted" in d.seen[0], false);
 });

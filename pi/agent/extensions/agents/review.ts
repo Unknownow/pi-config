@@ -65,6 +65,12 @@ export interface ReviewCommon {
 	runId?: number;
 	/** Test hook: replaces runSubagent. */
 	runner?: RoleRun["runner"];
+	/** Time limit of the run; default agents.json `subagent.timeoutMs`. */
+	timeoutMs?: number;
+	/** Idle limit of the run; default agents.json `subagent.idleTimeoutMs`. */
+	idleTimeoutMs?: number;
+	/** The caller's project trust (`-a` / `-na`); unset passes neither. */
+	trusted?: boolean;
 }
 
 export interface JudgeRequest extends ReviewCommon {
@@ -190,6 +196,9 @@ async function review(role: "judge" | "critic", label: string, prompt: { systemP
 		onRun,
 		runId: req.runId,
 		runner: req.runner,
+		timeoutMs: req.timeoutMs,
+		idleTimeoutMs: req.idleTimeoutMs,
+		trusted: req.trusted,
 	});
 	const { verdict, findings } = result.ok ? reviewVerdict(result.text) : { verdict: "FAIL" as const, findings: [] };
 	if (result.ok) endRun(run, verdict === "PASS", `${verdict}${findings.length ? ` · ${findings.length} finding${findings.length === 1 ? "" : "s"}` : ""}`);

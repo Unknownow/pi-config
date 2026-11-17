@@ -36,11 +36,14 @@ export interface RunOptions {
 	env?: Record<string, string>;
 	/** Starts the subagent without AGENTS.md / CLAUDE.md context files. */
 	noContextFiles?: boolean;
+	/** The caller's project trust: `-a` when true, `-na` when false; unset passes neither. */
+	trusted?: boolean;
 }
 
 /** The flags before the system prompts and the task. */
-export function baseArgs(opts: Pick<RunOptions, "role" | "extensions" | "mcp" | "tools" | "noContextFiles">): string[] {
+export function baseArgs(opts: Pick<RunOptions, "role" | "extensions" | "mcp" | "tools" | "noContextFiles" | "trusted">): string[] {
 	const args = ["--mode", "json", "-p", "--no-session", "--no-extensions", "--no-skills", "--no-prompt-templates"];
+	if (opts.trusted !== undefined) args.push(opts.trusted ? "-a" : "-na");
 	if (opts.noContextFiles) args.push("--no-context-files");
 	for (const ext of opts.extensions) args.push("-e", expandHome(ext));
 	if (opts.mcp) args.push("-e", "builtin:mcp", "-e", opts.mcp.extension);
