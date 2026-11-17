@@ -116,10 +116,11 @@ import { shortModel } from "../shared/runs.ts";
 import { assistantText, createFlow, type Diff, type FlowState, FOLDERS_ENTRY, GIT_GUARD_EXTENSION, MODEL_ROLES, OWN_TOOLS, type Phase, STATE_ENTRY, SUMMARY_ENTRY, type ToolReply } from "./flow/context.ts";
 import { advanceReviewBase, collectBoard, collectFlowDiff, existingFolders, flowRepos, git, gitRoot, joinReviewBase, judge, markPassed, nextAmendmentNumber, planCardReady, planCardText, planForJudge, refreshReviewBase, restoreReview, stageCheckpoints } from "./flow/diff.ts";
 import { endReview, fixOrAsk, markPassSummarized, resolvePlanFlaw, reviewDiff, settlePlanFlawOnPass, stageOutcomeText } from "./flow/judge.ts";
-import { abortGate, askUser, lastAssistantText, notifyUser, scheduleIdleNotice } from "./flow/notify.ts";
+import { abortGate, askUser, lastAssistantText, scheduleIdleNotice } from "./flow/notify.ts";
 import { applyRole, approve, autopilotOn, blockPlanTools, currentStages, deescalate, deliverHintsText, deliverLine, endFlow, escalate, noteAuto, persist, publishFolders, publishRefuse, refilterTools, refreshChecklist, sendPlanKickoff, setPhase, summarizeFlow, updateStatus } from "./flow/phase.ts";
 import { gitEnv, isDir, planDirFor, planHousekeeping, planMilestone, recordMetric, rewritePlanFile, stopClaimTimer, stopLiveTimer } from "./flow/plan-files.ts";
 import { modelOf, roleSpecOf, runRole } from "./flow/roles.ts";
+import { finishWait, runWaitCheck, setWaiting, startWaitTimer, stopWaitTimer } from "./flow/wait-points.ts";
 
 export default function workflow(pi: ExtensionAPI) {
 	const fl = createFlow(pi);
@@ -308,7 +309,7 @@ export default function workflow(pi: ExtensionAPI) {
 			const held = status.waiting.held ?? (atStart && fl.state.stage ? stageStart(resumedStages, fl.state.stage) : undefined);
 			const publishStep = /^Call publish_packages again with step (\S+)\.$/.exec(status.waiting.held ?? "")?.[1];
 			if (publishStep) fl.wait.publishWaitSince.set(publishStep, status.waiting.since);
-			setWaiting({
+			setWaiting(fl, {
 				...(publishStep ? { step: publishStep } : {}),
 				...(status.waiting.waitKind === "external" ? { waitKind: "external" as const } : {}),
 				reason: status.waiting.reason,
@@ -325,7 +326,7 @@ export default function workflow(pi: ExtensionAPI) {
 		publishFolders(fl, ctx);
 		updateStatus(fl, ctx);
 		planMilestone(fl, ctx);
-		startWaitTimer(fl.state.waiting?.step && fl.wait.publishWaitSince.has(fl.state.waiting.step) ? Date.parse(fl.state.waiting.since) : undefined);
+		startWaitTimer(fl, fl.state.waiting?.step && fl.wait.publishWaitSince.has(fl.state.waiting.step) ? Date.parse(fl.state.waiting.since) : undefined);
 		await fl.plan.planChain;
 		pi.sendMessage(
 			{ customType: "workflow-resume-plan", content: `Resumed on this device: check \`git status\` and the branch in each repo, then continue with the open steps.\n\n${planCardText(fl)}`, display: true },
@@ -344,117 +345,6 @@ export default function workflow(pi: ExtensionAPI) {
 
 	const title = (theme: Theme, name: string, role: Role | "judge" | "critic") =>
 		theme.fg("toolTitle", theme.bold(`${name} `)) + theme.fg("muted", shortModel(modelOf(fl, role).model));
-
-	// ----------------------------------------------------------------------
-	// Wait points
-	// ----------------------------------------------------------------------
-
-	function stopWaitTimer(): void {
-		if (fl.wait.waitTimer) clearInterval(fl.wait.waitTimer);
-		fl.wait.waitTimer = undefined;
-		if (fl.wait.waitFirstTimer) clearTimeout(fl.wait.waitFirstTimer);
-		fl.wait.waitFirstTimer = undefined;
-	}
-
-	/** Polls the wait's check every `wait.pollMs` while the session is idle. A wait without a check, or whose check already passed, is not polled. */
-	function startWaitTimer(sinceMs?: number): void {
-		stopWaitTimer();
-		const w = fl.state.waiting;
-		if (!w?.check || w.checkPassed) return;
-		fl.wait.waitTimerStart = sinceMs ?? Date.now();
-		fl.wait.waitTimer = setInterval(() => void waitTick(), fl.cfg.wait.pollMs);
-		(fl.wait.waitTimer as { unref?: () => void }).unref?.();
-		fl.wait.waitFirstTimer = setTimeout(() => void waitTick(), 5_000);
-		(fl.wait.waitFirstTimer as { unref?: () => void }).unref?.();
-	}
-
-	function resolveWaitShell(): { shell: string; args: string[] } | { error: string } {
-		if (fl.wait.waitShell) return fl.wait.waitShell;
-		try {
-			const c = getShellConfig();
-			fl.wait.waitShell = c.commandTransport === "stdin" ? { error: "no usable bash: only a WSL bash that needs stdin was found" } : { shell: c.shell, args: c.args };
-		} catch (e) {
-			fl.wait.waitShell = { error: `no usable bash: ${e instanceof Error ? e.message : String(e)}` };
-		}
-		return fl.wait.waitShell;
-	}
-
-	/** Runs a wait's check in pi's bash. Exit 0 passes; a failure or timeout is "not yet"; a check that cannot run is broken. */
-	async function runWaitCheck(check: string): Promise<CheckVerdict> {
-		const sh = resolveWaitShell();
-		if ("error" in sh) return checkVerdict(sh, fl.cfg.wait.checkTimeoutMs);
-		try {
-			const r = await pi.exec(sh.shell, [...sh.args, check], { cwd: fl.lastCtx?.cwd, timeout: fl.cfg.wait.checkTimeoutMs });
-			return checkVerdict({ code: r.code, stderr: r.stderr ?? "", killed: !!r.killed }, fl.cfg.wait.checkTimeoutMs);
-		} catch (e) {
-			return checkVerdict({ error: e instanceof Error ? e.message : String(e) }, fl.cfg.wait.checkTimeoutMs);
-		}
-	}
-
-	/** The wait is over: clears it and records the new state. */
-	function clearWait(ctx: ExtensionContext): void {
-		fl.state.waiting = undefined;
-		stopWaitTimer();
-		persist(fl);
-		updateStatus(fl, ctx);
-		planMilestone(fl, ctx);
-	}
-
-	/** Sets the wait; a wait set over an open one stops the old one's poll timer. */
-	function setWaiting(next: FlowState["waiting"]): void {
-		replaceWait(fl.state.waiting, { stopTimer: stopWaitTimer });
-		fl.state.waiting = next;
-	}
-
-	/** The wait is over because a person typed: clears it and returns the message that resumes the executor. */
-	function finishWait(ctx: ExtensionContext, w: NonNullable<FlowState["waiting"]>, how: "passed" | "forced" | "plain", text: string | undefined): string {
-		clearWait(ctx);
-		return resumeContent(resumePrefix(w.reason, how), w.held, text);
-	}
-
-	async function waitTick(): Promise<void> {
-		const w = fl.state.waiting;
-		const ctx = fl.lastCtx;
-		if (!w || !ctx || fl.wait.waitChecking || fl.state.phase !== "execute") return;
-		const elapsedMs = Date.now() - fl.wait.waitTimerStart;
-		const limit = fl.cfg.wait.maxMs;
-		const idle = ctx.isIdle() && (!ctx.hasUI || ctx.ui.getEditorText().trim() === "");
-		const d = pollDecision({ waiting: true, hasCheck: !!w.check && !w.checkPassed, idle, elapsedMs, maxMs: limit });
-		if (d === "hold") return;
-		if (d === "stop") {
-			stopWaitTimer();
-			if (w.check && elapsedMs >= limit) {
-				ctx.ui.notify(`workflow: stopped polling "${w.check}" after ${Math.round(elapsedMs / 60_000)} min; your next message checks again`, "warning");
-				notifyUser(fl, ctx, `stopped waiting for "${w.check}" after ${Math.round(elapsedMs / 60_000)} min`);
-			}
-			return;
-		}
-		fl.wait.waitChecking = true;
-		try {
-			const verdict = await runWaitCheck(w.check as string);
-			if (fl.state.waiting !== w) return;
-			if (verdict.status === "broken") {
-				stopWaitTimer();
-				ctx.ui.notify(`workflow: wait check can't run (${verdict.detail}): ${w.check}; fix it or send a message to continue`, "warning");
-				notifyUser(fl, ctx, `wait check can't run: ${verdict.detail}`);
-				return;
-			}
-			if (verdict.status !== "pass") return;
-			stopWaitTimer();
-			if (fl.cfg.wait.autoResume) {
-				clearWait(ctx);
-				const body = w.held ?? "Continue with the open steps of the plan.";
-				pi.sendMessage({ customType: "workflow-wait", content: `${resumePrefix(w.reason, "passed")} ${body}`, display: true }, { triggerTurn: true, deliverAs: "followUp" });
-			} else {
-				w.checkPassed = true;
-				persist(fl);
-				ctx.ui.notify(`workflow: "${w.check}" passed; send any message to continue`, "info");
-				notifyUser(fl, ctx, `"${w.check}" passed; send any message to continue`);
-			}
-		} finally {
-			fl.wait.waitChecking = false;
-		}
-	}
 
 	pi.registerTool({
 		name: "wait_for_user",
@@ -498,7 +388,7 @@ export default function workflow(pi: ExtensionAPI) {
 				if (problem) return reply(`The check must be read-only (${problem}). Nothing changed.`);
 			}
 			if (check) {
-				const first = await runWaitCheck(check);
+				const first = await runWaitCheck(fl, check);
 				if (first.status === "pass") return reply(`The check passes already: "${reason}" is done. Tick the step with plan_check and continue in this turn. Nothing to wait for.`);
 				if (first.status === "broken") return reply(`The check can't run (${first.detail}). Fix the check (it runs in bash from ${ctx.cwd}) and call wait_for_user again. Nothing changed.`);
 			}
@@ -517,11 +407,11 @@ export default function workflow(pi: ExtensionAPI) {
 				fl.state.approvedPlan = `${plan.replace(/\s+$/, "")}\n\n${waitAmendment(nextAmendmentNumber(fl), { reason, step, check })}\n`;
 				refreshChecklist(fl);
 			}
-			setWaiting({ reason, ...(check ? { check } : {}), ...(params.kind === "external" ? { waitKind: "external" as const } : {}), ...(step ? { step } : {}), stage: fl.state.stage, since: new Date().toISOString(), planned });
+			setWaiting(fl, { reason, ...(check ? { check } : {}), ...(params.kind === "external" ? { waitKind: "external" as const } : {}), ...(step ? { step } : {}), stage: fl.state.stage, since: new Date().toISOString(), planned });
 			persist(fl);
 			updateStatus(fl, ctx);
 			planMilestone(fl, ctx);
-			startWaitTimer();
+			startWaitTimer(fl);
 			return reply(`Waiting for: ${reason}. End your turn now; the workflow resumes you when ${check ? "the check passes" : "the user replies"}.`);
 		},
 		renderCall(args, theme) {
@@ -604,11 +494,11 @@ export default function workflow(pi: ExtensionAPI) {
 			const wait = (why: string, check: string): ToolReply => {
 				const since = waitSince(fl.wait.publishWaitSince.get(step), new Date().toISOString());
 				fl.wait.publishWaitSince.set(step, since);
-				setWaiting({ reason: why, check, step, stage: fl.state.stage, since, planned: true, held: `Call publish_packages again with step ${step}.` });
+				setWaiting(fl, { reason: why, check, step, stage: fl.state.stage, since, planned: true, held: `Call publish_packages again with step ${step}.` });
 				persist(fl);
 				updateStatus(fl, ctx);
 				planMilestone(fl, ctx);
-				startWaitTimer(Date.parse(since));
+				startWaitTimer(fl, Date.parse(since));
 				return reply(`Waiting: ${why}. End your turn now; the workflow resumes you when the check passes. Then call publish_packages again with step ${step}.`);
 			};
 			const lockFile = await publishLockFile(root);
@@ -1069,7 +959,7 @@ export default function workflow(pi: ExtensionAPI) {
 
 			const t = await deliverTag(ctx, tag, isPlannedTag(stepText, tag.name, tag.move));
 			if (t.wait) {
-				setWaiting({ reason: t.wait, ...(planned && step ? { step } : {}), stage: fl.state.stage, since: new Date().toISOString(), planned });
+				setWaiting(fl, { reason: t.wait, ...(planned && step ? { step } : {}), stage: fl.state.stage, since: new Date().toISOString(), planned });
 			}
 			fl.state.checkpoints = [...(fl.state.checkpoints ?? []), { ...(planned && step ? { step } : {}), stage: fl.state.stage, text: checkpointText(planned ? step : undefined, t.text), ok: t.ok }];
 			persist(fl);
@@ -1355,21 +1245,21 @@ export default function workflow(pi: ExtensionAPI) {
 			const w = fl.state.waiting;
 			let how: "passed" | "forced" | "plain" = w.check ? "passed" : "plain";
 			// The poll timer must not end this wait while the check or the question is open.
-			stopWaitTimer();
+			stopWaitTimer(fl);
 			fl.wait.waitChecking = true;
 			try {
-				const verdict = w.check && !w.checkPassed ? await runWaitCheck(w.check) : undefined;
+				const verdict = w.check && !w.checkPassed ? await runWaitCheck(fl, w.check) : undefined;
 				if (w.check && verdict && verdict.status !== "pass") {
 					if (fl.state.waiting !== w) return { action: "continue" };
 					if (!ctx.hasUI) {
-						startWaitTimer();
+						startWaitTimer(fl);
 						return { action: "handled" };
 					}
 					const choice = await ctx.ui.select(checkTitle(verdict, w.check), ["Continue anyway", "Keep waiting"]);
 					if (fl.state.waiting !== w) return { action: "continue" };
 					if (choice !== "Continue anyway") {
 						ctx.ui.notify(`workflow: still waiting for "${w.reason}"`, "info");
-						startWaitTimer();
+						startWaitTimer(fl);
 						return { action: "handled" };
 					}
 					how = "forced";
@@ -1378,7 +1268,7 @@ export default function workflow(pi: ExtensionAPI) {
 				fl.wait.waitChecking = false;
 			}
 			if (fl.state.waiting !== w) return { action: "continue" };
-			return { action: "transform", text: finishWait(ctx, w, how, typed) };
+			return { action: "transform", text: finishWait(fl, ctx, w, how, typed) };
 		}
 		// The discussion judge is running: a second "go" only shows a notice, other text cancels it.
 		if (fl.state.phase === "discuss" && event.source !== "extension" && typed && !typed.startsWith("/") && fl.gateRun?.kind === "discussion") {
@@ -1645,12 +1535,12 @@ export default function workflow(pi: ExtensionAPI) {
 	/** A stage that declares `(after: …)` waits before it starts: keeps its start text until the wait is over. True when it now waits. */
 	function holdForStageWait(ctx: ExtensionContext, stage: ReturnType<typeof parseStages>[number], held: string): boolean {
 		if (!stage.after) return false;
-		setWaiting({ reason: stage.after.reason, ...(stage.after.check ? { check: stage.after.check } : {}), stage: stage.n, since: new Date().toISOString(), planned: true, atStageStart: true, held });
+		setWaiting(fl, { reason: stage.after.reason, ...(stage.after.check ? { check: stage.after.check } : {}), stage: stage.n, since: new Date().toISOString(), planned: true, atStageStart: true, held });
 		persist(fl);
 		updateStatus(fl, ctx);
 		planMilestone(fl, ctx);
 		ctx.ui.notify(`workflow: stage ${stage.n} waits for: ${stage.after.reason}`, "info");
-		startWaitTimer();
+		startWaitTimer(fl);
 		return true;
 	}
 
@@ -2334,7 +2224,7 @@ export default function workflow(pi: ExtensionAPI) {
 				publishFolders(fl, ctx);
 			}
 			updateStatus(fl, ctx);
-			if (fl.state.phase === "execute" && fl.state.waiting) startWaitTimer();
+			if (fl.state.phase === "execute" && fl.state.waiting) startWaitTimer(fl);
 			if (event.reason !== "reload") void planHousekeeping(fl, ctx);
 			// Rewrites the plan file, which also (re)starts this session's claim on an unfinished flow.
 			if (fl.state.planDoc && !fl.state.planDoc.finished && fl.state.approvedPlan) planMilestone(fl, ctx, undefined, false);
@@ -2373,7 +2263,7 @@ export default function workflow(pi: ExtensionAPI) {
 	pi.on("session_shutdown", async () => {
 		if (fl.notify.idleTimer) clearTimeout(fl.notify.idleTimer);
 		fl.notify.idleTimer = undefined;
-		stopWaitTimer();
+		stopWaitTimer(fl);
 		const dir = fl.claim.claimedFlow ? fl.plan.planDirs.get(fl.claim.claimedFlow) : undefined;
 		if (dir && fl.claim.claimedFlow) dropClaim(dir, fl.claim.claimedFlow);
 		stopClaimTimer(fl);
@@ -2712,5 +2602,5 @@ export default function workflow(pi: ExtensionAPI) {
 		},
 	});
 
-	Object.assign(fl.legacy, { ensureGh, flowWithoutChanges, handover, holdForStageWait, noChangeTurn, planAllowedTools, stageDone, stopWaitTimer, stoppedSummary });
+	Object.assign(fl.legacy, { ensureGh, flowWithoutChanges, handover, holdForStageWait, noChangeTurn, planAllowedTools, stageDone, stoppedSummary });
 }

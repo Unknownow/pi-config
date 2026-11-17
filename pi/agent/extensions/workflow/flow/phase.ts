@@ -18,6 +18,7 @@ import { dropReviewRefs, existingFolders, initReviewBase } from "./diff.ts";
 import { abortGate, notifyUser } from "./notify.ts";
 import { liveTick, planMilestone, recordMetric } from "./plan-files.ts";
 import { modelOf } from "./roles.ts";
+import { stopWaitTimer } from "./wait-points.ts";
 
 export const autopilotOn = (fl: Flow): boolean => fl.autopilotOverride ?? fl.cfg.autopilot;
 /** An autopilot choice for the final card. */
@@ -94,7 +95,7 @@ export async function endFlow(fl: Flow, ctx: ExtensionContext): Promise<void> {
 	fl.state.passedTrees = undefined;
 	fl.state.judgedMerges = undefined;
 	fl.state.waiting = undefined;
-	fl.legacy.stopWaitTimer();
+	stopWaitTimer(fl);
 	updateStatus(fl, ctx);
 	const next = phaseAfterFlow(fl.cfg.returnTo, fl.state.phase);
 	if (!next) {
@@ -267,7 +268,7 @@ export async function setPhase(fl: Flow, ctx: ExtensionContext, phase: Phase): P
 		fl.state.stageNudgedFor = undefined;
 	}
 	fl.wait.publishWaitSince.clear();
-	fl.legacy.stopWaitTimer();
+	stopWaitTimer(fl);
 	fl.state.planRevisions = undefined;
 	fl.state.pendingPlanFlaw = undefined;
 	fl.state.unresolvedPlanFlaws = undefined;
