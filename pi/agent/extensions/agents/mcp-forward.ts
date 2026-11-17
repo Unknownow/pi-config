@@ -1,11 +1,11 @@
 /**
- * Subagent-only extension: registers the MCP servers the workflow forwards in PI_WORKFLOW_MCP
+ * Subagent-only extension: registers the MCP servers its parent forwards in PI_AGENTS_MCP
  * (JSON: server name -> config, the mcp.json shape). Loaded with `-e` next to `-e builtin:mcp`;
  * pi loads only index.ts from this folder, so the main session never runs it.
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-export const FORWARD_ENV = "PI_WORKFLOW_MCP";
+export const FORWARD_ENV = "PI_AGENTS_MCP";
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
@@ -16,7 +16,7 @@ export function parseForwarded(raw: string | undefined): Record<string, Record<s
 	try {
 		parsed = JSON.parse(raw);
 	} catch {
-		console.error(`workflow mcp-forward: ${FORWARD_ENV} is not valid JSON`);
+		console.error(`agents mcp-forward: ${FORWARD_ENV} is not valid JSON`);
 		return {};
 	}
 	if (!isObject(parsed)) return {};
@@ -28,7 +28,7 @@ export default function mcpForward(pi: ExtensionAPI): void {
 		try {
 			pi.registerMcpServer(name, config as never);
 		} catch (e) {
-			console.error(`workflow mcp-forward: ${name}: ${(e as Error).message}`);
+			console.error(`agents mcp-forward: ${name}: ${(e as Error).message}`);
 		}
 	}
 }

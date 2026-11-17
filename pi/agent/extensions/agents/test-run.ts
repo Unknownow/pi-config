@@ -78,20 +78,56 @@ export function callDir(roundDir: string, fsx: { mkdirSync(p: string): unknown; 
 	}
 }
 
+/** Takes the cross-process lock of a resource; see lock.ts. */
+export type ResourceLock = (resource: string, signal?: AbortSignal) => Promise<{ release(): void }>;
+
+const abortError = () => Object.assign(new Error("aborted"), { name: "AbortError" });
+
+/** Resolves with `p`, or rejects with an AbortError once `signal` aborts. */
+function untilAbort<T>(p: Promise<T>, signal?: AbortSignal): Promise<T> {
+	if (!signal) return p;
+	if (signal.aborted) return Promise.reject(abortError());
+	return new Promise<T>((resolve, reject) => {
+		const onAbort = () => reject(abortError());
+		signal.addEventListener("abort", onAbort, { once: true });
+		p.then(
+			(v) => {
+				signal.removeEventListener("abort", onAbort);
+				resolve(v);
+			},
+			(e) => {
+				signal.removeEventListener("abort", onAbort);
+				reject(e);
+			},
+		);
+	});
+}
+
 /**
- * Shared by all test_run calls of a session: one runner at a time per resource, and at most
- * `limit()` runners in all. The resource lock is taken before the slot, so a task that waits for
- * its resource never holds a slot.
+ * Shared by all test_run calls of a process: one runner at a time per resource, and at most `limit()`
+ * runners in all. Order: the in-process resource wait, then the cross-process file lock (`lock`), then a
+ * runner slot, so a task that waits for its resource never holds a slot. Every wait stops when `signal`
+ * aborts; an aborted waiter still passes the in-process lock on in chain order.
  */
-export function runnerGate(limit: () => number): <R>(resource: string, fn: () => Promise<R>) => Promise<R> {
+export function runnerGate(limit: () => number, lock?: ResourceLock): <R>(resource: string, fn: () => Promise<R>, signal?: AbortSignal) => Promise<R> {
 	const locks = new Map<string, Promise<void>>();
 	const waiting: (() => void)[] = [];
 	let running = 0;
-	return async function hold<R>(resource: string, fn: () => Promise<R>): Promise<R> {
+	const max = () => Math.max(1, limit());
+	function freeSlot(): void {
+		if (running > max() || !waiting.length) running--;
+		else waiting.shift()!(); // the slot is handed over
+		while (waiting.length && running < max()) {
+			running++;
+			waiting.shift()!();
+		}
+	}
+	return async function hold<R>(resource: string, fn: () => Promise<R>, signal?: AbortSignal): Promise<R> {
 		const k = resourceKey(resource);
+		const shared = !!k && k !== "none";
 		let release = () => {};
 		let prev: Promise<void> = Promise.resolve();
-		if (k && k !== "none") {
+		if (shared) {
 			prev = locks.get(k) ?? Promise.resolve();
 			const mine = new Promise<void>((r) => (release = r));
 			const tail = prev.then(() => mine);
@@ -100,21 +136,35 @@ export function runnerGate(limit: () => number): <R>(resource: string, fn: () =>
 				if (locks.get(k) === tail) locks.delete(k);
 			});
 		}
-		await prev;
 		try {
-			if (running >= Math.max(1, limit())) await new Promise<void>((r) => waiting.push(r)); // the slot is handed over
-			else running++;
+			await untilAbort(prev, signal);
+		} catch (e) {
+			void prev.then(release); // the next waiter still goes after the one before this one
+			throw e;
+		}
+		let file: { release(): void } | undefined;
+		try {
+			if (shared && lock) file = await lock(resource, signal);
+			if (running >= max()) {
+				let handed = () => {};
+				const slot = new Promise<void>((r) => (handed = r));
+				waiting.push(handed);
+				try {
+					await untilAbort(slot, signal);
+				} catch (e) {
+					const at = waiting.indexOf(handed);
+					if (at >= 0) waiting.splice(at, 1);
+					else freeSlot(); // handed over just as the abort came
+					throw e;
+				}
+			} else running++;
 			try {
 				return await fn();
 			} finally {
-				if (running > Math.max(1, limit()) || !waiting.length) running--;
-				else waiting.shift()!();
-				while (waiting.length && running < Math.max(1, limit())) {
-					running++;
-					waiting.shift()!();
-				}
+				freeSlot();
 			}
 		} finally {
+			file?.release();
 			release();
 		}
 	};

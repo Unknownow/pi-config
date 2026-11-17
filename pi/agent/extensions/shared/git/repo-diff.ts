@@ -84,3 +84,20 @@ export async function collectRepoDiff(git: RunGit, cwd: string, base = "HEAD"): 
 	const checkNames = [...current.stdout.split("\0").filter(Boolean), ...untracked];
 	return { full, files, names, checkNames, rootNames: [...trackedNames, ...rootUntracked] };
 }
+
+/**
+ * The default base of a branch review: `git merge-base HEAD <origin default branch>`, the default branch
+ * read from `refs/remotes/origin/HEAD`, else `origin/main`, else `origin/master`. `HEAD` when none resolves
+ * (then only uncommitted and untracked changes count).
+ */
+export async function defaultReviewBase(git: RunGit, cwd: string): Promise<string> {
+	const head = await git(cwd, "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD");
+	const candidates = [head.code === 0 ? head.stdout.trim().replace(/^refs\/remotes\//, "") : "", "origin/main", "origin/master"].filter(Boolean);
+	for (const ref of candidates) {
+		const ok = await git(cwd, "rev-parse", "--verify", "--quiet", `${ref}^{commit}`);
+		if (ok.code !== 0) continue;
+		const mb = await git(cwd, "merge-base", "HEAD", ref);
+		if (mb.code === 0 && mb.stdout.trim()) return mb.stdout.trim();
+	}
+	return "HEAD";
+}

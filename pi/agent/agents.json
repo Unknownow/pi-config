@@ -1,5 +1,5 @@
 {
-  "_comment": "Config for ~/.pi/agent/extensions/agents (explore, advisor, test_run). model is provider/model-id; thinking is off|minimal|low|medium|high|xhigh|max. Edit here or with `/agents model <explore|advisor|runner> <provider/id[:thinking]>`. Synced by pi-config.",
+  "_comment": "Config for ~/.pi/agent/extensions/agents (explore, advisor, test_run, judge, critic). model is provider/model-id; thinking is off|minimal|low|medium|high|xhigh|max. Edit here or with `/agents model <explore|advisor|runner|judge|critic> <provider/id[:thinking]>`. modelCost: cost multiplier per model (case-insensitive substring of the model id, longest key first; no match = 1.0). Synced by pi-config.",
   "roles": {
     "explore": {
       "model": "claude-bridge/claude-haiku-5-5",
@@ -12,6 +12,14 @@
     "runner": {
       "model": "claude-bridge/claude-haiku-5-5",
       "thinking": "low"
+    },
+    "judge": {
+      "model": "claude-bridge/claude-opus-5-5",
+      "thinking": "medium"
+    },
+    "critic": {
+      "model": "claude-bridge/claude-opus-5-5",
+      "thinking": "medium"
     }
   },
   "explore": {
@@ -33,6 +41,28 @@
       "ls"
     ],
     "maxTranscriptChars": 1500000
+  },
+  "judge": {
+    "tools": [
+      "read",
+      "grep",
+      "find",
+      "ls"
+    ],
+    "maxDiffChars": 400000
+  },
+  "critic": {
+    "tools": [
+      "read",
+      "grep",
+      "find",
+      "ls"
+    ]
+  },
+  "modelCost": {
+    "haiku": 0.2,
+    "sonnet": 0.6,
+    "opus": 1
   },
   "test": {
     "concurrency": 4,
@@ -62,7 +92,9 @@
     "server": "knowledge",
     "roles": [
       "explore",
-      "advisor"
+      "advisor",
+      "judge",
+      "critic"
     ],
     "tools": [
       "search",

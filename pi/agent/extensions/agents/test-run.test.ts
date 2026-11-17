@@ -175,3 +175,47 @@ test("runnerGate: a newcomer does not take a freed slot from a waiter", async ()
 		assert.deepEqual(order, ["A", "B", "D"], `D after ${ticks} microtasks`);
 	}
 });
+
+test("runnerGate: an aborted waiter does not block the next one", async () => {
+	const gate = runnerGate(() => 4);
+	const order: string[] = [];
+	let open = () => {};
+	const first = gate("device:A", () => new Promise<void>((r) => (open = () => { order.push("first"); r(); })));
+	const ac = new AbortController();
+	const second = gate("device:A", async () => { order.push("second"); }, ac.signal);
+	const third = gate("device:A", async () => { order.push("third"); });
+	await sleep(5);
+	ac.abort();
+	await assert.rejects(second, /aborted/);
+	assert.deepEqual(order, [], "the third still waits for the first");
+	open();
+	await Promise.all([first, third]);
+	assert.deepEqual(order, ["first", "third"]);
+});
+
+test("runnerGate: a slot wait stops on abort and frees nothing it does not hold", async () => {
+	const gate = runnerGate(() => 1);
+	let open = () => {};
+	const first = gate("none", () => new Promise<void>((r) => (open = r)));
+	const ac = new AbortController();
+	const second = gate("none", async () => 2, ac.signal);
+	await sleep(5);
+	ac.abort();
+	await assert.rejects(second, /aborted/);
+	open();
+	await first;
+	assert.equal(await gate("none", async () => 3), 3);
+});
+
+test("runnerGate: the file lock is taken after the resource wait and before the slot, and released", async () => {
+	const events: string[] = [];
+	const lock = async (r: string) => {
+		events.push(`lock ${r}`);
+		return { release: () => events.push(`unlock ${r}`) };
+	};
+	const gate = runnerGate(() => 1, lock);
+	await Promise.all([gate("device:A", async () => { events.push("run 1"); await sleep(5); }), gate("device:A", async () => { events.push("run 2"); }), gate("none", async () => { events.push("run none"); })]);
+	assert.deepEqual(events.filter((e) => e.includes("device")), ["lock device:A", "unlock device:A", "lock device:A", "unlock device:A"]);
+	assert.equal(events.filter((e) => e.startsWith("run")).length, 3);
+	assert.ok(!events.includes("lock none"));
+});

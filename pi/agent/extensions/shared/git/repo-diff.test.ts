@@ -5,7 +5,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { test } from "node:test";
-import { citeNames, collectRepoDiff, type RepoDiff, type RunGit, needsFinalFullReview, shouldSkipRepeatFullReview, uncitedFiles } from "./repo-diff.ts";
+import { citeNames, collectRepoDiff, defaultReviewBase, type RepoDiff, type RunGit, needsFinalFullReview, shouldSkipRepeatFullReview, uncitedFiles } from "./repo-diff.ts";
 
 const NUL = String.fromCharCode(0);
 
@@ -181,4 +181,43 @@ test("shouldSkipRepeatFullReview follows the share", () => {
 	assert.equal(shouldSkipRepeatFullReview(100, 1000, 0.1), true);
 	assert.equal(shouldSkipRepeatFullReview(101, 1000, 0.1), false);
 	assert.equal(shouldSkipRepeatFullReview(0, 1000, 0.1), true);
+});
+
+test("defaultReviewBase: merge-base with origin/HEAD, then origin/main, origin/master, else HEAD", async () => {
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "rd-base-"));
+	const remote = fs.mkdtempSync(path.join(os.tmpdir(), "rd-remote-"));
+	await git(remote, "init", "-q", "--bare", "-b", "trunk");
+	await git(dir, "init", "-q", "-b", "trunk");
+	assert.equal(await defaultReviewBase(git, dir), "HEAD", "no remote, no commits");
+	const commit = async (name: string) => {
+		fs.writeFileSync(path.join(dir, name), name);
+		await git(dir, "add", name);
+		await git(dir, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", name);
+		return (await git(dir, "rev-parse", "HEAD")).stdout.trim();
+	};
+	const first = await commit("a");
+	await git(dir, "remote", "add", "origin", remote);
+	await git(dir, "push", "-q", "origin", "trunk");
+	await git(dir, "fetch", "-q", "origin");
+	await git(dir, "remote", "set-head", "origin", "trunk");
+	await git(dir, "checkout", "-qb", "feature");
+	await commit("b");
+	assert.equal(await defaultReviewBase(git, dir), first, "origin/HEAD -> origin/trunk");
+	await git(dir, "remote", "set-head", "origin", "-d");
+	assert.equal(await defaultReviewBase(git, dir), "HEAD", "no origin/HEAD, no origin/main or origin/master");
+	await git(dir, "push", "-q", "origin", `${first}:refs/heads/master`);
+	await git(dir, "fetch", "-q", "origin");
+	assert.equal(await defaultReviewBase(git, dir), first, "falls back to origin/master");
+});
+
+test("defaultReviewBase: the order of the candidates (stubbed git)", async () => {
+	const calls: string[] = [];
+	const stub: RunGit = async (_cwd, ...args) => {
+		calls.push(args.join(" "));
+		if (args[0] === "symbolic-ref") return { code: 1, stdout: "" };
+		if (args[0] === "rev-parse") return { code: args[3] === "origin/main^{commit}" ? 0 : 1, stdout: "" };
+		return { code: 0, stdout: "abc\n" };
+	};
+	assert.equal(await defaultReviewBase(stub, "."), "abc");
+	assert.deepEqual(calls, ["symbolic-ref --quiet refs/remotes/origin/HEAD", "rev-parse --verify --quiet origin/main^{commit}", "merge-base HEAD origin/main"]);
 });

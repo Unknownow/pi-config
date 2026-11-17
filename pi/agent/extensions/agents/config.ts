@@ -1,6 +1,6 @@
 /**
- * agents.json lives next to workflow.json in ~/.pi/agent. Missing keys fall back to DEFAULTS and
- * unknown keys are ignored; `/agents model explore|advisor|runner ...` writes the roles back.
+ * agents.json lives in ~/.pi/agent. Missing keys fall back to DEFAULTS and unknown keys are ignored
+ * (`modelCost` is a free map and keeps every key); `/agents model <role> ...` writes the roles back.
  */
 
 import * as fs from "node:fs";
@@ -9,7 +9,7 @@ import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { KnowledgeConfig } from "./types.ts";
 import { type RoleSpec, THINKING_LEVELS } from "../shared/roles.ts";
 
-export const AGENT_ROLES = ["explore", "advisor", "runner"] as const;
+export const AGENT_ROLES = ["explore", "advisor", "runner", "judge", "critic"] as const;
 export type AgentRole = (typeof AGENT_ROLES)[number];
 
 /** The runner side of test_run. */
@@ -40,6 +40,15 @@ export interface AgentsConfig {
 		contextFiles: boolean;
 	};
 	advisor: { tools: string[]; maxTranscriptChars: number };
+	/** The code reviewer (runJudge and the judge tool). Diffs past maxDiffChars are fitted (fitDiffs). */
+	judge: { tools: string[]; maxDiffChars: number };
+	/** The document reviewer (runCritic and the critic tool). */
+	critic: { tools: string[] };
+	/**
+	 * Cost multiplier per model: a key matches when it is a case-insensitive substring of the model id,
+	 * longest key first; no match = 1.0. See cost.ts.
+	 */
+	modelCost: Record<string, number>;
 	test: TestRunConfig;
 	knowledge: KnowledgeConfig;
 	subagent: {
@@ -53,11 +62,16 @@ export interface AgentsConfig {
 export const DEFAULTS: AgentsConfig = {
 	roles: {
 		explore: { model: "claude-bridge/claude-haiku-5-5", thinking: "medium" },
-		advisor: { model: "claude-bridge/claude-opus-5-5", thinking: "high" },
+		advisor: { model: "claude-bridge/claude-opus-5-5", thinking: "medium" },
 		runner: { model: "claude-bridge/claude-haiku-5-5", thinking: "low" },
+		judge: { model: "claude-bridge/claude-opus-5-5", thinking: "medium" },
+		critic: { model: "claude-bridge/claude-opus-5-5", thinking: "medium" },
 	},
 	explore: { maxQueries: 8, concurrency: 8, tools: ["read", "grep", "find", "ls"], contextFiles: false },
 	advisor: { tools: ["read", "grep", "find", "ls"], maxTranscriptChars: 1_500_000 },
+	judge: { tools: ["read", "grep", "find", "ls"], maxDiffChars: 400_000 },
+	critic: { tools: ["read", "grep", "find", "ls"] },
+	modelCost: { haiku: 0.2, sonnet: 0.6, opus: 1.0 },
 	test: {
 		concurrency: 4,
 		maxTasks: 8,
@@ -73,7 +87,7 @@ export const DEFAULTS: AgentsConfig = {
 	},
 	knowledge: {
 		server: "knowledge",
-		roles: ["explore", "advisor"],
+		roles: ["explore", "advisor", "judge", "critic"],
 		tools: ["search", "get_entry", "get_rule_pack", "get_schema", "status"],
 		env: { KNOWLEDGE_OFFLINE: "1" },
 		judgeCheck: true,
@@ -100,7 +114,8 @@ function merge<T>(base: T, over: unknown): T {
 	return out as T;
 }
 
-type Loaded = { config: AgentsConfig; error?: string };
+/** `error`: the file could not be read, defaults are used. `warning`: one setting fell back to its default. */
+type Loaded = { config: AgentsConfig; error?: string; warning?: string };
 let cache: { file: string; key: string; result: Loaded } | null = null;
 
 /** Parsed again only when the file's mtime, ctime or size changed; `saveRole` clears the cache. */
@@ -126,6 +141,8 @@ function parseConfig(file: string): Loaded {
 	try {
 		const raw: unknown = JSON.parse(fs.readFileSync(file, "utf8"));
 		const config = merge(DEFAULTS, raw);
+		const cost = parseModelCost(isObject(raw) ? raw.modelCost : undefined);
+		config.modelCost = cost.table;
 		for (const r of AGENT_ROLES) {
 			const spec = config.roles[r];
 			if (typeof spec?.model !== "string" || !spec.model) config.roles[r] = DEFAULTS.roles[r];
@@ -139,6 +156,10 @@ function parseConfig(file: string): Loaded {
 		const a = config.advisor;
 		if (!strings(a.tools)) a.tools = DEFAULTS.advisor.tools;
 		if (!num(a.maxTranscriptChars, 1000)) a.maxTranscriptChars = DEFAULTS.advisor.maxTranscriptChars;
+		const j = config.judge;
+		if (!strings(j.tools)) j.tools = DEFAULTS.judge.tools;
+		if (!num(j.maxDiffChars, 1000)) j.maxDiffChars = DEFAULTS.judge.maxDiffChars;
+		if (!strings(config.critic.tools)) config.critic.tools = DEFAULTS.critic.tools;
 		const t = config.test;
 		if (!num(t.concurrency, 1)) t.concurrency = DEFAULTS.test.concurrency;
 		if (!num(t.maxTasks, 1, 16)) t.maxTasks = DEFAULTS.test.maxTasks;
@@ -153,10 +174,22 @@ function parseConfig(file: string): Loaded {
 		if (!strings(s.extensions)) s.extensions = DEFAULTS.subagent.extensions;
 		if (typeof s.timeoutMs !== "number" || !Number.isFinite(s.timeoutMs) || s.timeoutMs <= 0) s.timeoutMs = DEFAULTS.subagent.timeoutMs;
 		if (typeof s.idleTimeoutMs !== "number" || !Number.isFinite(s.idleTimeoutMs) || s.idleTimeoutMs < 0) s.idleTimeoutMs = DEFAULTS.subagent.idleTimeoutMs;
-		return { config };
+		return cost.warning ? { config, warning: `${file}: ${cost.warning}` } : { config };
 	} catch (err) {
 		return { config: DEFAULTS, error: `${file}: ${(err as Error).message}` };
 	}
+}
+
+/**
+ * `modelCost` as written: a map of finite numbers >= 0, every key kept. Missing = the defaults; anything
+ * else invalid = the defaults with a warning.
+ */
+export function parseModelCost(raw: unknown): { table: Record<string, number>; warning?: string } {
+	if (raw === undefined) return { table: { ...DEFAULTS.modelCost } };
+	if (!isObject(raw) || Object.values(raw).some((v) => typeof v !== "number" || !Number.isFinite(v) || v < 0)) {
+		return { table: { ...DEFAULTS.modelCost }, warning: "modelCost must map model-id parts to numbers >= 0; using the defaults" };
+	}
+	return { table: { ...(raw as Record<string, number>) } };
 }
 
 /** Updates one role in agents.json, leaving the rest of the file as it was. */

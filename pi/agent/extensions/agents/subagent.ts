@@ -3,7 +3,7 @@
  * own model, thinking level, tools and context window.
  *
  * Sub-processes start with `--no-extensions` and load only the extensions
- * listed in agents.json or workflow.json (`subagent.extensions`, normally just the provider).
+ * listed in agents.json (`subagent.extensions`, normally just the provider).
  * That keeps the pi-config sync extension from pulling and importing on every
  * subagent start, and keeps this extension from recursing into itself.
  */
@@ -28,7 +28,7 @@ export interface RunOptions {
 	/** Ends the run after this long without output while no tool runs; 0 or unset turns it off. */
 	idleTimeoutMs?: number;
 	signal?: AbortSignal;
-	/** Live activity, for the workflow view. */
+	/** Live activity, for the caller's run rows. */
 	onEvent?: (event: SubagentEvent) => void;
 	/** MCP servers to connect in the subagent (name -> config), registered by `extension` (mcp-forward.ts). */
 	mcp?: { servers: Record<string, Record<string, unknown>>; extension: string };
@@ -196,7 +196,7 @@ function lastAssistantText(messages: Message[]): string {
 }
 
 export async function runSubagent(opts: RunOptions): Promise<RunResult> {
-	const tmp = await fs.promises.mkdtemp(path.join(os.tmpdir(), "pi-workflow-"));
+	const tmp = await fs.promises.mkdtemp(path.join(os.tmpdir(), "pi-agents-"));
 	const result: RunResult = { ok: false, text: "", turns: 0, usage: emptyUsage(), toolCalls: [] };
 	const messages: Message[] = [];
 
