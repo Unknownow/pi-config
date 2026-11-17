@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { test } from "node:test";
+import { AGENTS_EXTENSION, FORWARD_EXTENSION } from "../agents/api.ts";
 import { LfParser, RpcWorker, workerArgs } from "./rpc.ts";
 
 test("LfParser keeps U+2028 and U+2029 inside a record, strips CR, and joins split chunks", () => {
@@ -62,12 +63,14 @@ test("workerArgs: the exact -e list, no other extension", () => {
 	const a = workerArgs(base);
 	assert.deepEqual(a.slice(0, 5), ["--mode", "rpc", "-ne", "-ns", "-np"]);
 	const es = (args: string[]) => args.flatMap((x, i) => (args[i - 1] === "-e" ? [x] : []));
-	assert.equal(es(a).length, 1);
+	assert.equal(es(a).length, 2);
 	assert.match(es(a)[0], /worker\.ts$/);
+	assert.equal(es(a)[1], AGENTS_EXTENSION, "the agents extension (explore, advisor, test_run)");
 	assert.deepEqual(a.slice(a.indexOf("--session-dir"), a.indexOf("--session-dir") + 2), ["--session-dir", "/s"]);
 	assert.ok(!a.includes("-c") && !a.includes("-a") && !a.includes("-na"));
 	const b = workerArgs({ ...base, extensions: ["/x/e.ts"], mcp: { knowledge: {} }, resume: true, trusted: false, thinking: "medium" });
-	assert.deepEqual(es(b).map((x) => x.replace(/^.*[\\/]/, "")), ["worker.ts", "e.ts", "builtin:mcp", "mcp-forward.ts"]);
+	assert.deepEqual(es(b).map((x) => x.replace(/^.*[\\/]/, "")), ["worker.ts", "index.ts", "e.ts", "builtin:mcp", "mcp-forward.ts"]);
+	assert.equal(es(b)[4], FORWARD_EXTENSION, "agents' mcp-forward.ts (it reads PI_AGENTS_MCP)");
 	assert.ok(b.includes("-c") && b.includes("-na") && b.includes("--thinking"));
 	assert.ok(workerArgs({ ...base, trusted: true }).includes("-a"));
 });

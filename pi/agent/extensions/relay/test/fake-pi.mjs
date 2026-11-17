@@ -1,12 +1,12 @@
-// A scripted stand-in for `pi`, used with RELAY_PI_BIN. One file serves the RPC worker (--mode rpc) and the
-// json-mode critic and judge (--mode json), switching on --mode.
+// A scripted stand-in for `pi` as the RPC worker (--mode rpc), used with RELAY_PI_BIN. The judge and critic are
+// agents runs: test/env.ts `scriptedReviewer` plays their entries of the same script (the engine's runReviewer).
 //
 // FAKE_PI_SCRIPT points to a JSON file:
 //   { "worker": [ turn, ... ], "judge": [ text | {text, delayMs}, ... ], "critic": [ text | {text, delayMs}, ... ] }
 // A turn: { "write": [{file, content}], "ask": {question} | {approval:{category,item,why}}, "done": "summary", "crash": true, "hang": true,
 //           "delayMs": n (a pause before the writes), "tool": {name, args, hang: true} (a tool that starts and never ends) }
 // Every RPC command is logged to <script>.cmds.jsonl; a steer or follow_up that arrives during a turn stays queued (get_state shows it, clear_queue empties it).
-// Each prompt consumes the next turn (the last one repeats). Judge and critic runs consume the next text the same way.
+// Each prompt consumes the next turn (the last one repeats). Judge and critic runs consume the next text the same way (in env.ts).
 // State (counters) lives in <script>.state.json; every start is logged to <script>.calls.jsonl.
 import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
@@ -33,20 +33,12 @@ const next = (key, list) => {
 };
 const modeAt = argv.indexOf("--mode");
 const mode = modeAt >= 0 ? argv[modeAt + 1] : "";
-const sysPrompts = argv.flatMap((a, i) => (argv[i - 1] === "--append-system-prompt" ? [fs.readFileSync(a, "utf8")] : []));
-const role = (sysPrompts.join("\n").match(/relay-role:\s*(\w+)/) ?? [])[1] ?? (mode === "rpc" ? "worker" : "unknown");
-if (scriptFile) fs.appendFileSync(`${scriptFile}.calls.jsonl`, `${JSON.stringify({ mode, role, args: argv, cwd: process.cwd(), env: { RELAY_ROLE: process.env.RELAY_ROLE, RELAY_JOB: process.env.RELAY_JOB } })}\n`);
+const role = mode === "rpc" ? "worker" : "unknown";
+const ENV_KEYS = ["RELAY_ROLE", "RELAY_JOB", "PI_AGENTS_TOOLS", "PI_AGENTS_ADVISOR_CAP", "PI_AGENTS_USAGE_FILE", "PI_AGENTS_MCP"];
+if (scriptFile) fs.appendFileSync(`${scriptFile}.calls.jsonl`, `${JSON.stringify({ mode, role, args: argv, cwd: process.cwd(), env: Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]])) })}\n`);
 
 const usage = { input: 100, output: 50, cacheRead: 0, cacheWrite: 0, totalTokens: 150, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
 const out = (o) => process.stdout.write(`${JSON.stringify(o)}\n`);
-
-if (mode === "json") {
-	const item = next(role, script[role]) ?? "VERDICT: PASS";
-	const text = typeof item === "string" ? item : item.text;
-	if (item.delayMs) await new Promise((r) => setTimeout(r, item.delayMs));
-	out({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text }], usage, model: "fake", stopReason: "stop" } });
-	process.exit(0);
-}
 
 // ---- rpc worker
 const jobDir = process.env.RELAY_JOB_DIR;

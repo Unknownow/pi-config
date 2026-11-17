@@ -7,6 +7,7 @@ import { allowed, classifyCommand, pathCategory } from "./authority.ts";
 import { type AuthorityItem, parseBrief } from "./brief.ts";
 import type { Category } from "./config.ts";
 import { normPath } from "./glob.ts";
+import { fileGlobs, FILES_HINT, outsideFiles } from "./files.ts";
 import { type Approval, readJob } from "./job.ts";
 import { findReply, inboxPath } from "./mailbox.ts";
 
@@ -21,6 +22,8 @@ export interface GuardFacts {
 	sensitivePaths: string[];
 	authority: Partial<Record<Category, AuthorityItem>>;
 	approvals: Approval[];
+	/** The job's `## Files` globs plus the snapshot paths and the approved `files` items; undefined when the brief has no Files section. */
+	files?: string[];
 }
 
 const HINT = " Use ask_lead (with `approval` when you need a sensitive action approved); relay does outward actions itself.";
@@ -95,10 +98,20 @@ export function workerPathProblem(file: string, cwd: string, f: GuardFacts): str
 	const home = (f.worktrees ?? []).map((w) => path.resolve(w)).filter((w) => abs.toLowerCase().startsWith(`${w.toLowerCase()}${path.sep}`)).sort((a, b) => b.length - a.length)[0];
 	const rel = normPath(path.relative(home ?? cwd, abs));
 	if (rel.startsWith("../")) return undefined;
+	if (f.files && outsideFiles([rel], f.files).length) return `${rel} is outside the brief's Files (${f.files.join(", ") || "none"}): ${FILES_HINT} first, or keep to the listed paths.`;
 	const cat = pathCategory(rel, f.sensitivePaths);
 	if (!cat) return undefined;
 	if (allowed(cat, rel, f)) return undefined;
 	return `${rel} is a sensitive path (${cat}): ask_lead with approval {category: "${cat}", item: "${rel}", why} first.`;
+}
+
+/** The changed paths (`git status --porcelain` of each job repo, repo-relative) outside the job's Files, as a warning for the worker; undefined when none. */
+export function filesWarning(changed: { repo: string; paths: string[] }[], f: GuardFacts): string | undefined {
+	if (!f.files) return undefined;
+	const multi = changed.length > 1;
+	const out = changed.flatMap((c) => outsideFiles(c.paths, f.files!).map((p) => (multi ? `${c.repo}: ${p}` : p)));
+	if (!out.length) return undefined;
+	return `Warning: these changed paths are outside the brief's Files, and the judge round fails while they are in the diff:\n${out.map((p) => `- ${p}`).join("\n")}\nRevert them, or ${FILES_HINT}.`;
 }
 
 /** The guard's facts, read fresh each call so approvals take effect at once. */
@@ -117,7 +130,9 @@ export function loadFacts(dir: string): GuardFacts {
 	} catch {
 		// no brief: nothing is authorised
 	}
-	return { branches: job?.repos.map((r) => r.branch) ?? [], bases: job?.repos.map((r) => r.base) ?? [], worktrees: job?.repos.map((r) => r.worktree) ?? [], sensitivePaths: sensitive, authority, approvals: job?.approvals ?? [] };
+	const approvals = job?.approvals ?? [];
+	const files = fileGlobs(dir, approvals);
+	return { branches: job?.repos.map((r) => r.branch) ?? [], bases: job?.repos.map((r) => r.base) ?? [], worktrees: job?.repos.map((r) => r.worktree) ?? [], sensitivePaths: sensitive, authority, approvals, ...(files ? { files } : {}) };
 }
 
 

@@ -9,8 +9,7 @@ import { toolSummary } from "./engine.ts";
 import { filesOverlap } from "./glob.ts";
 import { appendLog, type Job, readJob, stackState } from "./job.ts";
 import { run } from "./sh.ts";
-import { runSubagent } from "./subagent.ts";
-import { brief, type World, waitFor, world } from "./test/env.ts";
+import { brief, reviewerRole, scriptedReviewer, type World, waitFor, world } from "./test/env.ts";
 import { cleanup, git, makeRepo, tmpDir } from "./test/helpers.ts";
 
 const PASS = "VERDICT: PASS";
@@ -240,8 +239,8 @@ test("relay_add_repo: a repo joins a running job; the worker is told; the judge 
 	const tasks: string[] = [];
 	const w = world({}, undefined, {
 		runReviewer: (o) => {
-			if (/relay-role: judge/.test(o.systemPrompts.join(nl))) tasks.push(o.task);
-			return runSubagent(o);
+			if (reviewerRole(o) === "judge") tasks.push(o.task);
+			return scriptedReviewer(o);
 		},
 	});
 	try {

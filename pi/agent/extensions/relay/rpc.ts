@@ -3,9 +3,8 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { FORWARD_ENV } from "./mcp-forward.ts";
+import { AGENTS_EXTENSION, expandHome, FORWARD_ENV, FORWARD_EXTENSION } from "../agents/api.ts";
 import { piCommand } from "./pi-bin.ts";
-import { expandHome } from "./subagent.ts";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -44,16 +43,19 @@ export interface WorkerOpts {
 	trusted?: boolean;
 	/** relay.json `worker.extensions`. */
 	extensions: string[];
-	/** Forward the knowledge MCP: `-e builtin:mcp -e mcp-forward.ts` and the servers. */
+	/** Forward the knowledge MCP: `-e builtin:mcp -e <agents mcp-forward.ts>` and the servers (agents `PI_AGENTS_MCP`). */
 	mcp?: Record<string, Record<string, unknown>>;
 	env: Record<string, string>;
 }
 
-/** The pi arguments for a worker. The `-e` list is exactly worker.ts, the configured extensions, and (with `mcp`) builtin:mcp and mcp-forward.ts. */
+/**
+ * The pi arguments for a worker. The `-e` list is exactly worker.ts, the agents extension (its tools are picked by
+ * `PI_AGENTS_TOOLS` in the env), the configured extensions, and (with `mcp`) builtin:mcp and agents' mcp-forward.ts.
+ */
 export function workerArgs(o: WorkerOpts): string[] {
-	const a = ["--mode", "rpc", "-ne", "-ns", "-np", "-e", path.join(here, "worker.ts")];
+	const a = ["--mode", "rpc", "-ne", "-ns", "-np", "-e", path.join(here, "worker.ts"), "-e", AGENTS_EXTENSION];
 	for (const e of o.extensions) a.push("-e", expandHome(e));
-	if (o.mcp) a.push("-e", "builtin:mcp", "-e", path.join(here, "mcp-forward.ts"));
+	if (o.mcp) a.push("-e", "builtin:mcp", "-e", FORWARD_EXTENSION);
 	a.push("--session-dir", o.sessionDir);
 	if (o.resume) a.push("-c");
 	a.push("--model", o.model);

@@ -1,9 +1,10 @@
-// node --experimental-strip-types --test engine.test.ts
-// The engine end to end with the fake pi (RELAY_PI_BIN): a scripted RPC worker, critic and judge, a fake worktree extension, real git repos with a bare origin.
+// node --experimental-strip-types --import ../agents/test-hooks.ts --test engine.test.ts
+// The engine end to end: the fake pi (RELAY_PI_BIN) as a scripted RPC worker, the scripted judge and critic as agents' runner, a fake worktree extension, real git repos with a bare origin.
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { test } from "node:test";
+import { AGENTS_EXTENSION, FORWARD_EXTENSION } from "../agents/api.ts";
 import { listJobs, readJob } from "./job.ts";
 import { git } from "./test/helpers.ts";
 import { brief, waitFor, world } from "./test/env.ts";
@@ -35,8 +36,9 @@ test("dispatch -> FAIL -> fix -> PASS -> delivery to the bare remote -> report.m
 		assert.equal(job.state, "done");
 		assert.equal(job.lastVerdict?.verdict, "PASS");
 		assert.equal(job.lastVerdict?.round, 2);
-		// worker and judge usage both count against the budget: two worker turns and two judge runs, 350 weighted tokens each
-		assert.ok(job.used.tokens >= 4 * 350, String(job.used.tokens));
+		// worker and judge usage both count against the budget, each through agents costOf (350 weighted tokens a run x the model
+		// multiplier): two worker turns on the normal worker (Sonnet, 0.6) and two judge runs (model "fake", 1.0)
+		assert.equal(job.used.tokens, 2 * 350 * 0.6 + 2 * 350);
 		// the bare remote's main has the job's files, including the lead's edits
 		const check = path.join(path.dirname(w.script), "check");
 		git(path.dirname(w.script), "clone", "-q", w.bare, check);
@@ -68,15 +70,20 @@ test("dispatch -> FAIL -> fix -> PASS -> delivery to the bare remote -> report.m
 		for (const f of ["-ne", "-ns", "-np", "--session-dir"]) assert.ok(rpc.args.includes(f), f);
 		assert.equal(rpc.env.RELAY_ROLE, "worker");
 		const es = rpc.args.flatMap((a: string, i: number) => (rpc.args[i - 1] === "-e" ? [a] : []));
-		assert.equal(es.length, 1);
+		assert.equal(es.length, 2);
 		assert.match(es[0], /worker\.ts$/);
+		assert.equal(es[1], AGENTS_EXTENSION);
 		assert.ok(!rpc.args.includes("builtin:mcp"));
+		// the worker's agents tools: explore, advisor (3 per job) and test_run, their usage in the job dir
+		assert.equal(rpc.env.PI_AGENTS_TOOLS, "explore,advisor,test_run");
+		assert.equal(rpc.env.PI_AGENTS_ADVISOR_CAP, "3");
+		assert.equal(rpc.env.PI_AGENTS_USAGE_FILE, path.join(jr.dir, "agents-usage.jsonl"));
 	} finally {
 		w.end();
 	}
 });
 
-test("worker.extensions are in the -e list after worker.ts; builtin:mcp and mcp-forward only with knowledge", async () => {
+test("worker.extensions are in the -e list after worker.ts and agents; builtin:mcp and agents' mcp-forward only with knowledge", async () => {
 	const w = world({ worker: { extensions: ["/x/ext.ts"] } }, undefined, { mcpServers: () => [{ name: "knowledge", config: { command: "node", args: [] } }] });
 	try {
 		w.write({ worker: [{ write: [{ file: "greeting.txt", content: "hello\n" }], done: "ok" }], judge: [PASS] });
@@ -87,10 +94,15 @@ test("worker.extensions are in the -e list after worker.ts; builtin:mcp and mcp-
 		const rpc = w.calls().find((c) => c.mode === "rpc")!;
 		const es = rpc.args.flatMap((a: string, i: number) => (rpc.args[i - 1] === "-e" ? [a] : []));
 		assert.match(es[0], /worker\.ts$/);
-		assert.equal(es[1], "/x/ext.ts");
-		assert.equal(es[2], "builtin:mcp");
-		assert.match(es[3], /mcp-forward\.ts$/);
-		assert.equal(es.length, 4);
+		assert.equal(es[1], AGENTS_EXTENSION);
+		assert.equal(es[2], "/x/ext.ts");
+		assert.equal(es[3], "builtin:mcp");
+		assert.equal(es[4], FORWARD_EXTENSION);
+		assert.equal(es.length, 5);
+		// the knowledge MCP is forwarded in agents' env variable, with relay.json's worker knowledge
+		const fwd = JSON.parse(rpc.env.PI_AGENTS_MCP);
+		assert.deepEqual(Object.keys(fwd), ["knowledge"]);
+		assert.equal(fwd.knowledge.env.KNOWLEDGE_OFFLINE, "1");
 	} finally {
 		w.end();
 	}

@@ -13,10 +13,11 @@ export const RELAY_SUBS: Sub[] = [
 	{ value: "resume", arg: "<job>", description: "resume a paused job" },
 	{ value: "followup", arg: "<job> <text>", description: "send a follow-up task to a finished job" },
 	{ value: "log", arg: "<job> [n]", description: "the last n log lines of a job (default 20)" },
-	{ value: "model", arg: "<role> <provider/id[:thinking]>", description: "set the model of a relay role" },
+	{ value: "model", arg: "<role> <provider/id[:thinking]>", description: "set the model of the escalate or a worker role (judge and critic: /agents model)" },
 ];
 
-export const RELAY_ROLES = ["critic", "judge", "escalate", "worker.small", "worker.normal", "worker.large"] as const;
+/** Relay's own roles; the judge and critic are agents roles (agents.json, `/agents model`). */
+export const RELAY_ROLES = ["escalate", "worker.small", "worker.normal", "worker.large"] as const;
 
 /** Subcommands that take a job id as their first argument. */
 const JOB_SUBS = ["stop", "pause", "resume", "followup", "log"];

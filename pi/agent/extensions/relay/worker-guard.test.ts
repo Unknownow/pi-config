@@ -3,10 +3,13 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { test } from "node:test";
-import { reviewerRefusal } from "./reviewer.ts";
 import { append, inboxPath } from "./mailbox.ts";
-import { DEFAULT_SENSITIVE_PATHS } from "./config.ts";
-import { loadFacts, waitReply, workerCommandProblem, workerPathProblem, type GuardFacts } from "./worker-guard.ts";
+import { allowed } from "./authority.ts";
+import { checkBrief } from "./brief.ts";
+import { APPROVAL_CATEGORIES, CATEGORIES, DEFAULT_SENSITIVE_PATHS } from "./config.ts";
+import { porcelainPaths, writeFilesGuard } from "./files.ts";
+import { filesWarning, loadFacts, waitReply, workerCommandProblem, workerPathProblem, type GuardFacts } from "./worker-guard.ts";
+import { brief } from "./test/env.ts";
 import { cleanup, tmpDir } from "./test/helpers.ts";
 
 const facts = (over: Partial<GuardFacts> = {}): GuardFacts => ({ branches: ["wt/r1"], bases: ["abcdef1234567890"], sensitivePaths: DEFAULT_SENSITIVE_PATHS, authority: {}, approvals: [], ...over });
@@ -88,9 +91,48 @@ test("waitReply returns the reply, and undefined when aborted", async () => {
 	cleanup(d);
 });
 
-test("reviewer: only reading tools and the listed knowledge tools", () => {
-	for (const t of ["read", "grep", "find", "ls"]) assert.equal(reviewerRefusal(t), undefined);
-	for (const t of ["bash", "edit", "write", "run_code"]) assert.match(reviewerRefusal(t) ?? "", /not available to a reviewer/);
-	assert.equal(reviewerRefusal("mcp__knowledge__search", ["mcp__knowledge__search"]), undefined);
-	assert.match(reviewerRefusal("mcp__knowledge__propose_entry", ["mcp__knowledge__search"]) ?? "", /not available/);
+test("## Files: an edit or write outside the globs is refused with a pointer to ask_lead; inside, or with no Files section, it passes", () => {
+	const cwd = path.resolve("/w/set");
+	const f = facts({ worktrees: [cwd], files: ["src/**", "README.md"] });
+	assert.equal(workerPathProblem("src/a/b.ts", cwd, f), undefined);
+	assert.equal(workerPathProblem("README.md", cwd, f), undefined);
+	const why = workerPathProblem("docs/x.md", cwd, f) ?? "";
+	assert.match(why, /docs\/x\.md is outside the brief's Files \(src\/\*\*, README\.md\)/);
+	assert.match(why, /ask_lead with approval \{category: "files", item: "<glob>", why\}/);
+	assert.equal(workerPathProblem("docs/x.md", cwd, facts({ worktrees: [cwd] })), undefined, "no Files section: no limit");
+	// an approved files item is part of the globs (loadFacts puts it there)
+	assert.equal(workerPathProblem("docs/x.md", cwd, facts({ worktrees: [cwd], files: ["src/**", "docs/**"] })), undefined);
+});
+
+test("## Files: loadFacts reads files.json and the approved files items on every call; the snapshot paths count", () => {
+	const d = tmpDir();
+	fs.writeFileSync(path.join(d, "job.json"), JSON.stringify({ v: 1, id: "r1", repos: [], approvals: [] }));
+	assert.equal(loadFacts(d).files, undefined, "no files.json: no Files limit");
+	writeFilesGuard(d, ["src/**"], ["lead-edit.txt"]);
+	assert.deepEqual(loadFacts(d).files, ["src/**", "lead-edit.txt"]);
+	// an approval mid-job applies at once
+	fs.writeFileSync(path.join(d, "job.json"), JSON.stringify({ v: 1, id: "r1", repos: [], approvals: [{ category: "files", item: "docs/**", by: "lead" }, { category: "deps", item: "x", by: "lead" }] }));
+	assert.deepEqual(loadFacts(d).files, ["src/**", "lead-edit.txt", "docs/**"]);
+	cleanup(d);
+});
+
+test("## Files: the bash warning lists the changed paths outside the globs, per repo in a multi-repo job", () => {
+	const f = facts({ files: ["src/**"] });
+	assert.equal(filesWarning([{ repo: "A", paths: ["src/a.ts"] }], f), undefined);
+	assert.equal(filesWarning([{ repo: "A", paths: ["x.ts"] }], facts()), undefined, "no Files section: no warning");
+	const one = filesWarning([{ repo: "A", paths: ["src/a.ts", "x.ts"] }], f) ?? "";
+	assert.match(one, /outside the brief's Files[\s\S]*\n- x\.ts\n[\s\S]*category: "files"/);
+	assert.ok(!one.includes("src/a.ts"));
+	assert.match(filesWarning([{ repo: "A", paths: ["x.ts"] }, { repo: "B", paths: ["y.ts"] }], f) ?? "", /- A: x\.ts\n- B: y\.ts/);
+	assert.deepEqual(porcelainPaths(" M src/a.ts\n?? new file.txt\nR  old.ts -> src/new.ts\n?? \"q t.txt\"\n"), ["src/a.ts", "new file.txt", "src/new.ts", "q t.txt"]);
+});
+
+test("the files approval category: asked through ask_lead and approved like the others; never an Authority line", () => {
+	assert.deepEqual([...APPROVAL_CATEGORIES], [...CATEGORIES, "files"]);
+	assert.ok(!(CATEGORIES as readonly string[]).includes("files"));
+	// a brief without a files: Authority line still validates
+	assert.ok(!("errors" in checkBrief(brief({ repo: "R" }))));
+	assert.ok("errors" in checkBrief(brief({ repo: "R", authority: { files: "yes" } })), "files is not an Authority category");
+	assert.equal(allowed("files", "docs/**", { authority: {}, approvals: [{ at: "", item: "docs/**", category: "files", by: "lead", reason: "" }] }), true);
+	assert.equal(allowed("files", "docs/**", { authority: {}, approvals: [] }), false);
 });

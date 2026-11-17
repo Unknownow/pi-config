@@ -6,7 +6,7 @@ import * as path from "node:path";
 import { test } from "node:test";
 import { defaultShell } from "./engine.ts";
 import { emptyJob, type Job } from "./job.ts";
-import { gateCheck } from "./merge-gate.ts";
+import { gateCheck } from "../shared/git/merge-gate.ts";
 import { parseConfig } from "./config.ts";
 import { run } from "./sh.ts";
 import { deliverStep, mergeAllowed, pushJobBranch, verifyCommands } from "./steps/deliver.ts";

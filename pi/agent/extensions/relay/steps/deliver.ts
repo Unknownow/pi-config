@@ -4,9 +4,8 @@ import { type AuthorityItem, parseBrief } from "../brief.ts";
 import { repoPolicy } from "../config.ts";
 import { dropSnapshotBranch } from "../snapshot.ts";
 import { type Job, type RepoState, stackState } from "../job.ts";
-import { gateCheck } from "../merge-gate.ts";
-import { originRepo } from "../merge-gate.ts";
-import { type PushContext, pushProblem } from "../push-guard.ts";
+import { gateCheck, originRepo } from "../../shared/git/merge-gate.ts";
+import { type PushContext, pushProblem } from "../../shared/git/push-guard.ts";
 import { backToWork, failRound, workAmendments } from "./loop.ts";
 import type { Step, StepCtx } from "../types.ts";
 

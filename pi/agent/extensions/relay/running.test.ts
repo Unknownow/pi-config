@@ -7,9 +7,8 @@ import * as path from "node:path";
 import { test } from "node:test";
 import { listJobs, readJob, writeJob } from "./job.ts";
 import { run } from "./sh.ts";
-import { runSubagent } from "./subagent.ts";
 import { git, tmpDir } from "./test/helpers.ts";
-import { brief, type World, waitFor, world } from "./test/env.ts";
+import { brief, reviewerRole, scriptedReviewer, type World, waitFor, world } from "./test/env.ts";
 
 const FAIL = "- major - [bug] `greeting.txt:1` wrong greeting fix: auto\n  Why: it should say hello.\n  Fix: say hello.\n\nVERDICT: FAIL";
 const PASS = "VERDICT: PASS";
@@ -425,8 +424,8 @@ function followWorld(cfg: object = {}, script: object) {
 	const tasks: string[] = [];
 	const w = world(cfg, undefined, {
 		runReviewer: (o) => {
-			if (/relay-role: judge/.test(o.systemPrompts.join("\n"))) tasks.push(o.task);
-			return runSubagent(o);
+			if (reviewerRole(o) === "judge") tasks.push(o.task);
+			return scriptedReviewer(o);
 		},
 	});
 	w.write(script);

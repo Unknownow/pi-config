@@ -1,32 +1,31 @@
 /**
- * relay.json: roles, limits and repo policies. Pure: the file path comes from the caller
+ * relay.json: the worker roles, limits and repo policies. The judge and critic are agents roles: their models,
+ * diff limit and knowledge come from agents.json (`/agents model`). Pure: the file path comes from the caller
  * (`RELAY_CONFIG`, else `<agent dir>/relay.json`, see `configPath`), so tests need no pi package.
  * Invalid keys fall back to their defaults and add a warning.
  */
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { DEFAULT_TOKEN_WEIGHTS, type TokenWeights } from "../shared/tokens.ts";
 import { parseRoleSpec, type RoleSpec, THINKING_LEVELS, type Thinking } from "../shared/roles.ts";
 
 export type Size = "small" | "normal" | "large";
 export type MergeMode = "after-pass" | "pr-only";
 export const CATEGORIES = ["merge", "publish", "comments", "delete", "formats", "deps"] as const;
 export type Category = (typeof CATEGORIES)[number];
+/** What a worker may ask approval for: the Authority categories plus `files` (a path outside the brief's `## Files`). Not an Authority line. */
+export const APPROVAL_CATEGORIES = [...CATEGORIES, "files"] as const;
+export type ApprovalCategory = (typeof APPROVAL_CATEGORIES)[number];
 
+/** The worker's knowledge tools (the reviewers' knowledge is agents.json `knowledge`). */
 export interface KnowledgeConfig {
 	server: string;
-	roles: string[];
 	tools: string[];
 	env: Record<string, string>;
-	judgeCheck: boolean;
 }
 
-export interface ReviewRole extends RoleSpec {
-	/** Prompt file, relative to the relay folder unless absolute. */
-	prompt: string;
-	tools: string[];
-}
+/** Keys that moved to agents.json; an old relay.json that has them gets one warning. */
+const MOVED_KEYS = ["roles.judge", "roles.critic", "reviewer", "judge", "tokenWeights", "knowledge.roles", "knowledge.judgeCheck"];
 
 export interface RepoPolicy {
 	merge: MergeMode;
@@ -36,7 +35,7 @@ export interface RepoPolicy {
 
 export interface RelayConfig {
 	active: boolean;
-	roles: { critic: ReviewRole; judge: ReviewRole; escalate: RoleSpec; worker: Record<Size, RoleSpec> };
+	roles: { escalate: RoleSpec; worker: Record<Size, RoleSpec> };
 	editBudget: { lines: number; files: number };
 	maxJobs: number;
 	caps: { critic: number; judge: number; escalate: number; replans: number };
@@ -45,14 +44,10 @@ export interface RelayConfig {
 	bashTimeoutMin: number;
 	toolTimeouts: { pattern: string; minutes: number }[];
 	worker: { extensions: string[] };
-	/** Extensions the critic and judge processes load next to reviewer.ts (normally just the model provider). */
-	reviewer: { extensions: string[] };
 	repos: Record<string, Partial<RepoPolicy>>;
 	defaultMerge: MergeMode;
 	askUser: Category[];
 	knowledge: KnowledgeConfig;
-	judge: { maxDiffChars: number };
-	tokenWeights: TokenWeights;
 	/** The typed-"go" pattern (copied from workflow.json `approvePattern`). */
 	approvePattern: string;
 	defaults: { protectedBranches: string[]; sensitivePaths: string[] };
@@ -63,10 +58,8 @@ export const DEFAULT_SENSITIVE_PATHS = ["**/package.json", "**/package-lock.json
 const opus = (thinking: Thinking): RoleSpec => ({ model: "claude-bridge/claude-opus-5-5", thinking });
 
 export const DEFAULTS: RelayConfig = {
-	active: true,
+	active: false,
 	roles: {
-		critic: { ...opus("high"), prompt: "prompts/critic.md", tools: ["read", "grep", "find", "ls"] },
-		judge: { ...opus("high"), prompt: "prompts/judge.md", tools: ["read", "grep", "find", "ls"] },
 		escalate: opus("high"),
 		worker: {
 			small: { model: "claude-bridge/claude-haiku-5-5", thinking: "medium" },
@@ -77,24 +70,19 @@ export const DEFAULTS: RelayConfig = {
 	editBudget: { lines: 40, files: 3 },
 	maxJobs: 3,
 	caps: { critic: 3, judge: 3, escalate: 2, replans: 1 },
-	budget: { wallMin: 120, tokens: 4_000_000, graceMin: 30, graceTokenShare: 0.1 },
+	budget: { wallMin: 120, tokens: 8_000_000, graceMin: 30, graceTokenShare: 0.1 },
 	stallMin: 10,
 	bashTimeoutMin: 60,
 	toolTimeouts: [],
 	worker: { extensions: [] },
-	reviewer: { extensions: [] },
 	repos: {},
 	defaultMerge: "after-pass",
 	askUser: [],
 	knowledge: {
 		server: "knowledge",
-		roles: ["critic", "judge"],
 		tools: ["search", "get_entry", "get_rule_pack", "get_schema", "status"],
 		env: { KNOWLEDGE_OFFLINE: "1" },
-		judgeCheck: true,
 	},
-	judge: { maxDiffChars: 400_000 },
-	tokenWeights: { ...DEFAULT_TOKEN_WEIGHTS },
 	approvePattern:
 		"^((ok(ay)?|yes|yeah|yep|sure|alright|fine|great|good)[,.! ]+)?(then[, ]+)?(go|go ahead|go for it|do it|do that|do this|do them|do (it )?all( of (it|that|them))?|approved?|lgtm|ship it|execute( it| that| this| the plan)?|proceed|start|let'?s go|let'?s do it|run it|implement( it| that| this| the plan)?|build it|make it so)( for me)?( now)?( please)?[.! ]*$",
 	defaults: { protectedBranches: ["main", "master"], sensitivePaths: DEFAULT_SENSITIVE_PATHS },
@@ -146,21 +134,15 @@ export function parseConfig(raw: unknown): Loaded {
 
 	if (raw.active !== undefined) {
 		if (typeof raw.active === "boolean") c.active = raw.active;
-		else warn("active: expected a boolean; using true");
+		else warn("active: expected a boolean; using false");
 	}
+	const moved = MOVED_KEYS.filter((k) => {
+		const [a, b] = k.split(".");
+		return b ? isObject(raw[a]) && (raw[a] as Record<string, unknown>)[b] !== undefined : raw[a] !== undefined;
+	});
+	if (moved.length) warn(`${moved.join(", ")}: ignored; the judge and critic are configured in agents.json (/agents model), the job token cost uses its modelCost`);
 	if (isObject(raw.roles)) {
 		const r = raw.roles;
-		for (const name of ["critic", "judge"] as const) {
-			const o = r[name];
-			if (o === undefined) continue;
-			const spec = roleSpec(o, c.roles[name], `roles.${name}`, warn);
-			c.roles[name] = { ...c.roles[name], ...spec };
-			if (isObject(o) && typeof o.prompt === "string") c.roles[name].prompt = o.prompt;
-			if (isObject(o) && o.tools !== undefined) {
-				if (isStrings(o.tools)) c.roles[name].tools = o.tools;
-				else warn(`roles.${name}.tools: expected a list of names; using the default`);
-			}
-		}
 		c.roles.escalate = roleSpec(r.escalate, c.roles.escalate, "roles.escalate", warn);
 		if (isObject(r.worker)) for (const s of ["small", "normal", "large"] as const) c.roles.worker[s] = roleSpec(r.worker[s], c.roles.worker[s], `roles.worker.${s}`, warn);
 		else if (r.worker !== undefined) warn("roles.worker: expected {small, normal, large}; using the defaults");
@@ -186,10 +168,6 @@ export function parseConfig(raw: unknown): Loaded {
 			// keep the default
 		} else if (isStrings(raw.worker.extensions)) c.worker.extensions = raw.worker.extensions;
 		else warn("worker.extensions: expected a list of paths; using none");
-	}
-	if (isObject(raw.reviewer)) {
-		if (isStrings(raw.reviewer.extensions)) c.reviewer.extensions = raw.reviewer.extensions;
-		else if (raw.reviewer.extensions !== undefined) warn("reviewer.extensions: expected a list of paths; using none");
 	}
 	if (raw.repos !== undefined) {
 		if (!isObject(raw.repos)) warn("repos: expected an object; using none");
@@ -219,13 +197,9 @@ export function parseConfig(raw: unknown): Loaded {
 	if (isObject(raw.knowledge)) {
 		const k = raw.knowledge;
 		if (typeof k.server === "string") c.knowledge.server = k.server;
-		if (isStrings(k.roles)) c.knowledge.roles = k.roles;
 		if (isStrings(k.tools)) c.knowledge.tools = k.tools;
 		if (isObject(k.env)) c.knowledge.env = Object.fromEntries(Object.entries(k.env).map(([a, b]) => [a, String(b)]));
-		if (typeof k.judgeCheck === "boolean") c.knowledge.judgeCheck = k.judgeCheck;
 	}
-	if (isObject(raw.judge)) c.judge.maxDiffChars = num(raw.judge.maxDiffChars, c.judge.maxDiffChars, "judge.maxDiffChars", warn, 1000);
-	if (isObject(raw.tokenWeights)) for (const k of Object.keys(c.tokenWeights) as (keyof TokenWeights)[]) c.tokenWeights[k] = num(raw.tokenWeights[k], c.tokenWeights[k], `tokenWeights.${k}`, warn, 0);
 	if (typeof raw.approvePattern === "string") {
 		try {
 			new RegExp(raw.approvePattern, "i");
@@ -267,7 +241,7 @@ export function loadConfig(file: string): Loaded {
 }
 
 /** Writes one role's model back (for `/relay model`). Keeps other keys; creates the file when missing. */
-export function saveRole(file: string, role: "critic" | "judge" | "escalate" | "worker.small" | "worker.normal" | "worker.large", spec: RoleSpec): void {
+export function saveRole(file: string, role: "escalate" | "worker.small" | "worker.normal" | "worker.large", spec: RoleSpec): void {
 	const raw: Record<string, any> = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : {};
 	raw.roles ??= {};
 	const [a, b] = role.split(".");

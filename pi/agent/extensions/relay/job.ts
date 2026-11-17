@@ -71,7 +71,10 @@ export interface Job {
 	replans: number;
 	followups: number;
 	budget: { wallMs: number; tokens: number };
+	/** `tokens`: weighted tokens × model multiplier (agents `costOf`) of the worker, the judge, the critic and the worker's agents tools. */
 	used: { wallMs: number; tokens: number };
+	/** Bytes of `agents-usage.jsonl` already counted into `used.tokens` (a lead that takes over continues from here). */
+	usageOffset?: number;
 	grace?: { startedAt: number; tokensAt: number };
 	worker?: { pid: number; model: string; sessionDir: string };
 	approvals: Approval[];

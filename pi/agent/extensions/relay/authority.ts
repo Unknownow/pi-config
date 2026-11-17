@@ -3,10 +3,10 @@
 import * as path from "node:path";
 import { gitSubcommand, parseCommands, unwrapCommand } from "../shared/readonly-bash.ts";
 import type { AuthorityItem } from "./brief.ts";
-import type { Category } from "./config.ts";
+import type { ApprovalCategory, Category } from "./config.ts";
 import { matchesAny, normPath } from "./glob.ts";
 import type { Approval } from "./job.ts";
-import { type GateRequest, pushProblem, registryPublishProblem } from "./push-guard.ts";
+import { type GateRequest, pushProblem, registryPublishProblem } from "../shared/git/push-guard.ts";
 
 export interface Classified {
 	category: Category;
@@ -102,9 +102,9 @@ export interface Authorized {
 	approvals: Approval[];
 }
 
-/** Whether the brief's Authority or an approval covers `item` of `category`. */
-export function allowed(category: Category, item: string, a: Authorized): boolean {
-	if (a.authority[category]?.value === "yes") return true;
+/** Whether the brief's Authority or an approval covers `item` of `category` (`files` is never an Authority line: approvals only). */
+export function allowed(category: ApprovalCategory, item: string, a: Authorized): boolean {
+	if (category !== "files" && a.authority[category]?.value === "yes") return true;
 	return a.approvals.some((x) => x.category === category && (x.item === item || x.item === "*"));
 }
 

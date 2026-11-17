@@ -4,26 +4,26 @@ import { spawn, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { countTokens } from "../shared/tokens.ts";
 import { type Brief, appendAmendment, briefFiles, checkBrief, parseBrief, replaceBrief } from "./brief.ts";
+import { readFilesGuard, writeFilesGuard } from "./files.ts";
 import { filesOverlap } from "./glob.ts";
-import { parseFindings } from "../shared/findings.ts";
 import { budgetState, longToolWall, toolTimeoutMs } from "./budget.ts";
-import { CATEGORIES, type Category, type RelayConfig, repoPolicy, type Size } from "./config.ts";
+import { APPROVAL_CATEGORIES, CATEGORIES, type Category, type RelayConfig, repoPolicy, type Size } from "./config.ts";
 import { type Job, type JobState, type RepoState, stackState, appendLog, draftDir, emptyJob, FINISHED, jobDir, listJobs, newId, readJob, readLog, writeJob } from "./job.ts";
 import { JobLock, type Me, pidAlive } from "./lock.ts";
 import { append, inboxPath, outboxPath, takeNew, type OutMsg } from "./mailbox.ts";
-import { forwardedServers, roleTools } from "./knowledge.ts";
 import { type RpcCallbacks, type RpcWorker, startWorker as realStartWorker, type WorkerOpts } from "./rpc.ts";
 import type { Run } from "./sh.ts";
-import { runSubagent, type RunOptions, type RunResult } from "./subagent.ts";
+import { ADVISOR_CAP_ENV, costOf, forwardedServers, loadConfig as loadAgentsConfig, type ReviewResult, roleTools, runCritic, runJudge, type RunOptions, type RunResult, TOOLS_ENV, USAGE_FILE_ENV } from "../agents/api.ts";
+import { ADVISOR_CAP, AGENTS_USAGE_FILE, advisorRunsUsed, draftCriticCost, readNewUsage } from "./usage.ts";
+import { AMENDMENT_CRITERIA, CRITIC_ABOUT } from "./reviews.ts";
 import { applySnapshot } from "./snapshot.ts";
 import { dispatchStep, resolveRepo, workerPrompt } from "./steps/dispatch.ts";
 import { followupStep } from "./steps/followup.ts";
 import { deliverStep } from "./steps/deliver.ts";
 import { judgeStep, workStep } from "./steps/loop.ts";
 import { cleanupStep, reportStep } from "./steps/report.ts";
-import type { Shell, Step, StepCtx, StepName, Wt, WorkerState } from "./types.ts";
+import type { CriticCall, JudgeCall, Shell, Step, StepCtx, StepName, Wt, WorkerState } from "./types.ts";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -37,6 +37,9 @@ export const STEPS: Record<StepName, Step> = {
 	report: reportStep,
 	cleanup: cleanupStep,
 };
+
+/** The agents tools a worker gets (no judge or critic: relay runs those). */
+export const WORKER_AGENT_TOOLS = ["explore", "advisor", "test_run"];
 
 const STATE_OF: Partial<Record<StepName, JobState>> = { work: "working", judge: "judging", deliver: "delivering" };
 
@@ -79,6 +82,7 @@ export interface EngineDeps {
 	trusted?: () => boolean | undefined;
 	wt: Wt;
 	startWorker?: (o: WorkerOpts, cb: RpcCallbacks) => RpcWorker;
+	/** Replaces agents' runSubagent for the judge and critic (`ReviewCommon.runner`); tests play scripted replies. */
 	runReviewer?: (o: RunOptions) => Promise<RunResult>;
 	/** The registered MCP servers (pi.getMcpServers()), for the knowledge tools. */
 	mcpServers?: () => { name: string; config: object }[];
@@ -260,7 +264,11 @@ export class Engine {
 		}
 		if (input.draft && /^d[0-9a-z]{6}$/.test(input.draft)) {
 			const src = path.join(draftDir(this.d.root, input.draft), "critic");
-			if (fs.existsSync(src)) fs.cpSync(src, path.join(dir, "critic"), { recursive: true });
+			if (fs.existsSync(src)) {
+				fs.cpSync(src, path.join(dir, "critic"), { recursive: true });
+				// the relay_critic rounds of the draft count against the job's token cap
+				job.used.tokens += draftCriticCost(src);
+			}
 		}
 		const jr = new JobRun(dir, job, lock);
 		this.jobs.set(id, jr);
@@ -464,6 +472,8 @@ export class Engine {
 				const at = model.indexOf("/");
 				if (at < 0 || !jr.worker) return false;
 				const r = await jr.worker.setModel(model.slice(0, at), model.slice(at + 1));
+				// the worker's usage is priced by the model it runs on now
+				if (r.success && jr.job.worker) jr.job.worker.model = model;
 				return r.success;
 			},
 			prompt: async (text) => {
@@ -484,7 +494,7 @@ export class Engine {
 				await jr.worker?.stop(10_000);
 				jr.ws.alive = false;
 			},
-			review: (role, task, cwd) => this.review(role, task, cwd, jr.abort.signal),
+			judge: (req) => this.judge(req, jr.abort.signal),
 			now: () => this.now(),
 			relayDir: this.relayDir,
 			leadCwd: d.leadCwd,
@@ -500,12 +510,16 @@ export class Engine {
 		const spec = job.escalated > 0 ? cfg.roles.escalate : cfg.roles.worker[job.size];
 		const sessionDir = path.join(jr.dir, "sessions", ...(job.followups ? [`f${job.followups}`] : []));
 		fs.mkdirSync(sessionDir, { recursive: true });
-		const k = this.knowledgeMcp("worker");
+		const k = this.workerKnowledge();
 		const gen = ++jr.gen;
 		const live = () => jr.gen === gen;
+		// the worker's agents tools: the advisor cap is per job, so runs recorded by earlier worker processes count
+		const usageFile = path.join(jr.dir, AGENTS_USAGE_FILE);
+		const advisorLeft = Math.max(0, ADVISOR_CAP - advisorRunsUsed(usageFile));
 		const cb: RpcCallbacks = {
 			onUsage: (u) => {
-				if (live()) job.used.tokens += countTokens(u, cfg.tokenWeights).cost;
+				// priced by the model the worker runs on (the escalate model once escalated)
+				if (live()) job.used.tokens += costOf(u, job.worker?.model ?? spec.model);
 			},
 			onActivity: () => {
 				if (live()) jr.lastActivity = this.now();
@@ -549,7 +563,7 @@ export class Engine {
 				trusted: this.d.trusted?.(),
 				extensions: cfg.worker.extensions,
 				mcp: k?.servers,
-				env: { RELAY_JOB: job.id, RELAY_JOB_DIR: jr.dir },
+				env: { RELAY_JOB: job.id, RELAY_JOB_DIR: jr.dir, [TOOLS_ENV]: WORKER_AGENT_TOOLS.join(","), [USAGE_FILE_ENV]: usageFile, [ADVISOR_CAP_ENV]: String(advisorLeft) },
 			},
 			cb,
 		);
@@ -646,33 +660,36 @@ export class Engine {
 		}
 	}
 
-	private knowledgeMcp(role: string): { servers: Record<string, Record<string, unknown>>; tools: string[] } | undefined {
-		const k = this.cfg.knowledge;
+	/** The worker's knowledge MCP (relay.json `knowledge`): the forwarded server config and the tool names; undefined when off or not registered. */
+	private workerKnowledge(): { servers: Record<string, Record<string, unknown>>; tools: string[] } | undefined {
+		const k = { ...this.cfg.knowledge, roles: ["worker"], judgeCheck: false };
 		if (!k.server || !this.d.mcpServers) return undefined;
 		const servers = forwardedServers(this.d.mcpServers(), k);
 		if (!servers[k.server]) return undefined;
-		return { servers, tools: roleTools(role, k) };
+		return { servers, tools: roleTools("worker", k) };
 	}
 
-	async review(role: "critic" | "judge", task: string, cwd: string, signal?: AbortSignal): Promise<RunResult> {
-		const spec = this.cfg.roles[role];
-		const file = path.isAbsolute(spec.prompt) ? spec.prompt : path.join(this.relayDir, spec.prompt);
-		const k = this.knowledgeMcp(role);
-		const run = this.d.runReviewer ?? runSubagent;
-		return run({
-			role: { model: spec.model, thinking: spec.thinking },
-			systemPrompts: [fs.readFileSync(file, "utf8")],
-			tools: [...spec.tools, ...(k?.tools ?? [])],
-			task,
+	/** What every relay review passes to agents: limits, trust, the test runner and the registered MCP servers (agents.json `knowledge` decides). */
+	private reviewCommon(cwd: string, signal?: AbortSignal) {
+		return {
 			cwd,
-			extensions: [...this.cfg.reviewer.extensions, path.join(this.relayDir, "reviewer.ts")],
+			signal,
 			timeoutMs: 30 * 60_000,
 			idleTimeoutMs: 10 * 60_000,
-			mcp: k ? { servers: k.servers, extension: path.join(this.relayDir, "mcp-forward.ts") } : undefined,
-			env: k?.tools.length ? { RELAY_REVIEW_ALLOW: k.tools.join(",") } : undefined,
 			trusted: this.d.trusted?.(),
-			signal,
-		});
+			mcpServers: this.d.mcpServers?.(),
+			runner: this.d.runReviewer,
+		};
+	}
+
+	/** Agents `runJudge`, full mode, with relay's spec, criteria, previous findings and diff parts. */
+	judge(req: JudgeCall, signal?: AbortSignal): Promise<ReviewResult> {
+		return runJudge({ ...this.reviewCommon(req.cwd, signal), mode: "full", spec: req.spec, criteria: req.criteria, previousFindings: req.previousFindings, diff: req.diff });
+	}
+
+	/** Agents `runCritic` on a relay brief or amendment. */
+	critic(req: CriticCall, signal?: AbortSignal): Promise<ReviewResult> {
+		return runCritic({ ...this.reviewCommon(req.cwd, signal), document: req.document, about: CRITIC_ABOUT, criteria: req.criteria });
 	}
 
 	// ------------------------------------------------------------------------------------------------ the watcher
@@ -698,6 +715,7 @@ export class Engine {
 			if (jr.job.state === "queued") continue;
 			this.pump(jr);
 			if (jr.job.state === "working" || jr.job.state === "judging") jr.job.used.wallMs += dt;
+			this.countAgentsUsage(jr);
 			const b = budgetState(jr.job, this.cfg, now);
 			if (b.state === "grace" && !jr.graceNotified) {
 				jr.job.grace = b.grace;
@@ -724,6 +742,16 @@ export class Engine {
 			}
 			if (jr.job.state === "working" && !jr.driving) void this.drive(jr);
 		}
+	}
+
+	/** Adds the worker's agents-tool runs written since the last read (agents-usage.jsonl) to the job's tokens; the byte offset is saved in job.json. */
+	countAgentsUsage(jr: JobRun): void {
+		if (jr.lost) return;
+		const at = jr.job.usageOffset ?? 0;
+		const r = readNewUsage(path.join(jr.dir, AGENTS_USAGE_FILE), at);
+		if (r.offset === at) return;
+		jr.job.used.tokens += r.cost;
+		jr.job.usageOffset = r.offset;
 	}
 
 	/** Reads new outbox messages: asks and approvals wake the lead, `done` is kept for the work step. */
@@ -769,7 +797,7 @@ export class Engine {
 			return { ok: true, text: "answered" };
 		}
 		if (ask.type !== "approval") return { error: "not an ask" };
-		if (!(CATEGORIES as readonly string[]).includes(ask.category)) {
+		if (!(APPROVAL_CATEGORIES as readonly string[]).includes(ask.category)) {
 			append(inbox, { type: "refuse", replyTo: askId, reason: `unknown category ${ask.category}` });
 			open();
 			return { error: `unknown category "${ask.category}"` };
@@ -832,15 +860,19 @@ export class Engine {
 		if (!("errors" in p)) jr.job.briefVersion = p.version;
 	}
 
-	/** The critic reads only an amendment (a restart, a follow-up): `{ok}` unless it finds a blocker or major problem. */
-	private async checkAmendment(dir: string, proposed: string, amendment: string, label: string): Promise<{ ok: true } | { error: string }> {
-		const task = `Review only this amendment to a brief that is already running (do not re-review the rest of the brief).\n\n## Amendment\n\n${amendment}\n\n## The brief with the amendment\n\n${proposed}\n\nEnd with a VERDICT line.`;
-		let res = await this.review("critic", task, this.d.leadCwd);
-		if (!res.ok) res = await this.review("critic", task, this.d.leadCwd);
+	/** The critic reads only an amendment (a restart, a follow-up): `{ok}` unless it finds a blocker or major problem. Its cost counts against the job's tokens. */
+	private async checkAmendment(job: Job, dir: string, proposed: string, amendment: string, label: string): Promise<{ ok: true } | { error: string }> {
+		const call: CriticCall = { document: `## Amendment\n\n${amendment}\n\n## The brief with the amendment\n\n${proposed}`, criteria: AMENDMENT_CRITERIA, cwd: this.d.leadCwd };
+		let res = await this.critic(call);
+		job.used.tokens += res.weightedCost;
+		if (!res.ok) {
+			res = await this.critic(call);
+			job.used.tokens += res.weightedCost;
+		}
 		if (!res.ok) return { error: `the critic failed twice (${res.error ?? "no output"}); nothing was changed` };
 		fs.mkdirSync(path.join(dir, "critic"), { recursive: true });
 		fs.writeFileSync(path.join(dir, "critic", `${label}.md`), `${res.text}\n`);
-		const hard = parseFindings(res.text).filter((f) => f.severity === "blocker" || f.severity === "major");
+		const hard = res.findings.filter((f) => f.severity === "blocker" || f.severity === "major");
 		if (hard.length) return { error: `the critic found ${hard.length} blocker/major problem(s) in the amendment; nothing was changed. Revise the text and send it again:\n${hard.map((f) => `- ${f.head}`).join("\n")}` };
 		return { ok: true };
 	}
@@ -907,7 +939,7 @@ export class Engine {
 		const n = parseBriefVersion(old, job.briefVersion);
 		jr.recovering = true;
 		try {
-			const checked = await this.checkAmendment(jr.dir, proposed, body, `amendment-${n}`);
+			const checked = await this.checkAmendment(job, jr.dir, proposed, body, `amendment-${n}`);
 			if ("error" in checked) return checked;
 			// the critic took a while: the job may have moved on (a stop, the end of the job)
 			if (jr.ended || jr.stopRequested || (job.state !== "working" && job.state !== "paused") || job.paused?.why === "replan") return { error: `job ${job.id} moved on while the critic checked the amendment (now ${job.state}); send it again` };
@@ -1012,6 +1044,8 @@ export class Engine {
 			const a = checked.brief.authority[c];
 			if (a?.value === "yes" && !job.approvals.some((x) => x.category === c && x.item === (a.specifics ?? "*"))) job.approvals.push({ at: new Date(this.now()).toISOString(), item: a.specifics ?? "*", category: c, by: "lead", reason: "Authority in the re-planned brief", ...(job.followups ? { followup: job.followups } : {}) });
 		}
+		// ## Files follows the re-planned brief; the snapshot paths stay
+		writeFilesGuard(jr.dir, checked.brief.sections.Files !== undefined ? (checked.brief.files ?? []) : undefined, readFilesGuard(jr.dir)?.snapshot ?? job.repos.flatMap((r) => r.leadEdits?.paths.map((p) => p.path) ?? []));
 		job.replans++;
 		job.round = 0;
 		job.escalated = 0;
@@ -1050,8 +1084,9 @@ export class Engine {
 		const old = fs.readFileSync(briefFile, "utf8");
 		const n = (job.followups ?? 0) + 1;
 		const proposed = appendAmendment(old, "user", text);
-		const checked = await this.checkAmendment(dir, proposed, text, `followup-${n}`);
+		const checked = await this.checkAmendment(job, dir, proposed, text, `followup-${n}`);
 		if ("error" in checked) {
+			writeJob(dir, job); // the critic's cost counts
 			lock.release();
 			return checked;
 		}
@@ -1256,8 +1291,9 @@ export class Engine {
 	activeModel(job: Job): string {
 		const r = this.cfg.roles;
 		const pick = (): [string, { model: string; thinking?: string }] => {
-			if (job.state === "judging") return ["judge", r.judge];
-			if (job.state === "critic") return ["critic", r.critic];
+			// the judge and critic are agents roles: their models are in agents.json
+			if (job.state === "judging") return ["judge", loadAgentsConfig().config.roles.judge];
+			if (job.state === "critic") return ["critic", loadAgentsConfig().config.roles.critic];
 			const spec = job.escalated > 0 ? r.escalate : r.worker[job.size];
 			const model = job.worker?.model ?? spec.model;
 			return [job.escalated > 0 ? "worker (escalated)" : "worker", { model, thinking: model === spec.model ? spec.thinking : undefined }];

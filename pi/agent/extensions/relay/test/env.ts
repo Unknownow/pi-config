@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { DEFAULTS, parseConfig, type RelayConfig } from "../config.ts";
+import { emptyUsage, type ReviewResult, reviewVerdict, type RunOptions, type RunResult } from "../../agents/api.ts";
 import { Engine, type EngineDeps } from "../engine.ts";
 import { run } from "../sh.ts";
 import type { Wt, WtCreateReply } from "../types.ts";
@@ -118,6 +119,51 @@ export function makeWt(sets: string, repo: string, wtCalls: { create: any[]; rem
 	};
 }
 
+/** A ReviewResult as agents runJudge / runCritic return it (for step tests that stub the engine's judge or critic). */
+export const reviewOf = (text: string, weightedCost = 100, ok = true): ReviewResult => ({ ok, text, ...(ok ? reviewVerdict(text) : { verdict: "FAIL" as const, findings: [] }), usage: emptyUsage(), weightedCost, model: "fake", ...(ok ? {} : { error: "boom" }) });
+
+/** The role of an agents reviewer run, from its base prompt (agents JUDGE / CRITIC). */
+export const reviewerRole = (o: RunOptions): string => {
+	const p = o.systemPrompts.join("\n");
+	return /^You are the judge/m.test(p) ? "judge" : /^You are the critic/m.test(p) ? "critic" : "unknown";
+};
+
+/**
+ * The engine's `runReviewer` in tests (agents `ReviewCommon.runner`): plays the scripted judge and critic replies of
+ * FAKE_PI_SCRIPT the way fake-pi.mjs does in json mode (same counters, same calls log), without a process.
+ */
+export async function scriptedReviewer(o: RunOptions): Promise<RunResult> {
+	const scriptFile = process.env.FAKE_PI_SCRIPT;
+	const role = reviewerRole(o);
+	const script = scriptFile && fs.existsSync(scriptFile) ? JSON.parse(fs.readFileSync(scriptFile, "utf8")) : {};
+	if (scriptFile) fs.appendFileSync(`${scriptFile}.calls.jsonl`, `${JSON.stringify({ mode: "json", role, args: [], cwd: o.cwd, task: o.task, timeoutMs: o.timeoutMs, idleTimeoutMs: o.idleTimeoutMs, trusted: o.trusted })}\n`);
+	let item: string | { text: string; delayMs?: number } = "VERDICT: PASS";
+	const list = script[role] as unknown[] | undefined;
+	if (list?.length) {
+		const stateFile = `${scriptFile}.state.json`;
+		let st: Record<string, number> = {};
+		try {
+			st = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+		} catch {
+			// first run
+		}
+		const i = st[role] ?? 0;
+		fs.writeFileSync(stateFile, JSON.stringify({ ...st, [role]: i + 1 }));
+		item = list[Math.min(i, list.length - 1)] as typeof item;
+	}
+	const text = typeof item === "string" ? item : item.text;
+	const usage = { input: 100, output: 50, cacheRead: 0, cacheWrite: 0, totalTokens: 150, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
+	if (typeof item === "object" && item.delayMs) {
+		const aborted = await new Promise<boolean>((resolve) => {
+			if (o.signal?.aborted) return resolve(true);
+			const t = setTimeout(() => resolve(false), item.delayMs);
+			o.signal?.addEventListener("abort", () => (clearTimeout(t), resolve(true)), { once: true });
+		});
+		if (aborted) return { ok: false, text: "", error: "aborted", turns: 0, usage: { ...usage, input: 0, output: 0, totalTokens: 0 }, toolCalls: [] };
+	}
+	return { ok: true, text, turns: 1, usage, toolCalls: [], model: "fake" };
+}
+
 export function world(cfgRaw: object = {}, files?: Record<string, string>, over: Partial<EngineDeps> = {}): World {
 	const { dir: repo, bare } = makeRepo(files ?? { "a.txt": "a\n", "package.json": "{}\n" }, true);
 	const base = tmpDir("relay-w-");
@@ -163,6 +209,7 @@ export function world(cfgRaw: object = {}, files?: Record<string, string>, over:
 		folders: () => [],
 		pollMs: 40,
 		heartbeatMs: 100_000,
+		runReviewer: scriptedReviewer,
 		...over,
 	});
 	w.mk = (o = {}) => new Engine({ ...deps(), ...o });

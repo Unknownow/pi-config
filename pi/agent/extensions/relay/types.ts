@@ -3,7 +3,7 @@
 import type { RelayConfig } from "./config.ts";
 import type { Job } from "./job.ts";
 import type { Run } from "./sh.ts";
-import type { RunOptions, RunResult } from "./subagent.ts";
+import type { DiffPart, Finding, ReviewResult, RunOptions } from "../agents/api.ts";
 
 export type StepName = "dispatch" | "followup" | "work" | "judge" | "deliver" | "report" | "cleanup";
 
@@ -82,11 +82,29 @@ export interface StepCtx {
 	/** Switches the running worker to another model ("provider/id"); false when it could not. */
 	setWorkerModel(model: string): Promise<boolean>;
 	stopWorker(): Promise<void>;
-	review(role: "critic" | "judge", task: string, cwd: string): Promise<RunResult>;
+	/** Agents `runJudge` in full mode, with the job's knowledge servers, limits, trust and abort signal. */
+	judge(req: JudgeCall): Promise<ReviewResult>;
 	now(): number;
 	relayDir: string;
 	leadCwd: string;
 	folders(): string[];
+}
+
+/** What a relay judge call passes to agents `runJudge`. */
+export interface JudgeCall {
+	/** The brief (with its version), the judge's spec. */
+	spec: string;
+	criteria: string;
+	previousFindings?: Finding[];
+	diff: DiffPart[];
+	cwd: string;
+}
+
+/** What a relay critic call passes to agents `runCritic` (`about` is always "relay brief"). */
+export interface CriticCall {
+	document: string;
+	criteria: string;
+	cwd: string;
 }
 
 export type { RunOptions };
