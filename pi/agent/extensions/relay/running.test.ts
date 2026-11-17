@@ -260,6 +260,8 @@ test("a stall (no events, no tool) aborts and restarts the worker with -c; a sec
 		assert.ok(w.notices.some((n) => /stalled/.test(n)));
 		assert.equal(jr.job.restarts, 1);
 		await waitFor(() => w.cmds().filter((c) => c.type === "prompt").length === 2, 30_000, "the restart prompt");
+		// the restart is over once the worker answered its prompt: activity after the clock jump would hide the stall
+		await waitFor(() => !jr.recovering, 30_000, "the restart to finish");
 		clock.t += 11 * 60_000;
 		await w.engine.tick();
 		await waitFor(() => jr.job.state === "paused", 30_000, "the pause");

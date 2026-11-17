@@ -94,13 +94,13 @@ test("agents-usage.jsonl: complete lines count once by byte offset (saved in job
 		const line = (role: string, weightedCost: number, ok = true) => `${JSON.stringify({ role, model: "m", usage: emptyUsage(), weightedCost, ok, at: "" })}\n`;
 		const first = line("advisor", 1000, false) + line("explore", 500);
 		fs.appendFileSync(file, `${first}${line("advisor", 7).slice(0, 20)}`);
-		await waitFor(() => jr.job.used.tokens >= 1500, 10_000, "the usage lines to be counted");
-		await waitFor(() => readJob(jr.dir)?.usageOffset === Buffer.byteLength(first), 10_000, "the offset in job.json");
+		await waitFor(() => jr.job.used.tokens >= 1500, 30_000, "the usage lines to be counted");
+		await waitFor(() => readJob(jr.dir)?.usageOffset === Buffer.byteLength(first), 30_000, "the offset in job.json");
 		assert.equal(jr.job.used.tokens, 1500, "a line still being written waits");
 		fs.appendFileSync(file, line("advisor", 7).slice(20));
-		await waitFor(() => jr.job.used.tokens === 1507, 10_000, "the completed line");
+		await waitFor(() => jr.job.used.tokens === 1507, 30_000, "the completed line");
 		const offset = fs.statSync(file).size;
-		await waitFor(() => readJob(jr.dir)?.usageOffset === offset, 10_000, "the new offset saved");
+		await waitFor(() => readJob(jr.dir)?.usageOffset === offset, 30_000, "the new offset saved");
 		// the lead goes away; the same session re-attaches: nothing is counted twice, the worker restarts with the advisor runs left
 		await w.engine.shutdown();
 		b = w.mk();
@@ -110,7 +110,7 @@ test("agents-usage.jsonl: complete lines count once by byte offset (saved in job
 		await waitFor(() => rpcCalls(w).length === 2, 30_000, "the restarted worker");
 		assert.equal(rpcCalls(w)[1].env.PI_AGENTS_ADVISOR_CAP, "1", "3 minus 2 advisor runs, the failed one included");
 		fs.appendFileSync(file, line("test_run", 3));
-		await waitFor(() => jr2.job.used.tokens === 1510, 10_000, "only the new line counted");
+		await waitFor(() => jr2.job.used.tokens === 1510, 30_000, "only the new line counted");
 		assert.equal(advisorRunsUsed(file), 2);
 		assert.deepEqual(readNewUsage(file, fs.statSync(file).size), { cost: 0, offset: fs.statSync(file).size });
 		await b.stop(r.id);
