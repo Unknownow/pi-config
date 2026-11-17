@@ -113,21 +113,15 @@ import {
 	summaryLines,
 } from "./view.ts";
 import { shortModel } from "../shared/runs.ts";
-import { APPROVED_FINAL, assistantText, citedPaths, countFindings, createFlow, type Diff, type FlowState, FOLDERS_ENTRY, GIT_GUARD_EXTENSION, type JudgeResult, type LastKnowledge, MAX_PLAN_CHARS, MODEL_ROLES, OWN_TOOLS, type Phase, type ReviewPlan, STATE_ENTRY, SUMMARY_ENTRY, type ToolReply } from "./flow/context.ts";
-import { advanceReviewBase, collectBoard, collectFlowDiff, dropReviewRefs, existingFolders, flowRepos, git, gitRoot, initReviewBase, joinReviewBase, judge, markPassed, nextAmendmentNumber, planCardReady, planCardText, planForJudge, refreshReviewBase, repoRoots, restoreReview, stageCheckpoints } from "./flow/diff.ts";
+import { assistantText, citedPaths, countFindings, createFlow, type Diff, type FlowState, FOLDERS_ENTRY, GIT_GUARD_EXTENSION, type JudgeResult, type LastKnowledge, MAX_PLAN_CHARS, MODEL_ROLES, OWN_TOOLS, type Phase, type ReviewPlan, STATE_ENTRY, SUMMARY_ENTRY, type ToolReply } from "./flow/context.ts";
+import { advanceReviewBase, collectBoard, collectFlowDiff, existingFolders, flowRepos, git, gitRoot, joinReviewBase, judge, markPassed, nextAmendmentNumber, planCardReady, planCardText, planForJudge, refreshReviewBase, repoRoots, restoreReview, stageCheckpoints } from "./flow/diff.ts";
 import { abortGate, askUser, lastAssistantText, notifyUser, scheduleIdleNotice } from "./flow/notify.ts";
-import { gitEnv, isDir, liveTick, planDirFor, planHousekeeping, planMilestone, recordMetric, rewritePlanFile, stopClaimTimer, stopLiveTimer } from "./flow/plan-files.ts";
+import { applyRole, approve, autopilotOn, blockPlanTools, currentStages, deescalate, deliverHintsText, deliverLine, endFlow, escalate, noteAuto, persist, phaseStage, publishFolders, publishRefuse, refilterTools, refreshChecklist, sendPlanKickoff, setPhase, summarizeFlow, updateStatus } from "./flow/phase.ts";
+import { gitEnv, isDir, planDirFor, planHousekeeping, planMilestone, recordMetric, rewritePlanFile, stopClaimTimer, stopLiveTimer } from "./flow/plan-files.ts";
 import { judgeKnowledgeServer, modelOf, roleSpecOf, runRole } from "./flow/roles.ts";
 
 export default function workflow(pi: ExtensionAPI) {
 	const fl = createFlow(pi);
-
-	const autopilotOn = (): boolean => fl.autopilotOverride ?? fl.cfg.autopilot;
-	/** An autopilot choice for the final card. */
-	const noteAuto = (text: string): void => {
-		fl.state.autoDecisions = [...(fl.state.autoDecisions ?? []), text.replace(/\s+/g, " ").slice(0, 240)].slice(-30);
-		persist();
-	};
 
 	pi.registerFlag("add-dir", {
 		description: "Extra folders for this session, separated by ; on Windows and : elsewhere",
@@ -138,362 +132,6 @@ export default function workflow(pi: ExtensionAPI) {
 		description: "Workflow phase to start in: discuss, plan, execute, test or off (default from workflow.json)",
 		type: "string",
 	});
-
-	// ----------------------------------------------------------------------
-	// Phases and models
-	// ----------------------------------------------------------------------
-
-	function persist(): void {
-		fl.state.tokens = { ...fl.view.used };
-		fl.state.tokenUnit = "both";
-		fl.state.flow = structuredClone(fl.view.flow);
-		fl.state.flowStarted = fl.view.flowStarted;
-		pi.appendEntry(STATE_ENTRY, fl.state);
-	}
-
-	/** K1: appends the folder list as a `session-folders` entry when the newest one on the branch differs. */
-	function publishFolders(ctx: ExtensionContext): void {
-		const data = { v: 1, cwd: ctx.cwd.replace(/\\/g, "/"), folders: [...(fl.state.folders ?? [])] };
-		const newest = ctx.sessionManager
-			.getBranch()
-			.filter((e) => e.type === "custom" && (e as { customType?: string }).customType === FOLDERS_ENTRY)
-			.pop() as { data?: { cwd?: unknown; folders?: unknown } } | undefined;
-		if (newest?.data && newest.data.cwd === data.cwd && JSON.stringify(newest.data.folders) === JSON.stringify(data.folders)) return;
-		pi.appendEntry(FOLDERS_ENTRY, data);
-	}
-
-	/** Ends the current flow: shows its token breakdown and starts counting the next one. False if it had none. */
-	function summarizeFlow(outcome: string, ok: boolean, extra?: HumanCheck[]): boolean {
-		const fromPlan = humanChecks(fl.state.approvedPlan, fl.state.checklist);
-		const human = [...fromPlan, ...(extra ?? [])];
-		if (fromPlan.length) outcome += ` · ${fromPlan.length} human check(s) for you (see the card)`;
-		if ((fl.state.unresolvedPlanFlaws ?? 0) > 0) outcome += ` · ${fl.state.unresolvedPlanFlaws} plan flaw(s) not settled (see the plan)`;
-		fl.state.unresolvedPlanFlaws = undefined;
-		const steps: ReportStep[] | undefined = fl.state.checklist?.some((c) => !isHuman(c)) ? fl.state.checklist.filter((c) => !isHuman(c)).map((c) => ({ id: c.id, text: c.text, done: c.done })) : undefined;
-		const found = reportFindings(fl.state.flowFindings, fl.state.approvedPlan);
-		const findings = found.length ? found : undefined;
-		const flowId = fl.state.planDoc?.flowId;
-		fl.state.flowSummarized = true;
-		fl.state.flowFindings = undefined;
-		const lateFindings = fl.state.lateFindings?.length ? fl.state.lateFindings : undefined;
-		fl.state.lateFindings = undefined;
-		const autopilot = autopilotDecisions(fl.state.approvedPlan, fl.state.autoDecisions);
-		fl.state.autoDecisions = undefined;
-		fl.state.autoCaps = undefined;
-		fl.state.autoRetries = undefined;
-		if (fl.state.planDoc && !fl.state.planDoc.finished) planMilestone(fl, undefined, { at: new Date().toISOString(), ok, text: outcome });
-		fl.state.touchedRepos = undefined;
-		fl.view.settleMain();
-		if (!fl.view.hasFlowUsage() && !steps && !findings && !lateFindings && !autopilot.length && !human.length) {
-			if (flowId) {
-				const empty = fl.view.peekFlow(outcome, ok);
-				recordMetric(fl, { kind: "flow", at: new Date().toISOString(), flowId, outcome, ok, started: empty.started, ended: empty.ended, stages: empty.stages });
-			}
-			persist();
-			return false;
-		}
-		const summary = fl.view.endFlow(outcome, ok);
-		pi.appendEntry(SUMMARY_ENTRY, { ...summary, steps, findings, ...(lateFindings ? { lateFindings } : {}), ...(autopilot.length ? { autopilot } : {}), ...(human.length ? { humanChecks: human } : {}) });
-		if (flowId) recordMetric(fl, { kind: "flow", at: new Date().toISOString(), flowId, outcome, ok, started: summary.started, ended: summary.ended, stages: summary.stages });
-		persist();
-		return true;
-	}
-
-	/** A flow has ended: on to the phase `returnTo` names. */
-	async function endFlow(ctx: ExtensionContext): Promise<void> {
-		notifyUser(fl, ctx, "flow finished");
-		await dropReviewRefs(fl, ctx);
-		fl.state.reviewBase = undefined;
-		fl.state.passedTrees = undefined;
-		fl.state.judgedMerges = undefined;
-		fl.state.waiting = undefined;
-		stopWaitTimer();
-		updateStatus(ctx);
-		const next = phaseAfterFlow(fl.cfg.returnTo, fl.state.phase);
-		if (!next) {
-			if (fl.cfg.returnTo === "off" && fl.state.phase === "execute") await setPhase(ctx, "off"); // restores the model from before the flow
-			return;
-		}
-		await setPhase(ctx, next);
-		ctx.ui.notify(`workflow: flow done, back to ${next === "discuss" ? "discussion" : "planning"} on ${describeRole(fl.cfg.roles[next])}`, "info");
-	}
-
-	function updateStatus(ctx: ExtensionContext): void {
-		fl.lastCtx = ctx;
-		fl.view.roles = fl.cfg.roles;
-		fl.view.judge = modelOf(fl, "judge");
-		fl.view.weights = fl.cfg.tokenWeights;
-		fl.view.phase = fl.state.phase;
-		fl.view.escalated = fl.state.escalated;
-		if (fl.state.phase === "discuss") fl.view.stage = "discuss";
-		else if (fl.state.phase === "plan") fl.view.stage = "plan";
-		else if (fl.view.stage === "discuss" || fl.view.stage === "plan") fl.view.stage = "execute";
-		if (ctx.hasUI) fl.view.mount(ctx.ui);
-		const n = existingFolders(fl).length + (fl.state.touchedRepos?.length ?? 0);
-		const cl = fl.state.checklist;
-		if (ctx.hasUI) ctx.ui.setStatus("workflow-plan", cl?.length && fl.state.phase === "execute" ? `plan ${cl.filter((i) => !isHuman(i) && i.done).length}/${cl.filter((i) => !isHuman(i)).length}` : undefined);
-		if (ctx.hasUI) ctx.ui.setStatus("workflow-wait", fl.state.waiting && fl.state.phase === "execute" ? `waiting: ${fl.state.waiting.reason.slice(0, 40)}` : undefined);
-		if (ctx.hasUI) ctx.ui.setStatus("workflow-judge", fl.gateRun ? (fl.gateRun.kind === "plan" ? `critic on the plan (run ${(fl.state.planGate?.rounds ?? 0) + 1}/${fl.cfg.maxPlanJudgeRounds})` : "critic on the discussion") : undefined);
-		if (ctx.hasUI) ctx.ui.setStatus("workflow-autopilot", autopilotOn() ? "autopilot" : undefined);
-		if (ctx.hasUI) ctx.ui.setStatus("workflow-folders", n ? `+${n} folder${n === 1 ? "" : "s"}` : undefined);
-		if (fl.state.approvedPlan && cl?.length && fl.state.phase === "execute") {
-			const st = currentStages();
-			const open = cl.find((i) => !i.done && !isHuman(i));
-			fl.view.progress = {
-				...(st ? { stage: st.current, stages: st.stages.length } : {}),
-				done: cl.filter((i) => !isHuman(i) && i.done).length,
-				total: cl.filter((i) => !isHuman(i)).length,
-				...(open ? { current: `${open.id} ${open.text}` } : {}),
-				judgeRound: fl.state.judgeRounds,
-				...(fl.state.waiting ? { waiting: fl.state.waiting.reason } : {}),
-			};
-		} else fl.view.progress = undefined;
-		emitStatus();
-		liveTick(fl);
-	}
-
-	/** K4: tells other extensions the phase and stage; only when it changed. */
-	function emitStatus(): void {
-		const st = currentStages();
-		const cl = fl.state.approvedPlan && fl.state.phase === "execute" ? fl.state.checklist?.filter((i) => !isHuman(i)) : undefined;
-		const payload = {
-			v: 1,
-			phase: fl.state.phase,
-			...(fl.state.planDoc?.flowId ? { flowId: fl.state.planDoc.flowId } : {}),
-			...(fl.state.approvedPlan ? { title: planTitle(fl.state.approvedPlan) } : {}),
-			...(st ? { stage: st.current, stages: st.stages.length } : {}),
-			...(cl?.length ? { done: cl.filter((i) => i.done).length, total: cl.length } : {}),
-			...(cl && fl.state.waiting ? { waiting: true } : {}),
-			...(fl.gateRun ? { judging: fl.gateRun.kind } : {}),
-			delivery: { mergeMethod: fl.cfg.delivery.mergeMethod, deleteBranch: fl.cfg.delivery.deleteBranch },
-		};
-		const json = JSON.stringify(payload);
-		if (json === fl.lastStatusEvent) return;
-		fl.lastStatusEvent = json;
-		try {
-			pi.events.emit("workflow:status", payload);
-		} catch {}
-	}
-
-	/** Switches the main session to a role's model and thinking level. */
-	async function applyRole(ctx: ExtensionContext, role: Role): Promise<boolean> {
-		const spec = fl.cfg.roles[role];
-		const slash = spec.model.indexOf("/");
-		const model = slash > 0 ? ctx.modelRegistry.find(spec.model.slice(0, slash), spec.model.slice(slash + 1)) : undefined;
-		if (!model) {
-			ctx.ui.notify(`workflow: model ${spec.model} (${role}) not found — check ${CONFIG_PATH}`, "error");
-			return false;
-		}
-		if (!(await pi.setModel(model))) {
-			ctx.ui.notify(`workflow: no credentials for ${spec.model} (${role})`, "error");
-			return false;
-		}
-		if (spec.thinking) pi.setThinkingLevel(spec.thinking);
-		return true;
-	}
-
-	/** Puts back the model and thinking level the session had before the flow; keeps the current ones when the model is gone. */
-	async function restorePreFlowModel(ctx: ExtensionContext, saved: { model: string; thinking?: string }): Promise<void> {
-		const slash = saved.model.indexOf("/");
-		const model = slash > 0 ? ctx.modelRegistry.find(saved.model.slice(0, slash), saved.model.slice(slash + 1)) : undefined;
-		if (!model || !(await pi.setModel(model))) {
-			ctx.ui.notify(`workflow: the model from before the flow (${saved.model}) is not available; keeping the current one`, "warning");
-			return;
-		}
-		if (saved.thinking) pi.setThinkingLevel(saved.thinking as ReturnType<typeof pi.getThinkingLevel>);
-	}
-
-	function blockPlanTools(): void {
-		fl.state.toolsBeforePlan ??= pi.getActiveTools();
-		pi.setActiveTools(fl.state.toolsBeforePlan.filter((t) => !planToolRefusedIn(t)));
-	}
-
-	function planToolRefusedIn(name: string): boolean {
-		return hiddenInPhase("plan", name, (n) => planToolRefused(n, planAllowedTools(), fl.cfg.planBlockedTools) !== null);
-	}
-
-	/** Tools that registered after the phase began (an MCP server that connected late) get the same filter. */
-	function refilterTools(): void {
-		if ((fl.state.phase !== "discuss" && fl.state.phase !== "plan") || !fl.state.toolsBeforePlan) return;
-		try {
-			refilterPlanTools(pi, fl.state.toolsBeforePlan, (t) => planToolRefusedIn(t));
-		} catch {
-			// the turn goes on with the tools it has
-		}
-	}
-
-	/** The widget stage the main session is in. */
-	function phaseStage(): Stage {
-		return fl.state.phase === "discuss" ? "discuss" : fl.state.phase === "plan" ? "plan" : "execute";
-	}
-
-	function restorePlanTools(): void {
-		if (!fl.state.toolsBeforePlan) return;
-		const extra = pi.getActiveTools().filter((t) => !fl.state.toolsBeforePlan!.includes(t));
-		pi.setActiveTools([...fl.state.toolsBeforePlan, ...extra]);
-		fl.state.toolsBeforePlan = undefined;
-	}
-
-	/** The result is always true. */
-	async function setPhase(ctx: ExtensionContext, phase: Phase): Promise<boolean> {
-		const leavingFlow = fl.state.phase === "execute" && phase !== fl.state.phase;
-		if (phase !== fl.state.phase) {
-			abortGate(fl, "phase");
-			fl.planApproveQueued = false;
-			fl.planFixing = false;
-		}
-		if (phase === "plan" && fl.state.phase !== "plan") {
-			fl.state.planGate = planGateReset(fl.state.planGate, "enter-plan");
-		}
-		if (leavingFlow && fl.state.approvedPlan && !fl.state.flowSummarized) {
-			summarizeFlow(stoppedSummary(phase === "plan" ? "back to planning" : phase === "discuss" ? "back to discussion" : "abandoned"), false);
-		}
-		fl.planReady = false;
-		fl.planProposed = false;
-		fl.planDraft = { full: "", changes: [] };
-		fl.planWaitRetried = false; fl.planWaitNow = [];
-		const readOnly = (p: Phase) => p === "discuss" || p === "plan";
-		// Discuss and plan share one tool set, so moving between them keeps the snapshot.
-		if (phase !== fl.state.phase && !(readOnly(fl.state.phase) && readOnly(phase))) {
-			if (readOnly(fl.state.phase)) restorePlanTools();
-			if (readOnly(phase)) blockPlanTools();
-		}
-		if (!readOnly(phase)) syncFlowOnlyTools(pi, phase); // plan_check and deliver only exist inside a flow
-		if (leavingFlow && fl.state.planDoc && !fl.state.planDoc.finished) planMilestone(fl, ctx, { at: new Date().toISOString(), ok: false, text: "abandoned" });
-		const samePhase = phase === fl.state.phase; // a repeated setPhase keeps what the judge already passed
-		const modelAction = preFlowModelAction(fl.state.phase, phase);
-		if (modelAction === "save" && ctx.model) fl.state.preFlowModel = { model: `${ctx.model.provider}/${ctx.model.id}`, thinking: pi.getThinkingLevel() };
-		const restoreModel = modelAction === "restore" ? fl.state.preFlowModel : undefined;
-		if (leavingFlow) await dropReviewRefs(fl, ctx);
-		fl.state.phase = phase;
-		fl.state.escalated = false;
-		fl.state.judgeRounds = 0;
-		fl.state.minorRounds = 0;
-		fl.state.minorSentFor = undefined;
-		fl.state.minorFix = undefined;
-		fl.state.waiting = undefined;
-		fl.state.checkpoints = undefined;
-		if (!samePhase) {
-			fl.state.reviewBase = undefined;
-			fl.state.passedTrees = undefined;
-			fl.state.judgedMerges = undefined;
-			fl.state.stageNudgedFor = undefined;
-		}
-		fl.wait.publishWaitSince.clear();
-		stopWaitTimer();
-		fl.state.planRevisions = undefined;
-		fl.state.pendingPlanFlaw = undefined;
-		fl.state.unresolvedPlanFlaws = undefined;
-		fl.state.touchedRepos = undefined;
-		fl.state.stage = undefined;
-		fl.state.stageJudged = undefined;
-		fl.state.stageOutcomes = undefined;
-		if (phase === "discuss" || phase === "plan") {
-			fl.state.approvedPlan = undefined;
-			fl.state.checklist = undefined;
-			fl.state.planDoc = undefined;
-			fl.state.planFlaw = undefined;
-		}
-		fl.consecutiveErrors = 0;
-		if (phase === "execute" && !(samePhase && fl.state.reviewBase)) await initReviewBase(fl, ctx);
-		if (phase !== "off") await applyRole(ctx, phase);
-		else if (restoreModel) await restorePreFlowModel(ctx, restoreModel);
-		if (phase === "off") fl.state.preFlowModel = undefined;
-		persist();
-		updateStatus(ctx);
-		return true;
-	}
-
-	function sendPlanKickoff(open?: Finding[], notes?: Finding[]): void {
-		const extra = (open?.length ? "\n\nOpen discussion-judge findings the plan must address:\n" + open.map((f) => `- ${f.head}`).join("\n") : "") + (notes?.length ? "\n\nMinor discussion-judge notes (take them into the plan where they fit; they are not blockers):\n" + notes.map((f) => `- ${f.head}`).join("\n") : "");
-		pi.sendMessage({ customType: "workflow-plan-kickoff", content: prompts.PLAN_KICKOFF + extra, display: true }, { triggerTurn: true, deliverAs: "followUp" });
-	}
-
-	/** Re-reads the steps from the approved plan (after an amendment too), keeping the ticks of the steps still in it. */
-	function refreshChecklist(): void {
-		const list = fl.state.approvedPlan ? mergeChecklist(fl.state.approvedPlan, fl.state.checklist) : [];
-		fl.state.checklist = list.length ? list : undefined;
-	}
-
-	/** Records the plan that starts executing; for a staged plan also stage 1. Returns the text to add to the start message. */
-	function startExecution(ctx: ExtensionContext, plan: string | undefined): string {
-		fl.state.approvedPlan = plan || undefined;
-		fl.state.checklist = undefined;
-		fl.state.planDoc = undefined;
-		fl.state.flowFindings = undefined;
-		fl.state.flowSummarized = undefined;
-		refreshChecklist();
-		updateStatus(ctx);
-		fl.state.stageOutcomes = undefined;
-		fl.state.stageJudged = undefined;
-		const stages = parseStages(plan);
-		fl.state.stage = stages.length ? 1 : undefined;
-		planMilestone(fl, ctx);
-		if (!stages.length) return deliverHintsText(undefined);
-		ctx.ui.notify(`workflow: staged plan, ${stages.length} stages; stage 1: ${stages[0].title}`, "info");
-		const first = stageStart(stages, 1);
-		if (holdForStageWait(ctx, stages[0], first)) return `\n\nStage 1 waits for: ${stages[0].after?.reason}. Don't start it; end your turn now. The workflow sends you the stage when the wait is over.`;
-		return `\n\n${first}${deliverHintsText(1)}`;
-	}
-
-	/** The stages of the approved plan and the current one, or null when the plan is not staged. */
-	function currentStages() {
-		const stages = fl.state.stage ? parseStages(fl.state.approvedPlan) : [];
-		return stages.length && fl.state.stage ? { stages, current: fl.state.stage } : null;
-	}
-
-	/** The open Deliver steps of `stage` with the call each one makes, as text to append to a message ("" when there are none). */
-	function deliverHintsText(stage: number | undefined): string {
-		const block = deliverHintsBlock(fl.state.approvedPlan ?? "", fl.state.checklist, stage);
-		return block ? `\n\n${block}` : "";
-	}
-
-	/** A refusal of a command the executor may not run. */
-	function publishRefuse(problem: string): string {
-		return publishRefusal(problem);
-	}
-
-	/** ` → call deliver …` for a Deliver step that names a tag, or "". */
-	function deliverLine(id: string, stage: number | undefined): string {
-		const spec = deliverStepSpec(fl.state.approvedPlan ?? "", id);
-		const hint = spec ? deliverHint(id, spec) : "";
-		return hint ? ` ${hint}` : "";
-	}
-
-	async function approve(ctx: ExtensionContext, arbiterOnFlaw = false): Promise<void> {
-		const blocked = approvalBlock(fl.planDraft, fl.planWaitNow);
-		if (blocked) {
-			ctx.ui.notify(`workflow: can't approve: ${blocked}.`, "warning");
-			return;
-		}
-		fl.state.planFlaw = arbiterOnFlaw ? "auto" : undefined;
-		const composed = composePlan(fl.planDraft);
-		// minors of the plan judge are notes for the executor, never another review
-		const minors = fl.state.planGate && fl.state.planGate.planHash === textHash(composed) ? fl.state.planGate.notes ?? [] : [];
-		const minorNotes = minors.length ? `## Notes for the executor\n${minors.map((f) => `- ${findingText(f).replace(/\n/g, "\n  ")}`).join("\n")}` : "";
-		const plan = [composed, minorNotes].filter(Boolean).join("\n\n");
-		await setPhase(ctx, "execute");
-		const extra = startExecution(ctx, plan);
-		persist();
-		handover("workflow-execute", APPROVED_FINAL + extra, ctx);
-	}
-
-	async function escalate(ctx: ExtensionContext): Promise<void> {
-		if (await applyRole(ctx, "escalate")) {
-			fl.state.escalated = true;
-			persist();
-			updateStatus(ctx);
-			ctx.ui.notify(`workflow: escalated to ${describeRole(fl.cfg.roles.escalate)}. /flow back to return.`, "warning");
-		}
-	}
-
-	async function deescalate(ctx: ExtensionContext): Promise<void> {
-		fl.state.escalated = false;
-		if (fl.state.phase !== "off") await applyRole(ctx, fl.state.phase);
-		persist();
-		updateStatus(ctx);
-		ctx.ui.notify(`workflow: back to ${fl.state.phase}${fl.state.phase === "off" ? "" : ` on ${describeRole(fl.cfg.roles[fl.state.phase])}`}`, "info");
-	}
 
 	/** `/flow resume`: rebuilds an unfinished flow from its plan ref, found in the working folder's repo or an added folder. */
 	async function resumeFlow(ctx: ExtensionContext, wanted: string | undefined): Promise<void> {
@@ -641,7 +279,7 @@ export default function workflow(pi: ExtensionAPI) {
 			if (remote && fetched && (await gitEnv(r.root, ["merge", "--ff-only", "--quiet", `${remote.name}/${r.branch}`])).code !== 0) stuck();
 		}
 
-		if (!(await setPhase(ctx, "execute"))) return;
+		if (!(await setPhase(fl, ctx, "execute"))) return;
 		const folders = [...(fl.state.folders ?? [])];
 		let added = 0;
 		for (const r of roots) {
@@ -682,9 +320,9 @@ export default function workflow(pi: ExtensionAPI) {
 			});
 		}
 		fl.state.planDoc = { flowId: status.flowId, rev: status.rev, roots: roots.map((r) => r.root) };
-		persist();
-		publishFolders(ctx);
-		updateStatus(ctx);
+		persist(fl);
+		publishFolders(fl, ctx);
+		updateStatus(fl, ctx);
 		planMilestone(fl, ctx);
 		startWaitTimer(fl.state.waiting?.step && fl.wait.publishWaitSince.has(fl.state.waiting.step) ? Date.parse(fl.state.waiting.since) : undefined);
 		await fl.plan.planChain;
@@ -772,7 +410,7 @@ export default function workflow(pi: ExtensionAPI) {
 		if (!r.ok) {
 			const run = endReview("judge", ext, r, started, false, r.error ?? "failed");
 			onChange?.(run);
-			fl.view.stage = phaseStage();
+			fl.view.stage = phaseStage(fl);
 			return { verdict: "ERROR", text: `judge failed: ${r.error}`, findings: [], hash: diff.hash, usage: r.usage, run };
 		}
 		let text = r.text;
@@ -797,12 +435,12 @@ export default function workflow(pi: ExtensionAPI) {
 		if (late.length) fl.state.lateFindings = [...new Set([...(fl.state.lateFindings ?? []), ...late])].slice(-30);
 		onChange?.(run);
 		// Back to the phase's stage either way.
-		fl.view.stage = phaseStage();
+		fl.view.stage = phaseStage(fl);
 		fl.state.lastJudge = plan.snaps ? { hash: diff.hash, repos: plan.snaps, base: diff.base, verdict, text } : undefined;
 		if (plan.kind === "full") fl.state.lastFullPass = plan.snaps && verdict === "PASS" && !planFlaws(findings).length ? { repos: plan.snaps, base: diff.base } : undefined;
 		if (fl.state.phase === "execute") fl.state.flowFindings = recordFindings(fl.state.flowFindings, fl.state.stage, findings);
 		fl.state.lastKnowledge = knowledge;
-		persist();
+		persist(fl);
 		return { verdict, text, findings, hash: diff.hash, usage: r.usage, run };
 	}
 
@@ -863,8 +501,8 @@ export default function workflow(pi: ExtensionAPI) {
 	function clearWait(ctx: ExtensionContext): void {
 		fl.state.waiting = undefined;
 		stopWaitTimer();
-		persist();
-		updateStatus(ctx);
+		persist(fl);
+		updateStatus(fl, ctx);
 		planMilestone(fl, ctx);
 	}
 
@@ -915,7 +553,7 @@ export default function workflow(pi: ExtensionAPI) {
 				pi.sendMessage({ customType: "workflow-wait", content: `${resumePrefix(w.reason, "passed")} ${body}`, display: true }, { triggerTurn: true, deliverAs: "followUp" });
 			} else {
 				w.checkPassed = true;
-				persist();
+				persist(fl);
 				ctx.ui.notify(`workflow: "${w.check}" passed; send any message to continue`, "info");
 				notifyUser(fl, ctx, `"${w.check}" passed; send any message to continue`);
 			}
@@ -949,10 +587,10 @@ export default function workflow(pi: ExtensionAPI) {
 					fl.state.approvedPlan = `${plan.replace(/\s+$/, "")}\n\n${verifyAmendment(nextAmendmentNumber(fl), { steps: reason, step: vstep })}\n`;
 					const item = vstep ? fl.state.checklist?.find((i) => i.id === vstep) : undefined;
 					if (item && !isHuman(item)) item.done = true;
-					refreshChecklist();
+					refreshChecklist(fl);
 				}
-				persist();
-				updateStatus(ctx);
+				persist(fl);
+				updateStatus(fl, ctx);
 				planMilestone(fl, ctx);
 				return reply(`Recorded as a human check for after the flow: ${reason}. Don't wait; continue in this turn.`);
 			}
@@ -972,22 +610,22 @@ export default function workflow(pi: ExtensionAPI) {
 			}
 			const step = params.step?.trim().toUpperCase() || undefined;
 			const planned = !!step && !!parseWaitStep(plan, step);
-			if (autopilotSkipsWait(autopilotOn(), params.manual, params.kind)) {
+			if (autopilotSkipsWait(autopilotOn(fl), params.manual, params.kind)) {
 				const kind = params.kind === "approve" ? "approve" : "act";
-				noteAuto(`wait skipped: ${reason}`);
+				noteAuto(fl, `wait skipped: ${reason}`);
 				fl.state.approvedPlan = `${plan.replace(/\s+$/, "")}\n\n${autopilotAmendment(nextAmendmentNumber(fl), { reason, step, kind })}\n`;
-				refreshChecklist();
-				persist();
+				refreshChecklist(fl);
+				persist(fl);
 				planMilestone(fl, ctx);
 				return reply(autopilotReply(kind, reason, check));
 			}
 			if (!planned) {
 				fl.state.approvedPlan = `${plan.replace(/\s+$/, "")}\n\n${waitAmendment(nextAmendmentNumber(fl), { reason, step, check })}\n`;
-				refreshChecklist();
+				refreshChecklist(fl);
 			}
 			setWaiting({ reason, ...(check ? { check } : {}), ...(params.kind === "external" ? { waitKind: "external" as const } : {}), ...(step ? { step } : {}), stage: fl.state.stage, since: new Date().toISOString(), planned });
-			persist();
-			updateStatus(ctx);
+			persist(fl);
+			updateStatus(fl, ctx);
 			planMilestone(fl, ctx);
 			startWaitTimer();
 			return reply(`Waiting for: ${reason}. End your turn now; the workflow resumes you when ${check ? "the check passes" : "the user replies"}.`);
@@ -1073,8 +711,8 @@ export default function workflow(pi: ExtensionAPI) {
 				const since = waitSince(fl.wait.publishWaitSince.get(step), new Date().toISOString());
 				fl.wait.publishWaitSince.set(step, since);
 				setWaiting({ reason: why, check, step, stage: fl.state.stage, since, planned: true, held: `Call publish_packages again with step ${step}.` });
-				persist();
-				updateStatus(ctx);
+				persist(fl);
+				updateStatus(fl, ctx);
 				planMilestone(fl, ctx);
 				startWaitTimer(Date.parse(since));
 				return reply(`Waiting: ${why}. End your turn now; the workflow resumes you when the check passes. Then call publish_packages again with step ${step}.`);
@@ -1175,7 +813,7 @@ export default function workflow(pi: ExtensionAPI) {
 				const existing = fl.state.judgedMerges?.[key];
 				if (rec.entry && !(rec.entry.commit && existing?.pr && existing.stage === fl.state.stage)) {
 					fl.state.judgedMerges = { ...(fl.state.judgedMerges ?? {}), [key]: { ...rec.entry, ...(fl.state.stage ? { stage: fl.state.stage } : {}) } };
-					persist();
+					persist(fl);
 				}
 				lines.push(`${path.basename(r.root)}: branch ${branch}, ${n} commits since review base, ${pr}`);
 			}
@@ -1299,14 +937,14 @@ export default function workflow(pi: ExtensionAPI) {
 					else unknown.push(id);
 				}
 			}
-			persist();
-			updateStatus(ctx);
+			persist(fl);
+			updateStatus(fl, ctx);
 			rewritePlanFile(fl);
-			const staged = currentStages();
+			const staged = currentStages(fl);
 			const open = list.filter((i) => !isHuman(i) && !i.done && (!staged || i.stage === undefined || i.stage === staged.current));
 			const done = list.filter((i) => !isHuman(i) && i.done).length;
 			const head = `${done} of ${list.filter((i) => !isHuman(i)).length} steps done${unknown.length ? `; unknown IDs: ${unknown.join(", ")}` : ""}.`;
-			const rest = open.length ? `Open${staged ? ` in stage ${staged.current}` : ""}:\n${open.map((i) => `- ${i.id} ${i.text}${deliverLine(i.id, staged?.current)}`).join("\n")}` : `No open steps${staged ? " in this stage" : ""}.`;
+			const rest = open.length ? `Open${staged ? ` in stage ${staged.current}` : ""}:\n${open.map((i) => `- ${i.id} ${i.text}${deliverLine(fl, i.id, staged?.current)}`).join("\n")}` : `No open steps${staged ? " in this stage" : ""}.`;
 			return reply(`${head}\n${rest}`);
 		},
 		renderCall(args, theme) {
@@ -1334,7 +972,7 @@ export default function workflow(pi: ExtensionAPI) {
 			const allowedText = (why: string) => `Merge allowed: ${why}. Run judge if the tree changed since the last pass, merge with gh pr merge as its own command, then continue on a new branch from the updated default branch.`;
 			const refusedText = (why: string) => `No merge: ${why}. Keep committing and pushing to the branch and continue the plan.`;
 			if (midFlowMergeRefusal() === null) return reply(allowedText("the gate already allows a merge here (the end of the flow, a planned Deliver: merge step or an earlier approval)"));
-			const staged = currentStages();
+			const staged = currentStages(fl);
 			const stage = staged?.current ?? 0;
 			const mine = mergeDecisions(fl.state.approvedPlan).filter((d) => d.stage === 0 || d.stage === stage);
 			const userNo = mine.find((d) => !d.allowed && d.by === "user");
@@ -1405,9 +1043,9 @@ export default function workflow(pi: ExtensionAPI) {
 			const baseNote = params.base ? undefined : await refreshReviewBase(fl, ctx);
 			const diff = await collectFlowDiff(fl, ctx, params.base || undefined);
 			if (!diff) throw new Error("no git work tree in this flow (working folder, /folders, or repos edited this flow); the judge reviews git diffs");
-			if (fl.state.phase === "execute" && currentStages()) {
+			if (fl.state.phase === "execute" && currentStages(fl)) {
 				fl.state.stageJudged = true;
-				persist();
+				persist(fl);
 			}
 			if (!diff.text) return { content: [{ type: "text", text: "No changes to review." }], details: undefined };
 			const progress = toolProgress(onUpdate);
@@ -1427,14 +1065,14 @@ export default function workflow(pi: ExtensionAPI) {
 				if (block) text += `\n\nEnd the pull request body (or the last commit message if there is no pull request) with this block, unchanged:\n\n${block}`;
 				if (fl.state.lateFindings?.length) text += `\n\nAdd a "Late findings (not fixed)" section to the pull request body (or the last commit message) listing:\n${fl.state.lateFindings.map((l) => `- ${l}`).join("\n")}`;
 			}
-			const reminder = fl.state.phase === "execute" ? openStepsReminder(fl.state.checklist, currentStages()?.current) : undefined;
-			if (reminder) text += `\n\n${reminder}${fl.state.phase === "execute" ? deliverHintsText(currentStages()?.current) : ""}`;
+			const reminder = fl.state.phase === "execute" ? openStepsReminder(fl.state.checklist, currentStages(fl)?.current) : undefined;
+			if (reminder) text += `\n\n${reminder}${fl.state.phase === "execute" ? deliverHintsText(fl, currentStages(fl)?.current) : ""}`;
 			// Every call replaces the pending report, so a stale one never outlives a clean review.
 			fl.state.pendingPlanFlaw = flawed ? r.text : undefined;
 			if (fl.state.pendingPlanFlaw) {
 				text += "\n\nThis review questions the plan. Do not change the plan's design yourself: end your turn now; the workflow resolves it.";
 			}
-			persist();
+			persist(fl);
 			return { content: [{ type: "text", text }], details: { runs: progress.snapshot(), verdict: r.verdict }, usage: r.usage };
 		}),
 	);
@@ -1529,9 +1167,9 @@ export default function workflow(pi: ExtensionAPI) {
 				const amend = { tag: tag.name, reason };
 				if (!hasCheckpointAmendment(plan, amend)) {
 					fl.state.approvedPlan = `${plan.replace(/\s+$/, "")}\n\n${checkpointAmendment(nextAmendmentNumber(fl), amend)}\n`;
-					refreshChecklist();
+					refreshChecklist(fl);
 					planMilestone(fl, ctx);
-					persist();
+					persist(fl);
 				}
 			}
 
@@ -1540,8 +1178,8 @@ export default function workflow(pi: ExtensionAPI) {
 				setWaiting({ reason: t.wait, ...(planned && step ? { step } : {}), stage: fl.state.stage, since: new Date().toISOString(), planned });
 			}
 			fl.state.checkpoints = [...(fl.state.checkpoints ?? []), { ...(planned && step ? { step } : {}), stage: fl.state.stage, text: checkpointText(planned ? step : undefined, t.text), ok: t.ok }];
-			persist();
-			updateStatus(ctx);
+			persist(fl);
+			updateStatus(fl, ctx);
 			planMilestone(fl, ctx);
 			if (t.wait) return reply(`${t.text}\n\nWaiting for: ${t.wait}. End your turn now; the workflow resumes you when the user replies.`);
 			const branches: string[] = [];
@@ -1562,11 +1200,11 @@ export default function workflow(pi: ExtensionAPI) {
 	// ----------------------------------------------------------------------
 
 	pi.on("turn_start", async () => {
-		refilterTools();
+		refilterTools(fl);
 	});
 
 	pi.on("before_agent_start", async (event, ctx) => {
-		refilterTools();
+		refilterTools(fl);
 		const folders = existingFolders(fl);
 		const touched = fl.state.touchedRepos ?? [];
 		const opts = event.systemPromptOptions;
@@ -1589,7 +1227,7 @@ export default function workflow(pi: ExtensionAPI) {
 		// A section deleted and re-added moves to the end in pi's patch replay, which then no longer matches the prompt
 		// pi-claude-bridge saved (prompt_capture_unresolved). So both sections are always set, in this order.
 		opts.sections.workspace = prompts.workspaceSection(ctx.cwd, folders, touched, listed);
-		const staged = fl.state.phase === "execute" ? currentStages() : undefined;
+		const staged = fl.state.phase === "execute" ? currentStages(fl) : undefined;
 		const publishKey = [ctx.cwd, ...existingFolders(fl), ...(fl.state.touchedRepos ?? [])].join("|");
 		if (fl.publishCache?.key !== publishKey) fl.publishCache = { key: publishKey, value: (await flowRepos(fl, ctx)).some((r) => fs.existsSync(path.join(r.root, "scripts", "update-packages.mjs"))) };
 		const canPublish = (fl.state.phase === "plan" || fl.state.phase === "execute") && fl.publishCache.value;
@@ -1642,7 +1280,7 @@ export default function workflow(pi: ExtensionAPI) {
 					const record = kind === "merge" ? { pr: target ?? (await branchOf(dir)), tree: res.tree, ...(stage ? { stage } : {}) } : res.commit ? { commit: res.commit, tree: res.tree, ...(stage ? { stage } : {}) } : undefined;
 					if (record) {
 						fl.state.judgedMerges = { ...(fl.state.judgedMerges ?? {}), [key]: record };
-						persist();
+						persist(fl);
 					}
 				}
 				return null;
@@ -1709,8 +1347,8 @@ export default function workflow(pi: ExtensionAPI) {
 		if (known.has(repoKey(root)) || (fl.state.touchedRepos ?? []).some((t) => repoKey(t) === repoKey(root))) return;
 		fl.state.touchedRepos = [...(fl.state.touchedRepos ?? []), root];
 		await joinReviewBase(fl, root);
-		persist();
-		updateStatus(ctx);
+		persist(fl);
+		updateStatus(fl, ctx);
 		ctx.ui.notify(`workflow: ${root} joins this flow (edited ${raw})`, "info");
 	});
 
@@ -1769,7 +1407,7 @@ export default function workflow(pi: ExtensionAPI) {
 	pi.on("agent_settled", async (event, ctx) => {
 		fl.view.settleMain();
 		const tracked = fl.state.phase !== "off" || fl.state.tokens !== undefined;
-		if (tracked && STAGES.some((s) => fl.view.used[s].raw !== (fl.state.tokens?.[s]?.raw ?? 0) || fl.view.used[s].cost !== (fl.state.tokens?.[s]?.cost ?? 0))) persist();
+		if (tracked && STAGES.some((s) => fl.view.used[s].raw !== (fl.state.tokens?.[s]?.raw ?? 0) || fl.view.used[s].cost !== (fl.state.tokens?.[s]?.cost ?? 0))) persist(fl);
 		if (fl.pendingHandover) {
 			const msg = fl.pendingHandover;
 			fl.pendingHandover = undefined;
@@ -1860,7 +1498,7 @@ export default function workflow(pi: ExtensionAPI) {
 		// In discuss, a typed "go" only moves to planning: it never approves or executes.
 		if (fl.state.phase === "discuss" && event.source !== "extension" && !event.streamingBehavior && approveRe().test(event.text.trim())) {
 			if (await startDiscussionGate(ctx)) return { action: "handled" };
-			await setPhase(ctx, "plan");
+			await setPhase(fl, ctx, "plan");
 			ctx.ui.notify(`workflow: planning on ${describeRole(fl.cfg.roles.plan)}`, "info");
 			return { action: "transform", text: `${event.text.trim()}\n\n${prompts.PLAN_KICKOFF}` };
 		}
@@ -1880,7 +1518,7 @@ export default function workflow(pi: ExtensionAPI) {
 		// Without a plan on screen, "yes, do that" answers a question; it doesn't approve anything.
 		if (!fl.planReady || !approveRe().test(event.text.trim())) return { action: "continue" };
 		ctx.ui.notify(`workflow: plan approved, executing on ${describeRole(fl.cfg.roles.execute)}`, "info");
-		await approve(ctx);
+		await approve(fl, ctx);
 		return { action: "handled" };
 	});
 
@@ -1999,12 +1637,12 @@ export default function workflow(pi: ExtensionAPI) {
 			const act = stoppedNormally ? discussionGateAfterFixReply({ prevListHash: dr.listHash, replyListHash: list ? textHash(list) : undefined, reply }) : "pause";
 			if (act === "recheck") {
 				fl.state.discussionReview = { ...dr, status: "idle" };
-				persist();
+				persist(fl);
 				void runDiscussionGate(ctx, "recheck", dr.restateLoop ?? true, false);
 			}
 			else {
 				fl.state.discussionReview = { ...dr, status: "paused" };
-				persist();
+				persist(fl);
 				ctx.ui.notify("workflow: discussion critic paused: answer its findings, then say go again", "info");
 			}
 		}
@@ -2047,7 +1685,7 @@ export default function workflow(pi: ExtensionAPI) {
 				fl.planApproveQueued = false;
 				if (reused && planOfferAction({ clean: isClean(reused.verdict, [...reused.autoFindings, ...reused.userFindings]), queuedGo: queued }) === "approve") {
 					ctx.ui.notify(`workflow: plan approved, executing on ${describeRole(fl.cfg.roles.execute)}`, "info");
-					await approve(fl.lastCtx ?? ctx);
+					await approve(fl, fl.lastCtx ?? ctx);
 					return;
 				}
 				await offerPlan(ctx, blocked);
@@ -2062,10 +1700,10 @@ export default function workflow(pi: ExtensionAPI) {
 		if (fl.state.waiting) return;
 		if (!skipJudge(last)) fl.state.autoRetries = 0;
 		if (skipJudge(last)) {
-			const autoRetry = autopilotOn() && !(fl.state.autoRetries ?? 0);
+			const autoRetry = autopilotOn(fl) && !(fl.state.autoRetries ?? 0);
 			if (autoRetry) {
 				fl.state.autoRetries = 1;
-				noteAuto("executor error: retried automatically");
+				noteAuto(fl, "executor error: retried automatically");
 				ctx.ui.notify("workflow: autopilot: the executor's reply failed; retrying once", "info");
 			}
 			const choice = autoRetry ? "Retry" : await askUser(fl, ctx, "The executor's last reply ended in an error", ["Retry", "Back to planning", "Stop"]);
@@ -2075,11 +1713,11 @@ export default function workflow(pi: ExtensionAPI) {
 					{ triggerTurn: true, deliverAs: "followUp" },
 				);
 			} else if (choice === "Back to planning") {
-				await setPhase(ctx, "plan");
+				await setPhase(fl, ctx, "plan");
 			} else {
 				ctx.ui.notify("workflow: stopped: the executor's reply failed", "warning");
-				summarizeFlow(stoppedSummary("stopped: the executor's reply failed"), false);
-				await endFlow(ctx);
+				summarizeFlow(fl, stoppedSummary("stopped: the executor's reply failed"), false);
+				await endFlow(fl, ctx);
 			}
 			return;
 		}
@@ -2088,7 +1726,7 @@ export default function workflow(pi: ExtensionAPI) {
 			// The executor's own judge call questioned the plan; it was told to stop, so the workflow decides.
 			const report = fl.state.pendingPlanFlaw;
 			fl.state.pendingPlanFlaw = undefined;
-			persist();
+			persist(fl);
 			const flawed = await collectFlowDiff(fl, ctx);
 			if (flawed) {
 				if (fl.state.lastJudge?.hash === flawed.hash) {
@@ -2114,8 +1752,8 @@ export default function workflow(pi: ExtensionAPI) {
 	function holdForStageWait(ctx: ExtensionContext, stage: ReturnType<typeof parseStages>[number], held: string): boolean {
 		if (!stage.after) return false;
 		setWaiting({ reason: stage.after.reason, ...(stage.after.check ? { check: stage.after.check } : {}), stage: stage.n, since: new Date().toISOString(), planned: true, atStageStart: true, held });
-		persist();
-		updateStatus(ctx);
+		persist(fl);
+		updateStatus(fl, ctx);
 		planMilestone(fl, ctx);
 		ctx.ui.notify(`workflow: stage ${stage.n} waits for: ${stage.after.reason}`, "info");
 		startWaitTimer();
@@ -2137,16 +1775,16 @@ export default function workflow(pi: ExtensionAPI) {
 		fl.view.stage = "execute";
 		fl.view.changed();
 		planMilestone(fl, ctx);
-		persist();
+		persist(fl);
 		ctx.ui.notify(`workflow: stage ${next} of ${stages.length}: ${stages[next - 1].title}`, "info");
-		const text = nextStage(stages, next, outcome) + deliverHintsText(next);
+		const text = nextStage(stages, next, outcome) + deliverHintsText(fl, next);
 		if (holdForStageWait(ctx, stages[next - 1], text)) return;
 		handover("workflow-stage", text);
 	}
 
 	/** A staged plan's turn ended with nothing new to review: it ends the stage only if the executor handed it over (judge called) or the user confirms. */
 	async function noChangeTurn(ctx: ExtensionContext, staged: { stages: ReturnType<typeof parseStages>; current: number }): Promise<void> {
-		const auto = (fl.cfg.stageAdvance === "auto" || autopilotOn()) && !fl.turnAborted;
+		const auto = (fl.cfg.stageAdvance === "auto" || autopilotOn(fl)) && !fl.turnAborted;
 		const open = (fl.state.checklist ?? []).filter((i) => !isHuman(i) && !i.done && (i.stage === undefined || i.stage === staged.current)).length;
 		const what = noChangeStage(!!fl.state.stageJudged, ctx.hasUI, auto, open);
 		if (what === "wait") return;
@@ -2173,8 +1811,8 @@ export default function workflow(pi: ExtensionAPI) {
 		fl.state.planFlaw = undefined;
 		fl.view.stage = "execute";
 		const decided = mergeDecisionsText(fl.state.approvedPlan);
-		if (!summarizeFlow(decided ? `${outcome.text}; ${decided}` : outcome.text, outcome.ok)) persist();
-		await endFlow(ctx);
+		if (!summarizeFlow(fl, decided ? `${outcome.text}; ${decided}` : outcome.text, outcome.ok)) persist(fl);
+		await endFlow(fl, ctx);
 	}
 
 	/** A staged plan's stage ended with nothing to review: records it and starts the next stage, or ends the flow after the last one. */
@@ -2195,13 +1833,13 @@ export default function workflow(pi: ExtensionAPI) {
 		fl.state.stage = undefined;
 		fl.state.stageOutcomes = undefined;
 		fl.view.stage = "execute";
-		if (!summarizeFlow(finalText, final.ok)) persist();
-		await endFlow(ctx);
+		if (!summarizeFlow(fl, finalText, final.ok)) persist(fl);
+		await endFlow(fl, ctx);
 	}
 
 	/** The summary text for a flow that stops early: the stages already delivered, then `text`. Clears the stage state. */
 	function stoppedSummary(text: string): string {
-		const staged = currentStages();
+		const staged = currentStages(fl);
 		const done = fl.state.stageOutcomes ?? [];
 		fl.state.stage = undefined;
 		fl.state.stageOutcomes = undefined;
@@ -2245,15 +1883,15 @@ export default function workflow(pi: ExtensionAPI) {
 			},
 		});
 		if (choice === PLAN_BACK) {
-			await setPhase(ctx, "discuss");
+			await setPhase(fl, ctx, "discuss");
 			ctx.ui.notify(`workflow: back to discussion on ${describeRole(fl.cfg.roles.discuss)}`, "info");
 			return;
 		}
 		if (choice === arbiterLabel && fl.cfg.planFlaw === "ask") {
-			await approve(ctx, true);
+			await approve(fl, ctx, true);
 			return;
 		}
-		if (choice === approveLabel) await approve(ctx);
+		if (choice === approveLabel) await approve(fl, ctx);
 	}
 
 	/** The plan judge: one run on a complete plan, then fix (auto findings go to the planner), offer, or approve a queued "go". Runs detached from agent_end and the input hook. */
@@ -2267,7 +1905,7 @@ export default function workflow(pi: ExtensionAPI) {
 				run.offEsc = ctx.ui.onTerminalInput((d) => (isEscKey(d) ? (abortGate(fl, "esc"), { consume: true }) : undefined));
 			} catch {}
 		}
-		updateStatus(ctx);
+		updateStatus(fl, ctx);
 		let specKind: SpecKind = "none";
 		let outcome: { text: string; findings: Finding[]; review: ReviewResult; ext?: RunView } | { error: string; review?: ReviewResult; ext?: RunView } | undefined;
 		const started = Date.now();
@@ -2307,7 +1945,7 @@ export default function workflow(pi: ExtensionAPI) {
 			} catch {}
 			if (fl.gateRun === run) fl.gateRun = undefined;
 			if (ctx.hasUI) ctx.ui.setWorkingMessage();
-			updateStatus(ctx);
+			updateStatus(fl, ctx);
 			try {
 				if (ctx.isIdle()) scheduleIdleNotice(fl, ctx);
 			} catch {}
@@ -2321,7 +1959,7 @@ export default function workflow(pi: ExtensionAPI) {
 			if ((run.reason === "esc" || run.reason === "command") && !stale) {
 				const g: PlanGate = { ...blank, planHash: run.judgedHash, verdict: "cancelled", spec: specKind };
 				fl.state.planGate = g;
-				persist();
+				persist(fl);
 				ctx.ui.notify("workflow: plan critic cancelled", "info");
 				await offerPlan(ctx, undefined);
 			}
@@ -2332,7 +1970,7 @@ export default function workflow(pi: ExtensionAPI) {
 			const error = outcome && "error" in outcome ? outcome.error : "no result";
 			const g: PlanGate = { ...blank, planHash: run.judgedHash, verdict: "error", spec: specKind };
 			fl.state.planGate = g;
-			persist();
+			persist(fl);
 			fl.planApproveQueued = false;
 			ctx.ui.notify(`workflow: plan critic did not run: ${error}`, "warning");
 			await offerPlan(ctx, undefined);
@@ -2358,10 +1996,10 @@ export default function workflow(pi: ExtensionAPI) {
 			spec: specKind,
 		};
 		fl.state.planGate = g;
-		persist();
+		persist(fl);
 		pi.sendMessage({ customType: "workflow-plan-judge", content: `**Plan critic: ${verdict}** (run ${rounds}/${fl.cfg.maxPlanJudgeRounds})\n\n${outcome.text}`, display: true }, { triggerTurn: false });
-		const assume = autopilotOn() && !confirm && !after.capped && !clean && after.user.length > 0;
-		if (assume) noteAuto(`plan critic: ${after.user.length} finding(s) that needed a decision were settled by the planner as assumptions`);
+		const assume = autopilotOn(fl) && !confirm && !after.capped && !clean && after.user.length > 0;
+		if (assume) noteAuto(fl, `plan critic: ${after.user.length} finding(s) that needed a decision were settled by the planner as assumptions`);
 		if (after.action === "fix" || assume) {
 			fl.planFixing = true;
 			const listed = [...after.auto, ...after.user].map((f) => `- ${findingText(f).replace(/\n/g, "\n  ")}`).join("\n");
@@ -2372,7 +2010,7 @@ export default function workflow(pi: ExtensionAPI) {
 		fl.planApproveQueued = false;
 		if (planOfferAction({ clean, queuedGo: queued }) === "approve") {
 			ctx.ui.notify(`workflow: plan approved, executing on ${describeRole(fl.cfg.roles.execute)}`, "info");
-			await approve(fl.lastCtx ?? ctx);
+			await approve(fl, fl.lastCtx ?? ctx);
 			return;
 		}
 		await offerPlan(ctx, undefined);
@@ -2414,9 +2052,9 @@ export default function workflow(pi: ExtensionAPI) {
 	/** Leaves discuss for plan after the discussion gate; `open` findings go into the kickoff. */
 	async function moveToPlan(ctx: ExtensionContext, open?: Finding[], notes?: Finding[]): Promise<void> {
 		if (fl.state.discussionReview) fl.state.discussionReview = { ...fl.state.discussionReview, status: "idle" };
-		await setPhase(ctx, "plan");
+		await setPhase(fl, ctx, "plan");
 		ctx.ui.notify(`workflow: planning on ${describeRole(fl.cfg.roles.plan)}`, "info");
-		sendPlanKickoff(open, notes);
+		sendPlanKickoff(fl, open, notes);
 	}
 
 	/** A review already ran on this list and the list was not rewritten since: the judge would read the same text again, so the discuss model restates the conclusion first. True when it asked. */
@@ -2426,7 +2064,7 @@ export default function workflow(pi: ExtensionAPI) {
 		if (!last || !list || last.listHash !== textHash(list) || isClean(last.verdict, last.findings) || fl.restateAskedFor === last.listHash) return false;
 		fl.restateAskedFor = last.listHash;
 		fl.state.discussionReview = { ...last, status: "awaiting-fix", restateLoop: loop };
-		persist();
+		persist(fl);
 		ctx.ui.notify("workflow: the agreed list was not rewritten since the last review; asking for a restated conclusion first", "info");
 		pi.sendMessage({ customType: "workflow-discussion-restate", content: prompts.DISCUSSION_RESTATE, display: true }, { triggerTurn: true, deliverAs: "followUp" });
 		return true;
@@ -2478,7 +2116,7 @@ export default function workflow(pi: ExtensionAPI) {
 				run.offEsc = ctx.ui.onTerminalInput((d) => (isEscKey(d) ? (abortGate(fl, "esc"), { consume: true }) : undefined));
 			} catch {}
 		}
-		updateStatus(ctx);
+		updateStatus(fl, ctx);
 		let outcome: { text: string; findings: Finding[]; review: ReviewResult; ext?: RunView } | { error: string; review?: ReviewResult; ext?: RunView } | undefined;
 		const started = Date.now();
 		try {
@@ -2510,7 +2148,7 @@ export default function workflow(pi: ExtensionAPI) {
 			} catch {}
 			if (fl.gateRun === run) fl.gateRun = undefined;
 			ctx.ui.setWorkingMessage();
-			updateStatus(ctx);
+			updateStatus(fl, ctx);
 			try {
 				if (ctx.isIdle()) scheduleIdleNotice(fl, ctx);
 			} catch {}
@@ -2522,7 +2160,7 @@ export default function workflow(pi: ExtensionAPI) {
 			if (run.reason === "restart" || run.reason === "phase") return;
 			if (fl.state.discussionReview) {
 				fl.state.discussionReview = { ...fl.state.discussionReview, status: "idle" };
-				persist();
+				persist(fl);
 			}
 			if (run.reason === "esc" || run.reason === "command") ctx.ui.notify("workflow: discussion critic cancelled; still in discuss", "info");
 			return;
@@ -2546,7 +2184,7 @@ export default function workflow(pi: ExtensionAPI) {
 		pi.sendMessage({ customType: "workflow-discussion-review", content: `**Discussion review: ${verdict}**\n\n${outcome.text}`, display: true }, { triggerTurn: false });
 		const after = ctx.sessionManager.getBranch();
 		fl.state.discussionReview = { listHash, verdict, findings, afterEntryId: (after[after.length - 1] as { id?: string } | undefined)?.id, rounds, status: "idle" };
-		persist();
+		persist(fl);
 		if (!loop) {
 			ctx.ui.notify(`workflow: discussion review ${verdict}${list ? "" : " (no Agreed so far: list found)"}`, verdict === "PASS" ? "info" : "warning");
 			return;
@@ -2558,13 +2196,13 @@ export default function workflow(pi: ExtensionAPI) {
 			await moveToPlan(ctx, blockingFindings(findings), minorFindings(findings));
 		} else if (action === "fix") {
 			fl.state.discussionReview = { ...fl.state.discussionReview, status: "awaiting-fix" };
-			persist();
+			persist(fl);
 			ctx.ui.notify(`workflow: discussion critic: fixing ${blockingFindings(findings).length} finding(s) (run ${rounds}/${fl.cfg.maxDiscussionJudgeRounds})`, "info");
 			const listed = blockingFindings(findings).map((f) => `- ${findingText(f).replace(/\n/g, "\n  ")}`).join("\n");
 			pi.sendMessage({ customType: "workflow-discussion-fix", content: `${prompts.DISCUSSION_FIX}\n\n${listed}`, display: true }, { triggerTurn: true, deliverAs: "followUp" });
 		} else {
 			fl.state.discussionReview = { ...fl.state.discussionReview, status: "paused" };
-			persist();
+			persist(fl);
 			ctx.ui.notify(`workflow: discussion critic: ${blockingFindings(findings).filter((f) => f.route === "user").length} finding(s) need your decision; answer them, then say go again`, "warning");
 		}
 	}
@@ -2579,7 +2217,7 @@ export default function workflow(pi: ExtensionAPI) {
 				// The executor delivered the passed change and the base moved up with it: nothing is left to review, but the pass is still open.
 				await stageDone(ctx, { ...diff, hash: fl.state.passedDiff });
 			} else {
-				const staged = currentStages();
+				const staged = currentStages(fl);
 				if (staged) await noChangeTurn(ctx, staged);
 				else await flowWithoutChanges(ctx);
 			}
@@ -2594,7 +2232,7 @@ export default function workflow(pi: ExtensionAPI) {
 			return;
 		}
 		if (!manual && (fl.cfg.autoJudge === "off" || fl.seenDiffs.has(diff.hash))) return;
-		if (!manual && fl.cfg.autoJudge === "ask" && !autopilotOn()) {
+		if (!manual && fl.cfg.autoJudge === "ask" && !autopilotOn(fl)) {
 			const run = (await askUser(fl, ctx, `Diff ready: run the judge (${describeRole(modelOf(fl, "judge"))}) on ${diff.files} changed file(s)?`, ["Run the judge", "Skip"])) === "Run the judge";
 			if (!run) {
 				fl.seenDiffs.add(diff.hash);
@@ -2612,21 +2250,21 @@ export default function workflow(pi: ExtensionAPI) {
 		if (r.verdict === "ERROR") {
 			ctx.ui.notify(r.text, "error");
 			if (!ctx.hasUI || fl.state.phase !== "execute") return;
-			const autoRetry = autopilotOn() && !(fl.state.autoRetries ?? 0);
+			const autoRetry = autopilotOn(fl) && !(fl.state.autoRetries ?? 0);
 			if (autoRetry) {
 				fl.state.autoRetries = 1;
-				noteAuto("judge error: retried automatically");
+				noteAuto(fl, "judge error: retried automatically");
 				ctx.ui.notify("workflow: autopilot: the judge failed to run; retrying once", "info");
 			}
 			const choice = autoRetry ? "Retry the judge" : await askUser(fl, ctx, "The judge failed to run", ["Retry the judge", "Back to planning", "Stop"]);
 			if (choice === "Retry the judge") {
 				await reviewDiff(ctx, true);
 			} else if (choice === "Back to planning") {
-				await setPhase(ctx, "plan");
+				await setPhase(fl, ctx, "plan");
 			} else {
 				ctx.ui.notify("workflow: stopped: the judge failed to run", "warning");
-				summarizeFlow(stoppedSummary("stopped: the judge failed to run"), false);
-				await endFlow(ctx);
+				summarizeFlow(fl, stoppedSummary("stopped: the judge failed to run"), false);
+				await endFlow(fl, ctx);
 			}
 			return;
 		}
@@ -2641,7 +2279,7 @@ export default function workflow(pi: ExtensionAPI) {
 		}
 		if (r.verdict === "FAIL") {
 			fl.state.judgeRounds++;
-			persist();
+			persist(fl);
 			await fixOrAsk(ctx, report);
 			return;
 		}
@@ -2654,23 +2292,23 @@ export default function workflow(pi: ExtensionAPI) {
 	async function fixOrAsk(ctx: ExtensionContext, report: string | undefined): Promise<void> {
 		if (judgeCapReached(fl.state.judgeRounds, fl.cfg.maxJudgeRounds)) {
 			if (report) pi.sendMessage({ customType: "workflow-judge", content: report, display: true }, { triggerTurn: false });
-			const autoCap = autopilotOn() ? ((fl.state.autoCaps ?? 0) === 0 ? "Escalate and keep fixing" : "Stop") : undefined;
+			const autoCap = autopilotOn(fl) ? ((fl.state.autoCaps ?? 0) === 0 ? "Escalate and keep fixing" : "Stop") : undefined;
 			if (autoCap) {
 				fl.state.autoCaps = (fl.state.autoCaps ?? 0) + 1;
-				noteAuto(`judge cap (${fl.state.judgeRounds} failed rounds): ${autoCap === "Stop" ? "stopped (second cap)" : "escalated and kept fixing (advisor asked once)"}`);
+				noteAuto(fl, `judge cap (${fl.state.judgeRounds} failed rounds): ${autoCap === "Stop" ? "stopped (second cap)" : "escalated and kept fixing (advisor asked once)"}`);
 				ctx.ui.notify(`workflow: autopilot: judge cap reached; ${autoCap === "Stop" ? "stopping" : "escalating and fixing on"}`, "warning");
 			}
 			const choice = autoCap ?? await askUser(fl, ctx, `Judge failed ${fl.state.judgeRounds} rounds in a row`, ["Keep fixing", "Escalate and keep fixing", "Stop"]);
 			if (choice === "Keep fixing" || choice === "Escalate and keep fixing") {
-				if (choice !== "Keep fixing") await escalate(ctx);
+				if (choice !== "Keep fixing") await escalate(fl, ctx);
 				fl.state.judgeRounds = 0;
-				persist();
+				persist(fl);
 				pi.sendMessage({ customType: "workflow-fix", content: autoCap ? `${prompts.FIX_MESSAGE} Before you change code, ask the advisor about the open findings above.` : prompts.FIX_MESSAGE, display: true }, { triggerTurn: true, deliverAs: "followUp" });
 				return;
 			}
 			ctx.ui.notify(`workflow: stopped after ${fl.state.judgeRounds} failed judge rounds`, "warning");
-			summarizeFlow(stoppedSummary(`stopped: judge failed ${fl.state.judgeRounds} rounds`), false);
-			await endFlow(ctx);
+			summarizeFlow(fl, stoppedSummary(`stopped: judge failed ${fl.state.judgeRounds} rounds`), false);
+			await endFlow(fl, ctx);
 			return;
 		}
 		pi.sendMessage(
@@ -2686,7 +2324,7 @@ export default function workflow(pi: ExtensionAPI) {
 	 * "stop": back to planning, or the flow ended.
 	 */
 	async function resolvePlanFlaw(ctx: ExtensionContext, report: string, diff: Diff): Promise<"continue" | "amended" | "stop"> {
-		let arbiter = arbiterFirst(autopilotOn() ? "auto" : fl.state.planFlaw, fl.cfg.planFlaw);
+		let arbiter = arbiterFirst(autopilotOn(fl) ? "auto" : fl.state.planFlaw, fl.cfg.planFlaw);
 		let canAsk = true;
 		for (;;) {
 			if (arbiter) {
@@ -2697,14 +2335,14 @@ export default function workflow(pi: ExtensionAPI) {
 			}
 			if (!ctx.hasUI) {
 				pi.sendMessage({ customType: "workflow-judge", content: report, display: true }, { triggerTurn: false });
-				summarizeFlow(stoppedSummary("stopped: judge questions the plan"), false);
-				await endFlow(ctx);
+				summarizeFlow(fl, stoppedSummary("stopped: judge questions the plan"), false);
+				await endFlow(fl, ctx);
 				return "stop";
 			}
 			const options = ["Back to planning", ...(canAsk ? ["Let the arbiter decide"] : []), "Ignore and continue", "Stop"];
 			const choice = await askUser(fl, ctx, "Judge questions the plan", options);
 			if (choice === "Back to planning") {
-				await setPhase(ctx, "plan");
+				await setPhase(fl, ctx, "plan");
 				pi.sendMessage({ customType: "workflow-judge", content: report, display: true }, { triggerTurn: false });
 				return "stop";
 			}
@@ -2718,8 +2356,8 @@ export default function workflow(pi: ExtensionAPI) {
 				return "continue";
 			}
 			pi.sendMessage({ customType: "workflow-judge", content: report, display: true }, { triggerTurn: false });
-			summarizeFlow(stoppedSummary("stopped: judge questions the plan"), false);
-			await endFlow(ctx);
+			summarizeFlow(fl, stoppedSummary("stopped: judge questions the plan"), false);
+			await endFlow(fl, ctx);
 			return "stop";
 		}
 	}
@@ -2729,9 +2367,9 @@ export default function workflow(pi: ExtensionAPI) {
 		const lines = planFlaws(parseFindings(report)).map((f) => `- ${f.head}`).filter((l) => !(fl.state.approvedPlan ?? "").includes(l));
 		if (!lines.length) return 0;
 		fl.state.approvedPlan = `${fl.state.approvedPlan ?? ""}\n\n## ${heading}\n${lines.join("\n")}`;
-		refreshChecklist();
+		refreshChecklist(fl);
 		planMilestone(fl, ctx);
-		persist();
+		persist(fl);
 		return lines.length;
 	}
 
@@ -2743,7 +2381,7 @@ export default function workflow(pi: ExtensionAPI) {
 			if (outcome !== "ask") return outcome;
 			const n = notePlanFlaws(ctx, report, heading);
 			fl.state.unresolvedPlanFlaws = (fl.state.unresolvedPlanFlaws ?? 0) + n;
-			persist();
+			persist(fl);
 			if (n > 0) ctx.ui.notify(`workflow: the arbiter did not settle ${n} plan flaw(s); noted in the plan, continuing`, "warning");
 			return "continue";
 		}
@@ -2779,9 +2417,9 @@ export default function workflow(pi: ExtensionAPI) {
 		}
 		if (d.decision === "KEEP") {
 			fl.state.approvedPlan = `${fl.state.approvedPlan ?? ""}\n\n## Plan choices upheld by the arbiter\n${d.reason}`;
-			refreshChecklist();
+			refreshChecklist(fl);
 			planMilestone(fl, ctx);
-			persist();
+			persist(fl);
 			pi.sendMessage({ customType: "workflow-judge", content: `**Arbiter: the plan stands.**\n\n${d.reason}`, display: true }, { triggerTurn: false });
 			return "continue";
 		}
@@ -2793,9 +2431,9 @@ export default function workflow(pi: ExtensionAPI) {
 			}
 			fl.state.planRevisions = done + 1;
 			fl.state.approvedPlan = `${fl.state.approvedPlan ?? ""}\n\n## Amendment ${nextAmendmentNumber(fl)} (arbiter)\n${d.amendment}`;
-			refreshChecklist();
+			refreshChecklist(fl);
 			planMilestone(fl, ctx);
-			persist();
+			persist(fl);
 			pi.sendMessage(
 				{
 					customType: "workflow-amend",
@@ -2822,7 +2460,7 @@ export default function workflow(pi: ExtensionAPI) {
 		// Remember the passed tree: a fix that touches only the cited files passes without another review.
 		const passedRepos = fl.state.lastJudge?.hash === hash ? fl.state.lastJudge.repos : undefined;
 		fl.state.minorFix = passedRepos ? { trees: Object.fromEntries(Object.entries(passedRepos).map(([k, v]) => [k, v.tree])), cited: citedPaths(parsed), text } : undefined;
-		persist();
+		persist(fl);
 		const shown = report ?? `**Judge: PASS**\n\n${text}`;
 		handover(
 			"workflow-fix",
@@ -2866,20 +2504,20 @@ export default function workflow(pi: ExtensionAPI) {
 
 	/** Whether a merge is due at this point of the flow: the plan is not staged or this is its last stage, or a merge was planned or approved for this stage. */
 	function mergeDue(): boolean {
-		const staged = currentStages();
+		const staged = currentStages(fl);
 		return !staged || staged.current >= staged.stages.length || deliverMergeOpen(fl.state.approvedPlan ?? "", fl.state.checklist, staged.current) || mergeApproved();
 	}
 
 	/** Whether the latest merge decision that covers this stage (or the whole flow) allows a merge. */
 	function mergeApproved(): boolean {
-		const stage = currentStages()?.current ?? 0;
+		const stage = currentStages(fl)?.current ?? 0;
 		const mine = mergeDecisions(fl.state.approvedPlan).filter((d) => d.stage === 0 || d.stage === stage);
 		return mine.length > 0 && mine[mine.length - 1].allowed;
 	}
 
 	/** The refusal of a merge or protected push before the end of the flow (the gate's rules), or null when it is allowed. */
 	function midFlowMergeRefusal(): string | null {
-		const staged = currentStages();
+		const staged = currentStages(fl);
 		const open = gateOpenSteps(fl.state.approvedPlan ?? "", fl.state.checklist, staged ? { current: staged.current, total: staged.stages.length } : undefined);
 		return midFlowMergeProblem({
 			staged: !!staged,
@@ -2893,11 +2531,11 @@ export default function workflow(pi: ExtensionAPI) {
 
 	/** Records a merge decision in the approved plan, tells the user in chat and with a notification. */
 	function recordMergeDecision(ctx: ExtensionContext, by: "arbiter" | "user", allowed: boolean, reason: string, shown?: string): void {
-		const stage = currentStages()?.current ?? 0;
+		const stage = currentStages(fl)?.current ?? 0;
 		fl.state.approvedPlan = `${fl.state.approvedPlan ?? ""}\n\n${mergeAmendment(nextAmendmentNumber(fl), { by, allowed, stage, reason })}`;
-		refreshChecklist();
+		refreshChecklist(fl);
 		planMilestone(fl, ctx);
-		persist();
+		persist(fl);
 		const head = by === "arbiter" ? `Arbiter: merge ${allowed ? "allowed" : "refused"} before the end of the flow` : `You ${allowed ? "allowed" : "refused"} a merge before the end of the flow`;
 		pi.sendMessage({ customType: "workflow-judge", content: `**${head}**\n\n${shown ?? reason}`, display: true }, { triggerTurn: false });
 		ctx.ui.notify(`workflow: ${head}: ${reason.split("\n")[0]}`, "info");
@@ -2954,7 +2592,7 @@ export default function workflow(pi: ExtensionAPI) {
 	async function stageDone(ctx: ExtensionContext, diff: Diff, report?: string): Promise<void> {
 		const hash = diff.hash;
 		if (report) pi.sendMessage({ customType: "workflow-judge", content: report, display: true }, { triggerTurn: false });
-		const staged = currentStages();
+		const staged = currentStages(fl);
 		if (fl.state.summarizedPasses?.includes(hash)) {
 			// A staged plan's stage added nothing to the diff that was already passed.
 			if (staged) await noChangeTurn(ctx, staged);
@@ -2966,7 +2604,7 @@ export default function workflow(pi: ExtensionAPI) {
 		const unpushed = due || noMerge(fl.state.approvedPlan ?? "") ? [] : await unpushedRepos(diff);
 		if (stageEndAction({ openSteps: open.length + (unmerged.length || unpushed.length ? 1 : 0), nudgedFor: fl.state.stageNudgedFor, hash }) === "nudge") {
 			fl.state.stageNudgedFor = hash;
-			persist();
+			persist(fl);
 			const lines: string[] = [];
 			const afterOnly = open.length > 0 && open.every((i) => afterMergeStep(fl.state.approvedPlan ?? "", i.id));
 			const openLine = open.length ? `Open steps ${open.map((i) => i.id).join(", ")}: finish them (merge, publish), tick them with plan_check, then end your turn.` : "";
@@ -3002,8 +2640,8 @@ export default function workflow(pi: ExtensionAPI) {
 		fl.state.stage = undefined;
 		fl.state.stageOutcomes = undefined;
 		fl.view.stage = "execute";
-		if (!summarizeFlow(outcome.text, outcome.ok)) persist();
-		await endFlow(ctx);
+		if (!summarizeFlow(fl, outcome.text, outcome.ok)) persist(fl);
+		await endFlow(fl, ctx);
 	}
 
 	/** Folders from --add-dir join the session's list (existing folders only, no repeats, not the working folder). */
@@ -3030,8 +2668,8 @@ export default function workflow(pi: ExtensionAPI) {
 		}
 		if (!changed) return;
 		fl.state.folders = folders;
-		persist();
-		publishFolders(ctx);
+		persist(fl);
+		publishFolders(fl, ctx);
 	}
 
 	/** K1b: after the session moved to another checkout of the same projects, added folders move to the matching checkouts next to the working folder. */
@@ -3056,7 +2694,7 @@ export default function workflow(pi: ExtensionAPI) {
 		const res = followFolders(folders, ctx.cwd.replace(/\\/g, "/"), top, (f) => infos.get(repoKey(f)) ?? null, (p) => fs.existsSync(p));
 		if (!res.changes.length && res.folders.length === folders.length) return;
 		fl.state.folders = res.folders;
-		persist();
+		persist(fl);
 		for (const c of res.changes) ctx.ui.notify(`workflow: added folders follow the working folder: ${c.from} \u2192 ${c.to}`, "info");
 	}
 
@@ -3088,15 +2726,15 @@ export default function workflow(pi: ExtensionAPI) {
 			fl.view.used = { ...emptyStageTokens(), ...fl.state.tokens };
 			fl.view.flow = { ...emptyFlowUsage(), ...structuredClone(fl.state.flow) };
 			fl.view.flowStarted = fl.state.flowStarted;
-			if (fl.state.phase === "discuss" || fl.state.phase === "plan") blockPlanTools();
+			if (fl.state.phase === "discuss" || fl.state.phase === "plan") blockPlanTools(fl);
 			else syncFlowOnlyTools(pi, fl.state.phase);
 			if (event.reason !== "reload") {
 				await followWorkingFolder(ctx);
 				// --add-dir is a launch flag: only the first session of the process applies it, not a later switch or resume.
 				if (event.reason === "startup") applyAddDir(ctx);
-				publishFolders(ctx);
+				publishFolders(fl, ctx);
 			}
-			updateStatus(ctx);
+			updateStatus(fl, ctx);
 			if (fl.state.phase === "execute" && fl.state.waiting) startWaitTimer();
 			if (event.reason !== "reload") void planHousekeeping(fl, ctx);
 			// Rewrites the plan file, which also (re)starts this session's claim on an unfinished flow.
@@ -3112,8 +2750,8 @@ export default function workflow(pi: ExtensionAPI) {
 		fl.view.flow = emptyFlowUsage();
 		fl.view.flowStarted = undefined;
 		applyAddDir(ctx);
-		publishFolders(ctx);
-		if (start === "off" || !(await setPhase(ctx, start))) updateStatus(ctx);
+		publishFolders(fl, ctx);
+		if (start === "off" || !(await setPhase(fl, ctx, start))) updateStatus(fl, ctx);
 		void planHousekeeping(fl, ctx);
 	});
 
@@ -3151,9 +2789,9 @@ export default function workflow(pi: ExtensionAPI) {
 		const lines = [
 			`phase      ${fl.state.phase}${fl.state.escalated ? " (escalated)" : ""}`,
 			`judge     ${fl.state.judgeRounds} failed round(s); auto=${fl.cfg.autoJudge}; ${noMerge(fl.state.approvedPlan ?? "") ? "no merge (the plan says so)" : "merge and publish after a judge pass"}`,
-			...(currentStages() ? [`stage     ${currentStages()!.current} of ${currentStages()!.stages.length}: ${currentStages()!.stages[currentStages()!.current - 1].title}`] : []),
+			...(currentStages(fl) ? [`stage     ${currentStages(fl)!.current} of ${currentStages(fl)!.stages.length}: ${currentStages(fl)!.stages[currentStages(fl)!.current - 1].title}`] : []),
 			fl.state.planFlaw === "auto" ? "flaws     arbiter (this flow)" : `flaws     ${fl.cfg.planFlaw === "auto" ? "arbiter" : "ask"} (config)`,
-			`autopilot ${autopilotOn() ? "on" : "off"} (${fl.autopilotOverride === undefined ? "config" : "session"})`,
+			`autopilot ${autopilotOn(fl) ? "on" : "off"} (${fl.autopilotOverride === undefined ? "config" : "session"})`,
 			`guard     compact at ${fl.cfg.contextGuardTokens || "off"} tokens`,
 			`tokens    ${STAGES.filter((s) => !["discuss", "commit"].includes(s) || fl.view.sessionTokens(s).raw + fl.view.sessionTokens(s).cost > 0).map((s) => `${s} ${fmtTok(fl.view.sessionTokens(s))}`).join(" · ")} · session total ${fmtTok(STAGES.reduce((n, s) => ({ raw: n.raw + fl.view.sessionTokens(s).raw, cost: n.cost + fl.view.sessionTokens(s).cost }), { raw: 0, cost: 0 }))}`,
 			"",
@@ -3255,9 +2893,9 @@ export default function workflow(pi: ExtensionAPI) {
 				fl.state.folders = [...current, final];
 				const addedRoot = await gitRoot(fl, final);
 				if (addedRoot) await joinReviewBase(fl, addedRoot);
-				persist();
-				publishFolders(ctx);
-				updateStatus(ctx);
+				persist(fl);
+				publishFolders(fl, ctx);
+				updateStatus(fl, ctx);
 				ctx.ui.notify(final === abs ? `workflow: added ${abs}; reloading` : `workflow: added ${final} (for ${abs}); reloading`, "info");
 			} else {
 				const n = /^\d+$/.test(arg) ? Number(arg) - 1 : -1;
@@ -3269,9 +2907,9 @@ export default function workflow(pi: ExtensionAPI) {
 				}
 				const [gone] = folders.splice(i, 1);
 				fl.state.folders = folders;
-				persist();
-				publishFolders(ctx);
-				updateStatus(ctx);
+				persist(fl);
+				publishFolders(fl, ctx);
+				updateStatus(fl, ctx);
 				ctx.ui.notify(`workflow: removed ${gone}; reloading`, "info");
 			}
 			await ctx.waitForIdle();
@@ -3304,20 +2942,20 @@ export default function workflow(pi: ExtensionAPI) {
 					}
 					if (sub.toLowerCase() === "plan" && fl.state.phase === "discuss" && (await startDiscussionGate(ctx))) return;
 					const from = fl.state.phase;
-					if (!(await setPhase(ctx, sub.toLowerCase() as Phase))) return;
+					if (!(await setPhase(fl, ctx, sub.toLowerCase() as Phase))) return;
 					ctx.ui.notify(`workflow: ${fl.state.phase}`, "info");
-					if (from === "discuss" && fl.state.phase === "plan") sendPlanKickoff();
+					if (from === "discuss" && fl.state.phase === "plan") sendPlanKickoff(fl);
 					return;
 				}
 				case "approve":
 					if (fl.state.phase === "discuss") {
 						if (await startDiscussionGate(ctx)) return;
 						ctx.ui.notify("workflow: discuss phase; moving to planning first", "info");
-						await setPhase(ctx, "plan");
-						sendPlanKickoff();
+						await setPhase(fl, ctx, "plan");
+						sendPlanKickoff(fl);
 						return;
 					}
-					await approve(ctx);
+					await approve(fl, ctx);
 					return;
 				case "resume":
 					await resumeFlow(ctx, rest[0]);
@@ -3393,18 +3031,18 @@ export default function workflow(pi: ExtensionAPI) {
 						ctx.ui.notify("usage: /flow autopilot [on|off]", "warning");
 						return;
 					}
-					fl.autopilotOverride = arg === undefined ? !autopilotOn() : arg === "on";
-					updateStatus(ctx);
-					ctx.ui.notify(`workflow: autopilot ${autopilotOn() ? "on" : "off"} (session)`, "info");
+					fl.autopilotOverride = arg === undefined ? !autopilotOn(fl) : arg === "on";
+					updateStatus(fl, ctx);
+					ctx.ui.notify(`workflow: autopilot ${autopilotOn(fl) ? "on" : "off"} (session)`, "info");
 					return;
 				}
 				case "escalate":
 				case "fable":
-					await escalate(ctx);
+					await escalate(fl, ctx);
 					return;
 				case "back":
 				case "opusplan":
-					await deescalate(ctx);
+					await deescalate(fl, ctx);
 					return;
 				case "critic":
 					if (rest[0]?.toLowerCase() === "cancel") {
@@ -3431,7 +3069,7 @@ export default function workflow(pi: ExtensionAPI) {
 					fl.configError = loaded.error;
 					fl.configWarning = loaded.warning;
 					if (fl.configWarning) ctx.ui.notify(`workflow: ${fl.configWarning}`, "warning");
-					updateStatus(ctx);
+					updateStatus(fl, ctx);
 					ctx.ui.notify(fl.configError ? `workflow: ${fl.configError}` : statusText(), fl.configError ? "error" : "info");
 					return;
 				}
@@ -3464,8 +3102,8 @@ export default function workflow(pi: ExtensionAPI) {
 					saveRole(role as Role, parsed);
 					fl.cfg = loadConfig().config;
 					const live = fl.state.escalated ? role === "escalate" : fl.state.phase !== "off" && role === fl.state.phase;
-					if (live) await applyRole(ctx, role as Role);
-					updateStatus(ctx);
+					if (live) await applyRole(fl, ctx, role as Role);
+					updateStatus(fl, ctx);
 					ctx.ui.notify(`workflow: ${role} -> ${describeRole(parsed)} (saved to workflow.json)`, "info");
 					return;
 				}
@@ -3475,5 +3113,5 @@ export default function workflow(pi: ExtensionAPI) {
 		},
 	});
 
-	Object.assign(fl.legacy, { autopilotOn, currentStages, judgeOnce, persist, trimPlan });
+	Object.assign(fl.legacy, { handover, holdForStageWait, judgeOnce, planAllowedTools, stopWaitTimer, stoppedSummary, trimPlan });
 }

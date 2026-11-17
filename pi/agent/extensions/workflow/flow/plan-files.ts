@@ -12,6 +12,7 @@ import type { MetricEvent } from "../metrics.ts";
 import { mapLimit } from "../../agents/api.ts";
 import { execFileAsync, type Flow, type PlanSnap } from "./context.ts";
 import { flowRepos, gitRoot } from "./diff.ts";
+import { autopilotOn, currentStages, persist } from "./phase.ts";
 
 // ----------------------------------------------------------------------
 // Plan files
@@ -69,7 +70,7 @@ export function stopClaimTimer(fl: Flow): void {
 export function liveSnapshot(fl: Flow): LiveInfo | undefined {
 	const flowId = fl.state.planDoc?.flowId;
 	if (!flowId || !fl.plan.planDirs.get(flowId)) return undefined;
-	const st = fl.legacy.currentStages();
+	const st = currentStages(fl);
 	return {
 		v: 1,
 		flowId,
@@ -82,7 +83,7 @@ export function liveSnapshot(fl: Flow): LiveInfo | undefined {
 		...(st ? { stage: st.current, stages: st.stages.length } : {}),
 		steps: (fl.state.checklist ?? []).map((i) => ({ id: i.id, text: i.text.slice(0, 80), done: i.done })),
 		judgeRound: fl.state.judgeRounds,
-		autopilot: fl.legacy.autopilotOn(),
+		autopilot: autopilotOn(fl),
 		...(fl.state.waiting ? { waiting: fl.state.waiting.reason.slice(0, 120) } : {}),
 		runs: fl.view.runs.filter((r) => r.status === "running").slice(0, 6).map((r) => ({ role: r.role, label: r.label.slice(0, 80), activity: (r.activity ?? "").slice(0, 80) })),
 		events: [],
@@ -193,13 +194,13 @@ export async function writePlan(fl: Flow, ctx: ExtensionContext, snap: PlanSnap)
 	const live = fl.state.planDoc?.flowId === snap.flowId ? fl.state.planDoc : undefined;
 	if (live && roots.join("\n") !== live.roots.join("\n")) {
 		live.roots = roots;
-		fl.legacy.persist();
+		persist(fl);
 	}
 	const revs = await mapLimit(roots, 3, (root) => syncRoot(fl, ctx, root, snap, planMd, status));
 	const top = Math.max(snap.rev, ...revs);
 	if (live && top > live.rev) {
 		live.rev = top;
-		fl.legacy.persist();
+		persist(fl);
 	}
 	if (snap.finished && fl.cfg.plans.keepCount === 0) deleteLocal(dir, snap.flowId);
 }

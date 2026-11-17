@@ -16,6 +16,7 @@ import { stageNote } from "../stages.ts";
 import { type DiffPart, mapLimit, emptyUsage, addUsage } from "../../agents/api.ts";
 import type { FlowRun } from "../view.ts";
 import { type Diff, execFileAsync, type Flow, type FlowState, type JudgeResult, type RepoRef, type ReviewPlan, type Snaps } from "./context.ts";
+import { currentStages, persist } from "./phase.ts";
 import { gitEnv, planDirFor, planFilePath } from "./plan-files.ts";
 import { modelOf } from "./roles.ts";
 
@@ -253,7 +254,7 @@ export async function judge(fl: Flow, ctx: ExtensionContext, diff: Diff, focus: 
 	// A real review is running: the minor-fix shortcut is gone for good.
 	if (fl.state.minorFix) {
 		fl.state.minorFix = undefined;
-		fl.legacy.persist();
+		persist(fl);
 	}
 	// Disputes need a fresh look at the code, so they never get the "no changes" shortcut (a recheck still applies).
 	const plan = await reviewPlan(fl, diff, full, Boolean(disputes));
@@ -296,7 +297,7 @@ export function markPassed(fl: Flow, hash: string): void {
 	fl.state.passedDiff = hash;
 	fl.state.judgeRounds = 0;
 	recordPassedTrees(fl, hash);
-	fl.legacy.persist();
+	persist(fl);
 }
 
 // ----------------------------------------------------------------------
@@ -341,7 +342,7 @@ export async function joinReviewBase(fl: Flow, root: string, lazy = false): Prom
 	}
 	if (base) {
 		fl.state.reviewBase = { ...(fl.state.reviewBase ?? {}), [key]: base };
-		fl.legacy.persist();
+		persist(fl);
 	}
 }
 
@@ -437,7 +438,7 @@ export async function restoreReview(fl: Flow, ctx: ExtensionContext, status: Pla
 export function planForJudge(fl: Flow): string {
 	const plan = fl.state.approvedPlan;
 	if (!plan) return "None recorded: judge the diff on its own.";
-	const staged = fl.legacy.currentStages();
+	const staged = currentStages(fl);
 	const note = staged ? `\n\n${stageNote(staged.stages, staged.current)}` : "";
 	const list = fl.state.checklist?.length ? `\n\n## Executor's checklist (claims, not proof)\n${fl.state.checklist.map((i) => `- [${i.done ? "x" : " "}] ${i.id} ${i.text}`).join("\n")}` : "";
 	return fl.legacy.trimPlan(plan) + note + list + checkpointSection(fl);
@@ -445,7 +446,7 @@ export function planForJudge(fl: Flow): string {
 
 /** Checkpoints delivered earlier: this stage's in a staged plan, all of them otherwise. */
 export function stageCheckpoints(fl: Flow): NonNullable<FlowState["checkpoints"]> {
-	const staged = fl.legacy.currentStages();
+	const staged = currentStages(fl);
 	return (fl.state.checkpoints ?? []).filter((c) => !staged || c.stage === staged.current);
 }
 
@@ -471,7 +472,7 @@ export async function planCardReady(fl: Flow): Promise<string> {
 
 /** The short plan sent after a compaction in place of the full plan. Without a plan file it carries the (trimmed) plan itself. */
 export function planCardText(fl: Flow): string {
-	const staged = fl.legacy.currentStages();
+	const staged = currentStages(fl);
 	const file = planFilePath(fl);
 	const plan = fl.state.approvedPlan ?? "";
 	return planCard(file ? plan : fl.legacy.trimPlan(plan), fl.state.checklist, staged?.current, staged?.stages.length, file, fl.state.waiting?.reason);
