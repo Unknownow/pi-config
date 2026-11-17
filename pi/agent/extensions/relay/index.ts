@@ -1,6 +1,6 @@
 /**
  * relay: an autonomous lead/worker/judge extension. This session is the lead; real work goes to headless workers in worktree sets.
- * Inert when RELAY_ROLE is set (workers and reviewers load worker.ts / reviewer.ts with -e instead). See README.md.
+ * Inert when RELAY_ROLE is set (workers load worker.ts with -e instead; the judge and critic are agents runs). See README.md.
  */
 
 import * as path from "node:path";
