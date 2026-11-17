@@ -17,7 +17,7 @@ import { readOnlyProblem } from "./readonly-bash.ts";
  * by name and then checked below.
  */
 export const PLAN_TOOLS = [
-	"^(read|grep|find|ls|bash|codemode|explore|advisor|judge)$",
+	"^(read|grep|find|ls|bash|codemode|explore|advisor|judge|critic)$",
 	"(^|__)run_code$",
 	"(^|__)fetch_url$",
 	"(^|__)video_frames$",
@@ -100,7 +100,7 @@ export function planToolProblem(
 	if (BASH_TOOL.test(name)) return readOnlyProblem(String(input.command ?? ""), allow);
 	if (RUN_CODE_TOOL.test(name)) return firstMatch(String(input.code ?? ""), JS_CHECKS);
 	if (FETCH_TOOL.test(name)) return null;
-	if (/^mcp__/.test(name) && !/__(read|grep|find|ls|bash|codemode|explore|advisor|judge|edit|write)$/.test(name) && stringsOf(input).some((t) => { const sql = t.replace(/'(?:[^']|'')*'|\/\*[\s\S]*?\*\/|--[^\n]*/g, (tok) => (tok[0] === "'" ? "''" : " ")); return SQL_CHANGE.test(sql) || GRAPHQL_MUTATION.test(sql); })) {
+	if (/^mcp__/.test(name) && !/__(read|grep|find|ls|bash|codemode|explore|advisor|judge|critic|edit|write)$/.test(name) && stringsOf(input).some((t) => { const sql = t.replace(/'(?:[^']|'')*'|\/\*[\s\S]*?\*\/|--[^\n]*/g, (tok) => (tok[0] === "'" ? "''" : " ")); return SQL_CHANGE.test(sql) || GRAPHQL_MUTATION.test(sql); })) {
 		return "sends a statement that changes data";
 	}
 	return null;

@@ -78,6 +78,7 @@ import { emitClaims, gatherClaims } from "../shared/claims.ts";
 import { type CheckStatus, MAX_REASKS, PLAN_ARBITER, PLAN_APPROVE, PLAN_BACK, PLAN_FULL, type AskKey, type AskRole, type OpenAsk, askAnswer, askMenu, idleDue, idleNoticeAllowed, idlePayload, bumpAskId, planMenuRequest, waitDonePayload, restoreAsks, resumeContent, waitPayload, waitResumeOutcome } from "./asks.ts";
 import { refilterPlanTools, hiddenInPhase, syncFlowOnlyTools } from "./plan-tools.ts";
 import { AGENT_ROLES } from "../agents/config.ts";
+import { agentsOnlyRoles, claimJudgeCall, type JudgeParams } from "./judge-claim.ts";
 import { countSubagent } from "./agent-events.ts";
 import { MetricsQueue, type MetricEvent, subagentMetric, judgeMetric } from "./metrics.ts";
 import { addUsage, emptyUsage, mapLimit, type RunResult, runSubagent } from "../agents/subagent.ts";
@@ -234,7 +235,9 @@ const APPROVED_FINAL = "The final plan is approved. Execute it exactly, step by 
 const MAX_PLAN_CHARS = 60_000;
 /** Roles `/flow model` sets (workflow.json); explore, advisor and runner are the agents extension's (`/agents model`). */
 const MODEL_ROLES: readonly string[] = ROLES;
-const OWN_TOOLS = new Set(["explore", "advisor", "judge"]);
+const OWN_TOOLS = new Set(["explore", "advisor", "judge", "critic"]);
+/** Agents roles `/flow model` refers to `/agents model`; judge and critic stay the workflow's own until flow uses the agents reviewers. */
+const AGENTS_ONLY_ROLES = agentsOnlyRoles(AGENT_ROLES, MODEL_ROLES);
 const execFileAsync = promisify(execFile);
 /** Subagent-only extension that registers forwarded MCP servers (see mcp-forward.ts). */
 const FORWARD_EXTENSION = path.join(path.dirname(CONFIG_PATH), "extensions", "agents", "mcp-forward.ts");
@@ -2863,23 +2866,10 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 		},
 	});
 
-	pi.registerTool({
-		name: "judge",
-		label: "Judge",
-		description:
-			"Adversarial review of the diff since the flow's review base (committed or not, plus untracked files) of every git repo in this flow (the working folder's, the /folders ones, and repos edited this flow) by a stronger model that assumes the change is wrong. Returns one line per finding and VERDICT: PASS or FAIL. Call it when the diff is ready; fix blocker and major findings and call it again. On a pass, finish the delivery (push, pull request, and the merge unless the plan says Delivery: no merge), tick any steps not ticked yet and end your turn: the workflow decides whether minor findings get a fix round. Rounds after the first review only the changes since the last round, with its findings. Commits are free; merge, a protected push and publish_packages need a PASS on their exact tree.",
-		promptSnippet: "judge: adversarial review of the current diff; must PASS before a merge, a protected push or a publish",
-		parameters: Type.Object({
-			focus: Type.Optional(Type.String({ description: "What the change is meant to do, or areas to scrutinize" })),
-			base: Type.Optional(Type.String({ description: "Git ref to diff against. Default: the flow's review base" })),
-			full: Type.Optional(
-				Type.Boolean({ description: "Review the whole diff, not only the changes since the last round. Use once before committing a risky change." }),
-			),
-			disputes: Type.Optional(
-				Type.String({ description: "Findings from the last round you believe are wrong, and the evidence (file:line). The judge verifies them against the code; it does not take them on trust." }),
-			),
-		}),
-		async execute(_id, params, signal, onUpdate, ctx) {
+	// The judge tool is the agents extension's; while a flow is on the workflow takes its calls over with
+	// its own review (review base, rounds, gates). Errors the review throws reject the claim.
+	pi.events.on("agents:judge-call", (payload) =>
+		claimJudgeCall(state.phase, payload, async (params: JudgeParams, signal: AbortSignal | undefined, onUpdate: any, ctx: ExtensionContext) => {
 			const baseNote = params.base ? undefined : await refreshReviewBase(ctx);
 			const diff = await collectFlowDiff(ctx, params.base || undefined);
 			if (!diff) throw new Error("no git work tree in this flow (working folder, /folders, or repos edited this flow); the judge reviews git diffs");
@@ -2913,12 +2903,8 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 			}
 			persist();
 			return { content: [{ type: "text", text }], details: { runs: progress.snapshot(), verdict: r.verdict }, usage: r.usage };
-		},
-		renderCall(args, theme) {
-			return new Text(`${title(theme, "judge", "judge")} ${theme.fg("dim", String(args.focus ?? "current diff"))}`, 0, 0);
-		},
-		renderResult: (result, opts, theme) => renderRuns(result, opts, theme, 40),
-	});
+		}),
+	);
 
 	/** The tag part of `deliver`: creates or moves a tag on the remote default branch, safely. A wait is returned for the caller to set. */
 	async function deliverTag(ctx: ExtensionContext, t: { name: string; commit?: string; move: boolean; repo?: string }, planned: boolean): Promise<{ text: string; ok: boolean; wait?: string }> {
@@ -4777,7 +4763,7 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 			`tokens    ${STAGES.filter((s) => !["discuss", "commit"].includes(s) || view.sessionTokens(s).raw + view.sessionTokens(s).cost > 0).map((s) => `${s} ${fmtTok(view.sessionTokens(s))}`).join(" · ")} · session total ${fmtTok(STAGES.reduce((n, s) => ({ raw: n.raw + view.sessionTokens(s).raw, cost: n.cost + view.sessionTokens(s).cost }), { raw: 0, cost: 0 }))}`,
 			"",
 			...MODEL_ROLES.map((r) => `${r.padEnd(9)} ${describeRole(roleSpecOf(r))}`),
-			`${AGENT_ROLES.join(", ")}: /agents model`,
+			`${AGENTS_ONLY_ROLES.join(", ")}: /agents model`,
 			"",
 			`config    ${CONFIG_PATH}${fs.existsSync(CONFIG_PATH) ? "" : " (not created, using defaults)"}`,
 		];
@@ -5061,7 +5047,7 @@ The arbiter's view: ${seen || "it hands the decision to you"}` });
 				case "model": {
 					let [role, spec] = rest;
 					const usage = () => ctx.ui.notify(`Usage: /flow model <${MODEL_ROLES.join("|")}> <provider/id[:thinking]>`, "warning");
-					if (role && (AGENT_ROLES as readonly string[]).includes(role)) {
+					if (role && AGENTS_ONLY_ROLES.includes(role)) {
 						ctx.ui.notify(`workflow: ${role} belongs to the agents extension; use /agents model ${role}`, "warning");
 						return;
 					}

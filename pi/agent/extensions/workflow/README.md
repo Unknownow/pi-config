@@ -23,12 +23,13 @@ plan is read-only:   bash refuses commands that change files, git or GitHub
 | `execute` | main session model | after you approve the plan; when the flow ends (delivered, passed without a commit, or stopped) it goes back to `discuss` (`returnTo`: `discuss`, `plan` or `off`) |
 | `explore` | `explore` tool of the agents extension | open questions and multi-file searches, in every mode (see `../agents/README.md`) |
 | `advisor` | `advisor` tool of the agents extension | choosing an approach, after an error repeats (auto-nudged after `repeatedErrorThreshold` failures), before "done" (see `../agents/README.md`) |
-| `judge` | `judge` tool, sub-`pi` with the git diff | the diff is ready; when a run ends with an unreviewed diff it asks (`autoJudge`) |
+| `judge` | `judge` tool (registered by the agents extension; while a flow is on the workflow takes its calls over through `agents:judge-call`, `judge-claim.ts`), sub-`pi` with the git diff | the diff is ready; when a run ends with an unreviewed diff it asks (`autoJudge`). `/flow model judge` sets this workflow role; the agents `judge` role (`/agents model judge`) is used only outside a flow |
 | `arbiter` | sub-`pi` with the plan, the judge's report and the diff | the judge questions the plan and `planFlaw` is `auto`, or a passed review has a major plan flaw (whatever `planFlaw` is) (or you pick "Let the arbiter decide", or you picked *Approve, arbiter solves plan flaws* for this flow) |
 | `git_task` (`commit` role) | sub-`pi` with bash only, a git helper prompt, and its own git guard (`git-guard.ts`) with the same judge gate as the main session | when the executor (or normal mode, where the gate is off) calls `git_task` to delegate commit, push, pull request or merge work; default model `claude-bridge/claude-haiku-5-5`, thinking `medium` |
 | `escalate` | main session model | `/flow escalate` |
 | `quick` | main session model; same read-only rules as `plan` | the scope card of a quick flow (`/flow quick`); default Sonnet 5.5, medium |
 | `quick-judge` | the `judge` tool in a quick flow | one review, blockers and majors only; default Opus 5.5, medium |
+| `critic` | `critic` tool of the agents extension | reviews a document (a plan, a brief) against the code when asked; kept in every phase (read-only) |
 | `runner` | `test_run` tool of the agents extension; refused in discuss and plan (runner bash is not read-only) | one per test task card; reports facts only (see `../agents/README.md`) |
 
 ## Hands-off run
@@ -254,7 +255,7 @@ its plan and hand over, even when you said "fix it" or "do it for me".
 - It is a guard against the planner drifting into execution, not a sandbox. The code checks are
   regexes: a determined disguise (a computed lookup on an alias of `require('fs')`, say) can still get
   past them.
-- Tests: `node --experimental-strip-types --test agent-end.test.ts hooks.test.ts delivery.test.ts merge-gate.test.ts folder-add.test.ts plan-tools.test.ts push-guard.test.ts knowledge.test.ts registry-publish.test.ts agent-events.test.ts notify.test.ts asks.test.ts ui-guard.test.ts repos.test.ts stages.test.ts git-guard.test.ts repo-diff.test.ts prompts.test.ts config.test.ts metrics.test.ts plan-store.test.ts gate-wiring.test.ts boundary.test.ts plan-doc.test.ts  flow-report.test.ts view.test.ts waits.test.ts checkpoints.test.ts tags.test.ts commands.test.ts`.
+- Tests: `node --experimental-strip-types --test agent-end.test.ts hooks.test.ts delivery.test.ts merge-gate.test.ts folder-add.test.ts plan-tools.test.ts push-guard.test.ts knowledge.test.ts registry-publish.test.ts agent-events.test.ts notify.test.ts asks.test.ts ui-guard.test.ts repos.test.ts stages.test.ts git-guard.test.ts repo-diff.test.ts prompts.test.ts config.test.ts metrics.test.ts plan-store.test.ts gate-wiring.test.ts boundary.test.ts plan-doc.test.ts  flow-report.test.ts view.test.ts waits.test.ts checkpoints.test.ts tags.test.ts commands.test.ts judge-claim.test.ts`.
 
 ## Test phase (removed)
 
