@@ -113,7 +113,8 @@ import {
 	summaryLines,
 } from "./view.ts";
 import { shortModel } from "../shared/runs.ts";
-import { APPROVED_FINAL, assistantText, citedPaths, countFindings, createFlow, type Diff, execFileAsync, type FlowState, FOLDERS_ENTRY, FORWARD_EXTENSION, type GateAbort, GIT_GUARD_EXTENSION, type JudgeResult, type LastKnowledge, MAX_PLAN_CHARS, MODEL_ROLES, OWN_TOOLS, type Phase, type PlanSnap, type RepoRef, type ReviewPlan, type Snaps, STATE_ENTRY, SUMMARY_ENTRY, type ToolReply } from "./flow/context.ts";
+import { APPROVED_FINAL, assistantText, citedPaths, countFindings, createFlow, type Diff, execFileAsync, type FlowState, FOLDERS_ENTRY, FORWARD_EXTENSION, GIT_GUARD_EXTENSION, type JudgeResult, type LastKnowledge, MAX_PLAN_CHARS, MODEL_ROLES, OWN_TOOLS, type Phase, type PlanSnap, type RepoRef, type ReviewPlan, type Snaps, STATE_ENTRY, SUMMARY_ENTRY, type ToolReply } from "./flow/context.ts";
+import { abortGate, askUser, lastAssistantText, notifyUser, scheduleIdleNotice } from "./flow/notify.ts";
 
 export default function workflow(pi: ExtensionAPI) {
 	const fl = createFlow(pi);
@@ -123,56 +124,6 @@ export default function workflow(pi: ExtensionAPI) {
 
 	/** The model of a workflow role, or of agents' judge or critic (agents.json, `/agents model`). */
 	const modelOf = (role: Role | "judge" | "critic"): RoleSpec => (role === "judge" || role === "critic" ? loadAgentsConfig().config.roles[role] : fl.cfg.roles[role]);
-
-	/** A desktop notification that this session needs the user. Never throws; rate-limited. */
-	function notifyUser(ctx: ExtensionContext, why: string): void {
-		try {
-			const now = Date.now();
-			if (!notifyDue({ enabled: fl.cfg.notify.enabled, hasUI: ctx.hasUI, now, last: fl.notify.lastNotifyAt })) return;
-			fl.notify.lastNotifyAt = now;
-			fl.notify.notifiedSinceStart = true;
-			const c = notifyCommand(process.platform, "pi", `${path.basename(ctx.cwd)}: ${why}`);
-			if (!c) return;
-			const child = spawn(c.command, c.args, { detached: true, stdio: "ignore", windowsHide: true });
-			child.on("error", () => {});
-			child.unref();
-		} catch {}
-	}
-	/** A menu that waits for a person; it notifies, then asks. */
-	function askUser(ctx: ExtensionContext, title: string, options: string[], opts: { localNotice?: () => void; skipLocal?: boolean } = {}): Promise<string | undefined> {
-		return askMenu({ select: (t, o) => ctx.ui.select(t, o), notify: (t) => notifyUser(ctx, t) }, { title, options, ...opts });
-	}
-
-	/** Aborts the running gate; the run settles on its own and decides what to do from `reason`. */
-	function abortGate(reason: GateAbort): void {
-		if (!fl.gateRun || fl.gateRun.reason) return;
-		fl.gateRun.reason = reason;
-		fl.gateRun.controller.abort();
-	}
-	function lastAssistantText(ctx: ExtensionContext): string {
-		try {
-			const entries = ctx.sessionManager.getBranch() as { type: string; message?: AgentMessage }[];
-			for (let i = entries.length - 1; i >= 0; i--) {
-				const e = entries[i];
-				if (e.type === "message" && e.message?.role === "assistant") return assistantText(e.message).trim();
-			}
-		} catch {}
-		return "";
-	}
-	/** After a run settles, notify when the session stays idle; a new turn cancels it. */
-	function scheduleIdleNotice(ctx: ExtensionContext): void {
-		if (fl.notify.idleTimer) clearTimeout(fl.notify.idleTimer);
-		if (!fl.cfg.notify.enabled || !ctx.hasUI) return;
-		fl.notify.idleTimer = setTimeout(() => {
-			fl.notify.idleTimer = undefined;
-			try {
-				if (fl.gateRun || fl.notify.notifiedSinceStart || !ctx.isIdle()) return;
-				if (fl.compacting || fl.compactPending || fl.pendingHandover) return scheduleIdleNotice(ctx);
-				notifyUser(ctx, idleReason({ phase: fl.state.phase, waiting: fl.state.waiting?.reason }));
-			} catch {}
-		}, fl.cfg.notify.idleMs);
-		fl.notify.idleTimer.unref?.();
-	}
 
 	const autopilotOn = (): boolean => fl.autopilotOverride ?? fl.cfg.autopilot;
 	/** An autopilot choice for the final card. */
@@ -253,7 +204,7 @@ export default function workflow(pi: ExtensionAPI) {
 
 	/** A flow has ended: on to the phase `returnTo` names. */
 	async function endFlow(ctx: ExtensionContext): Promise<void> {
-		notifyUser(ctx, "flow finished");
+		notifyUser(fl, ctx, "flow finished");
 		await dropReviewRefs(ctx);
 		fl.state.reviewBase = undefined;
 		fl.state.passedTrees = undefined;
@@ -390,7 +341,7 @@ export default function workflow(pi: ExtensionAPI) {
 	async function setPhase(ctx: ExtensionContext, phase: Phase): Promise<boolean> {
 		const leavingFlow = fl.state.phase === "execute" && phase !== fl.state.phase;
 		if (phase !== fl.state.phase) {
-			abortGate("phase");
+			abortGate(fl, "phase");
 			fl.planApproveQueued = false;
 			fl.planFixing = false;
 		}
@@ -1828,7 +1779,7 @@ export default function workflow(pi: ExtensionAPI) {
 			stopWaitTimer();
 			if (w.check && elapsedMs >= limit) {
 				ctx.ui.notify(`workflow: stopped polling "${w.check}" after ${Math.round(elapsedMs / 60_000)} min; your next message checks again`, "warning");
-				notifyUser(ctx, `stopped waiting for "${w.check}" after ${Math.round(elapsedMs / 60_000)} min`);
+				notifyUser(fl, ctx, `stopped waiting for "${w.check}" after ${Math.round(elapsedMs / 60_000)} min`);
 			}
 			return;
 		}
@@ -1839,7 +1790,7 @@ export default function workflow(pi: ExtensionAPI) {
 			if (verdict.status === "broken") {
 				stopWaitTimer();
 				ctx.ui.notify(`workflow: wait check can't run (${verdict.detail}): ${w.check}; fix it or send a message to continue`, "warning");
-				notifyUser(ctx, `wait check can't run: ${verdict.detail}`);
+				notifyUser(fl, ctx, `wait check can't run: ${verdict.detail}`);
 				return;
 			}
 			if (verdict.status !== "pass") return;
@@ -1852,7 +1803,7 @@ export default function workflow(pi: ExtensionAPI) {
 				w.checkPassed = true;
 				persist();
 				ctx.ui.notify(`workflow: "${w.check}" passed; send any message to continue`, "info");
-				notifyUser(ctx, `"${w.check}" passed; send any message to continue`);
+				notifyUser(fl, ctx, `"${w.check}" passed; send any message to continue`);
 			}
 		} finally {
 			fl.wait.waitChecking = false;
@@ -2322,7 +2273,7 @@ export default function workflow(pi: ExtensionAPI) {
 			pi.sendMessage({ customType: "workflow-judge", content: `**Merge request before the end of the flow**\n\nThe executor's reason: ${reason}\n\nThe arbiter's view: ${seen || "it hands the decision to you"}`, display: true }, { triggerTurn: false });
 			let answer: string | undefined;
 			try {
-				answer = await askUser(ctx, `Merge before the end of the flow? ${reason}`, ["Allow the merge", "Don't merge"]);
+				answer = await askUser(fl, ctx, `Merge before the end of the flow? ${reason}`, ["Allow the merge", "Don't merge"]);
 			} catch {}
 			const allowed = answer === "Allow the merge";
 			recordMergeDecision(ctx, "user", allowed, reason);
@@ -2789,7 +2740,7 @@ export default function workflow(pi: ExtensionAPI) {
 				ctx.ui.notify("workflow: discussion critic running (Esc or any other message cancels it)", "info");
 				return { action: "handled" };
 			}
-			abortGate("message");
+			abortGate(fl, "message");
 			return { action: "continue" };
 		}
 		// In discuss, a typed "go" only moves to planning: it never approves or executes.
@@ -2806,7 +2757,7 @@ export default function workflow(pi: ExtensionAPI) {
 				ctx.ui.notify(fl.gateRun ? `workflow: approval queued: plan critic running (run ${(fl.state.planGate?.rounds ?? 0) + 1}/${fl.cfg.maxPlanJudgeRounds})` : "workflow: approval queued: the planner is fixing the critic's findings", "info");
 				return { action: "handled" };
 			}
-			abortGate("message");
+			abortGate(fl, "message");
 			fl.planApproveQueued = false;
 			fl.planFixing = false;
 			return { action: "continue" };
@@ -2899,7 +2850,7 @@ export default function workflow(pi: ExtensionAPI) {
 		} finally {
 			fl.turnAborted = prevAborted;
 			fl.inAgentEnd--;
-			if (fl.inAgentEnd === 0) scheduleIdleNotice(ctx);
+			if (fl.inAgentEnd === 0) scheduleIdleNotice(fl, ctx);
 		}
 	});
 
@@ -3003,7 +2954,7 @@ export default function workflow(pi: ExtensionAPI) {
 				noteAuto("executor error: retried automatically");
 				ctx.ui.notify("workflow: autopilot: the executor's reply failed; retrying once", "info");
 			}
-			const choice = autoRetry ? "Retry" : await askUser(ctx, "The executor's last reply ended in an error", ["Retry", "Back to planning", "Stop"]);
+			const choice = autoRetry ? "Retry" : await askUser(fl, ctx, "The executor's last reply ended in an error", ["Retry", "Back to planning", "Stop"]);
 			if (choice === "Retry") {
 				pi.sendMessage(
 					{ customType: "workflow-retry", content: "Your last reply ended in an error. Continue with the open steps of the approved plan.", display: true },
@@ -3088,7 +3039,7 @@ export default function workflow(pi: ExtensionAPI) {
 		if (what === "advance" && auto && !fl.state.stageJudged) ctx.ui.notify(`workflow: stage ${staged.current} ended with no changes; continuing (${fl.cfg.stageAdvance === "auto" ? "stageAdvance: auto" : "autopilot"})`, "info");
 		if (what === "ask") {
 			const yes = "Mark done and continue";
-			if ((await askUser(ctx, `Stage ${staged.current} ended with no changes`, [yes, "Wait"])) !== yes) return;
+			if ((await askUser(fl, ctx, `Stage ${staged.current} ended with no changes`, [yes, "Wait"])) !== yes) return;
 		}
 		await stageWithoutChanges(ctx, staged);
 	}
@@ -3100,7 +3051,7 @@ export default function workflow(pi: ExtensionAPI) {
 		if ((fl.state.checklist ?? []).some((i) => !isHuman(i) && !i.done)) {
 			if (!ctx.hasUI) return;
 			const yes = "Mark done and finish";
-			if ((await askUser(ctx, "All changes were delivered at checkpoints, but plan steps are still open", [yes, "Wait"])) !== yes) return;
+			if ((await askUser(fl, ctx, "All changes were delivered at checkpoints, but plan steps are still open", [yes, "Wait"])) !== yes) return;
 		}
 		fl.state.minorRounds = 0;
 		fl.state.minorSentFor = undefined;
@@ -3172,7 +3123,7 @@ export default function workflow(pi: ExtensionAPI) {
 		const approveLabel = PLAN_APPROVE;
 		const arbiterLabel = PLAN_ARBITER;
 		const menu = planMenuRequest({ blocked: !!blocked, planFlawAsk: fl.cfg.planFlaw === "ask", planPrompt: fl.cfg.planPrompt });
-		const choice = await askUser(ctx, `Plan phase · execute on ${describeRole(fl.cfg.roles.execute)}`, menu.options, {
+		const choice = await askUser(fl, ctx, `Plan phase · execute on ${describeRole(fl.cfg.roles.execute)}`, menu.options, {
 			skipLocal: menu.skipLocal,
 			localNotice: () => {
 				if (!fl.cfg.planPrompt) ctx.ui.notify(`workflow: say "go" to execute on ${describeRole(fl.cfg.roles.execute)}, or keep discussing.`, "info");
@@ -3193,13 +3144,13 @@ export default function workflow(pi: ExtensionAPI) {
 
 	/** The plan judge: one run on a complete plan, then fix (auto findings go to the planner), offer, or approve a queued "go". Runs detached from agent_end and the input hook. */
 	async function runPlanGate(ctx: ExtensionContext, plan: string, text: string, decision: "confirm" | "recheck" | "full"): Promise<void> {
-		abortGate("restart");
+		abortGate(fl, "restart");
 		const gate0 = fl.state.planGate;
 		const run = { kind: "plan" as const, controller: new AbortController(), judgedHash: textHash(plan) } as NonNullable<typeof fl.gateRun>;
 		fl.gateRun = run;
 		if (ctx.hasUI) {
 			try {
-				run.offEsc = ctx.ui.onTerminalInput((d) => (isEscKey(d) ? (abortGate("esc"), { consume: true }) : undefined));
+				run.offEsc = ctx.ui.onTerminalInput((d) => (isEscKey(d) ? (abortGate(fl, "esc"), { consume: true }) : undefined));
 			} catch {}
 		}
 		updateStatus(ctx);
@@ -3244,7 +3195,7 @@ export default function workflow(pi: ExtensionAPI) {
 			if (ctx.hasUI) ctx.ui.setWorkingMessage();
 			updateStatus(ctx);
 			try {
-				if (ctx.isIdle()) scheduleIdleNotice(ctx);
+				if (ctx.isIdle()) scheduleIdleNotice(fl, ctx);
 			} catch {}
 		}
 		const blank: PlanGate = gate0 ?? { planHash: run.judgedHash, rounds: 0, autoFindings: [], userFindings: [], spec: specKind };
@@ -3392,7 +3343,7 @@ export default function workflow(pi: ExtensionAPI) {
 
 	/** The discussion critic: one run on the last agreed list. `loop` false is the manual `/flow critic`: it reports and stores the review but starts no fix loop. */
 	async function runDiscussionGate(ctx: ExtensionContext, decision: "full" | "recheck", loop: boolean, resetRounds = true): Promise<void> {
-		abortGate("restart");
+		abortGate(fl, "restart");
 		const prev = fl.state.discussionReview;
 		const branch = ctx.sessionManager.getBranch();
 		const list = lastAgreedList(branchAssistantTexts(branch));
@@ -3410,7 +3361,7 @@ export default function workflow(pi: ExtensionAPI) {
 		fl.gateRun = run;
 		if (ctx.hasUI) {
 			try {
-				run.offEsc = ctx.ui.onTerminalInput((d) => (isEscKey(d) ? (abortGate("esc"), { consume: true }) : undefined));
+				run.offEsc = ctx.ui.onTerminalInput((d) => (isEscKey(d) ? (abortGate(fl, "esc"), { consume: true }) : undefined));
 			} catch {}
 		}
 		updateStatus(ctx);
@@ -3447,7 +3398,7 @@ export default function workflow(pi: ExtensionAPI) {
 			ctx.ui.setWorkingMessage();
 			updateStatus(ctx);
 			try {
-				if (ctx.isIdle()) scheduleIdleNotice(ctx);
+				if (ctx.isIdle()) scheduleIdleNotice(fl, ctx);
 			} catch {}
 		}
 		const nowList = lastAgreedList(branchAssistantTexts(ctx.sessionManager.getBranch()));
@@ -3530,7 +3481,7 @@ export default function workflow(pi: ExtensionAPI) {
 		}
 		if (!manual && (fl.cfg.autoJudge === "off" || fl.seenDiffs.has(diff.hash))) return;
 		if (!manual && fl.cfg.autoJudge === "ask" && !autopilotOn()) {
-			const run = (await askUser(ctx, `Diff ready: run the judge (${describeRole(modelOf("judge"))}) on ${diff.files} changed file(s)?`, ["Run the judge", "Skip"])) === "Run the judge";
+			const run = (await askUser(fl, ctx, `Diff ready: run the judge (${describeRole(modelOf("judge"))}) on ${diff.files} changed file(s)?`, ["Run the judge", "Skip"])) === "Run the judge";
 			if (!run) {
 				fl.seenDiffs.add(diff.hash);
 				return;
@@ -3553,7 +3504,7 @@ export default function workflow(pi: ExtensionAPI) {
 				noteAuto("judge error: retried automatically");
 				ctx.ui.notify("workflow: autopilot: the judge failed to run; retrying once", "info");
 			}
-			const choice = autoRetry ? "Retry the judge" : await askUser(ctx, "The judge failed to run", ["Retry the judge", "Back to planning", "Stop"]);
+			const choice = autoRetry ? "Retry the judge" : await askUser(fl, ctx, "The judge failed to run", ["Retry the judge", "Back to planning", "Stop"]);
 			if (choice === "Retry the judge") {
 				await reviewDiff(ctx, true);
 			} else if (choice === "Back to planning") {
@@ -3595,7 +3546,7 @@ export default function workflow(pi: ExtensionAPI) {
 				noteAuto(`judge cap (${fl.state.judgeRounds} failed rounds): ${autoCap === "Stop" ? "stopped (second cap)" : "escalated and kept fixing (advisor asked once)"}`);
 				ctx.ui.notify(`workflow: autopilot: judge cap reached; ${autoCap === "Stop" ? "stopping" : "escalating and fixing on"}`, "warning");
 			}
-			const choice = autoCap ?? await askUser(ctx, `Judge failed ${fl.state.judgeRounds} rounds in a row`, ["Keep fixing", "Escalate and keep fixing", "Stop"]);
+			const choice = autoCap ?? await askUser(fl, ctx, `Judge failed ${fl.state.judgeRounds} rounds in a row`, ["Keep fixing", "Escalate and keep fixing", "Stop"]);
 			if (choice === "Keep fixing" || choice === "Escalate and keep fixing") {
 				if (choice !== "Keep fixing") await escalate(ctx);
 				fl.state.judgeRounds = 0;
@@ -3637,7 +3588,7 @@ export default function workflow(pi: ExtensionAPI) {
 				return "stop";
 			}
 			const options = ["Back to planning", ...(canAsk ? ["Let the arbiter decide"] : []), "Ignore and continue", "Stop"];
-			const choice = await askUser(ctx, "Judge questions the plan", options);
+			const choice = await askUser(fl, ctx, "Judge questions the plan", options);
 			if (choice === "Back to planning") {
 				await setPhase(ctx, "plan");
 				pi.sendMessage({ customType: "workflow-judge", content: report, display: true }, { triggerTurn: false });
@@ -4343,7 +4294,7 @@ export default function workflow(pi: ExtensionAPI) {
 					return;
 				case "critic":
 					if (rest[0]?.toLowerCase() === "cancel") {
-						if (fl.gateRun) abortGate("command");
+						if (fl.gateRun) abortGate(fl, "command");
 						else ctx.ui.notify("workflow: no critic review running", "info");
 						return;
 					}

@@ -76,7 +76,7 @@ test("entering plan resets the gate", () => {
 
 test("setPhase aborts a running gate when the phase changes", () => {
 	const a = source.indexOf("async function setPhase(");
-	assert.ok(source.indexOf('abortGate("phase")', a) > a);
+	assert.ok(source.indexOf('abortGate(fl, "phase")', a) > a);
 });
 
 test("the input handler queues a go and cancels on other text while the plan judge runs", () => {
@@ -84,7 +84,7 @@ test("the input handler queues a go and cancels on other text while the plan jud
 	assert.ok(a > 0);
 	const seg = source.slice(a, a + 900);
 	assert.match(seg, /fl.planApproveQueued = true/);
-	assert.match(seg, /abortGate\("message"\)/);
+	assert.match(seg, /abortGate\(fl, "message"\)/);
 });
 
 test("the three discuss-to-plan paths call startDiscussionGate", () => {
