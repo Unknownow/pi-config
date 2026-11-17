@@ -1,3 +1,4 @@
+/** The plan gate: the approval menu and the automatic plan judge. */
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { describeRole } from "../../shared/roles.ts";
 import { composePlan } from "../agent-end.ts";

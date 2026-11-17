@@ -1,3 +1,4 @@
+/** The workflow's tools (wait_for_user, publish_packages, git_task, plan_check, request_merge, deliver) and their helpers. */
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";

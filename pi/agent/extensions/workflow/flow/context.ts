@@ -1,3 +1,4 @@
+/** The workflow's shared context: `Flow` (the session's state, created once in index.ts and passed to every flow/ module as `fl`), the persisted `FlowState` and the types and helpers the modules share. */
 import { execFile } from "node:child_process";
 import * as path from "node:path";
 import { promisify } from "node:util";
@@ -198,7 +199,7 @@ export function citedPaths(findings: Finding[]): string[] {
 	return [...out];
 }
 
-/** The automatic judge gate that runs now (not persisted: a restart drops it). Only one at a time. */
+/** Why a running gate was aborted. */
 export type GateAbort = "esc" | "command" | "message" | "phase" | "restart";
 
 export interface JudgeResult {
@@ -264,6 +265,7 @@ export interface Flow {
 	pendingHandover: { customType: string; content: string } | undefined;
 	/** nesting depth: a run can end while a handler still waits on a subagent */
 	inAgentEnd: number;
+	/** The automatic judge gate that runs now (not persisted: a restart drops it). Only one at a time. */
 	gateRun: { kind: "discussion" | "plan"; controller: AbortController; offEsc?: () => void; judgedHash: string; reason?: GateAbort } | undefined;
 	/** A "go" typed while the plan judge ran or the planner fixed its findings: it approves only after a clean PASS. */
 	planApproveQueued: boolean;

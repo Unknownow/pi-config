@@ -1,3 +1,4 @@
+/** Diffs of the flow's repos, the judge call and its review plan, the review base the judge diffs from, and the plan text the judge reads. */
 import { createHash, randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";

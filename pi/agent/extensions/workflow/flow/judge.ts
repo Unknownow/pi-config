@@ -1,3 +1,4 @@
+/** Judge rounds: one review of the diff, fix or ask, plan flaws and the arbiter, minor findings and stage outcomes. */
 import * as path from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { describeRole } from "../../shared/roles.ts";

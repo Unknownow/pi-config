@@ -1,3 +1,4 @@
+/** Phases and models: setPhase, approval, execution start, escalation, the flow's end, status and persistence. */
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { type Role, CONFIG_PATH } from "../config.ts";
 import { describeRole } from "../../shared/roles.ts";

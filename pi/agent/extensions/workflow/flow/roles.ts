@@ -1,3 +1,4 @@
+/** The roles' models and runRole, the workflow's own subagent runs with their knowledge tools. */
 import * as fs from "node:fs";
 import type { RoleSpec, Role } from "../config.ts";
 import * as prompts from "../prompts.ts";

@@ -1,3 +1,4 @@
+/** Merge checks at a pass and the end of a stage or flow (stageDone). */
 import * as path from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { stageEndAction } from "../agent-end.ts";

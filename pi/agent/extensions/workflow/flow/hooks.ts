@@ -1,3 +1,4 @@
+/** The event hooks (turns, tool calls, input, compaction, agent_end, session start and shutdown) and the plan phase's tool rules. */
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { loadProjectContextFiles, getAgentDir } from "@earendil-works/pi-coding-agent";

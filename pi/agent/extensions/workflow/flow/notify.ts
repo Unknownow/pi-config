@@ -1,3 +1,4 @@
+/** Desktop notifications, the menu that notifies before it asks, the idle notice and the gate abort. */
 import { spawn } from "node:child_process";
 import * as path from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";

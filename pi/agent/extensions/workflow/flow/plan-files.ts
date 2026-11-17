@@ -1,3 +1,4 @@
+/** Plan files: the plan folder and refs, this session's claim, the live board file, milestones, housekeeping and metrics. */
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";

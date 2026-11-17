@@ -1,3 +1,4 @@
+/** The end of a run: handover messages, onAgentEnd, stage moves, the no-change turns and the gh lookup (ensureGh). */
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";

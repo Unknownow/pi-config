@@ -1,3 +1,4 @@
+/** The discussion gate: the critic's review of the agreed list before the plan phase. */
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import * as prompts from "../prompts.ts";
 import { lastAgreedList, discussionCriticRequest, discussionVerdict } from "../discussion-review.ts";

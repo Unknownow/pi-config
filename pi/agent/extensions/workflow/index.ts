@@ -16,30 +16,34 @@
  *
  * view.ts draws it live: the pipeline above the editor with the active stage
  * and its model, plus a row per running subagent with what it is doing now.
+ *
+ * This file is only the wiring. The code is in flow/ (see README.md, "Code layout"):
+ * plain functions that take the session's shared context `fl: Flow` (flow/context.ts) first.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { createFlow } from "./flow/context.ts";
+import { createFlow, type Flow } from "./flow/context.ts";
 import { registerTools } from "./flow/tools.ts";
 import { registerHooks } from "./flow/hooks.ts";
 import { registerCommands } from "./flow/commands.ts";
 
 export default function workflow(pi: ExtensionAPI) {
-	const fl = createFlow(pi);
+	register(createFlow(pi));
+}
 
-	pi.registerFlag("add-dir", {
+/** Registers everything, in this order: the flags, the tools, the event hooks, the commands. */
+function register(fl: Flow): void {
+	fl.pi.registerFlag("add-dir", {
 		description: "Extra folders for this session, separated by ; on Windows and : elsewhere",
 		type: "string",
 	});
 
-	pi.registerFlag("flow", {
+	fl.pi.registerFlag("flow", {
 		description: "Workflow phase to start in: discuss, plan, execute, test or off (default from workflow.json)",
 		type: "string",
 	});
 
 	registerTools(fl);
-
 	registerHooks(fl);
-
 	registerCommands(fl);
 }

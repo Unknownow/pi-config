@@ -1,3 +1,4 @@
+/** Wait points: the wait state, its check and the timer that polls it. */
 import { getShellConfig, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { type CheckVerdict, checkVerdict, replaceWait, resumePrefix, pollDecision } from "../waits.ts";
 import { resumeContent } from "../asks.ts";
