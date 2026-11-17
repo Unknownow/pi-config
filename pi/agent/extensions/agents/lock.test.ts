@@ -5,6 +5,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { test } from "node:test";
 import { acquireLock, lockFile, normaliseResource } from "./lock.ts";
+import { LOCK_LOST, runnerGate } from "./test-run.ts";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "pi-agents-lock-test-"));
@@ -190,4 +191,22 @@ test("race 2: a takeover between the heartbeat's token check and its refresh is 
 	assert.equal(l.signal.aborted, true);
 	l.release();
 	assert.equal(JSON.parse(fs.readFileSync(l.file, "utf8")).token, "new-owner", "a lost lock's release deletes nothing");
+});
+
+test("test_run lock-lost: runnerGate gives the task the held file lock's signal; a lock taken over by another process aborts it (resource lock lost)", async () => {
+	const dir = tmp();
+	const gate = runnerGate(() => 2, (resource, signal) => acquireLock(resource, { dir, signal, pollMs: 5, heartbeatMs: 10 }));
+	const out = await gate("device:Z", async (lockSignal) => {
+		assert.ok(lockSignal, "a shared resource has a file lock");
+		assert.equal(lockSignal.aborted, false);
+		// another process takes the lock file over
+		const file = lockFile("device:Z", dir);
+		fs.rmSync(file);
+		fs.writeFileSync(file, JSON.stringify({ token: "other", pid: process.pid }));
+		await new Promise<void>((r) => lockSignal.addEventListener("abort", () => r(), { once: true }));
+		return `stopped: ${(lockSignal.reason as Error).message}`;
+	});
+	assert.equal(out, `stopped: ${LOCK_LOST}`);
+	assert.equal(JSON.parse(fs.readFileSync(lockFile("device:Z", dir), "utf8")).token, "other", "the new owner's lock is kept");
+	assert.equal(await gate("none", async (lockSignal) => lockSignal), undefined, "no file lock for a task without a resource");
 });
