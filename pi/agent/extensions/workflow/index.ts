@@ -113,10 +113,11 @@ import {
 	summaryLines,
 } from "./view.ts";
 import { shortModel } from "../shared/runs.ts";
-import { assistantText, createFlow, type Diff, type FlowState, FOLDERS_ENTRY, GIT_GUARD_EXTENSION, MODEL_ROLES, OWN_TOOLS, type Phase, STATE_ENTRY, SUMMARY_ENTRY, type ToolReply } from "./flow/context.ts";
-import { advanceReviewBase, collectBoard, collectFlowDiff, existingFolders, flowRepos, git, gitRoot, joinReviewBase, judge, markPassed, nextAmendmentNumber, planCardReady, planForJudge, refreshReviewBase, stageCheckpoints } from "./flow/diff.ts";
+import { assistantText, createFlow, type FlowState, FOLDERS_ENTRY, GIT_GUARD_EXTENSION, MODEL_ROLES, OWN_TOOLS, type Phase, STATE_ENTRY, SUMMARY_ENTRY, type ToolReply } from "./flow/context.ts";
+import { collectBoard, collectFlowDiff, existingFolders, flowRepos, git, gitRoot, joinReviewBase, judge, markPassed, nextAmendmentNumber, planCardReady, planForJudge, refreshReviewBase, stageCheckpoints } from "./flow/diff.ts";
 import { askRestate, runDiscussionGate, startDiscussionGate } from "./flow/discussion-gate.ts";
-import { fixOrAsk, markPassSummarized, resolvePlanFlaw, reviewDiff, settlePlanFlawOnPass, stageOutcomeText } from "./flow/judge.ts";
+import { fixOrAsk, markPassSummarized, resolvePlanFlaw, reviewDiff, settlePlanFlawOnPass } from "./flow/judge.ts";
+import { flowHasRemote, mergeDue, midFlowMergeRefusal, recordMergeDecision } from "./flow/merge.ts";
 import { abortGate, askUser, scheduleIdleNotice } from "./flow/notify.ts";
 import { applyRole, approve, autopilotOn, blockPlanTools, currentStages, deescalate, deliverHintsText, deliverLine, endFlow, escalate, noteAuto, persist, publishFolders, publishRefuse, refilterTools, refreshChecklist, sendPlanKickoff, setPhase, summarizeFlow, updateStatus } from "./flow/phase.ts";
 import { planHousekeeping, planMilestone, recordMetric, rewritePlanFile, stopClaimTimer, stopLiveTimer } from "./flow/plan-files.ts";
@@ -343,7 +344,7 @@ export default function workflow(pi: ExtensionAPI) {
 				protectedBranches: fl.cfg.protectedBranches,
 				passedTrees: fl.state.passedTrees ?? {},
 				noMerge: noMerge(fl.state.approvedPlan ?? ""),
-				...(allowed.ungated ? { ungated: true } : (() => { const mf = midFlowMergeRefusal(); return mf ? { midFlow: mf } : {}; })()),
+				...(allowed.ungated ? { ungated: true } : (() => { const mf = midFlowMergeRefusal(fl); return mf ? { midFlow: mf } : {}; })()),
 			};
 			const task = [
 				params.task.trim(),
@@ -554,7 +555,7 @@ export default function workflow(pi: ExtensionAPI) {
 			if (!reason) return reply("Give the reason: which later step needs the change merged now.");
 			const allowedText = (why: string) => `Merge allowed: ${why}. Run judge if the tree changed since the last pass, merge with gh pr merge as its own command, then continue on a new branch from the updated default branch.`;
 			const refusedText = (why: string) => `No merge: ${why}. Keep committing and pushing to the branch and continue the plan.`;
-			if (midFlowMergeRefusal() === null) return reply(allowedText("the gate already allows a merge here (the end of the flow, a planned Deliver: merge step or an earlier approval)"));
+			if (midFlowMergeRefusal(fl) === null) return reply(allowedText("the gate already allows a merge here (the end of the flow, a planned Deliver: merge step or an earlier approval)"));
 			const staged = currentStages(fl);
 			const stage = staged?.current ?? 0;
 			const mine = mergeDecisions(fl.state.approvedPlan).filter((d) => d.stage === 0 || d.stage === stage);
@@ -600,7 +601,7 @@ export default function workflow(pi: ExtensionAPI) {
 			if (decided && decided.decision !== "ASK_USER") {
 				const allowed = decided.decision === "MERGE";
 				const why = decided.reason || reason;
-				recordMergeDecision(ctx, "arbiter", allowed, why);
+				recordMergeDecision(fl, ctx, "arbiter", allowed, why);
 				return reply(allowed ? allowedText(why) : refusedText(why));
 			}
 			if (!ctx.hasUI) return reply("No merge: nobody to ask. Continue without merging; the pull request is merged at the end of the flow.");
@@ -611,7 +612,7 @@ export default function workflow(pi: ExtensionAPI) {
 				answer = await askUser(fl, ctx, `Merge before the end of the flow? ${reason}`, ["Allow the merge", "Don't merge"]);
 			} catch {}
 			const allowed = answer === "Allow the merge";
-			recordMergeDecision(ctx, "user", allowed, reason);
+			recordMergeDecision(fl, ctx, "user", allowed, reason);
 			return reply(allowed ? allowedText(`you allowed it: ${reason}`) : refusedText("the user did not allow it"));
 		},
 		renderCall(args, theme) {
@@ -637,8 +638,8 @@ export default function workflow(pi: ExtensionAPI) {
 			if (r.verdict === "FAIL") fl.state.judgeRounds++;
 			let text = r.text;
 			const flawed = planFlaws(r.findings).length > 0;
-			if (r.verdict === "PASS" && fl.state.phase === "execute" && !flawed && !noMerge(fl.state.approvedPlan ?? "") && (await flowHasRemote(ctx))) {
-				text += mergeDue()
+			if (r.verdict === "PASS" && fl.state.phase === "execute" && !flawed && !noMerge(fl.state.approvedPlan ?? "") && (await flowHasRemote(fl, ctx))) {
+				text += mergeDue(fl)
 					? "\n\nTick any finished steps not ticked yet with plan_check. Now deliver this exact tree: commit, push, open or update the pull request and merge it with gh pr merge (as its own command), then end your turn."
 					: "\n\nNow commit and push this exact tree to the flow branch (no merge: the pull request is merged at the end of the flow), tick any finished steps not ticked yet with plan_check, then end your turn.";
 			}
@@ -854,7 +855,7 @@ export default function workflow(pi: ExtensionAPI) {
 				const dir = root ?? ctx.cwd;
 				const key = repoKey(root ?? (await gitRoot(fl, ctx.cwd)) ?? ctx.cwd);
 				if (kind === "merge") await ensureGh(ctx).catch(() => false);
-				const early = noMerge(fl.state.approvedPlan ?? "") ? null : midFlowMergeRefusal();
+				const early = noMerge(fl.state.approvedPlan ?? "") ? null : midFlowMergeRefusal(fl);
 				if (early) return early;
 				const res = await gateCheck(defaultRunner, kind, dir, target, { passedTrees: fl.state.passedTrees?.[key] ?? [], noMerge: noMerge(fl.state.approvedPlan ?? ""), repo: repo ?? (await originRepo(defaultRunner, dir)) });
 				if (res.problem) return res.problem;
@@ -1453,148 +1454,6 @@ export default function workflow(pi: ExtensionAPI) {
 		return true;
 	}
 
-	/** Whether a merge is due at this point of the flow: the plan is not staged or this is its last stage, or a merge was planned or approved for this stage. */
-	function mergeDue(): boolean {
-		const staged = currentStages(fl);
-		return !staged || staged.current >= staged.stages.length || deliverMergeOpen(fl.state.approvedPlan ?? "", fl.state.checklist, staged.current) || mergeApproved();
-	}
-
-	/** Whether the latest merge decision that covers this stage (or the whole flow) allows a merge. */
-	function mergeApproved(): boolean {
-		const stage = currentStages(fl)?.current ?? 0;
-		const mine = mergeDecisions(fl.state.approvedPlan).filter((d) => d.stage === 0 || d.stage === stage);
-		return mine.length > 0 && mine[mine.length - 1].allowed;
-	}
-
-	/** The refusal of a merge or protected push before the end of the flow (the gate's rules), or null when it is allowed. */
-	function midFlowMergeRefusal(): string | null {
-		const staged = currentStages(fl);
-		const open = gateOpenSteps(fl.state.approvedPlan ?? "", fl.state.checklist, staged ? { current: staged.current, total: staged.stages.length } : undefined);
-		return midFlowMergeProblem({
-			staged: !!staged,
-			current: staged?.current,
-			total: staged?.stages.length,
-			openSteps: open,
-			deliverMergeOpen: deliverMergeOpen(fl.state.approvedPlan ?? "", fl.state.checklist, staged?.current),
-			approved: mergeApproved(),
-		});
-	}
-
-	/** Records a merge decision in the approved plan, tells the user in chat and with a notification. */
-	function recordMergeDecision(ctx: ExtensionContext, by: "arbiter" | "user", allowed: boolean, reason: string, shown?: string): void {
-		const stage = currentStages(fl)?.current ?? 0;
-		fl.state.approvedPlan = `${fl.state.approvedPlan ?? ""}\n\n${mergeAmendment(nextAmendmentNumber(fl), { by, allowed, stage, reason })}`;
-		refreshChecklist(fl);
-		planMilestone(fl, ctx);
-		persist(fl);
-		const head = by === "arbiter" ? `Arbiter: merge ${allowed ? "allowed" : "refused"} before the end of the flow` : `You ${allowed ? "allowed" : "refused"} a merge before the end of the flow`;
-		pi.sendMessage({ customType: "workflow-judge", content: `**${head}**\n\n${shown ?? reason}`, display: true }, { triggerTurn: false });
-		ctx.ui.notify(`workflow: ${head}: ${reason.split("\n")[0]}`, "info");
-	}
-
-	/** The changed repos of a passed diff with a remote whose work is not pushed yet, by folder name, with the reason. */
-	async function unpushedRepos(diff: Diff): Promise<string[]> {
-		const out: string[] = [];
-		for (const ref of diff.repos.filter((r) => r.changed)) {
-			if (!(await git(fl, ref.dir, "remote")).stdout.trim()) continue;
-			const dirty = (await git(fl, ref.dir, "status", "--porcelain")).stdout.trim() !== "";
-			const up = await git(fl, ref.dir, "rev-parse", "--abbrev-ref", "@{u}");
-			const hasUpstream = up.code === 0;
-			const ahead = hasUpstream ? Number((await git(fl, ref.dir, "rev-list", "--count", "@{u}..HEAD")).stdout.trim()) || 0 : 0;
-			const why = unpushedReason({ dirty, hasUpstream, ahead });
-			if (why) out.push(`${path.basename(ref.root)} (${why})`);
-		}
-		return out;
-	}
-
-	/** Whether some repo of the flow has a remote, so a pull request can be merged. */
-	async function flowHasRemote(ctx: ExtensionContext): Promise<boolean> {
-		const remotes = await Promise.all((await flowRepos(fl, ctx)).map((r) => git(fl, r.dir, "remote")));
-		return remotes.some((r) => r.stdout.trim() !== "");
-	}
-
-	/** The changed repos of a passed diff that have a remote but no judged merge yet, by folder name: the executor still has to merge. Empty when the plan says no merge. */
-	async function unmergedRepos(diff: Diff): Promise<string[]> {
-		if (noMerge(fl.state.approvedPlan ?? "")) return [];
-		const out: string[] = [];
-		for (const ref of diff.repos.filter((r) => r.changed)) {
-			const jm = fl.state.judgedMerges?.[repoKey(ref.root)];
-			if (mergedInStage(jm, fl.state.stage)) {
-				// The gate records a merge before the command runs; it counts only once the pull request is MERGED (gh unreadable: believe it).
-				if (!jm?.pr) continue;
-				const slug = await originRepo(defaultRunner, ref.dir);
-				const view = await defaultRunner("gh", ["pr", "view", jm.pr, ...(slug ? ["-R", slug] : []), "--json", "state"], ref.dir);
-				let state2 = "MERGED";
-				try {
-					if (view.code === 0) state2 = String(JSON.parse(view.stdout).state);
-				} catch {}
-				if (state2 === "MERGED") continue;
-			}
-			if (!(await git(fl, ref.dir, "remote")).stdout.trim()) continue;
-			out.push(path.basename(ref.root));
-		}
-		return out;
-	}
-
-	/**
-	 * The judge passed and nothing is left to fix. A stage with steps still open gets one reminder per pass; then the stage ends: the review base
-	 * moves up to the passed tree, and the next stage starts, or the flow ends. `report` is a verdict the executor has not seen yet.
-	 */
-	async function stageDone(ctx: ExtensionContext, diff: Diff, report?: string): Promise<void> {
-		const hash = diff.hash;
-		if (report) pi.sendMessage({ customType: "workflow-judge", content: report, display: true }, { triggerTurn: false });
-		const staged = currentStages(fl);
-		if (fl.state.summarizedPasses?.includes(hash)) {
-			// A staged plan's stage added nothing to the diff that was already passed.
-			if (staged) await noChangeTurn(ctx, staged);
-			return;
-		}
-		const open = (fl.state.checklist ?? []).filter((i) => !isHuman(i) && !i.done && (!staged || i.stage === undefined || i.stage === staged.current));
-		const due = mergeDue();
-		const unmerged = due ? await unmergedRepos(diff) : [];
-		const unpushed = due || noMerge(fl.state.approvedPlan ?? "") ? [] : await unpushedRepos(diff);
-		if (stageEndAction({ openSteps: open.length + (unmerged.length || unpushed.length ? 1 : 0), nudgedFor: fl.state.stageNudgedFor, hash }) === "nudge") {
-			fl.state.stageNudgedFor = hash;
-			persist(fl);
-			const lines: string[] = [];
-			const afterOnly = open.length > 0 && open.every((i) => afterMergeStep(fl.state.approvedPlan ?? "", i.id));
-			const openLine = open.length ? `Open steps ${open.map((i) => i.id).join(", ")}: finish them (merge, publish), tick them with plan_check, then end your turn.` : "";
-			if (openLine && !afterOnly) lines.push(openLine);
-			if (unpushed.length) lines.push(`The judge passed: commit and push ${unpushed.join(", ")}, then end your turn.`);
-			if (unmerged.length) lines.push(`The judge passed: merge the pull request (gh pr merge, as its own command)${unmerged.length > 1 || diff.multi ? ` in ${unmerged.join(", ")}` : ""}, then end your turn.`);
-			if (openLine && afterOnly) lines.push(openLine);
-			handover("workflow-open-steps", lines.join("\n"));
-			return;
-		}
-		const knowledge = fl.state.lastKnowledge?.hash === hash ? fl.state.lastKnowledge : undefined;
-		if (knowledge && knowledge.status !== "checked") ctx.ui.notify(`workflow: judge passed without the knowledge check: ${knowledge.reason}`, "warning");
-		let outcome = { text: await stageOutcomeText(fl, ctx, diff), ok: true };
-		const cps = stageCheckpoints(fl);
-		if (cps.length) outcome = { text: withCheckpoints(cps.map((c) => c.text), outcome.text), ok: cps.every((c) => c.ok) };
-		markPassSummarized(fl, hash);
-		await advanceReviewBase(fl, ctx);
-		fl.state.minorRounds = 0;
-		fl.state.minorSentFor = undefined;
-		fl.state.minorFix = undefined;
-		fl.state.stageNudgedFor = undefined;
-		if (staged) {
-			fl.state.stageOutcomes = [...(fl.state.stageOutcomes ?? []), outcome];
-			if (staged.current < staged.stages.length) {
-				startNextStage(ctx, staged.stages, outcome.text);
-				return;
-			}
-			outcome = stagesOutcome(fl.state.stageOutcomes, staged.stages.length);
-		}
-		const decided = mergeDecisionsText(fl.state.approvedPlan);
-		if (decided) outcome = { ...outcome, text: `${outcome.text}; ${decided}` };
-		fl.state.planFlaw = undefined;
-		fl.state.stage = undefined;
-		fl.state.stageOutcomes = undefined;
-		fl.view.stage = "execute";
-		if (!summarizeFlow(fl, outcome.text, outcome.ok)) persist(fl);
-		await endFlow(fl, ctx);
-	}
-
 	/** Folders from --add-dir join the session's list (existing folders only, no repeats, not the working folder). */
 	function applyAddDir(ctx: ExtensionContext): void {
 		const wanted = parseAddDir(pi.getFlag("add-dir"));
@@ -2064,5 +1923,5 @@ export default function workflow(pi: ExtensionAPI) {
 		},
 	});
 
-	Object.assign(fl.legacy, { ensureGh, flowWithoutChanges, handover, holdForStageWait, noChangeTurn, planAllowedTools, stageDone, stoppedSummary });
+	Object.assign(fl.legacy, { ensureGh, flowWithoutChanges, handover, holdForStageWait, noChangeTurn, planAllowedTools, startNextStage, stoppedSummary });
 }

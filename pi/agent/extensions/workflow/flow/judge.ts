@@ -14,6 +14,7 @@ import { covers, judgeKnowledge, parseDeviations, knowledgeFooter } from "../kno
 import type { FlowRun } from "../view.ts";
 import { citedPaths, countFindings, type Diff, type Flow, type JudgeResult, type LastKnowledge, MAX_PLAN_CHARS, type ReviewPlan } from "./context.ts";
 import { collectFlowDiff, git, judge, markPassed, nextAmendmentNumber, planForJudge, refreshReviewBase, repoRoots } from "./diff.ts";
+import { stageDone } from "./merge.ts";
 import { askUser } from "./notify.ts";
 import { autopilotOn, currentStages, endFlow, escalate, noteAuto, persist, phaseStage, refreshChecklist, setPhase, summarizeFlow } from "./phase.ts";
 import { planMilestone, recordMetric } from "./plan-files.ts";
@@ -134,7 +135,7 @@ export async function reviewDiff(fl: Flow, ctx: ExtensionContext, manual: boolea
 		if (manual) ctx.ui.notify("workflow: no changes to review", "info");
 		else if (diff && fl.state.passedDiff && passPending({ passedDiff: fl.state.passedDiff, judged: fl.state.lastJudge, summarized: fl.state.summarizedPasses })) {
 			// The executor delivered the passed change and the base moved up with it: nothing is left to review, but the pass is still open.
-			await fl.legacy.stageDone(ctx, { ...diff, hash: fl.state.passedDiff });
+			await stageDone(fl, ctx, { ...diff, hash: fl.state.passedDiff });
 		} else {
 			const staged = currentStages(fl);
 			if (staged) await fl.legacy.noChangeTurn(ctx, staged);
@@ -147,7 +148,7 @@ export async function reviewDiff(fl: Flow, ctx: ExtensionContext, manual: boolea
 		const prior = fl.state.lastJudge?.hash === diff.hash ? fl.state.lastJudge.text : "";
 		const open = minorFixOpen({ summarized: !!fl.state.summarizedPasses?.includes(diff.hash), sentFor: fl.state.minorSentFor, hash: diff.hash });
 		if (open && fixMinorFindings(fl, prior, diff.hash)) return;
-		await fl.legacy.stageDone(ctx, diff);
+		await stageDone(fl, ctx, diff);
 		return;
 	}
 	if (!manual && (fl.cfg.autoJudge === "off" || fl.seenDiffs.has(diff.hash))) return;
@@ -204,7 +205,7 @@ export async function reviewDiff(fl: Flow, ctx: ExtensionContext, manual: boolea
 	}
 
 	if (fixMinorFindings(fl, r.text, diff.hash, report)) return;
-	await fl.legacy.stageDone(ctx, diff, report);
+	await stageDone(fl, ctx, diff, report);
 }
 
 /** After a failed judge round: send the executor back to fix, or ask what to do once the round cap is hit. */
