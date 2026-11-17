@@ -145,8 +145,9 @@ test("pruneIds", () => {
 });
 
 test("planCard lists a pass-upheld plan flaw as an amendment", () => {
-	const card = planCard(`${PLAN}\n\n## Plan choices upheld at a pass\na.ts:3 - minor - [plan-flaw] x`, [], undefined, undefined, "/p");
+	const card = planCard(`${PLAN}\n\n## Plan choices upheld at a pass\n- minor - [plan] \`plan S1\` - x fix: user`, [], undefined, undefined, "/p");
 	assert.ok(card.includes("### Amendments"));
+	assert.ok(card.includes("[plan] `plan S1` - x"));
 });
 
 const item = (id: string, done: boolean, stage?: number) => ({ id, text: id, done, stage });

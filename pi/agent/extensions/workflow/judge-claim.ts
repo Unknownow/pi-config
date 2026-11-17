@@ -27,11 +27,3 @@ export function claimJudgeCall<C>(phase: string, payload: unknown, run: JudgeRun
 	return true;
 }
 
-/**
- * The agents roles `/flow model` and `/flow status` send to `/agents model`. The reviewer roles (judge,
- * critic) are left out: until flow uses the agents reviewers, `/flow model judge` sets the workflow's
- * own judge role.
- */
-export function agentsOnlyRoles(agentRoles: readonly string[], workflowRoles: readonly string[]): string[] {
-	return agentRoles.filter((r) => !workflowRoles.includes(r) && r !== "judge" && r !== "critic");
-}

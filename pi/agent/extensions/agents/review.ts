@@ -6,6 +6,7 @@
  */
 
 import type { Usage } from "@earendil-works/pi-ai";
+import type { ToolCall } from "./subagent.ts";
 import { collectRepoDiff, defaultReviewBase, type RunGit } from "../shared/git/repo-diff.ts";
 import { type Finding, findingsBlock, isClean, judgeVerdict, parseFindings } from "../shared/findings.ts";
 import type { RunView } from "../shared/runs.ts";
@@ -96,6 +97,8 @@ export interface ReviewResult {
 	/** Cost-weighted tokens × the model's multiplier (cost.ts), not dollars. */
 	weightedCost: number;
 	model: string;
+	/** The run's tool calls (what a caller checks, e.g. that the knowledge step really ran); [] when it did not run. */
+	toolCalls: ToolCall[];
 	error?: string;
 }
 
@@ -191,7 +194,7 @@ async function review(role: "judge" | "critic", label: string, prompt: { systemP
 	const { verdict, findings } = result.ok ? reviewVerdict(result.text) : { verdict: "FAIL" as const, findings: [] };
 	if (result.ok) endRun(run, verdict === "PASS", `${verdict}${findings.length ? ` · ${findings.length} finding${findings.length === 1 ? "" : "s"}` : ""}`);
 	onRun(run);
-	return { ok: result.ok, text: result.text, findings, verdict, usage: result.usage, weightedCost, model, ...(result.error ? { error: result.error } : {}) };
+	return { ok: result.ok, text: result.text, findings, verdict, usage: result.usage, weightedCost, model, toolCalls: result.toolCalls ?? [], ...(result.error ? { error: result.error } : {}) };
 }
 
 /** The knowledge tool names the reviewer extension lets through: the role's configured knowledge tools when forwarding is on. */

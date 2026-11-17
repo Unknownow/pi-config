@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { lockWaitCheck, blockedWaitCheck, classifyPublish, NO_JUDGED_MERGE, waitSince, lockDecision, mirrorArgs, parseMirrorStep, parsePublishStep, publishArgs } from "./registry-publish.ts";
-import { registryPublishProblem } from "./push-guard.ts";
+import { registryPublishProblem } from "../shared/git/push-guard.ts";
 
 test("parsePublishStep reads packages and rejects versions", () => {
 	assert.deepEqual(parsePublishStep("- [ ] **S9.** Publish: com.iecgames.core, com.iecgames.ads.applovin", "S9"), { packages: ["com.iecgames.core", "com.iecgames.ads.applovin"] });

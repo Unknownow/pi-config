@@ -1,9 +1,13 @@
 // node --test agent-end.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { preFlowModelAction, gitTaskAllowed, migrateSavedState, handoverAction, approvalBlock, handoverKind, addPlanReply, composePlan, afterPass, noChangeStage, arbiterFirst, fixableFindings, hasPlanFlaw, planFlawLines, planFlawOnPass, canApprove, hasPlanLine, isPlanReady, judgeCapReached, minorFixOpen, passPending, stageEndAction, parseArbiter, phaseAfterFlow, shouldResume, skipJudge, judgeAddenda, profileRole, nextProfile } from "./agent-end.ts";
-import { JUDGE_MAJOR_ONLY, JUDGE_QUICK } from "./prompts.ts";
-import { planWaitProblems } from "./stages.ts";
+
+// agent-end.ts reads findings through agents/api.ts, which loads the pi packages: stub them first.
+await import("./test-hooks.ts");
+const { preFlowModelAction, gitTaskAllowed, migrateSavedState, handoverAction, approvalBlock, handoverKind, addPlanReply, composePlan, afterPass, noChangeStage, arbiterFirst, codeVerdict, fixableFindings, lateFindingLines, planFlaws, planFlawOnPass, canApprove, hasPlanLine, isPlanReady, judgeCapReached, minorFixOpen, passPending, stageEndAction, parseArbiter, parseMergeArbiter, phaseAfterFlow, shouldResume, skipJudge, judgeAddenda } = await import("./agent-end.ts");
+const { JUDGE_MAJOR_ONLY } = await import("./prompts.ts");
+const { planWaitProblems } = await import("./stages.ts");
+const { parseFindings } = await import("../agents/api.ts");
 
 const empty = { role: "assistant", content: [] };
 
@@ -33,6 +37,15 @@ test("a saved state from the removed test phase loads as off; its test tokens ar
 	assert.deepEqual(kept.tokens, { plan: 2 });
 	const same = { phase: "plan" };
 	assert.equal(migrateSavedState(same), same);
+});
+
+test("a saved quick flow resumes as a normal flow: profile and the quick keys are dropped, the rest stays", () => {
+	const saved = { phase: "execute", profile: "quick", [`quick${"From"}`]: "discuss", approvedPlan: "## Plan: x", judgeRounds: 1 };
+	const out = migrateSavedState(saved) as Record<string, unknown>;
+	assert.equal("profile" in out, false);
+	assert.equal(Object.keys(out).some((k) => k.startsWith("quick")), false);
+	assert.deepEqual(out, { phase: "execute", approvedPlan: "## Plan: x", judgeRounds: 1 });
+	assert.equal(migrateSavedState({ phase: "plan", profile: "quick" } as { phase: string }).phase, "plan");
 });
 
 test("resume only after an overflow retry with an empty reply, at most twice", () => {
@@ -130,25 +143,46 @@ test("arbiterFirst: this flow's choice, else the config", () => {
 	assert.equal(arbiterFirst("auto", "auto"), true);
 });
 
-test("planFlawOnPass routes plan flaws on a pass", () => {
-	assert.equal(planFlawOnPass("a.ts:3 - minor - [plan-flaw] x\nVERDICT: PASS", "PASS"), "note");
-	assert.equal(planFlawOnPass("a.ts:3 - major - [plan-flaw] x", "PASS"), "arbiter");
-	assert.equal(planFlawOnPass("a.ts:3 - major - [plan-flaw] x\nb.ts:1 - minor - [plan-flaw] y", "PASS"), "arbiter");
-	assert.equal(planFlawOnPass("a.ts:3 - blocker - [plan-flaw] x", "PASS"), "stop");
-	assert.equal(planFlawOnPass("a.ts:3 - minor - [plan-flaw] x", "FAIL"), "stop");
-	assert.equal(planFlawOnPass("a.ts:3 - Major - [plan-flaw] x", "PASS"), "arbiter");
-	assert.equal(planFlawOnPass("a.ts:3 - blocker - [bug] y\na.ts:4 - minor - [plan-flaw] x", "PASS"), "note");
+/** A judge reply in agents' findings format, parsed. */
+const f = (text: string) => parseFindings(text);
+
+test("planFlawOnPass routes [plan] findings on a pass", () => {
+	assert.equal(planFlawOnPass(f("- minor - [plan] `plan S3` - x fix: user\nVERDICT: PASS"), "PASS"), "note");
+	assert.equal(planFlawOnPass(f("- major - [plan] `plan S3` - x"), "PASS"), "arbiter");
+	assert.equal(planFlawOnPass(f("- major - [plan] `plan S3` - x\n- minor - [plan] `plan S4` - y"), "PASS"), "arbiter");
+	assert.equal(planFlawOnPass(f("- blocker - [plan] `plan S3` - x"), "PASS"), "stop");
+	assert.equal(planFlawOnPass(f("- minor - [plan] `plan S3` - x"), "FAIL"), "stop");
+	assert.equal(planFlawOnPass(f("- Major - [plan] `plan S3` - x"), "PASS"), "arbiter");
+	assert.equal(planFlawOnPass(f("- blocker - [bug] `a.ts:3` - y\n- minor - [plan] `plan S3` - x"), "PASS"), "note");
 });
 
-test("planFlawLines keeps plan-flaw finding lines only", () => {
-	assert.deepEqual(planFlawLines("a.ts:3 - major - [plan-flaw] x\n  Why: [plan-flaw] mention\nb.ts:1 - minor - [bug] y"), ["a.ts:3 - major - [plan-flaw] x"]);
+test("planFlaws keeps the [plan] findings only; a mention in a Why line or prose is not one", () => {
+	const found = planFlaws(f("- major - [plan] `plan S3` - x fix: user\n  Why: [plan] mention\n- minor - [bug] `b.ts:1` - y\nSome prose that mentions [plan] in passing."));
+	assert.deepEqual(found.map((x) => x.head), ["major - [plan] `plan S3` - x fix: user"]);
+	assert.deepEqual(planFlaws(f("- major - [design] `a.ts:3` - x")), []);
 });
 
-test("hasPlanFlaw sees a tagged finding line only", () => {
-	assert.equal(hasPlanFlaw("a.ts:3 - major - [plan-flaw] the plan loses data"), true);
-	assert.equal(hasPlanFlaw("a.ts:3 - minor - [plan-flaw] x\nVERDICT: PASS"), true);
-	assert.equal(hasPlanFlaw("a.ts:3 - major - [design] x"), false);
-	assert.equal(hasPlanFlaw("Some prose that mentions [plan-flaw] in passing."), false);
+test("old-format judge text (saved in state by older versions) has no findings", () => {
+	const old = "a.ts:3 - major - [plan-flaw] x\n  Why: y\nb.ts:1 - blocker - [bug] z\nVERDICT: PASS";
+	assert.deepEqual(f(old), []);
+	assert.equal(planFlawOnPass(f(old), "PASS"), "note");
+	assert.equal(fixableFindings(f(old)), 0);
+});
+
+test("codeVerdict: a stated PASS with no blocker or non-late major, leaving out [plan] findings", () => {
+	const v = (t: string) => codeVerdict(t, f(t));
+	assert.equal(v("VERDICT: PASS"), "PASS");
+	assert.equal(v("VERDICT: FAIL"), "FAIL");
+	assert.equal(v("- major - [bug] `a.ts:1` - x\nVERDICT: PASS"), "FAIL");
+	assert.equal(v("- blocker - [bug][late] `a.ts:1` - x\nVERDICT: PASS"), "FAIL");
+	assert.equal(v("- major - [bug][late] `a.ts:1` - x\n- minor - [test] `a.test.ts:2` - y\nVERDICT: PASS"), "PASS");
+	assert.equal(v("- major - [plan] `plan S2` - x\nVERDICT: PASS"), "PASS");
+	assert.equal(v("- blocker - [plan] `plan S2` - x\nVERDICT: PASS"), "PASS");
+	assert.equal(v("- minor - [bug] `a.ts:1` - x\nVERDICT: FAIL"), "FAIL");
+});
+
+test("lateFindingLines lists the late findings that are not blockers", () => {
+	assert.deepEqual(lateFindingLines(f("- major - [bug][late] `a.ts:1` - x\n- blocker - [bug][late] `b.ts:1` - y\n- minor - [bug] `c.ts:1` - z")), ["major - [bug][late] `a.ts:1` - x"]);
 });
 
 test("parseArbiter reads the decision, the reason and the amendment", () => {
@@ -162,14 +196,15 @@ test("parseArbiter reads the decision, the reason and the amendment", () => {
 	assert.equal(parseArbiter("I think the plan is fine."), null);
 });
 
-test("fixableFindings skips knowledge deviations, plan flaws and indented lines", () => {
-	assert.equal(fixableFindings("a.ts:3 - minor - [bug] x\n  Why: y\n  Fix: z\nVERDICT: PASS"), 1);
-	assert.equal(fixableFindings("a.ts:3 - minor - [knowledge r1] deviation from a recommended rule\nVERDICT: PASS"), 0);
-	assert.equal(fixableFindings("a.ts:3 - minor - [knowledge r1] the required rule about locks is broken\nVERDICT: PASS"), 1);
-	assert.equal(fixableFindings("a.ts:3 - minor - [plan-flaw] x\nVERDICT: PASS"), 0);
-	assert.equal(fixableFindings("  Fix: split the file - minor - and retest\nVERDICT: PASS"), 0);
-	assert.equal(fixableFindings("a.ts:1 - minor - [design] a\r\nb.ts:2 - minor - [test] b\r\nVERDICT: PASS"), 2);
-	assert.equal(fixableFindings("VERDICT: PASS"), 0);
+test("fixableFindings skips knowledge deviations, [plan] findings, late non-blockers and indented lines", () => {
+	assert.equal(fixableFindings(f("- minor - [bug] `a.ts:3` - x fix: auto\n  Why: y\n  Fix: z\nVERDICT: PASS")), 1);
+	assert.equal(fixableFindings(f("- minor - [knowledge r1] `a.ts:3` - deviation from a recommended rule fix: user\n  Rule: r\nVERDICT: PASS")), 0);
+	assert.equal(fixableFindings(f("- minor - [knowledge r1] `a.ts:3` - the required rule about locks is broken\nVERDICT: PASS")), 1);
+	assert.equal(fixableFindings(f("- minor - [plan] `plan S3` - x\nVERDICT: PASS")), 0);
+	assert.equal(fixableFindings(f("- minor - [bug][late] `a.ts:3` - x\n- blocker - [bug][late] `a.ts:4` - y")), 1);
+	assert.equal(fixableFindings(f("  Fix: split the file - minor - and retest\nVERDICT: PASS")), 0);
+	assert.equal(fixableFindings(f("- minor - [design] `a.ts:1` - a\r\n- minor - [test] `b.ts:2` - b\r\nVERDICT: PASS")), 2);
+	assert.equal(fixableFindings(f("VERDICT: PASS")), 0);
 });
 
 test("a passed diff gets one minor-fix round, not after flow end or an earlier message", () => {
@@ -271,41 +306,10 @@ test("a wait check broken in the full plan stays broken in a change section; a n
 	assert.equal(problems(d).length, 0);
 });
 
-test("judge addenda after a minor round", async () => {
-	const { judgeAddenda } = await import("./agent-end.ts");
+test("after a minor-fix round the judge criteria ask for blockers and majors only", () => {
 	assert.equal(judgeAddenda(0), "");
-	assert.ok(judgeAddenda(1).includes("only blocker and major"));
+	assert.equal(judgeAddenda(1), JUDGE_MAJOR_ONLY);
 });
-
-test("a quick flow plans on the quick role and reviews on quick-judge; other roles and full flows keep theirs", () => {
-	assert.equal(profileRole("quick", "plan"), "quick");
-	assert.equal(profileRole("quick", "judge"), "quick-judge");
-	assert.equal(profileRole("quick", "execute"), "execute");
-	assert.equal(profileRole("quick", "arbiter"), "arbiter");
-	assert.equal(profileRole(undefined, "plan"), "plan");
-	assert.equal(profileRole(undefined, "judge"), "judge");
-});
-
-test("a quick flow's judge reports only blockers and majors from the first round", () => {
-	assert.equal(judgeAddenda(0), "");
-	assert.equal(judgeAddenda(1), "\n" + JUDGE_MAJOR_ONLY);
-	assert.equal(judgeAddenda(0, true), "\n" + JUDGE_QUICK);
-	assert.equal(judgeAddenda(2, true), "\n" + JUDGE_QUICK);
-});
-
-test("only the approval carries a quick profile into execute; every other switch clears it", () => {
-	assert.equal(nextProfile("off", "plan", "quick", undefined), "quick");
-	assert.equal(nextProfile("plan", "plan", undefined, "quick"), undefined, "/flow plan from a scope card is a full flow");
-	assert.equal(nextProfile("plan", "execute", undefined, "quick"), "quick", "approval");
-	assert.equal(nextProfile("execute", "execute", undefined, "quick"), "quick", "a repeated switch keeps it");
-	assert.equal(nextProfile("off", "execute", undefined, "quick"), undefined);
-	assert.equal(nextProfile("discuss", "execute", undefined, "quick"), undefined, "/flow resume from elsewhere is a full flow");
-	assert.equal(nextProfile("execute", "off", undefined, "quick"), undefined);
-	assert.equal(nextProfile("execute", "discuss", undefined, "quick"), undefined);
-	assert.equal(nextProfile("off", "plan", undefined, undefined), undefined);
-});
-
-import { parseMergeArbiter } from "./agent-end.ts";
 
 test("parseMergeArbiter: MERGE, NO_MERGE, ASK_USER and no decision", () => {
 	assert.deepEqual(parseMergeArbiter("DECISION: MERGE\nReason: S5 needs it on main."), { decision: "MERGE", reason: "S5 needs it on main." });

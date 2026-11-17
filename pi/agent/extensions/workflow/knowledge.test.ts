@@ -1,29 +1,13 @@
 // node --experimental-strip-types --test knowledge.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { KnowledgeConfig } from "./config.ts";
-import { judgeKnowledge as knowledgePrompt } from "./prompts.ts";
-import {
-	deviationBlock,
-	forwardedServers,
-	judgeKnowledge,
-	knowledgeFooter,
-	mergeKnowledgePass,
-	parseDeviations,
-	recheckKnowledgeFiles,
-	roleTools,
-	toolPrefix,
-} from "./knowledge.ts";
-import type { ToolCall } from "../agents/subagent.ts";
+import type { ToolCall } from "../agents/api.ts";
 
-// DEFAULTS.knowledge, inline: config.ts loads pi at runtime.
-const CFG: KnowledgeConfig = {
-	server: "knowledge",
-	roles: ["explore", "advisor", "judge", "arbiter"],
-	tools: ["search", "get_entry", "get_rule_pack", "get_schema", "status"],
-	env: { KNOWLEDGE_OFFLINE: "1" },
-	judgeCheck: true,
-};
+// knowledge.ts reads findings and tool names through agents/api.ts, which loads the pi packages: stub them first.
+await import("./test-hooks.ts");
+const { covers, deviationBlock, judgeKnowledge, knowledgeFooter, parseDeviations } = await import("./knowledge.ts");
+const { parseFindings } = await import("../agents/api.ts");
+
 const FILES = ["src/a.cs", "src/b.cs"];
 const S = "knowledge";
 const pack = (paths: unknown, isError: boolean | undefined = false, name = "mcp__knowledge__get_rule_pack"): ToolCall => ({
@@ -31,39 +15,6 @@ const pack = (paths: unknown, isError: boolean | undefined = false, name = "mcp_
 	name,
 	args: paths === undefined ? { generator: "code" } : { generator: "code", paths },
 	isError,
-});
-
-test("toolPrefix normalizes the server name", () => {
-	assert.equal(toolPrefix("knowledge"), "mcp__knowledge__");
-	assert.equal(toolPrefix("my-kb"), "mcp__my_kb__");
-});
-
-test("roleTools gives the listed roles the prefixed tools", () => {
-	assert.deepEqual(roleTools("judge", CFG), [
-		"mcp__knowledge__search",
-		"mcp__knowledge__get_entry",
-		"mcp__knowledge__get_rule_pack",
-		"mcp__knowledge__get_schema",
-		"mcp__knowledge__status",
-	]);
-	assert.deepEqual(roleTools("plan", CFG), []);
-	assert.deepEqual(roleTools("judge", { ...CFG, server: "" }), []);
-	assert.deepEqual(roleTools("judge", { ...CFG, tools: ["search", "propose_entry"] }), ["mcp__knowledge__search"], "never a write tool");
-});
-
-test("forwardedServers adds env to stdio servers only", () => {
-	const stdio = { command: "node", args: ["launch.mjs"], exposure: "direct", env: { A: "1" } };
-	assert.deepEqual(forwardedServers([{ name: "knowledge", config: stdio }], CFG), {
-		knowledge: { command: "node", args: ["launch.mjs"], exposure: "direct", env: { A: "1", KNOWLEDGE_OFFLINE: "1" } },
-	});
-	assert.deepEqual(stdio.env, { A: "1" }, "the registered config is not changed");
-	const url = forwardedServers([{ name: "knowledge", config: { url: "http://h" } }], CFG);
-	assert.deepEqual(url, { knowledge: { url: "http://h", exposure: "direct" } });
-	const codemode = forwardedServers([{ name: "knowledge", config: { url: "http://h", exposure: "codemode", toolExposure: { search: "deferred" } } }], CFG);
-	assert.deepEqual(codemode, { knowledge: { url: "http://h", exposure: "direct" } }, "subagents call the tools directly");
-	assert.equal("env" in url.knowledge, false);
-	assert.deepEqual(forwardedServers([{ name: "other", config: stdio }], CFG), {});
-	assert.deepEqual(forwardedServers([{ name: "knowledge", config: stdio }], { ...CFG, server: "" }), {});
 });
 
 test("judgeKnowledge: checked when successful rule packs cover every changed file", () => {
@@ -103,32 +54,36 @@ test("judgeKnowledge: unavailable when every knowledge call failed", () => {
 	});
 });
 
+/** A judge reply in agents' findings format, with the knowledge step's deviation notes. */
 const JUDGE_TEXT = [
-	"src/c.cs:9 - major - [bug] null check missing",
+	"- major - [bug] `src/c.cs:9` - null check missing fix: auto",
 	"  Why: x",
 	"  Fix: y",
-	"src/a.cs:3 - minor - [knowledge eng.rule.x] deviation from a recommended rule",
+	"- minor - [knowledge eng.rule.x] `src/a.cs:3` - deviation from a recommended rule fix: user",
 	"  Rule: keep it short.",
 	"  Code: it is long.",
 	"  Reason: generated code.",
 	"  Impact: harder to read.",
 	"  To follow it: split it.",
-	"src/b.cs:5 - minor - [knowledge eng.rule.y] deviation from a recommended rule",
+	"- minor - [knowledge eng.rule.y] `src/b.cs:5` - deviation from a recommended rule fix: user",
 	"  Rule: r",
 	"  Code: c",
 	"  Reason: none given",
 	"  To follow it: f",
-	"src/a.cs:3 - minor - [knowledge eng.rule.x] deviation from a recommended rule",
+	"- minor - [knowledge eng.rule.x] `src/a.cs:3` - deviation from a recommended rule fix: user",
 	"  Rule: keep it short.",
 	"  Code: it is long.",
 	"  Reason: generated code.",
 	"  Impact: harder to read.",
 	"  To follow it: split it.",
+	"- major - [knowledge eng.rule.z] `src/d.cs:1` - the required rule about locks is broken fix: auto",
+	"  Why: w",
+	"KNOWLEDGE: checked 3 rules (eng.rule.x, eng.rule.y, eng.rule.z); 1 broken",
 	"VERDICT: FAIL",
 ].join("\n");
 
-test("parseDeviations reads the five fields and drops repeats", () => {
-	const devs = parseDeviations(JUDGE_TEXT);
+test("parseDeviations reads the five fields from the findings and drops repeats; other knowledge findings are not deviations", () => {
+	const devs = parseDeviations(parseFindings(JUDGE_TEXT));
 	assert.equal(devs.length, 2);
 	assert.deepEqual(devs[0], {
 		where: "src/a.cs:3",
@@ -141,11 +96,12 @@ test("parseDeviations reads the five fields and drops repeats", () => {
 	});
 	assert.equal(devs[1].id, "eng.rule.y");
 	assert.equal(devs[1].impact, "");
+	assert.deepEqual(parseDeviations(parseFindings("src/a.cs:3 - minor - [knowledge eng.rule.x] deviation from a recommended rule\n  Rule: r")), [], "the old format has no findings");
 });
 
 test("deviationBlock lists each deviation; empty without any", () => {
 	assert.equal(
-		deviationBlock(parseDeviations(JUDGE_TEXT)),
+		deviationBlock(parseDeviations(parseFindings(JUDGE_TEXT))),
 		[
 			"Knowledge deviations:",
 			"- eng.rule.x at src/a.cs:3: it is long; reason: generated code; impact: harder to read",
@@ -155,33 +111,18 @@ test("deviationBlock lists each deviation; empty without any", () => {
 	assert.equal(deviationBlock([]), "");
 });
 
-test("mergeKnowledgePass keeps one verdict, FAIL when either fails or has none", () => {
-	const failed = mergeKnowledgePass("a\nVERDICT: PASS", "b\nVERDICT: FAIL");
-	assert.equal(failed.match(/VERDICT:/g)?.length, 1);
-	assert.ok(failed.endsWith("VERDICT: FAIL"));
-	assert.ok(mergeKnowledgePass("a\nVERDICT: PASS", "b\nVERDICT: PASS").endsWith("VERDICT: PASS"));
-	assert.ok(mergeKnowledgePass("a\nVERDICT: PASS", "b").endsWith("VERDICT: FAIL"));
-});
-
 test("knowledgeFooter", () => {
 	assert.equal(knowledgeFooter({ status: "checked" }, 0), "Knowledge: checked.");
 	assert.equal(knowledgeFooter({ status: "checked" }, 2), "Knowledge: checked; 2 recommended-rule deviation(s) above go into the commit message.");
 	assert.equal(knowledgeFooter({ status: "unavailable", reason: "x." }, 0), "Knowledge: not checked - x.");
+	assert.equal(knowledgeFooter({ status: "skipped", reason: "no get_rule_pack call" }, 0), "Knowledge: not checked - no get_rule_pack call.");
 });
 
-test("recheckKnowledgeFiles: scoped to changed files only after a checked round", () => {
-	const all = ["src/a.ts", "src/b.ts"];
-	assert.deepEqual(recheckKnowledgeFiles(true, ["src/a.ts"], all), { files: ["src/a.ts"], scoped: true });
-	assert.deepEqual(recheckKnowledgeFiles(false, ["src/a.ts"], all), { files: all, scoped: false });
-	assert.deepEqual(recheckKnowledgeFiles(true, ["src/c.ts"], ["src/a.ts"]), { files: ["src/a.ts"], scoped: false });
-	assert.deepEqual(recheckKnowledgeFiles(true, ["sub/x.ts"], ["x.ts"]), { files: ["x.ts"], scoped: true });
-	assert.deepEqual(recheckKnowledgeFiles(true, ["src\\a.ts"], ["src/a.ts"]), { files: ["src/a.ts"], scoped: true });
-});
-
-test("judgeKnowledge prompt: scoped re-check names the changed files", () => {
-	const scoped = knowledgePrompt("knowledge", true, ["a.ts"], true);
-	assert.match(scoped, /changed since the last round/);
-	assert.match(scoped, /carry over/);
-	assert.doesNotMatch(scoped, /the whole change, not only/);
-	assert.match(knowledgePrompt("knowledge", true, ["a.ts"]), /the whole change, not only/);
+test("covers: a path matches itself, a suffix either way, and backslash or ./ forms", () => {
+	assert.equal(covers(["src/a.ts"], "src/a.ts"), true);
+	assert.equal(covers(["sub/x.ts"], "x.ts"), true);
+	assert.equal(covers(["x.ts"], "sub/x.ts"), true);
+	assert.equal(covers(["src\\a.ts"], "./src/a.ts"), true);
+	assert.equal(covers(["src/c.ts"], "src/a.ts"), false);
+	assert.equal(covers(["b.ts"], "ab.ts"), false);
 });

@@ -15,3 +15,17 @@ test("workflow never refers to the worktree extension", () => {
 		for (const b of banned) assert.ok(!text.includes(b), `${f} mentions ${b}`);
 	}
 });
+
+test("workflow imports agents only through agents/api.ts and never imports relay", () => {
+	const dir = new URL(".", import.meta.url);
+	const files = fs.readdirSync(dir).filter((f) => f.endsWith(".ts"));
+	for (const f of files) {
+		const text = fs.readFileSync(new URL(f, dir), "utf8");
+		for (const m of text.matchAll(/from\s+["']([^"']+)["']/g)) {
+			const spec = m[1];
+			if (spec.startsWith("../agents/")) assert.equal(spec, "../agents/api.ts", `${f} imports ${spec}`);
+			assert.ok(!/(^|\/)relay\//.test(spec), `${f} imports ${spec}`);
+		}
+		assert.ok(!/import\(\s*["'][^"']*\.\.\/(agents\/(?!api\.ts)|relay\/)/.test(text), `${f} dynamically imports agents internals or relay`);
+	}
+});

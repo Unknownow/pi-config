@@ -97,3 +97,15 @@ test("flow lines with and without the per-model breakdown both load back", () =>
 	assert.equal(got[0].stages.plan.byModel, undefined);
 	assert.equal(got[1].stages.plan.byModel.m.input, 1);
 });
+
+test("judgeMetric counts findings by severity, late ones too; subagentMetric takes a review result without turns", async () => {
+	await import("./test-hooks.ts");
+	const { parseFindings } = await import("../agents/api.ts");
+	const { judgeMetric } = await import("./metrics.ts");
+	const findings = parseFindings("- blocker - [bug] `a.ts:1` - x\n- major - [bug][late] `a.ts:2` - y\n- minor - [test] `a.test.ts:3` - z\nVERDICT: FAIL");
+	const e: any = judgeMetric("code", 2, "FAIL", findings);
+	assert.deepEqual([e.gate, e.round, e.verdict, e.blocker, e.major, e.minor, e.late], ["code", 2, "FAIL", 1, 1, 1, 1]);
+	const review = { ok: true, usage: { input: 1, output: 2, cacheRead: 3, cacheWrite: 4, totalTokens: 10, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.1 } }, toolCalls: [{ id: "1", name: "read", args: {} }] };
+	const s: any = subagentMetric("critic", "flow plan", "plan", "m", 0, 10, review);
+	assert.deepEqual([s.role, s.turns, s.tools, s.bootMs], ["critic", 0, 1, undefined]);
+});

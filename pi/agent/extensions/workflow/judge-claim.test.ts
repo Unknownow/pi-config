@@ -1,19 +1,12 @@
 // node --experimental-strip-types --test judge-claim.test.ts
 import assert from "node:assert/strict";
-import { registerHooks } from "node:module";
-import * as os from "node:os";
 import { test } from "node:test";
 import { emitClaims } from "../shared/claims.ts";
-import { agentsOnlyRoles, claimJudgeCall, type JudgeParams } from "./judge-claim.ts";
+import { claimJudgeCall, type JudgeParams } from "./judge-claim.ts";
 
 // The config files read the agent folder from the pi package, which is not installed next to the tests.
-registerHooks({
-	resolve(specifier, context, next) {
-		if (specifier === "@earendil-works/pi-coding-agent") return { url: "data:text/javascript,export const getAgentDir = () => " + JSON.stringify(os.tmpdir()), shortCircuit: true };
-		return next(specifier, context);
-	},
-});
-const { AGENT_ROLES } = await import("../agents/config.ts");
+await import("./test-hooks.ts");
+const { AGENT_ROLES } = await import("../agents/api.ts");
 const { ROLES } = await import("./config.ts");
 
 function payload() {
@@ -51,9 +44,8 @@ test("an error of the run rejects the claim: agents sees { error }", async () =>
 	assert.deepEqual(await c.answer, { error: "no git work tree in this flow" });
 });
 
-test("/flow model judge is not refused as an agents role; explore, advisor and runner are", () => {
-	const refused = agentsOnlyRoles(AGENT_ROLES, ROLES);
-	assert.ok(!refused.includes("judge"));
-	assert.ok(!refused.includes("critic"));
-	assert.deepEqual(refused, ["explore", "advisor", "runner"]);
+test("workflow roles are exactly discuss, plan, execute, commit, arbiter, escalate; none is an agents role", () => {
+	assert.deepEqual([...ROLES], ["discuss", "plan", "execute", "commit", "arbiter", "escalate"]);
+	for (const r of ROLES) assert.ok(!(AGENT_ROLES as readonly string[]).includes(r), r);
+	for (const r of ["judge", "critic"]) assert.ok((AGENT_ROLES as readonly string[]).includes(r), r);
 });

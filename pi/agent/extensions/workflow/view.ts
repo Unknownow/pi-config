@@ -25,7 +25,8 @@ import { progressBar } from "./board.ts";
 import { reportLines, type ReportFinding, type ReportStep } from "./flow-report.ts";
 
 export type Stage = "discuss" | "plan" | "execute" | "judge" | "commit";
-export type SubRole = "explore" | "advisor" | "judge" | "arbiter" | "commit" | "runner";
+/** `critic`: agents' critic on the plan or the discussion; its tokens count toward the stage it reviews (plan or discuss). */
+export type SubRole = "explore" | "advisor" | "judge" | "critic" | "arbiter" | "commit" | "runner";
 
 /** A run card of the workflow widget, with the pipeline stage its tokens count toward. */
 export interface FlowRun extends RunView {
@@ -201,6 +202,8 @@ export class FlowView {
 	escalated = false;
 	stage: Stage = "plan";
 	roles: Record<Role, RoleSpec>;
+	/** The judge's model (agents.json, not a workflow role), for the judge node. */
+	judge: RoleSpec | undefined;
 	/** How much each kind of token counts; see WorkflowConfig.tokenWeights. */
 	weights: TokenWeights = DEFAULTS.tokenWeights;
 	runs: FlowRun[] = [];
@@ -216,6 +219,8 @@ export class FlowView {
 	/** The main session's message still streaming, and the stage it started in. */
 	private mainLive: { stage: Stage; tokens: Tok; counts: ModelCounts; model?: string } | undefined;
 	private nextId = 1;
+	/** Rows of the runs agents drives for flow, by agents' own row object. */
+	private mirrored = new Map<RunView, FlowRun>();
 	private tui: TUI | undefined;
 	private ticker: ReturnType<typeof setInterval> | undefined;
 	private mounted = false;
@@ -279,6 +284,39 @@ export class FlowView {
 		const spent = endRun(run, ok, outcome);
 		this.add(run.stage, spent.tokens, run.role, run.model, spent.counts);
 		this.changed();
+	}
+
+	/**
+	 * Mirrors a run that agents drives for flow (runJudge, runCritic: their `onRun`) into a row of this widget. While it
+	 * runs its tokens show as live; `endMirror` counts the run's exact usage once it is done.
+	 */
+	mirror(role: SubRole, ext: RunView): FlowRun {
+		let run = this.mirrored.get(ext);
+		if (!run) {
+			run = this.start(role, ext.label, ext.model);
+			this.mirrored.set(ext, run);
+		}
+		if (run.status !== "running") return run;
+		run.activity = ext.activity;
+		run.tools = ext.tools;
+		run.liveTokens = add(asTok(ext.tokens), asTok(ext.liveTokens));
+		this.changed();
+		return run;
+	}
+
+	/** Ends a mirrored row with flow's own outcome and counts `usage` (the review's) toward its stage. */
+	endMirror(ext: RunView, ok: boolean, outcome: string, model: string, usage: UsageCounts): FlowRun | undefined {
+		const run = this.mirrored.get(ext);
+		if (!run) return undefined;
+		this.mirrored.delete(ext);
+		run.liveTokens = zero();
+		run.liveCounts = noCounts();
+		endRun(run, ok, outcome);
+		const tokens = countTokens(usage, this.weights);
+		run.tokens = tokens;
+		this.add(run.stage, tokens, run.role, shortModel(model), countsOf(usage));
+		this.changed();
+		return run;
 	}
 
 	/** Counts a finished subagent run that another extension drove (explore, advisor, runners) toward the current stage. */
@@ -403,11 +441,11 @@ export class FlowView {
 		const lines: string[] = [];
 
 		if (this.phase !== "off") {
-			const node = (stage: Stage, role: Role | null) => {
+			const node = (stage: Stage, own: RoleSpec | null | undefined) => {
 				const active = this.stage === stage;
 				// Escalation swaps the main session's model, i.e. the current phase's node.
 				const escalated = this.escalated && stage === this.phase;
-				const spec = escalated ? this.roles.escalate : role ? this.roles[role] : null;
+				const spec = escalated ? this.roles.escalate : own;
 				const model = spec ? ` ${short(spec)}${escalated ? " ↑" : ""}` : "";
 				const n = this.stageTokens(stage);
 				const tokens = isZero(n) ? "" : theme.fg(active ? "toolOutput" : "muted", ` ${fmtTok(n)}`);
@@ -417,10 +455,10 @@ export class FlowView {
 			};
 			const sep = theme.fg("dim", " ▸ ");
 			const total = STAGES.reduce((sum, s) => add(sum, this.stageTokens(s)), zero());
-			const discussNode = this.stage === "discuss" || !isZero(this.stageTokens("discuss")) ? `${node("discuss", "discuss")}${sep}` : "";
+			const discussNode = this.stage === "discuss" || !isZero(this.stageTokens("discuss")) ? `${node("discuss", this.roles.discuss)}${sep}` : "";
 			const commitNode = this.stage === "commit" || !isZero(this.stageTokens("commit")) ? `${sep}${node("commit", null)}` : "";
 			lines.push(
-				`${theme.fg("muted", "flow ")} ${discussNode}${node("plan", "plan")}${sep}${node("execute", "execute")}${sep}${node("judge", "judge")}${commitNode}${isZero(total) ? "" : theme.fg("dim", ` · Σ ${fmtTok(total)}`)}`,
+				`${theme.fg("muted", "flow ")} ${discussNode}${node("plan", this.roles.plan)}${sep}${node("execute", this.roles.execute)}${sep}${node("judge", this.judge)}${commitNode}${isZero(total) ? "" : theme.fg("dim", ` · Σ ${fmtTok(total)}`)}`,
 			);
 			if (this.progress) lines.push(progressLine(this.progress, theme));
 		}

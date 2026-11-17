@@ -1,8 +1,11 @@
 // node --experimental-strip-types --test prompts.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { ARBITER, COMMIT, EXECUTE_PHASE, FIX_MESSAGE, FIX_TESTS, JUDGE, JUDGE_DISCUSSION, JUDGE_KNOWLEDGE_ONLY, NO_SLEEP, NO_WORKFLOW, PACE, deliveryGuidance, JUDGE_MAJOR_ONLY, minorFixMessage, phaseSection, PLAN_KICKOFF, planPhase, workspaceSection, QUICK_EXECUTE, quickPlanPhase } from "./prompts.ts";
-import { ADVISOR, EXPLORE, RUNNER } from "../agents/prompts.ts";
+
+// prompts.ts reads PACE and knowledgeTools from agents/api.ts, which loads the pi packages: stub them first.
+await import("./test-hooks.ts");
+const { ARBITER, COMMIT, DISCUSSION_CRITERIA, EXECUTE_PHASE, FIX_MESSAGE, FIX_TESTS, JUDGE_CRITERIA, MERGE_ARBITER, NO_SLEEP, NO_WORKFLOW, PACE, PLAN_CRITERIA, deliveryGuidance, JUDGE_MAJOR_ONLY, minorFixMessage, phaseSection, PLAN_KICKOFF, planPhase, workspaceSection } = await import("./prompts.ts");
+const { ADVISOR, CRITIC, EXPLORE, JUDGE, JUDGE_INCREMENTAL, RUNNER } = await import("../agents/api.ts");
 
 const BATCH = `- Batch tool calls. Each call re-sends the whole conversation, so ten small calls at 150k context re-send 1.5M tokens. Put independent reads and commands in one call (a codemode script, run_code, or one bash command joined with && or ;) and print only what you need. Don't spend a call on something you could have added to the previous one.`;
 const PLAN_BATCH = `- Batch tool calls. Each call re-sends the whole conversation, so ten small calls at 150k context re-send 1.5M tokens. Put independent reads and commands in one call (a codemode script, run_code for read-only analysis, or one bash command joined with && or ;) and print only what you need. Don't spend a call on something you could have added to the previous one.`;
@@ -75,7 +78,7 @@ test("planner prompts teach Deliver and Wait steps", async () => {
 });
 
 test("every role carries the keep-working and parallel rule", () => {
-	for (const [name, text] of Object.entries({ plan: planPhase(), execute: EXECUTE_PHASE, JUDGE, ARBITER, EXPLORE, ADVISOR, RUNNER, JUDGE_KNOWLEDGE_ONLY })) assert.ok(text.includes(PACE), name);
+	for (const [name, text] of Object.entries({ plan: planPhase(), execute: EXECUTE_PHASE, JUDGE, CRITIC, ARBITER, EXPLORE, ADVISOR, RUNNER })) assert.ok(text.includes(PACE), name);
 	assert.ok(!COMMIT.includes(PACE));
 });
 
@@ -172,18 +175,22 @@ test("the major-only note for the review after a minor-fix round", () => {
 	assert.match(JUDGE_MAJOR_ONLY, /only blocker and major/);
 });
 
-test("a quick flow gets the scope-card prompt in plan and the quick line in execute", () => {
-	const plan = phaseSection("plan", { ...SECTION_OPTS, quick: true });
-	assert.equal(plan, quickPlanPhase());
-	assert.ok(plan.includes("## Workflow: QUICK flow, scope card"));
-	assert.ok(plan.includes("`/flow plan`"), "the size check points to the full flow");
-	assert.ok(plan.includes("`## Plan: <title>`"), "the scope card is a plan the approve menu recognises");
-	assert.ok(plan.includes(PLAN_BATCH));
-	assert.ok(!plan.includes("### Stage 1"), "no stages in a quick flow");
-	const exec = phaseSection("execute", { ...SECTION_OPTS, quick: true });
-	assert.equal(exec, `${EXECUTE_PHASE}\n${QUICK_EXECUTE}`);
-	assert.ok(!phaseSection("execute", SECTION_OPTS).includes(QUICK_EXECUTE));
+test("phaseSection: the plan prompt in plan, the execute prompt alone in execute", () => {
 	assert.equal(phaseSection("plan", SECTION_OPTS), planPhase());
+	assert.ok(planPhase().includes(PLAN_BATCH));
+	assert.equal(phaseSection("execute", { publish: false }), EXECUTE_PHASE);
+});
+
+test("flow's judge and critic rules are criteria for agents' reviewers, not a copy of their prompts", () => {
+	for (const [name, text] of Object.entries({ JUDGE_CRITERIA, PLAN_CRITERIA, DISCUSSION_CRITERIA })) {
+		assert.ok(!text.includes("VERDICT: PASS or VERDICT: FAIL"), `${name} leaves the verdict line to agents`);
+		assert.ok(!/Report findings only, one block each/.test(text), `${name} leaves the findings format to agents`);
+		assert.ok(!text.includes(JUDGE_INCREMENTAL.slice(0, 40)), name);
+	}
+	assert.match(JUDGE_CRITERIA, /`\[plan\]`/);
+	assert.match(JUDGE_CRITERIA, /do not count toward the verdict/);
+	assert.match(EXECUTE_PHASE, /\[plan\] finding/);
+	assert.ok(!EXECUTE_PHASE.includes("[plan-flaw]"));
 });
 
 test("merge points: the planner lists them, the executor asks request_merge, the arbiter has a decision line", () => {
@@ -192,9 +199,7 @@ test("merge points: the planner lists them, the executor asks request_merge, the
 	assert.ok(EXECUTE_PHASE.includes("request_merge"));
 	assert.ok(MERGE_ARBITER.includes("DECISION: MERGE | NO_MERGE | ASK_USER"));
 });
-import { MERGE_ARBITER } from "./prompts.ts";
-
-test("JUDGE_DISCUSSION and the discuss prompt mention the discussion review", () => {
-	assert.ok(JUDGE_DISCUSSION.includes("VERDICT: PASS or VERDICT: FAIL") && JUDGE_DISCUSSION.includes("Agreed so far"));
-	assert.ok((phaseSection("discuss", SECTION_OPTS) ?? "").includes("/flow judge"));
+test("the discussion criteria and the discuss prompt name the critic review", () => {
+	assert.ok(DISCUSSION_CRITERIA.includes("Agreed so far") && DISCUSSION_CRITERIA.includes("fix: auto"));
+	assert.ok((phaseSection("discuss", SECTION_OPTS) ?? "").includes("`/flow critic`"));
 });

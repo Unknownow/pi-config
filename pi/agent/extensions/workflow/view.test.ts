@@ -158,3 +158,33 @@ test("addFinished counts each finished run", async () => {
 	assert.equal(models.length, 1);
 	assert.equal(models[0].runs, 2);
 });
+
+test("a run agents drives is mirrored into one row: live while it runs, its usage counted once at the end", async () => {
+	const { FlowView } = await import("./view.ts");
+	const { newRun } = await import("../shared/runs.ts");
+	const v = new FlowView(roles);
+	v.weights = w;
+	v.stage = "plan";
+	const ext = newRun(7, "critic", "flow plan", "claude-bridge/claude-opus-5-5");
+	const row = v.mirror("critic", ext);
+	assert.equal(row.stage, "plan", "a critic run counts toward the stage it reviews");
+	ext.activity = "read a.ts";
+	ext.tools = 2;
+	ext.liveTokens = { raw: 40, cost: 40 };
+	assert.equal(v.mirror("critic", ext), row, "the same agents row maps to the same flow row");
+	assert.equal(v.runs.filter((r) => r.role === "critic").length, 1);
+	assert.equal(row.activity, "read a.ts");
+	assert.equal(row.liveTokens.raw, 40);
+	const ended = v.endMirror(ext, true, "PASS · plan", "claude-bridge/claude-opus-5-5", usage(50, 10) as never);
+	assert.equal(ended, row);
+	assert.equal(row.status, "ok");
+	assert.equal(row.activity, "PASS · plan");
+	const sub = v.flow.plan.subs.critic!;
+	assert.equal(sub.runs, 1);
+	assert.equal(sub.tokens.raw, 60);
+	assert.equal(v.used.plan.raw, 60);
+	assert.equal(v.endMirror(ext, true, "again", "m", usage(1) as never), undefined, "ending twice counts nothing");
+	const extJudge = newRun(8, "judge", "review", "claude-bridge/claude-opus-5-5");
+	assert.equal(v.mirror("judge", extJudge).stage, "judge");
+	v.endMirror(extJudge, false, "failed", "m", usage(0) as never);
+});

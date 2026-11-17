@@ -1,9 +1,9 @@
 // node --test repos.test.ts
-// Checks shared/repos.ts together with the push guard that relies on it.
+// Checks repos.ts together with the push guard that relies on it.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { followFolders, parseWorktreeList, combineRepoTexts, parseAddDir, repoKey, fallbackTexts, repoTexts, shellText, uniqueRoots } from "../shared/repos.ts";
-import { pushProblem as checkPush, type GateRequest } from "./push-guard.ts";
+import { followFolders, parseWorktreeList, combineRepoTexts, parseAddDir, repoKey, fallbackTexts, repoTexts, shellText, uniqueRoots } from "./repos.ts";
+import { pushProblem as checkPush, type GateRequest } from "./git/push-guard.ts";
 
 /** A command counts as blocked when the pure check refuses it or hands it to the gate. */
 const pushProblem = (cmd: string, o: { branch?: string; protectedBranches: string[] }) => {

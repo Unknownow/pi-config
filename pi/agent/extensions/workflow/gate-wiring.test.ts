@@ -14,9 +14,9 @@ function body(header: string): string {
 	return source.slice(a, b);
 }
 
-test("runPlanGate passes the gate's signal to runRole and releases the Esc hook in a finally", () => {
+test("runPlanGate passes the gate's signal to agents' runCritic and releases the Esc hook in a finally", () => {
 	const fn = body("async function runPlanGate(");
-	assert.match(fn, /runRole\("judge", "plan review"[\s\S]*signal: run\.controller\.signal/);
+	assert.match(fn, /runCritic\(\{[\s\S]*planCriticRequest\([\s\S]*signal: run\.controller\.signal/);
 	assert.match(fn, /onTerminalInput\(/);
 	const fin = fn.indexOf("} finally {");
 	assert.ok(fin > 0);
@@ -38,12 +38,13 @@ test("K4 carries judging", () => {
 	assert.match(source, /\.\.\.\(gateRun \? \{ judging: gateRun\.kind \} : \{\}\)/);
 });
 
-test("the judge command handles cancel before the phase dispatch and judges the plan in plan", () => {
-	const a = source.indexOf('case "judge":');
+test("the critic command handles cancel before the phase dispatch, reviews the plan in plan and points to the judge tool in execute", () => {
+	const a = source.indexOf('case "critic":');
 	const cancel = source.indexOf('rest[0]?.toLowerCase() === "cancel"', a);
-	const dispatch = source.indexOf('state.phase === "discuss") await runDiscussionGate', a);
+	const dispatch = source.indexOf('await runDiscussionGate(ctx, "full", false)', a);
 	assert.ok(a > 0 && cancel > a && cancel < dispatch);
-	assert.match(source.slice(dispatch, dispatch + 300), /state\.phase === "plan"\) judgePlanNow\(ctx\)/);
+	assert.match(source.slice(dispatch, dispatch + 400), /state\.phase === "plan"\) criticPlanNow\(ctx\)[\s\S]*use the judge tool/);
+	assert.equal(source.indexOf('case "judge":'), -1);
 });
 
 test("the plan branch decides with planGateDecide before offerPlan", () => {

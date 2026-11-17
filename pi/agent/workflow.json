@@ -1,5 +1,5 @@
 {
-  "_comment": "Config for ~/.pi/agent/extensions/workflow. model is provider/model-id (see `pi --list-models`); thinking is off|minimal|low|medium|high|xhigh|max. Edit here or with `/flow model <role> <provider/id[:thinking]>`, then `/flow reload`. Synced by pi-config.",
+  "_comment": "Config for ~/.pi/agent/extensions/workflow. model is provider/model-id (see `pi --list-models`); thinking is off|minimal|low|medium|high|xhigh|max. The judge and critic models are agents.json's (`/agents model`). Edit here or with `/flow model <role> <provider/id[:thinking]>`, then `/flow reload`. Synced by pi-config.",
   "roles": {
     "discuss": {
       "model": "claude-bridge/claude-opus-5-5",
@@ -13,10 +13,6 @@
       "model": "claude-bridge/claude-sonnet-5-5",
       "thinking": "medium"
     },
-    "judge": {
-      "model": "claude-bridge/claude-opus-5-5",
-      "thinking": "medium"
-    },
     "commit": {
       "model": "claude-bridge/claude-haiku-5-5",
       "thinking": "medium"
@@ -28,14 +24,6 @@
     "escalate": {
       "model": "claude-bridge/claude-opus-5-5",
       "thinking": "high"
-    },
-    "quick": {
-      "model": "claude-bridge/claude-sonnet-5-5",
-      "thinking": "medium"
-    },
-    "quick-judge": {
-      "model": "claude-bridge/claude-opus-5-5",
-      "thinking": "medium"
     }
   },
   "startPhase": "off",
@@ -100,19 +88,9 @@
       "ls"
     ]
   },
-  "judge": {
-    "tools": [
-      "read",
-      "grep",
-      "find",
-      "ls"
-    ],
-    "maxDiffChars": 400000
-  },
   "knowledge": {
     "server": "knowledge",
     "roles": [
-      "judge",
       "arbiter"
     ],
     "tools": [
@@ -124,13 +102,7 @@
     ],
     "env": {
       "KNOWLEDGE_OFFLINE": "1"
-    },
-    "judgeCheck": true
-  },
-  "quick": {
-    "maxJudgeRounds": 2,
-    "maxMinorRounds": 0,
-    "knowledgeCheck": true
+    }
   },
   "subagent": {
     "extensions": [

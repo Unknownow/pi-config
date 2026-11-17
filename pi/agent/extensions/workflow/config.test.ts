@@ -48,8 +48,8 @@ test("saveRole clears the cache even within the same millisecond", () => {
 	const f = tmp();
 	fs.writeFileSync(f, "{}");
 	loadConfig(f);
-	saveRole("judge", { model: "p/x" }, f);
-	assert.equal(loadConfig(f).config.roles.judge.model, "p/x");
+	saveRole("arbiter", { model: "p/x" }, f);
+	assert.equal(loadConfig(f).config.roles.arbiter.model, "p/x");
 });
 
 test("unchanged file returns the cached result", () => {
@@ -132,7 +132,7 @@ test("settings that moved to agents.json are ignored and dropped", () => {
 	for (const r of ["explore", "advisor", "runner"]) assert.equal(r in c.config.roles, false, r);
 	assert.equal(c.config.roles.plan.model, "p/q");
 	assert.equal("test" in raw || "test" in c.config.roles, false);
-	assert.deepEqual(c.config.knowledge.roles, ["judge", "arbiter"]);
+	assert.deepEqual(c.config.knowledge.roles, ["arbiter"]);
 });
 
 test("addedFolderRules defaults to paths; full is kept, anything else falls back", () => {
@@ -190,19 +190,33 @@ test("the shipped planAllowedTools refuses test_run but admits explore, advisor 
 	for (const n of ["explore", "advisor", "judge"]) assert.equal(allowed(n), true, n);
 });
 
-test("quick: defaults, and bad values fall back", () => {
-	const quick = (v: string) => {
-		const f = tmp();
-		fs.writeFileSync(f, `{"quick":${v}}`);
-		return loadConfig(f).config.quick;
-	};
-	assert.deepEqual(quick("{}"), { maxJudgeRounds: 2, maxMinorRounds: 0, knowledgeCheck: true });
-	assert.deepEqual(quick('{"maxJudgeRounds":-1,"maxMinorRounds":1.5,"knowledgeCheck":"no"}'), { maxJudgeRounds: 2, maxMinorRounds: 0, knowledgeCheck: true });
-	assert.deepEqual(quick('{"maxJudgeRounds":0,"maxMinorRounds":1,"knowledgeCheck":false}'), { maxJudgeRounds: 0, maxMinorRounds: 1, knowledgeCheck: false });
-	assert.deepEqual(quick('"x"'), { maxJudgeRounds: 2, maxMinorRounds: 0, knowledgeCheck: true });
-	const roles = loadConfig(tmp()).config.roles;
-	assert.equal(roles.quick.model, "claude-bridge/claude-sonnet-5-5");
-	assert.deepEqual(roles["quick-judge"], { model: "claude-bridge/claude-opus-5-5", thinking: "medium" });
+test("old judge and quick keys are dropped with one warning; the rest of the file applies", () => {
+	const f = tmp();
+	fs.writeFileSync(f, JSON.stringify({
+		roles: { judge: { model: "a/j" }, quick: { model: "a/q" }, [`${"quick"}-judge`]: { model: "a/qj" }, plan: { model: "p/q" } },
+		quick: { maxJudgeRounds: 2 },
+		judge: { tools: ["read"], maxDiffChars: 5, recheckThinking: "low", recheck: false },
+		knowledge: { judgeCheck: false, server: "kb" },
+	}));
+	const c = loadConfig(f);
+	assert.equal(c.error, undefined);
+	assert.match(c.warning ?? "", /roles\.judge, roles\.quick, roles\.quick-judge, quick, judge\.tools, judge\.maxDiffChars, judge\.recheckThinking, knowledge\.judgeCheck/);
+	assert.deepEqual(Object.keys(c.config.roles).sort(), Object.keys(DEFAULTS.roles).sort());
+	assert.equal(c.config.roles.plan.model, "p/q");
+	assert.equal("quick" in c.config, false);
+	assert.deepEqual(Object.keys(c.config.judge).sort(), Object.keys(DEFAULTS.judge).sort());
+	assert.equal(c.config.judge.recheck, false);
+	assert.equal("judgeCheck" in c.config.knowledge, false);
+	assert.equal(c.config.knowledge.server, "kb");
+	fs.writeFileSync(f, JSON.stringify({ maxJudgeRounds: 3 }));
+	assert.equal(loadConfig(f).warning, undefined);
+});
+
+test("the roles are exactly discuss, plan, execute, commit, arbiter, escalate; judge config keeps only what flow drives", () => {
+	assert.deepEqual(Object.keys(DEFAULTS.roles), ["discuss", "plan", "execute", "commit", "arbiter", "escalate"]);
+	assert.deepEqual(Object.keys(DEFAULTS.judge).sort(), ["finalFullReviewNewFilesOnly", "finalFullReviewOverChars", "finalFullReviewRepeatMaxShare", "maxDiscussionChars", "recheck", "recheckMaxShare"]);
+	assert.deepEqual(DEFAULTS.knowledge.roles, ["arbiter"]);
+	assert.equal("judgeCheck" in DEFAULTS.knowledge, false);
 });
 
 test("a leftover stagedPlans key is ignored", () => {

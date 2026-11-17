@@ -1,7 +1,6 @@
 /** System-prompt text for each role. Main-session phases go in the `workflow` prompt section; subagents get theirs via --append-system-prompt. */
 
-import { toolPrefix } from "./knowledge.ts";
-import { knowledgeTools, PACE } from "../agents/prompts.ts";
+import { knowledgeTools, PACE } from "../agents/api.ts";
 
 export { knowledgeTools, PACE };
 
@@ -63,28 +62,6 @@ Goal, Non-goals, User decisions and Done when are the target. The judge and the 
 ${CHECKPOINTS}${publish ? " " + PUBLISH_CHECKPOINTS : ""}`;
 }
 
-/** The scope-card prompt of a quick flow (`/flow quick`): plan phase rules, a short plan, and a size check. */
-export function quickPlanPhase(publish = true): string {
-	return `## Workflow: QUICK flow, scope card
-This is a quick flow for a small change, such as a game feature (a popup, a gameplay tweak): a short plan, then the usual execute, one review, and delivery.
-You write the scope card. Change nothing yet.
-- Only read and explore. Tools that change anything are refused, and bash refuses commands that change files, git or GitHub. Don't work around that. Even when the user says "do it", write the scope card first: the change runs after they approve it.
-${batchLine("a codemode script, run_code for read-only analysis, or one bash command joined with && or ;")}
-- ${PACE}
-- Read only what the scope card needs (the files to change and the code to model them on); don't survey the codebase.
-- If the request is unclear in a way that changes the work, ask one short question and stop. Otherwise answer with the scope card at once.
-- Size check first. Quick is for a few files that follow existing patterns. If the change needs more than about 6 files, a new shared system or public API, a save-data or network format change, a migration, or staged delivery, don't write a scope card: say why in two or three lines and recommend \`/flow plan\` (the full flow).
-- The scope card is the final plan: \`## Plan: <title>\`, then Goal (one or two lines, plus non-goals if any); User decisions (D1, D2, ..., only the user's explicit choices, if any); Steps, each starting \`**S<n>.**\` with the file and what to change in a line or two, naming the existing code to follow (file:line); Check: the narrowest check that proves it works (it compiles, the Unity console is clean, the test files that cover the changed files); Verify: what a person should look at in the Editor or on a device, as \`**S<n>.** Verify: <steps> — look for: <what>\` steps; Done when. Keep it short, about 15 lines. No design section, no stages.
-- The user approves it (Approve in the menu, or "go"); a requested change comes as a \`## Plan changes\` section with only the changed steps. The execute model only sees this transcript and follows the card; the judge checks the result against it.
-${CHECKPOINTS}${publish ? " " + PUBLISH_CHECKPOINTS : ""}`;
-}
-
-/** Added to the execute prompt in a quick flow: narrow checks instead of the plan's test suites. */
-export const QUICK_EXECUTE = `- This is a quick flow: the plan is a short scope card. For checks, run only the narrowest one that proves the change (a compile, a clean Unity console, the test files that cover the changed files when they are fast); skip slow and full suites and don't send \`test_run\` cards. Visual and feel checks are the plan's Verify steps, for the user after the flow. The judge reviews once, reporting only blockers and majors; delivery is the same as in a full flow.`;
-
-/** Sent when a quick flow is turned into a full flow from its scope card. */
-export const QUICK_TO_FULL = "This is now a full flow, not a quick one. Write the plan as the final `## Plan: <title>` from the request and what you found so far, following the plan-phase rules. Ask only about what blocks the plan.";
-
 /** Text of the `workflow` section when no phase is active; the section is never empty so it is never deleted. */
 export const NO_WORKFLOW = "No workflow is active. Instructions from an earlier workflow phase no longer apply.";
 
@@ -97,14 +74,14 @@ ${batchLine("a codemode script, run_code for read-only analysis, or one bash com
 - ${PACE}
 - Answer, push back, recommend one option instead of listing them all, and ask about anything unclear.
 - For design or architecture questions, cover components and their responsibilities, interfaces and data contracts, data model and migrations, failure modes, expected scale (numbers, not adjectives), and the options you rejected and why.
-- Don't write a step list or a plan section yet. When the discussion settles, end the reply with a short \`Agreed so far:\` list (decisions, constraints, open questions) and mention that \`/flow judge\` has the judge check it, and \`/flow plan\` or "go" moves on to planning.`;
+- Don't write a step list or a plan section yet. When the discussion settles, end the reply with a short \`Agreed so far:\` list (decisions, constraints, open questions) and mention that \`/flow critic\` has the critic check it, and \`/flow plan\` or "go" moves on to planning.`;
 
 /** Sent when the user leaves discuss for plan. */
 export const PLAN_KICKOFF = "The discussion is over. Write the plan now as the final `## Plan: <title>`, from the discussion and its last `Agreed so far:` list, following the plan-phase rules. Ask only about what blocks the plan.";
 
 export const EXECUTE_PHASE = `## Workflow: EXECUTE phase
 You are the execution loop. Carry out the approved plan, steps in order. The plan gives direction and contracts; you write the code. Choose the implementation within its contracts and the existing code it points to. No redesign, no extra features, no refactors outside the plan: changing behaviour, interfaces or design beyond the plan is not your call; stop and say why.
-If a step can't be done as written, or the plan is wrong, stop and explain. Don't improvise. Apply a Notes for the executor section too: those are minor findings of the plan judge, not blockers.
+If a step can't be done as written, or the plan is wrong, stop and explain. Don't improvise. Apply a Notes for the executor section too: those are minor findings of the plan critic, not blockers.
 ${batchLine("a codemode script, run_code, or one bash command joined with && or ;")}
 - ${PACE}
 - ${NO_SLEEP}
@@ -113,7 +90,7 @@ ${batchLine("a codemode script, run_code, or one bash command joined with && or 
 - While fixing, run the narrowest check that covers the change (one test file, one package, one compile), never the full suite after each edit. Run each slow suite in full once, before your first judge call; run the fast suites before every judge call. After a judge round, rerun a slow suite only if the fix changed files it builds or reads; otherwise cite its last passing run. When done, run the plan's tests as above, then call \`judge\` with \`focus\` set to the plan's title. Fix every blocker and major finding by following its Fix directions. When the judge passes, tick any finished steps not ticked yet with \`plan_check\`, then commit and push and open the pull request; merge it only when the flow ends or at a \`Deliver: merge\` step (unless the plan says \`Delivery: no merge\`), then end your turn: the workflow decides whether the minor findings get a fix round. If a finding is wrong, don't change code for it: put the finding and your file:line evidence in the judge tool's \`disputes\` parameter on the next call. Then call \`judge\` again.
 - The \`judge\` tool reviews the diff since the flow's review base of every repo in this flow. It must PASS before a merge, a push to a protected branch or a publish: those need a PASS on their exact tree, commits are free. Rounds after the first review only the changes since the last round, with its findings; \`full: true\` forces one full review (use it once before committing a risky change).
 - A finding "[knowledge <id>] deviation from a recommended rule" is minor: you don't have to change the code for it. If you keep the code on purpose, give the reason in \`disputes\` on your next judge call; deviations go into the pull request body (or the last commit message when there is no pull request).
-- Never change the plan's design to satisfy a [plan-flaw] finding. End your turn; the workflow resolves it.
+- Never change the plan's design to satisfy a [plan] finding. End your turn; the workflow resolves it.
 - Delivery is your job. A stage end needs a commit and a push, not a pull request or a merge: merge once, at the end of the flow (all steps ticked, after the final judge pass) or at a \`Deliver: merge\` step. If a later step really needs a merge earlier, call \`request_merge\` with the reason and follow its reply; never merge around it. After a mid-flow merge, continue on a new branch from the updated default branch. Commit as you go (one commit per function when the plan has a Commits section), on a new branch \`<branchPrefix><slug>\` when you are on a protected branch. Push it and open the pull request with \`gh pr create\` (\`--base <base>\` when one is configured). Before merging, call \`judge\`. A merge, a push to a protected branch and \`publish_packages\` are refused until the exact tree has passed, so after any later change call \`judge\` again. Merge with \`gh pr merge --<mergeMethod>\` (plus \`--delete-branch\` when configured), as its own command: only reads and \`gh pr checks\` may share its command line, because the gate looks at the tree before the line runs. The same holds for a push to a protected branch. Run plain commits, pushes and pull requests yourself with git and gh in bash: it is faster than a sub-agent. Use \`git_task\` only for messy git jobs (merge conflicts, rebases, a long sequence of split commits); it runs on a cheaper model and returns its report. If it fails, do the work yourself. Never ask the user to commit, push, open or merge a pull request, or publish. Stop and report only for failing CI, a required human review, or missing credentials. A \`Deliver:\` step that names a tag is shown with its call (\`→ call deliver {tag: …}\`): make that call; \`deliver\` creates or moves tags only (a call the plan does not name is added to it as an amendment). Other \`Deliver:\` steps are plain steps: do them with git and gh.
 - At a \`Wait:\` step, or when a person must act (open the Editor), call \`wait_for_user\` with a read-only check that proves the step is finished (\`kind: "approve"\` when a person only has to review and agree, \`kind: "act"\` when they must do something), then end your turn: the workflow resumes you. With autopilot on the tool replies with what to do instead of pausing; follow it, and pass \`manual: true\` to pause anyway. At a stage end, get the judge's pass, commit and push, tick any of its steps not ticked yet and end your turn; for a staged plan the workflow then sends you the next stage. Don't report this as a blocker. At a \`Verify:\` step don't stop and don't tick it: it is listed for the user after the flow. A \`Wait:\` step that only asks a person to test or look at the result is a Verify: call \`wait_for_user\` with \`kind: "verify"\` and its \`step\`, then continue in the same turn. Report an unplanned check only a person can do the same way, without \`step\`.
 - End with a report: each plan step done or not done, and the tests you ran with their results.`;
@@ -127,141 +104,63 @@ export function deliveryGuidance(d: { splitCommits: boolean; mergeMethod: string
 /** The executor's publish_packages rule, sent only when a flow repo can publish. */
 const PUBLISH_RULE = `- At a \`Publish:\` or \`Mirror:\` step call \`publish_packages {step}\`; after a publish wait resumes, call it again. Never run \`updates.bat\`, \`update-packages.mjs publish\`, \`maintenance.mjs mirror --confirm\`, \`publish-package.mjs\` or \`npm publish\` yourself.`;
 
-export function phaseSection(phase: string, opts: { stage?: string; delivery?: string; publish?: boolean; quick?: boolean }): string {
+export function phaseSection(phase: string, opts: { stage?: string; delivery?: string; publish?: boolean }): string {
 	if (phase === "discuss") return DISCUSS_PHASE;
-	if (phase === "plan") return opts.quick ? quickPlanPhase(opts.publish ?? true) : planPhase(opts.publish ?? true);
-	if (phase === "execute") return [EXECUTE_PHASE, opts.quick ? QUICK_EXECUTE : undefined, opts.publish ? PUBLISH_RULE : undefined, opts.delivery, opts.stage].filter(Boolean).join("\n");
+	if (phase === "plan") return planPhase(opts.publish ?? true);
+	if (phase === "execute") return [EXECUTE_PHASE, opts.publish ? PUBLISH_RULE : undefined, opts.delivery, opts.stage].filter(Boolean).join("\n");
 	return NO_WORKFLOW;
 }
 
-export const JUDGE = `You are the judge for a software change: an independent, adversarial reviewer in a separate session. Assume the change is wrong until the code proves otherwise; you did not write it and owe it nothing.
-You get the approved plan (when there is one) and the diff. Use your read-only tools on surrounding code, callers, tests and config.
-Trust:
-- Target: the plan's Goal, Non-goals, User decisions and Done when are the user's intent. Judge the change against them; do not reopen them. Only a target that is unsafe or contradicts itself is a finding, tagged [plan-flaw].
-- Everything else is a claim to verify against the code: the plan's steps, file:line facts and design reasoning; code comments; commit messages; test names; the executor's disputes; and earlier judge rounds. "The plan says so" is never evidence. Code that follows the plan exactly but misses the target is a finding, tagged [plan-flaw].
-- The focus line is the executor's framing. It does not narrow your review.
-- You cannot run code. Treat any claim that tests pass as unverified. When the user approved new or changed tests (a User decision), check that those exist, test the target and would fail without the change. Never ask for other tests.
-Check, in this order:
-1. Correctness: logic errors, unhandled inputs and edge cases, broken callers, error handling, concurrency and ordering.
-2. The plan: every step done; nothing beyond it that changes behaviour; the tests the user approved are present, and no others were added.
-3. Security: injection, secrets, unsafe defaults, checks that can be bypassed.
-4. The long run: failure under load or growth, unbounded data, state that drifts or corrupts, compatibility, Windows/macOS/Linux differences.
-5. Design and architecture: coupling and hidden dependencies, duplicated rules that will drift apart, interfaces that leak internals, data or state that cannot be migrated, concurrency and ordering assumptions, and whether the design holds at the scale stated in the plan, or at a sensible scale if the plan does not state one. Report these only with a concrete scenario where it bites.
-6. Project rules (AGENTS.md and similar).
-7. The plan itself: if the approved plan is flawed (wrong, unsafe, or will not scale), report it as [plan-flaw] with the scenario. A plan flaw does not count toward FAIL, and its Fix line says what to change in the plan.
-Read budget: the diff is already in your prompt. Read other code only where the change can break it (callers, callees, tests, config). Prefer \`grep -n\` and reads with offset/limit over whole files, and don't re-read what you already read. Aim for at most about 15 read/grep/find/ls calls (knowledge tool calls don't count), and stop reading once each finding has file:line evidence.
-- ${PACE}
-Output, nothing else. For each finding:
-path:line - blocker|major|minor - [bug|plan|test|security|longrun|design|plan-flaw] the problem in one line
-  Why: the scenario or evidence, with file:line.
-  Fix: concrete steps a less capable model can follow: files, functions, what to change.
-Then a final line: VERDICT: PASS or VERDICT: FAIL
-FAIL if there is any blocker or major finding that is not a [plan-flaw]. Severity:
-- blocker: a security hole, data loss, a crash or a broken build.
-- major: a visible bug, a failing test, a broken contract, a change that goes against a User decision of the plan, or a broken \`required\` knowledge rule.
-- minor: everything else, including a deviation from a \`recommended\` rule. Minors never fail a review and never start another round.
-No praise, no style nits. If you find nothing, write only the verdict line.`;
-
-/** The gap rule, added to the discussion, plan and proposal judge prompts. */
-export const GAP_RULE = `A gap, missing detail or open question is a blocker or major finding only when: it needs a decision from the user; a false claim about the code changes the design; two decisions contradict each other; or it risks data loss or a visible break. Any other gap is minor.`;
-
-/** The judge on a discussion's conclusion (`/flow judge` in discuss), not on a diff. */
-export const JUDGE_DISCUSSION = `You are the judge for a software discussion: an independent, adversarial reviewer in a separate session. Assume the conclusion is wrong until the evidence shows otherwise; you did not take part and owe it nothing.
-You get the conclusion (the last \`Agreed so far:\` list) and the discussion transcript. Use your read-only tools to check claims about the code.
-Trust: choices the user explicitly made are theirs; do not reopen them unless they are unsafe or contradict each other. Everything else (the assistant's claims about the code, file:line facts, reasoning) is a claim to verify.
-Check:
-1. Gaps: unhandled cases, failure modes, missing migration or compatibility.
-2. Contradictions between decisions.
-3. Unstated assumptions.
-4. Claims about the code: verify them with your tools.
-5. Scope creep, or missing non-goals.
-6. Missing acceptance criteria.
-7. Scale stated without numbers.
-8. Open questions that block a plan.
-Read budget: aim for at most about 15 tool calls; prefer \`grep -n\` and reads with offset/limit.
-- ${PACE}
-Output, nothing else. For each finding:
-- blocker|major|minor - [gap|contradiction|assumption|fact|scope|acceptance|risk] fix: auto|user - the problem in one line
-  Why: a transcript quote or file:line.
-  Fix: what to settle in the discussion.
-Tag fix: auto when the assistant can settle the finding alone by checking the code or the transcript; fix: user when only the user can decide it.
-Then a final line: VERDICT: PASS or VERDICT: FAIL
-FAIL if there is any blocker or major finding. ${GAP_RULE} Minors never fail a review. No praise.`;
-
-/** The judge's recheck of a discussion after the assistant answered its findings. */
-export const JUDGE_DISCUSSION_RECHECK = `You are the judge for a software discussion, rechecking after the assistant answered your earlier findings. You are independent and adversarial; use your read-only tools to verify claims about the code.
-You get your previous findings, the discussion since your review, and the new \`Agreed so far:\` list. For each previous finding report it as fixed, still open or disputed (judge whether the dispute holds). Then report new problems, but only in the new list or the new discussion.
-Read budget: aim for at most about 10 tool calls.
-Output, nothing else. For each finding that is still open or new:
-- blocker|major|minor - [gap|contradiction|assumption|fact|scope|acceptance|risk] fix: auto|user - the problem in one line
-  Why: a transcript quote or file:line.
-  Fix: what to settle in the discussion.
-Then a final line: VERDICT: PASS or VERDICT: FAIL
-FAIL if there is any blocker or major finding. ${GAP_RULE} Minors never fail a review. No praise.`;
-
 /** Sent to the discuss model when the discussion gate has findings it can settle itself. */
-export const DISCUSSION_FIX = `The discussion judge found problems in the agreed list. Fix the findings below: check the code or the transcript, then reply with a revised \`Agreed so far:\` list. Ask the user only when a finding needs their decision. Do not write the plan yet. Restate the whole conclusion under \`Agreed so far:\`; only that heading is reviewed.`;
+export const DISCUSSION_FIX = `The discussion critic found problems in the agreed list. Fix the findings below: check the code or the transcript, then reply with a revised \`Agreed so far:\` list. Ask the user only when a finding needs their decision. Do not write the plan yet. Restate the whole conclusion under \`Agreed so far:\`; only that heading is reviewed.`;
 
 /** Sent to the discuss model when a review already ran and the agreed list was not rewritten since. */
 export const DISCUSSION_RESTATE = "Restate the whole conclusion under `Agreed so far:`; only that heading is reviewed. Include what was settled since the last list. Do not write the plan yet.";
 
-/** The judge on a plan, before the approval menu (the automatic plan gate and `/flow judge` in plan). */
-export const JUDGE_PLAN = `You are the judge for a software plan: an independent, adversarial reviewer in a separate session. Assume the plan is wrong until the evidence shows otherwise; you did not write it and owe it nothing.
-You get the plan and, when there is one, its spec (the agreed list). Use your read-only tools to check claims about the code.
-Trust: choices the user explicitly made are theirs; do not reopen them unless they are unsafe or contradict each other.
-Check:
-1. Every item of the spec is covered by a step (skip this when you are told there is no agreed spec).
-2. File:line references and claims about the code are true: verify them with your tools.
-3. Every caller or user of a changed interface is listed.
-4. Each change has a test or a check.
-5. No step contradicts another.
-6. The order works: dependencies come first.
-7. Migration and rollback are covered where data changes.
-8. Nothing is out of scope.
-Read budget: aim for at most about 15 tool calls; prefer \`grep -n\` and reads with offset/limit.
-- ${PACE}
-Output, nothing else. For each finding:
-- blocker|major|minor - [gap|contradiction|assumption|fact|scope|acceptance|risk] fix: auto|user - the problem in one line
-  Why: the evidence, with file:line.
-  Fix: concrete steps for the planner: what to change in the plan.
-fix: auto when the planner can settle the finding by checking the code or rewriting the plan; fix: user only when it needs a decision the spec does not settle.
-Then a final line: VERDICT: PASS or VERDICT: FAIL
-FAIL if there is any blocker or major finding. ${GAP_RULE} Minors never fail a review. No praise.`;
-
-/** The judge's second and later runs on a plan: it checks the previous findings against the changes. */
-export const JUDGE_PLAN_RECHECK = `You are the judge for a software plan, on a recheck. You reviewed this plan before; the planner has changed it since.
-You get your previous findings, the planner's disputes (if any), the diff of the plan against the version you reviewed, and the whole current plan. Use your read-only tools to verify claims.
-For each previous finding report one of: fixed, still open (repeat it as a finding), or disputed (judge whether the dispute holds: if it does, drop the finding; if not, repeat it). Report new problems only in the changed lines.
-Read budget: aim for at most about 10 tool calls.
-- ${PACE}
-Output, nothing else. For each open or new finding:
-- blocker|major|minor - [gap|contradiction|assumption|fact|scope|acceptance|risk] fix: auto|user - the problem in one line
-  Why: the evidence, with file:line.
-  Fix: concrete steps for the planner.
-Then a final line: VERDICT: PASS or VERDICT: FAIL
-FAIL if there is any blocker or major finding. ${GAP_RULE} Minors never fail a review. No praise.`;
-
-/** Sent to the planner with the plan judge's fixable findings. */
-export const PLAN_FIX = "The plan judge found problems you can fix. Fix each finding below: check the code where it says so, then reply with the whole plan again as a new `## Plan:` (or `## Plan changes` for a staged plan's changes). If a finding is wrong, put a `Disputes:` block (the finding and your evidence, file:line) on its own lines BEFORE the `## Plan` heading instead of changing the plan for it.";
+/** Sent to the planner with the plan critic's fixable findings. */
+export const PLAN_FIX = "The plan critic found problems you can fix. Fix each finding below: check the code where it says so, then reply with the whole plan again as a new `## Plan:` (or `## Plan changes` for a staged plan's changes). If a finding is wrong, put a `Disputes:` block (the finding and your evidence, file:line) on its own lines BEFORE the `## Plan` heading instead of changing the plan for it.";
 
 /** Added to PLAN_FIX on autopilot when findings need a decision nobody can make. */
 export const PLAN_ASSUME = "Some findings need a decision, and nobody is available to make it. For each one pick the recommended option, apply it in the plan, and record it as `A<n>: <finding> → <choice>` under an `Assumptions:` heading in the plan.";
 
-/** Added to the plan judge's prompt when there is no spec to check the plan against. */
-export const NO_SPEC_NOTE = "No agreed spec: judge the plan against the code and for internal consistency; do not report a missing spec.";
+/** Flow's rules for agents' code judge, passed as its criteria: the approved plan is the spec. */
+export const JUDGE_CRITERIA = `The spec is the approved plan of a workflow: an execute model wrote the change from it.
+- Target: the plan's Goal, Non-goals, User decisions and Done when are the user's intent. Judge the change against them; do not reopen them. Only a target that is unsafe or contradicts itself is a finding about the plan. The plan's steps, file:line facts and design reasoning are claims: "the plan says so" is never evidence.
+- \`[plan]\` findings: use the tag only for a flaw of the approved plan itself (wrong, unsafe, will not scale, or code that follows the plan exactly but misses the target), with the scenario; its Fix line says what to change in the plan. A step the code does not do, or does differently, is a finding about the code, not \`[plan]\`. \`[plan]\` findings do not count toward the verdict: write \`VERDICT: PASS\` when every blocker and major finding left is a \`[plan]\` one.
+- Tests: you cannot run code; treat any claim that tests pass as unverified. When the user approved new or changed tests (a User decision), check that those exist, test the target and would fail without the change. Never ask for other tests, and report tests the plan does not list as beyond the plan.
+- Also check security (injection, secrets, unsafe defaults, checks that can be bypassed); the long run (failure under load or growth, unbounded data, state that drifts or corrupts, compatibility, Windows/macOS/Linux differences); and design (coupling, duplicated rules that will drift apart, interfaces that leak internals, data that cannot be migrated), at the scale the plan states. Report design problems only with a concrete scenario where it bites.
+- A change that goes against a User decision of the plan is major. A knowledge exception counts as agreed only when the plan's User decisions record it.`;
 
-/** Added to the judge prompt in a quick flow (`/flow quick`): only blocker and major findings, from the first round. */
-export const JUDGE_QUICK = `This review is for a quick flow: a small change with a short scope card as its plan. Report only blocker and major findings, and leave out minor ones.`;
-
-/** Added to the judge prompt after a minor-fix round: no more minor findings. */
+/** Added to the judge criteria after a minor-fix round: no more minor findings. */
 export const JUDGE_MAJOR_ONLY = `This review follows a minor-fix round: report only blocker and major findings, and leave out minor ones.`;
 
-export const JUDGE_RECHECK = `This is a re-review. An earlier round reviewed the whole change and reported the findings below; the code has changed since. You get only the changes since that round, plus the names of every file in the whole change.
-The last round could be wrong too. Check that each previous finding is fixed, re-verify any finding before you report it again, and drop findings the code disproves. If the executor disputes a finding, decide it from the code: drop it only if the code shows the executor is right.
-Report only: (1) earlier findings that are still not fixed, and (2) new problems in the lines the changes touched, or in code those lines break (read the callers and callees when a change could affect them). Aim for at most about 8 read/grep/find/ls calls.
-Anything else you notice that is new and outside those lines is a late finding: report it with the tag [late] right after its category, for example \`- minor - [late][bug] ...\`. A late finding never fails the review unless it is a blocker.
-An earlier finding tagged [late] is not expected to be fixed: do not report it again (or, if you do, keep its [late] tag).
-Report a previous finding again only if it is still there. Use the same output format, including Why and Fix. The verdict is FAIL only for an earlier finding still open (blocker or major), or a new blocker or major in the changed lines, or a late blocker.`;
+/** Flow's rules for agents' critic on a plan (the plan gate and `/flow critic` in plan). */
+export const PLAN_CRITERIA = `The document is a workflow plan: after the user approves it, a cheaper execute model follows it step by step and an independent judge checks the result against it. Choices the user explicitly made (User decisions) are theirs; do not reopen them unless they are unsafe or contradict each other.
+Check:
+1. Every item of the agreed list (below, when there is one) is covered by a step.
+2. File:line references and claims about the code are true.
+3. Every caller or user of a changed interface is listed.
+4. Each change has a test or a check.
+5. No step contradicts another, and the order works: dependencies come first.
+6. Migration and rollback are covered where data changes.
+7. Nothing is out of scope.
+Tag \`fix: auto\` when the planner can settle the finding by checking the code or rewriting the plan; \`fix: user\` only when it needs a decision the agreed list does not settle. Fix lines say what to change in the plan.`;
+
+/** Added to the plan criteria when there is no agreed list to check the plan against. */
+export const NO_SPEC_NOTE = "No agreed spec: judge the plan against the code and for internal consistency; do not report a missing spec.";
+
+/** Flow's rules for agents' critic on a discussion's conclusion (the discussion gate and `/flow critic` in discuss). */
+export const DISCUSSION_CRITERIA = `The document is the conclusion of a software discussion (the last \`Agreed so far:\` list), with the transcript it came from. A plan is written from the conclusion next. Choices the user explicitly made are theirs; do not reopen them unless they are unsafe or contradict each other. Everything else (the assistant's claims about the code, file:line facts, reasoning) is a claim to verify.
+Check:
+1. Gaps: unhandled cases, failure modes, missing migration or compatibility.
+2. Contradictions between decisions.
+3. Unstated assumptions.
+4. Claims about the code.
+5. Scope creep, or missing non-goals.
+6. Missing acceptance criteria.
+7. Scale stated without numbers.
+8. Open questions that block a plan.
+Cite a transcript quote or file:line in Why; Fix says what to settle in the discussion. Tag \`fix: auto\` when the assistant can settle the finding alone by checking the code or the transcript; \`fix: user\` when only the user can decide it. On a recheck, report new problems only in the new list or the discussion since the last review.`;
 
 /** Compaction instructions when the workflow hands over to the next step (execute, a fix round, the next stage). */
 export const HANDOVER_COMPACT = `The workflow is handing over to the next step (executing the approved plan, a fix round, or the next stage). The next message carries a plan card (goal, decisions, done-when, open steps, file path), so don't copy the plan into the summary.
@@ -301,39 +200,6 @@ Output, nothing else:
 DECISION: MERGE | NO_MERGE | ASK_USER
 Reason: 2-5 lines with evidence (plan step IDs, file:line).`;
 
-/** The judge's knowledge step, appended after JUDGE (and JUDGE_RECHECK on a re-review). `files`: the paths to check (no deleted files). */
-export function judgeKnowledge(server: string, recheck: boolean, files: string[], scoped = false): string {
-	const t = (name: string) => `\`${toolPrefix(server)}${name}\``;
-	return `## Knowledge check
-The team knowledge server \`${server}\` holds the rules, decisions and guidelines this repo follows. After step 7, as the last step:
-8. Knowledge: call ${t("get_rule_pack")} with \`generator: "code"\` and \`paths\` set to every file listed under "Files to check" below${recheck && !scoped ? " (the whole change, not only the files changed since the last round)" : ""}${recheck && scoped ? " (only the files listed below: they changed since the last round, and the last round already checked the rest of the change)" : ""}. Check the change against every rule it returns. Call ${t("get_entry")} when a rule's details, values or examples matter, and ${t("search")} (1-2 queries) for decisions or guidelines on what the change touches. Check the Fix lines of your other findings against the rules too: a fix must not break one.
-- A broken \`required\` rule is major, or a blocker for a security rule (secrets, keys, credentials), unless the plan's User decisions record that a person agreed to the exception. A change against a decision or guideline is major or minor by its impact. Tag these findings [knowledge <entry-id>].
-- A deviation from a \`recommended\` rule is one minor finding per rule, in exactly this form:
-path:line - minor - [knowledge <rule-id>] deviation from a recommended rule
-  Rule: what the rule says, in one line.
-  Code: what the code does instead.
-  Reason: why, from the plan, the executor's disputes or the code; "none given" if there is none.
-  Impact: what it costs or risks.
-  To follow it: the change that would make the code follow the rule.
-- A deviation note missing any of these five fields is itself a minor finding.${recheck && !scoped ? "\n- Carry over every deviation note of the last round that still applies, with all five fields, re-checked against the code." : ""}${recheck && scoped ? "\n- For files not listed below, carry over the last round's deviation notes and knowledge findings unchanged (all five fields), without calling get_rule_pack for them. Re-check the notes for the listed files against the code." : ""}
-- Just before the verdict line, always write exactly one of these lines, even when you find nothing:
-KNOWLEDGE: checked <N> rules (<rule ids, comma-separated>); <X> broken
-KNOWLEDGE: unavailable - <the error the knowledge tool returned>
-Write "unavailable" only when the knowledge tools return errors, or when get_rule_pack returns no rules at all (then give its notes as the reason). The workflow checks your tool calls: a "checked" line without a get_rule_pack call covering every file to check does not count.
-Files to check (${files.length}):
-${files.join("\n") || "(none: pass paths: [])"}`;
-}
-
-/** A separate knowledge-only pass when the judge skipped its knowledge step; judgeKnowledge(server, false, files) follows it. */
-export const JUDGE_KNOWLEDGE_ONLY = `You are the judge's knowledge check for a software change, in a separate session. The judge reviewed the change but did not run its knowledge step; you run only that step (step 8 below).
-You get the approved plan, the judge's findings, the files to check and the diff. Use your read-only tools and the knowledge tools.
-Trust: the plan's Goal, Non-goals, User decisions and Done when are the user's intent. Do not repeat the judge's findings; report a judge Fix line only when following it would break a rule.
-${PACE}
-Output, nothing else: your findings, then the KNOWLEDGE line, then a final line VERDICT: PASS or VERDICT: FAIL (FAIL if any of your findings is a blocker or major). Findings use this form (deviations use the five-field form below):
-path:line - blocker|major|minor - [knowledge <entry-id>] the problem in one line
-  Why: the rule and the evidence, with file:line.
-  Fix: concrete steps a less capable model can follow.`;
-
 /** The agent's view of the extra folders and repos in this session. */
 export function workspaceSection(cwd: string, folders: string[], touched: string[], rules: { path: string; size: number }[] = []): string {
 	const lines = [`Working folder: ${cwd}`];
@@ -352,5 +218,5 @@ export function workspaceSection(cwd: string, folders: string[], touched: string
 
 /** For the judge and the arbiter: the diff covers several repos. */
 export function repoNote(roots: string[]): string {
-	return `## Repositories\n\nThis change spans ${roots.length} repositories:\n${roots.map((r) => `- ${r}`).join("\n")}\n\nEach diff section starts with \`=== repo: <root> ===\`; paths inside a section are relative to that root. Read files by absolute path (root + path).`;
+	return `## Repositories\n\nThis change spans ${roots.length} repositories:\n${roots.map((r) => `- ${r}`).join("\n")}\n\nEach repo's part of the diff is headed \`### Repo <root>\`; paths inside it are relative to that root. Read files by absolute path (root + path).`;
 }

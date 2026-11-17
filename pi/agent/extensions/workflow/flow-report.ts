@@ -1,4 +1,6 @@
-/** Pure helpers for the end-of-flow report card: the findings log and the card's lines. No runtime imports. */
+/** Pure helpers for the end-of-flow report card: the findings log and the card's lines. */
+
+import type { Finding } from "../agents/api.ts";
 
 export type FindingStatus = "open" | "fixed" | "noted";
 
@@ -26,7 +28,7 @@ export interface ReportLine {
 	tone: "head" | "done" | "open" | "fixed" | "noted" | "human";
 }
 
-const HEADLINE = /^\S.*\s-\s*(blocker|major|minor)\s*-/i;
+const PLAN_HEAD = /^(?:blocker|major|minor)\s+-\s+\[plan\]/i;
 const MAX_STORED = 50;
 const MAX_SHOWN = 30;
 
@@ -34,12 +36,9 @@ function cut(s: string, max: number): string {
 	return s.length > max ? `${s.slice(0, max - 1)}…` : s;
 }
 
-/** Adds the finding headlines of a judge report to the log: same-stage findings missing from it become closed. Returns a new array. */
-export function recordFindings(list: FlowFinding[] | undefined, stage: number | undefined, report: string): FlowFinding[] {
-	const headlines = report
-		.split(/\r?\n/)
-		.filter((l) => HEADLINE.test(l))
-		.map((l) => l.trim());
+/** Adds the finding heads of a judge report to the log: same-stage findings missing from it become closed. Returns a new array. */
+export function recordFindings(list: FlowFinding[] | undefined, stage: number | undefined, findings: Finding[]): FlowFinding[] {
+	const headlines = [...new Set(findings.map((f) => f.head.trim()))];
 	const out = (list ?? []).map((f) => (f.stage === stage ? { ...f, open: false } : { ...f }));
 	for (const line of headlines) {
 		const existing = out.find((f) => f.stage === stage && f.line === line);
@@ -58,7 +57,7 @@ export function reportFindings(list: FlowFinding[] | undefined, plan: string | u
 	return (list ?? []).map((f) => {
 		let status: FindingStatus = "open";
 		if (!f.open) status = "fixed";
-		else if (/\[plan-flaw\]/i.test(f.line) && plan?.includes(f.line)) status = "noted";
+		else if (PLAN_HEAD.test(f.line) && plan?.includes(f.line)) status = "noted";
 		return { line: f.line, stage: f.stage, status };
 	});
 }

@@ -11,14 +11,14 @@ import { UNITY_PLAN_ALLOW } from "../shared/readonly-bash.ts";
 import { PLAN_TOOLS } from "../shared/readonly-tools.ts";
 import type { MergeMethod } from "./delivery.ts";
 import { DEFAULT_TOKEN_WEIGHTS, type TokenWeights } from "../shared/tokens.ts";
-import type { KnowledgeConfig } from "../agents/types.ts";
+import type { KnowledgeConfig } from "../agents/api.ts";
 import { type RoleSpec, type Thinking, THINKING_LEVELS } from "../shared/roles.ts";
 
 export { THINKING_LEVELS };
 export type { KnowledgeConfig, RoleSpec, Thinking };
 
-/** Roles of workflow.json; explore, advisor and runner live in agents.json (extensions/agents). */
-export const ROLES = ["discuss", "plan", "execute", "judge", "arbiter", "commit", "escalate", "quick", "quick-judge"] as const;
+/** Roles of workflow.json; explore, advisor, runner, judge and critic live in agents.json (extensions/agents, `/agents model`). */
+export const ROLES = ["discuss", "plan", "execute", "commit", "arbiter", "escalate"] as const;
 export type Role = (typeof ROLES)[number];
 
 /** Guidance for the executor's own commit, push, pull request and merge. Merging, pushing to a protected branch and publishing still wait for a judge pass; a plan line `Delivery: no merge` turns them off for a flow. */
@@ -67,15 +67,6 @@ export interface PlansConfig {
 	keepCount: number;
 }
 
-export interface QuickConfig {
-	/** Failed judge rounds in a row before the quick flow asks you what to do. 0 means no limit. */
-	maxJudgeRounds: number;
-	/** Fix rounds for minor findings after a pass. 0: minor findings are only listed. */
-	maxMinorRounds: number;
-	/** The judge runs the team knowledge check (`knowledge.judgeCheck` must be on too). */
-	knowledgeCheck: boolean;
-}
-
 export interface WorkflowConfig {
 	roles: Record<Role, RoleSpec>;
 	/** Phase a new session starts in. */
@@ -88,9 +79,9 @@ export interface WorkflowConfig {
 	autoJudge: "ask" | "auto" | "off";
 	/** Judge -> fix rounds in a row before the flow asks you what to do. 0 means no limit. */
 	maxJudgeRounds: number;
-	/** The judge reviews the discussion's `Agreed so far:` list before the move to plan ("auto") or not ("off"). Off in a quick flow. */
+	/** The critic reviews the discussion's `Agreed so far:` list before the move to plan ("auto") or not ("off"). */
 	autoJudgeDiscussion: "off" | "auto";
-	/** The judge reviews every complete plan before the approval menu ("auto") or not ("off"). Off in a quick flow. */
+	/** The critic reviews every complete plan before the approval menu ("auto") or not ("off"). */
 	autoJudgePlan: "off" | "auto";
 	/** Discussion judge runs per gate (fix rounds included). */
 	maxDiscussionJudgeRounds: number;
@@ -141,15 +132,12 @@ export interface WorkflowConfig {
 	/** Rules files of added folders: "paths" lists them in the workspace section, "full" loads them into the prompt. */
 	addedFolderRules: "paths" | "full";
 	arbiter: { tools: string[] };
+	/** How flow drives agents' judge and critic; their models, tools, diff limit and knowledge step are agents.json's. */
 	judge: {
-		tools: string[];
-		maxDiffChars: number;
-		/** Transcript limit for `/flow judge` in discuss. */
+		/** Transcript limit of the discussion review (`/flow critic` in discuss) on its first run. */
 		maxDiscussionChars: number;
-		/** Rounds after the first review only the changes since the last round, with its findings. */
+		/** Rounds after the first review only the changes since the last round, with its findings (agents' incremental mode). */
 		recheck: boolean;
-		/** Thinking level of those re-reviews. */
-		recheckThinking: Thinking;
 		/** Full review instead when the changes since the last round exceed this share of the whole diff. */
 		recheckMaxShare: number;
 		/** A re-review that passes a whole diff over this many characters gets one final full review. 0 disables. */
@@ -159,9 +147,8 @@ export interface WorkflowConfig {
 		/** The final full review is skipped when the changes since the last passing full review of this stage are at most this share of the whole diff. 0 never skips. */
 		finalFullReviewRepeatMaxShare: number;
 	};
-	knowledge: KnowledgeConfig;
-	/** `/flow quick`: a short scope card on the `quick` role, one review on `quick-judge`, these limits instead of the flow's. */
-	quick: QuickConfig;
+	/** Team knowledge for the arbiter; the judge's knowledge server, roles and `judgeCheck` are agents.json's. */
+	knowledge: Omit<KnowledgeConfig, "judgeCheck">;
 	subagent: {
 		extensions: string[];
 		timeoutMs: number;
@@ -175,12 +162,9 @@ export const DEFAULTS: WorkflowConfig = {
 		discuss: { model: "claude-bridge/claude-opus-5-5", thinking: "high" },
 		plan: { model: "claude-bridge/claude-opus-5-5", thinking: "high" },
 		execute: { model: "claude-bridge/claude-sonnet-5-5", thinking: "medium" },
-		judge: { model: "claude-bridge/claude-opus-5-5", thinking: "high" },
-		arbiter: { model: "claude-bridge/claude-fable-5-1", thinking: "high" },
 		commit: { model: "claude-bridge/claude-haiku-5-5", thinking: "medium" },
+		arbiter: { model: "claude-bridge/claude-fable-5-1", thinking: "high" },
 		escalate: { model: "claude-bridge/claude-fable-5-1", thinking: "high" },
-		quick: { model: "claude-bridge/claude-sonnet-5-5", thinking: "medium" },
-		"quick-judge": { model: "claude-bridge/claude-opus-5-5", thinking: "medium" },
 	},
 	startPhase: "discuss",
 	contextGuardTokens: 140_000,
@@ -214,11 +198,8 @@ export const DEFAULTS: WorkflowConfig = {
 	addedFolderRules: "paths",
 	arbiter: { tools: ["read", "grep", "find", "ls"] },
 	judge: {
-		tools: ["read", "grep", "find", "ls"],
-		maxDiffChars: 400_000,
 		maxDiscussionChars: 400_000,
 		recheck: true,
-		recheckThinking: "medium",
 		recheckMaxShare: 0.5,
 		finalFullReviewOverChars: 80_000,
 		finalFullReviewNewFilesOnly: true,
@@ -226,12 +207,10 @@ export const DEFAULTS: WorkflowConfig = {
 	},
 	knowledge: {
 		server: "knowledge",
-		roles: ["judge", "arbiter"],
+		roles: ["arbiter"],
 		tools: ["search", "get_entry", "get_rule_pack", "get_schema", "status"],
 		env: { KNOWLEDGE_OFFLINE: "1" },
-		judgeCheck: true,
 	},
-	quick: { maxJudgeRounds: 2, maxMinorRounds: 0, knowledgeCheck: true },
 	subagent: {
 		extensions: ["~/.pi/agent/npm/node_modules/pi-claude-bridge/src/index.ts"],
 		timeoutMs: 15 * 60_000,
@@ -256,7 +235,23 @@ function merge<T>(base: T, over: unknown): T {
 	return out as T;
 }
 
-type Loaded = { config: WorkflowConfig; error?: string };
+/**
+ * Keys of the removed quick profile and of the workflow's own judge (now agents' judge and critic, set in
+ * agents.json). Found in an old workflow.json they are dropped with one warning: the judge role, the quick
+ * profile's roles (quick, quick-judge) and its `quick` block (every key starting with `quickPrefix`), and the
+ * judge and knowledge keys below. A saved flow state drops the keys in `state` and every key starting with `quickPrefix`
+ * (migrateSavedState in agent-end.ts).
+ */
+export const LEGACY_KEYS = {
+	quickPrefix: "quick",
+	roles: ["judge"],
+	judge: ["tools", "maxDiffChars", "recheckThinking"],
+	knowledge: ["judgeCheck"],
+	state: ["profile"],
+} as const;
+
+/** `warning`: the file had keys of LEGACY_KEYS; they were ignored. */
+type Loaded = { config: WorkflowConfig; error?: string; warning?: string };
 let cache: { file: string; key: string; result: Loaded } | null = null;
 
 /** Parsed again only when the file's mtime, ctime or size changed; `saveRole` clears the cache. */
@@ -311,16 +306,33 @@ function parseConfig(file: string): Loaded {
 		if (typeof config.notify.enabled !== "boolean") config.notify.enabled = DEFAULTS.notify.enabled;
 		if (typeof config.notify.idleMs !== "number" || !Number.isFinite(config.notify.idleMs) || config.notify.idleMs <= 0) config.notify.idleMs = DEFAULTS.notify.idleMs;
 		if (config.stageAdvance !== "auto" && config.stageAdvance !== "ask") config.stageAdvance = DEFAULTS.stageAdvance;
-		if (!isObject(config.quick)) config.quick = { ...DEFAULTS.quick };
-		for (const k of ["maxJudgeRounds", "maxMinorRounds"] as const) if (typeof config.quick[k] !== "number" || !Number.isInteger(config.quick[k]) || config.quick[k] < 0) config.quick[k] = DEFAULTS.quick[k];
-		if (typeof config.quick.knowledgeCheck !== "boolean") config.quick.knowledgeCheck = DEFAULTS.quick.knowledgeCheck;
 		// The test phase is gone: its role and block are dropped silently.
 		delete (config as unknown as Record<string, unknown>).test;
 		delete (config.roles as unknown as Record<string, unknown>).test;
-		return { config };
+		const legacy = dropLegacyKeys(config);
+		return legacy.length ? { config, warning: `${file}: ignored old keys ${legacy.join(", ")} (judge and critic are set in agents.json with /agents model; the quick flow is gone)` } : { config };
 	} catch (e) {
 		return { config: DEFAULTS, error: `${file}: ${(e as Error).message}` };
 	}
+}
+
+/** Deletes the LEGACY_KEYS from a merged config; returns their dotted names. */
+function dropLegacyKeys(config: WorkflowConfig): string[] {
+	const found: string[] = [];
+	const drop = (obj: unknown, keys: readonly string[], prefix: string, quick = false) => {
+		if (!isObject(obj)) return;
+		for (const k of Object.keys(obj)) {
+			if (!keys.includes(k) && !(quick && k.startsWith(LEGACY_KEYS.quickPrefix))) continue;
+			delete obj[k];
+			found.push(`${prefix}${k}`);
+		}
+	};
+	const c = config as unknown as Record<string, unknown>;
+	drop(c.roles, LEGACY_KEYS.roles, "roles.", true);
+	drop(c, [], "", true);
+	drop(c.judge, LEGACY_KEYS.judge, "judge.");
+	drop(c.knowledge, LEGACY_KEYS.knowledge, "knowledge.");
+	return found;
 }
 
 /** Updates one role in workflow.json, leaving the rest of the file as it was. */
