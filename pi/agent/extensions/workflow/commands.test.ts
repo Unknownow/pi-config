@@ -51,8 +51,12 @@ test("/folders table, usage and completions", () => {
 	assert.equal(foldersCompletions("add ", foldersSt({ readDirs: () => { throw new Error("x"); } })), null);
 });
 
-test("index.ts handles every table entry and builds usage from the tables", () => {
-	const src = fs.readFileSync(new URL("./index.ts", import.meta.url), "utf8");
+test("the file with /flow handles every table entry and builds usage from the tables", () => {
+	const flowDir = new URL("./flow/", import.meta.url);
+	const candidates = [new URL("./index.ts", import.meta.url), ...fs.readdirSync(flowDir).filter((f) => f.endsWith(".ts")).map((f) => new URL(f, flowDir))];
+	const holders = candidates.map((u) => fs.readFileSync(u, "utf8")).filter((t) => /registerCommand\("flow"/.test(t));
+	assert.equal(holders.length, 1, "one file registers /flow");
+	const src = holders[0];
 	for (const s of FLOW_SUBS) assert.ok(src.includes(`case "${s.value}"`), `no case for /flow ${s.value}`);
 	assert.ok(src.includes("FLOW_UNKNOWN(sub)") && src.includes("foldersUsage()") && src.includes("foldersDescription()"));
 	assert.ok(!src.includes("const SUBCOMMANDS"));
