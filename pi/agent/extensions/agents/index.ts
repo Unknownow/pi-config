@@ -28,7 +28,7 @@ import { applyEvent, endRun, newRun, type RunView, shortModel } from "../shared/
 import { DEFAULT_TOKEN_WEIGHTS } from "../shared/tokens.ts";
 import { describeRole, parseRoleSpec, pickRoleSpec } from "../shared/roles.ts";
 import { forwardedServers, roleTools } from "./knowledge.ts";
-import { foldersForCwd } from "./session-folders.ts";
+import { foldersForCwd } from "../shared/session-folders.ts";
 import { knowledgeTools } from "./prompts.ts";
 import { uniqueRoots } from "../shared/repos.ts";
 
