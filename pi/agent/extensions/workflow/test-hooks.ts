@@ -13,7 +13,7 @@ export const AGENT_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "pi-workflow-test
 
 const anyFn = "new Proxy(function () {}, { get: (t, k) => (k === 'then' ? undefined : (...a) => ({ args: a })), apply: () => ({}), construct: () => ({}) })";
 const STUBS: Record<string, string> = {
-	"@earendil-works/pi-coding-agent": `export const getAgentDir = () => ${JSON.stringify(AGENT_DIR)}; export const convertToLlm = (m) => m; export const serializeConversation = () => "";`,
+	"@earendil-works/pi-coding-agent": `export const getAgentDir = () => ${JSON.stringify(AGENT_DIR)}; export const convertToLlm = (m) => m; export const serializeConversation = () => ""; export const getShellConfig = () => ({ shell: "sh", args: ["-c"] }); export const loadProjectContextFiles = () => [];`,
 	"@earendil-works/pi-ai": `export const StringEnum = (v, o) => ({ enum: v, ...o });`,
 	"@earendil-works/pi-tui": `export class Text { constructor(text) { this.text = text; } }; export const truncateToWidth = (s) => s;`,
 	typebox: `export const Type = ${anyFn};`,
