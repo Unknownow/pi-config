@@ -160,7 +160,7 @@ function main() {
     }
   }
 
-  const keptNote = (kept ? `, ${kept} in conflict (edited in the repo)` : '') + (skipped ? `, ${skipped} skipped (possible secrets — not synced)` : '');
+  const keptNote = (kept ? `, ${kept} kept (edited in the repo, or pending)` : '') + (skipped ? `, ${skipped} skipped (possible secrets — not synced)` : '');
   if (DRY) {
     console.log(`\nDry run — ${changed} file(s) would change, ${del.toDelete.length} would be deleted, ${same} already current${keptNote}.`);
     if (overCap) process.exitCode = 2;

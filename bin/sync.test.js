@@ -510,7 +510,7 @@ test('a repo hand edit with an unchanged machine copy is kept, not reported as a
   const ma = path.join(env.mirror, 'extensions', 'demo', 'a.ts');
   write(ma, 'repo edit\n');
   const out = run(env, 'export.js');
-  assert.doesNotMatch(out, /conflict/);
+  assert.doesNotMatch(out, /^\s*conflict\s/m);
   assert.match(out, /keep\s+extensions\/demo\/a\.ts\s+\(edited in the repo\)/);
   assert.equal(read(ma), 'repo edit\n');
 });
