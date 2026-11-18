@@ -90,6 +90,13 @@ function main() {
       if (lib.recordable(state, item.rel, prev)) state[lib.key(item.rel)] = lib.sha(prev);
       continue;
     }
+    // Gone from the repo while this machine's copy still matches the last sync: it was deleted upstream and the
+    // delete has not reached this machine yet (e.g. import held it over the deletion cap). Adding it back would undo it.
+    if (!FORCE && prev === null && lib.recordedHash(state, item.rel) === lib.sha(bytes)) {
+      console.log(`  pending ${label}  (deleted in the repo: run import to delete it here, or --force to add it back)`);
+      kept++;
+      continue;
+    }
     if (!FORCE && lib.editedInRepo(state, item.rel, prev)) {
       console.log(`  keep    ${label}  (edited in the repo: run import to take the repo's copy, or --force to replace it)`);
       kept++;

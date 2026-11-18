@@ -253,6 +253,22 @@ function syncedPair() {
   return { env, a, b, ma: path.join(env.mirror, 'extensions', 'demo', 'a.ts'), mb: path.join(env.mirror, 'extensions', 'demo', 'b.ts') };
 }
 
+test('export does not add back a file deleted in the repo whose local copy is unchanged; an edited one goes back', () => {
+  const { env, a, b, ma, mb } = syncedPair();
+  fs.unlinkSync(ma);
+  fs.unlinkSync(mb);
+  write(b, 'edited locally\n');
+  const out = run(env, 'export.js');
+  assert.match(out, /pending\s+extensions\/demo\/a\.ts/);
+  assert.ok(!fs.existsSync(ma));
+  assert.equal(read(mb), 'edited locally\n');
+  run(env, 'export.js', '--force');
+  assert.equal(read(ma), 'a\n');
+  fs.unlinkSync(ma);
+  run(env, 'import.js');
+  assert.ok(!fs.existsSync(a));
+});
+
 test('export deletes a repo file that is gone locally and marks the record deleted', () => {
   const { env, a, ma } = syncedPair();
   fs.unlinkSync(a);
