@@ -21,23 +21,23 @@ function importTargets(file: string, text: string): { spec: string; target: stri
 	return specs.map((spec) => ({ spec, target: spec.startsWith(".") ? path.posix.normalize(path.posix.join("workflow", path.posix.dirname(file), spec)) : spec }));
 }
 
-/** Why an import of `file` crosses the boundary, or undefined: agents only via agents/api.ts, never relay or worktree. */
+/** Why an import of `file` crosses the boundary, or undefined: agents only via agents/api.ts, never relay or workspace. */
 function importProblem(file: string, text: string): string | undefined {
 	for (const { spec, target } of importTargets(file, text)) {
 		if (target.startsWith("agents/") && target !== "agents/api.ts") return `${file} imports ${spec}`;
 		if (target.startsWith("relay/") || /(^|\/)relay\//.test(spec)) return `${file} imports ${spec}`;
-		if (target.startsWith("worktree/")) return `${file} imports ${spec}`;
+		if (target.startsWith("workspace/")) return `${file} imports ${spec}`;
 	}
 	return undefined;
 }
 
-test("workflow never refers to the worktree extension", () => {
+test("workflow never refers to the workspace extension", () => {
 	const files = workflowFiles(false);
 	assert.ok(files.length > 10 && files.includes("flow/context.ts"));
-	const banned = [".pi-set.json", "agent/live", "wt-backup", "worktree.json", '"wt/'];
+	const banned = [".pi-set.json", "agent/live", "wt-backup", "worktree.json", "workspace.json", '"wt/'];
 	for (const f of files) {
 		const text = fs.readFileSync(new URL(f, dir), "utf8");
-		assert.ok(!importTargets(f, text).some((t) => t.target.startsWith("worktree/")), `${f} imports from ../worktree`);
+		assert.ok(!importTargets(f, text).some((t) => t.target.startsWith("workspace/")), `${f} imports from ../workspace`);
 		for (const b of banned) assert.ok(!text.includes(b), `${f} mentions ${b}`);
 	}
 });
@@ -53,7 +53,7 @@ test("workflow imports agents only through agents/api.ts and never imports relay
 test("the import check resolves paths from flow/ files", () => {
 	assert.equal(importProblem("flow/x.ts", 'import { runSubagent } from "../../agents/subagent.ts";'), 'flow/x.ts imports ../../agents/subagent.ts');
 	assert.equal(importProblem("flow/x.ts", 'const m = await import("../../relay/api.ts");'), 'flow/x.ts imports ../../relay/api.ts');
-	assert.equal(importProblem("flow/x.ts", 'import { a } from "../../worktree/index.ts";'), 'flow/x.ts imports ../../worktree/index.ts');
+	assert.equal(importProblem("flow/x.ts", 'import { a } from "../../workspace/index.ts";'), 'flow/x.ts imports ../../workspace/index.ts');
 	assert.equal(importProblem("flow/x.ts", 'import { runJudge } from "../../agents/api.ts";'), undefined);
 	assert.equal(importProblem("x.ts", 'import { runSubagent } from "../agents/subagent.ts";'), 'x.ts imports ../agents/subagent.ts');
 	assert.equal(importProblem("x.ts", 'import { runJudge } from "../agents/api.ts";'), undefined);

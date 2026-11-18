@@ -122,7 +122,7 @@ When pi runs in a VS Code terminal, `/wt new` opens the session in a new focused
 Install: run `pi-config vscode` from the pi-config repo (or `./pi-config.sh vscode`). `pi-config setup` does it too when `code` is on PATH. Or by hand:
 
 ```
-cd ~/.pi/agent/extensions/worktree/vscode
+cd ~/.pi/agent/extensions/workspace/vscode
 npx --yes @vscode/vsce package --no-dependencies --allow-missing-repository --skip-license -o "$TEMP/pi-terminal-bridge.vsix"
 code --install-extension "$TEMP/pi-terminal-bridge.vsix" --force
 ```

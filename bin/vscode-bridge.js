@@ -33,7 +33,7 @@ function codeAvailable(platform) {
 }
 
 function main() {
-  const src = path.join(lib.REPO, 'pi', 'agent', 'extensions', 'worktree', 'vscode');
+  const src = path.join(lib.REPO, 'pi', 'agent', 'extensions', 'workspace', 'vscode');
   if (!fs.existsSync(path.join(src, 'package.json'))) {
     console.error(`ERROR: bridge source not found in ${src}`);
     process.exit(1);
