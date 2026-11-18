@@ -73,9 +73,11 @@ test("classifyPublish splits by the dry run and the tags", () => {
 	assert.deepEqual(r, { publish: [a], alreadyPublished: [b], notPublishable: ["c@1.0.0"] });
 });
 
-test("lockWaitCheck passes without a lock and the guard allows it", async () => {
-	const { execFileSync } = await import("node:child_process");
+test("lockWaitCheck passes without a lock and the guard allows it", async (t) => {
+	const { execFileSync, spawnSync } = await import("node:child_process");
 	const c = lockWaitCheck("/nonexistent/iec-publish.lock");
 	assert.equal(registryPublishProblem(c), null);
+	// The check runs in bash; a machine without bash on PATH cannot run it.
+	if (spawnSync("bash", ["-c", "exit 0"]).error) return t.skip("bash is not on PATH");
 	execFileSync("bash", ["-c", c]);
 });
