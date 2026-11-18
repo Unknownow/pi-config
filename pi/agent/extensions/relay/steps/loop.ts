@@ -187,12 +187,12 @@ export const judgeStep: Step = {
 		const treeOf = async (r: Job["repos"][number]) => (await ctx.run("git", ["rev-parse", "HEAD^{tree}"], r.worktree)).stdout.trim();
 		const seen = await Promise.all(job.repos.map(treeOf));
 		const diff = await jobDiffParts(job, ctx);
-		// ## Files: a change outside the job's globs fails the round before the judge runs
-		const globs = fileGlobs(ctx.dir, job.approvals);
-		if (globs) {
-			const outside = diff.flatMap((p) => outsideFiles(p.names, globs).map((n) => (job.repos.length > 1 ? `${p.key}: ${n}` : n)));
-			if (outside.length) return filesFail(job, ctx, briefVersion, outside);
-		}
+		// ## Files: a change outside the globs of the repo it is in fails the round before the judge runs
+		const outside = diff.flatMap((p) => {
+			const globs = fileGlobs(ctx.dir, job.approvals, p.key);
+			return globs ? outsideFiles(p.names, globs).map((n) => (job.repos.length > 1 ? `${p.key}: ${n}` : n)) : [];
+		});
+		if (outside.length) return filesFail(job, ctx, briefVersion, outside);
 		const call = judgeCall(job, ctx, diff);
 		let res = await ctx.judge(call);
 		job.used.tokens += res.weightedCost;

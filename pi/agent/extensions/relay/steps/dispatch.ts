@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { parseBrief } from "../brief.ts";
 import { repoPolicy } from "../config.ts";
-import { writeFilesGuard } from "../files.ts";
+import { snapshotByRepo, writeFilesGuard } from "../files.ts";
 import { gitOut } from "../sh.ts";
 import { applySnapshot, dropSnapshotBranch, revertSnapshotted, snapshotEdits } from "../snapshot.ts";
 import type { Job, RepoState } from "../job.ts";
@@ -133,7 +133,7 @@ export const dispatchStep: Step = {
 		const sensitive = [...new Set(repos.flatMap((r) => repoPolicy(ctx.cfg, r.main).sensitivePaths))];
 		fs.writeFileSync(path.join(ctx.dir, "guard.json"), JSON.stringify({ sensitivePaths: sensitive }, null, 2));
 		// ## Files: the brief's globs plus the paths of the lead's snapshot commit (the worker did not change those)
-		writeFilesGuard(ctx.dir, parsed.sections.Files !== undefined ? (parsed.files ?? []) : undefined, repos.flatMap((r) => r.leadEdits?.paths.map((p) => p.path) ?? []));
+		writeFilesGuard(ctx.dir, parsed.sections.Files !== undefined ? (parsed.files ?? []) : undefined, snapshotByRepo(repos));
 
 		// 9: the worker
 		job.state = "working";
