@@ -43,7 +43,7 @@ When you want to drive it yourself:
 | `/pi-config export` | `pi-config export` | this machine → repo |
 | `/pi-config sync` | `pi-config sync` | export, commit, push (also pushes earlier unpushed commits) |
 | `/pi-config push` | `pi-config sync` | same as `sync` |
-| `/pi-config pull` | `git pull` | fetch the other machine's changes |
+| `/pi-config pull` | `git pull --ff-only` | fetch the other machine's changes (else the guarded rebase) |
 | — | `pi-config node` | install the latest Node LTS (nvm on macOS/Linux, winget on Windows) |
 | — | `pi-config pi` | install Pi with its official installer, or run `pi update` when it is already installed |
 | — | `pi-config install` | `npm install` the extensions |
@@ -89,17 +89,19 @@ Outside the mirror:
 | `npm/node_modules/` | Rebuilt by `npm install`. |
 | `*.db`, `*.sqlite`, `*-shm`, `*-wal` | Live SQLite. Git or cloud sync corrupts it, and two machines writing to it diverge with no sane merge. |
 
-**Deletions follow the sync record.** `local/sync-state.json` remembers the hash of every file that moved between this machine and the repo. A recorded file that is gone on one side and unchanged on the other is deleted there too (export deletes in the repo, import deletes on this machine, with no `.bak`). An edited copy is kept with a warning, and a file with no record is never deleted, so a machine that never had an extension cannot wipe it elsewhere. More than 20 deletions, or over 25% of the recorded files, need `--allow-deletes`; without it nothing is deleted and the script exits with code 2. `--dry-run` prints `WOULD delete <path>`.
+**Deletions follow the sync record.** `local/sync-state.json` remembers the hash of every file that moved between this machine and the repo. Export deletes a repo file when it is gone from this machine and the repo copy is unchanged; it stops at 20 files or 25% of the recorded files unless you pass `--allow-deletes` (exit code 2). Import deletes a machine file when it has a record, is not in the committed `HEAD`, and the working tree holds no copy of it that matches its record (a committed deletion, not an uncommitted new export). Import has **no deletion cap**. An edited machine copy gets a `<name>.bak-<timestamp>` backup first, then goes too. A file with no record is never deleted, so a machine that never had an extension cannot wipe it elsewhere. `--dry-run` prints `WOULD delete <path>`.
 
 ## Automatic sync
 
-`extension/index.ts` runs the scripts at the right moments:
+The committed `master` of this repo is the only truth. `~/.pi/agent` mirrors it, and config that Pi
+changes on the machine is committed and pushed at once. `extension/index.ts` runs the scripts at the
+right moments:
 
 | When | What |
 |---|---|
-| session start | `git pull --rebase`, then import — only if a dry run says something would change |
+| session start | once per window, under the lock: (1) repo-state guard, (2) export machine changes not yet synced, commit and push them, (3) with `pullOnStart`: `git pull --ff-only`, (4) with `autoImportOnStart`: import, (5) the restart notice when the import wrote anything |
 | setup changes mid-session | export, commit, optionally push — after `syncDebounceMs` of quiet |
-| session shutdown | export, then commit what changed under `pi/` |
+| session shutdown | export, then commit what changed under `pi/` (waits at most 10 s for the lock) |
 
 Register it once per machine, in `~/.pi/agent/settings.json`:
 
@@ -114,12 +116,12 @@ resolves it back to wherever the clone lives — the same treatment is applied t
 somewhere the extension can't work out, set `PI_CONFIG_REPO` to its path.
 
 Behaviour lives in `config/sync.json` (shared) and `local/sync.json` (this machine only, gitignored —
-see `local/sync.json.example`):
+see `local/sync.json.example`). The branch is not a setting: it is `master`.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `autoImportOnStart` | `true` | apply repo config at session start when it differs |
-| `pullOnStart` | `true` | `git pull --rebase --autostash` first, so you start from the other machine's latest |
+| `autoImportOnStart` | `true` | import the committed repo config at session start when it differs |
+| `pullOnStart` | `true` | `git pull --ff-only` first (never `--rebase`, never `--autostash`); when it cannot fast-forward, the same guarded fetch + rebase as a rejected push, and when that is not allowed the import is skipped |
 | `autoExportOnShutdown` | `true` | capture this machine's config when the session ends |
 | `autoCommit` | `true` | commit what the export changed |
 | `autoPush` | `true` | push that commit; if the other machine pushed first, rebase and retry once |
@@ -128,31 +130,66 @@ see `local/sync.json.example`):
 | `notify` | `true` | show TUI notifications |
 | `timeoutMs` | `20000` | per-command timeout for git and the scripts |
 
-With `pullOnStart` and `autoPush` on, the two machines converge with no thought at all: each one
-pulls when Pi starts and pushes a few seconds after its setup changes. If a push is rejected because
-the other machine got there first, the extension rebases onto it, pushes again, and imports what it
-pulled in (restart Pi to apply it). When both machines edited the same file, the rebase is aborted
-and logged — resolve it in the repo by hand. To keep a machine from publishing, set
-`{ "autoPush": false }` in its `local/sync.json`.
+### The rules
 
-Three behaviours worth knowing:
-
-- **Auto-commits touch `pi/` only.** Your edits to the extension, the scripts, `config/sync.json` or
-  this README are yours to commit — the extension never sweeps them into a background commit.
-- **A file you edit in the repo is kept, not overwritten.** `export.js` records a hash of every
-  mirror file as it last moved (`local/sync-state.json`, gitignored). If a mirror file no longer
-  matches that hash, you edited it in the repo: export leaves it alone and says `keep`, and the
-  auto-commit leaves it uncommitted (listed in `/pi-config status` under other edits). To keep your
-  edit, commit it, then run import so the record matches the commit (an edit that is committed but
-  still differs from this machine keeps reporting `keep` until one of the two runs). To take this
-  machine's copy instead, run `node bin/export.js --force`. To take the repo's copy, run import.
-- **A session that imported skips its shutdown export.** Pi keeps settings in memory and rewrites
-  them on exit, so exporting after an import would push the stale copy back over what was just
-  pulled in. Restart Pi to pick up an import; the notification says so.
+- **Repo-state guard.** Every automatic operation (startup pull, import, export, commit, push; the
+  watcher and shutdown too) runs only when the checkout is on branch `master` and no rebase, merge,
+  cherry-pick or revert is in progress (`.git/rebase-merge`, `rebase-apply`, `MERGE_HEAD`,
+  `CHERRY_PICK_HEAD`, `REVERT_HEAD`). Otherwise the window does no automatic sync, logs the reason once
+  in `local/sync.log`, and `/pi-config status` shows it. Work on feature branches in a separate
+  worktree, or just expect the sync to stand still while you are off `master`.
+- **Import mirrors the committed `HEAD`**, not the working tree: an uncommitted edit under `pi/agent/`
+  never reaches the machine. Files are read in working-copy form (`.gitattributes` makes `*.bat` CRLF).
+  Changed files are overwritten with a `.bak-<timestamp>` backup, placeholders are resolved as before.
+- **A pending machine export is left alone.** A file whose working-tree copy differs from `HEAD` but
+  matches its sync record (export wrote it, the commit has not happened yet, e.g. a failed commit or
+  `autoCommit=false`) keeps its machine copy and is never deleted by import. The commit step agrees: such
+  a file is ready to commit.
+- **Export never overwrites or deletes an uncommitted repo edit.** A repo edit is a file under `pi/agent/`
+  whose content differs from its sync record (with no record: from `HEAD`). When the machine copy also
+  changed, export skips the file and logs `conflict <path>`; `/pi-config status` lists the conflicts. To
+  keep your edit, commit it and run import; to take this machine's copy, run `node bin/export.js --force`.
+  A file pulled from the other PC but not imported yet counts as a repo edit until import runs.
+- **Commits and pushes.** Auto-commits touch `pi/` only (your edits to the extension, the scripts,
+  `config/sync.json` or this README are yours to commit) and read `chore(config): sync from <host>`. A rejected
+  push does `git fetch`, then `git rebase origin/master` (no autostash; a conflict is aborted), pushes once
+  more, then imports. The rebase runs only when no tracked file differs from `HEAD` and every commit in
+  `origin/master..HEAD` is a sync commit. Otherwise it is skipped and logged, the commit stays for the next
+  sync, and `/pi-config status` lists the blocking files, the number of unpushed sync commits and the hint
+  "commit or discard your edits to resume sync".
+- **Several windows share one lock.** `local/sync.lock` guards every git and sync step of the extension
+  across processes. It holds the pid and a token, and its mtime is a heartbeat refreshed every 15 s. A lock
+  whose pid is dead or whose heartbeat is older than 2 minutes is taken over under a short mutex
+  (`local/sync.lock.takeover`, stale after 30 s) that re-checks the token before it replaces the lock. A
+  window that loses the lock stops before its next git step and logs "lock lost". A waiting window polls for
+  up to 60 s, then skips the run and logs it; the shutdown path waits 10 s ("skipped, lock busy"), and what
+  export already left on disk is picked up by the next window's startup export. Every window keeps its own
+  watcher; a window that finds nothing to do reports "already up to date" and makes no commit. The manual
+  `bin/*.js` scripts do not take the lock.
+- **A session that imported skips its shutdown export.** Pi keeps settings in memory, so exporting after
+  an import could push a stale copy back over what was just pulled in. Restart Pi to pick up an import;
+  the notification says so. This rule is per window and stays even though the check below found no
+  rewrite of `settings.json`.
+- **A stale `ctx` never fails the sync.** After a session replacement or reload Pi's `ctx` throws on use.
+  UI calls are wrapped and only logged; the export, commit and push still run.
 - **Everything is logged** to `local/sync.log` (gitignored), including failures. The extension never
   throws into your session.
 
-Tests: `node --test bin/sync.test.js bin/vscode-bridge.test.js`.
+#### Does Pi rewrite `settings.json` on exit?
+
+Checked in the Pi package (`@earendil-works/pi-coding-agent` 1.5.2, `dist/core/settings-manager.js`) and its
+docs (`docs/settings.md`). No: Pi writes `settings.json` only when a setting changes (`setX()` →
+`save()`), and then it re-reads the file under a lock and merges only the fields it modified into the
+file's current content (`persistScopedSettings`). There is no write of the whole in-memory copy at exit
+(`flush()` only waits for the pending write queue). A stale window therefore cannot revert an import
+wholesale, so no `last-import.json` / `--session-start` guard was added. The per-window
+"imported this session" rule above stays.
+
+`/pi-config status` shows the repo-state guard result, the lock holder (pid, heartbeat age), the conflicts
+and the files an import would delete.
+
+Tests: `node --test bin/sync.test.js bin/vscode-bridge.test.js` and `node --experimental-strip-types --test extension/*.test.ts`.
+
 
 ### Secret guard
 

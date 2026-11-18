@@ -1,19 +1,27 @@
 #!/usr/bin/env node
 /**
- * import.js — apply the repo's Pi setup to this machine.
+ * import.js — apply the repo's committed Pi setup to this machine.
  *
- *   <repo>/pi/agent/<x>  ->  ~/.pi/agent/<x>
+ *   <repo> HEAD:pi/agent/<x>  ->  ~/.pi/agent/<x>
  *
- * Placeholders are resolved from local/machine.json or auto-detected. Every
- * file that gets overwritten is backed up to <name>.bak-<timestamp> first.
- * A file that was synced earlier, is gone from the repo and is unchanged on this machine
- * is deleted here too (no backup; never a file with no sync record, never an edited
- * one). More than 20 deletions, or over 25% of the recorded files, need --allow-deletes;
- * without it nothing is deleted and the exit code is 2.
+ * The committed `master` is the truth: import reads the files of `HEAD` (in working-copy
+ * form, so `.bat` is CRLF), never the working tree. An uncommitted edit under pi/agent/
+ * never reaches the machine. Placeholders are resolved from local/machine.json or
+ * auto-detected. Every file that gets overwritten is backed up to <name>.bak-<timestamp> first.
+ *
+ * A pending machine export is left alone: a file whose working-tree copy differs from HEAD
+ * but matches its sync record (export wrote it, the commit has not happened yet) keeps its
+ * machine copy, and is never deleted.
+ *
+ * A file is deleted from this machine when it has a record in local/sync-state.json, is not
+ * in HEAD, and the working tree holds no copy of it that matches the record (a committed
+ * deletion, not an uncommitted new export). There is no deletion cap. An edited machine copy
+ * is backed up to <name>.bak-<timestamp> first, then deleted. A file with no record (never
+ * in the repo) is never deleted.
  *
  *   node bin/import.js            apply
  *   node bin/import.js --dry-run  show what would change, write nothing
- *   node bin/import.js --allow-deletes  allow a large number of deletions
+ *   node bin/import.js --allow-deletes  accepted, does nothing (there is no cap)
  */
 'use strict';
 const fs = require('fs');
@@ -21,7 +29,6 @@ const path = require('path');
 const lib = require('./lib');
 
 const DRY = process.argv.includes('--dry-run');
-const ALLOW_DELETES = process.argv.includes('--allow-deletes');
 
 function loadOverrides() {
   const p = path.join(lib.REPO, 'local', 'machine.json');
@@ -35,12 +42,19 @@ function loadOverrides() {
 }
 
 function main() {
-  if (!fs.existsSync(lib.MIRROR)) {
-    console.error(`No pi/agent directory in ${lib.REPO}. Run \`node bin/export.js\` on a configured machine first.`);
+  let head;
+  try {
+    head = lib.loadHead();
+  } catch (e) {
+    console.error(`Cannot read HEAD of ${lib.REPO}: ${e.message}`);
+    process.exit(1);
+  }
+  if (head.size === 0) {
+    console.error(`No committed pi/agent in ${lib.REPO}. Run \`node bin/export.js\` on a configured machine and commit first.`);
     process.exit(1);
   }
 
-  const items = lib.inventory(lib.MIRROR);
+  const items = [...head.keys()].sort().map((rel) => ({ rel, kind: lib.classify(rel) })).filter((i) => i.kind);
   const overrides = loadOverrides();
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const warnings = [];
@@ -48,17 +62,37 @@ function main() {
   let changed = 0;
   let same = 0;
 
+  // The working-tree copy of a mirror file, or null.
+  const wtBytes = (k) => {
+    const f = path.join(lib.MIRROR, k);
+    return fs.existsSync(f) ? fs.readFileSync(f) : null;
+  };
+  // A working-tree copy that matches the sync record is the machine's own export, not committed yet.
+  const wtMatchesRecord = (k) => {
+    const b = wtBytes(k);
+    return b !== null && typeof state[k] === 'string' && lib.sha(b) === state[k];
+  };
+  // An export deleted this repo file and the commit has not happened: HEAD still holds it.
+  const pendingDelete = (k) => state[k] && state[k].deleted === true && !fs.existsSync(path.join(lib.MIRROR, k));
+
   for (const item of items) {
-    const src = path.join(lib.MIRROR, item.rel);
     const dest = path.join(lib.AGENT, item.rel);
     const label = item.rel;
+    const k = lib.key(item.rel);
     const note = (line) => { if (!DRY) console.log(`          ${line}`); };
 
-    // What this machine now matches: the mirror file's bytes, whether or not it is written.
-    const mirrorBytes = fs.readFileSync(src);
+    // What this machine now matches: the committed bytes, whether or not they are written.
+    const entry = head.get(k);
+    const mirrorBytes = entry.buf;
+    const wt = wtBytes(k);
+    const wtIsHead = wt !== null && entry.shas.has(lib.sha(wt));
+    if (!wtIsHead && (wtMatchesRecord(k) || pendingDelete(k))) {
+      console.log(`  pending ${label}  (machine export not committed yet: kept)`);
+      continue;
+    }
     let next;
     if (item.kind === 'json') {
-      const json = lib.readJson(src);
+      const json = lib.parseJson(mirrorBytes.toString('utf8'));
       if (json === null) {
         console.error(`  FAILED  ${label}  (not valid JSON)`);
         continue;
@@ -67,7 +101,7 @@ function main() {
       lib.keepMachineKeys(item.rel, json, fs.existsSync(dest) ? lib.readJson(dest) : null);
       next = Buffer.from(JSON.stringify(json, null, 2) + '\n');
     } else {
-      next = fs.readFileSync(src);
+      next = mirrorBytes;
     }
 
     const prev = fs.existsSync(dest) ? fs.readFileSync(dest) : null;
@@ -79,7 +113,7 @@ function main() {
 
     if (unchanged) {
       same++;
-      if (!DRY && lib.recordable(state, item.rel, mirrorBytes)) state[lib.key(item.rel)] = lib.sha(mirrorBytes);
+      if (!DRY) state[k] = lib.sha(mirrorBytes);
       continue;
     }
     if (DRY) {
@@ -94,8 +128,7 @@ function main() {
       console.log(`  backup  ${label}.bak-${stamp}`);
     }
     fs.writeFileSync(dest, next);
-    // A hand edit in the repo is copied to this machine but not recorded: the next export keeps it out of commits.
-    if (lib.recordable(state, item.rel, mirrorBytes)) state[lib.key(item.rel)] = lib.sha(mirrorBytes);
+    state[k] = lib.sha(mirrorBytes);
     console.log(`  write   ${label}`);
     changed++;
   }
@@ -113,31 +146,31 @@ function main() {
   const del = lib.planDeletes({
     state,
     direction: 'import',
-    onSource: (k) => fs.existsSync(path.join(lib.MIRROR, k)),
+    onSource: (k) => head.has(k) || wtMatchesRecord(k),
     targetHash: localForm,
   });
-  for (const k of del.keptEdited) console.log(`  keep    ${k}  (gone from the repo but edited on this machine: not deleted)`);
-  const overCap = del.toDelete.length > 0 && !ALLOW_DELETES && lib.tooMany(del.toDelete.length, del.recorded);
-  if (overCap) {
-    console.log(`\n${del.toDelete.length} deletion(s) are over the cap (20, or 25% of ${del.recorded} recorded files); nothing deleted. Rerun with --allow-deletes after checking:`);
-    for (const k of del.toDelete) console.log(`  WOULD delete ${k}`);
-  } else {
-    for (const k of del.toDelete) {
-      if (DRY) {
-        console.log(`  WOULD delete ${k}`);
-        continue;
-      }
-      const f = path.join(lib.AGENT, k);
-      try {
-        fs.unlinkSync(f);
-        lib.pruneEmptyParents(path.dirname(f), lib.AGENT);
-      } catch (e) {
-        console.log(`  WARNING  could not delete ${k}: ${e.message}`);
-        continue;
-      }
-      delete state[k];
-      console.log(`  delete  ${k}`);
+  // No cap: a committed deletion goes. An edited machine copy is backed up first.
+  const gone = [...del.toDelete, ...del.keptEdited].sort();
+  for (const k of gone) {
+    const edited = del.keptEdited.includes(k);
+    if (DRY) {
+      console.log(`  WOULD delete ${k}${edited ? '  (edited on this machine: backed up first)' : ''}`);
+      continue;
     }
+    const f = path.join(lib.AGENT, k);
+    try {
+      if (edited) {
+        fs.copyFileSync(f, `${f}.bak-${stamp}`);
+        console.log(`  backup  ${k}.bak-${stamp}`);
+      }
+      fs.unlinkSync(f);
+      lib.pruneEmptyParents(path.dirname(f), lib.AGENT);
+    } catch (e) {
+      console.log(`  WARNING  could not delete ${k}: ${e.message}`);
+      continue;
+    }
+    delete state[k];
+    console.log(`  delete  ${k}`);
   }
 
   if (!DRY) lib.writeState(state);
@@ -148,13 +181,11 @@ function main() {
     } catch (_) { /* not a git checkout */ }
   }
   if (DRY) {
-    console.log(`\nDry run — ${changed} file(s) would change, ${del.toDelete.length} would be deleted, ${same} already current.`);
-    if (overCap) process.exitCode = 2;
+    console.log(`\nDry run — ${changed} file(s) would change, ${gone.length} would be deleted, ${same} already current.`);
     return;
   }
 
   console.log(`\n${changed} file(s) applied, ${same} already current.`);
-  if (overCap) process.exitCode = 2;
   for (const w of warnings) console.log(`\n  WARNING  ${w}`);
 
   if (changed > 0) {
