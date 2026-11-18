@@ -2,18 +2,19 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { JOB_ID } from "./job.ts";
 
-/** Walks up from `cwd` to the nearest `.pi-set.json`; true when the folder holding it is named like a job set (`r1a2b3c`, `r1a2b3c-f1`). */
-export function inJobSet(cwd: string): boolean {
+/** True when `cwd` or a parent folder holds a `.pi-set.json`: any worktree set, a job's or a user's. */
+export function inAnySet(cwd: string): boolean {
 	let dir = path.resolve(cwd);
 	for (;;) {
-		if (fs.existsSync(path.join(dir, ".pi-set.json"))) return JOB_ID.test(path.basename(dir));
+		if (fs.existsSync(path.join(dir, ".pi-set.json"))) return true;
 		const up = path.dirname(dir);
 		if (up === dir) return false;
 		dir = up;
 	}
 }
+
+export const SET_REASON = "relay: this session is inside a worktree set; lead mode off (run the lead from the main checkouts)";
 
 export type Mode = "undecided" | "on" | "off";
 
@@ -35,13 +36,13 @@ export class Activation {
 		this.d = d;
 	}
 
-	get jobSet(): boolean {
-		return inJobSet(this.d.cwd);
+	get inSet(): boolean {
+		return inAnySet(this.d.cwd);
 	}
 
 	/** Lead mode can still come on: not a worker or reviewer, relay.json active, not a job's worktree. */
 	eligible(): boolean {
-		return !this.d.role && this.d.active() && !this.jobSet;
+		return !this.d.role && this.d.active() && !this.inSet;
 	}
 
 	/** Decides once; true when lead mode is on. */
@@ -49,7 +50,7 @@ export class Activation {
 		if (this.mode === "undecided") {
 			if (this.d.role) this.set("off", "a relay worker or reviewer process");
 			else if (!this.d.active()) this.set("off", "relay is off by default; /relay on turns it on");
-			else if (this.jobSet) this.set("off", "relay: this is a job's worktree; lead mode off");
+			else if (this.inSet) this.set("off", SET_REASON);
 			else this.set("on", "");
 		}
 		return Promise.resolve(this.mode === "on");
@@ -60,10 +61,10 @@ export class Activation {
 		this.reason = reason;
 	}
 
-	/** `/relay on`: turns lead mode on for this session whatever relay.json `active` says; refused for workers and job worktrees. */
+	/** `/relay on`: turns lead mode on for this session whatever relay.json `active` says; refused for workers and inside any worktree set. */
 	async turnOn(): Promise<{ ok: true } | { ok: false; why: string }> {
 		if (this.d.role) return { ok: false, why: "relay workers do not run a lead" };
-		if (this.jobSet) return { ok: false, why: "this is a job's worktree" };
+		if (this.inSet) return { ok: false, why: SET_REASON };
 		this.set("on", "");
 		return { ok: true };
 	}

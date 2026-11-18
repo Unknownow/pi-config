@@ -167,9 +167,9 @@ The numbers are starting values, to be tuned after first use.
 
 - **W1 `worktree:create`** with `launch: "none"`: relay's dispatch sends `{v:1, name: <job id>, launch:"none", bases: {<repo top>: "origin/<target>"}, folders}` (`folders`: the lead's added folders that are Targets). The reply carries `branch`, `cwd` and `repos: [{top, cwd}]`; relay never builds a branch name itself.
 - **W2 `worktree:remove`** `{v:1, name, force?}`: used after a merge (no force) and to undo a failed dispatch (force). Never shows a dialog; refuses in-use or broken sets; a refusal or a kept branch is reported.
-- **K1 `session-folders`**: the lead's added folders, read from the session entries.
-- **Relay and flow are switched by hand.** Relay does not ask workflow, and workflow does not ask relay. Lead mode is decided by `relay.json` `active` (default off), `RELAY_ROLE` and the job-set rule; `/relay on|off` switch it. Both can be on in one session, and a typed "go" is then handled by both (relay's kickoff and workflow's plan approval), so turn one of them off first.
-- **Job-set sessions.** A session whose cwd is inside a `.pi-set.json` folder named like a job set (`r1a2b3c`, `r1a2b3c-f1`) (a worker, a `/wt open` takeover) keeps lead mode off: no edit budget, no "go" hook, no dispatch.
+- **K1 `session-folders`**: the lead's added folders, written by the `workspace` extension into the session entries and read from there.
+- **Relay and flow are switched by hand.** Relay does not ask workflow, and workflow does not ask relay. Lead mode is decided by `relay.json` `active` (default off), `RELAY_ROLE` and the worktree-set rule; `/relay on|off` switch it. Both can be on in one session, and a typed "go" is then handled by both (relay's kickoff and workflow's plan approval), so turn one of them off first.
+- **Worktree-set sessions.** A session whose cwd is inside any folder that holds a `.pi-set.json` (a job's set such as `r1a2b3c`, or a user's set; a worker, a `/wt open` takeover) keeps lead mode off: no edit budget, no "go" hook, no dispatch, and `/relay on` refuses. Run the lead from the main checkouts. Workers get a Workspace section in every prompt (start, restart, re-plan, follow-up) listing each repo of the job with worktree, branch, target, base and its `AGENTS.md`/`CLAUDE.md` (path and size).
 
 ## Parallel and stacked jobs, add-repo, widget and log
 

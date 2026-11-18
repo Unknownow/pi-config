@@ -24,6 +24,25 @@ export async function resolveRepo(ctx: Pick<StepCtx, "run" | "leadCwd" | "folder
 	return undefined;
 }
 
+/** The "Workspace" section of a worker prompt: every repo of the job (worktree, branch, target, base) and its rules files by path and size. Built from `job.repos`, so repos added mid-job are in it. */
+export function workspaceSection(job: Job): string {
+	const lines = job.repos.map((r) => {
+		const rules = ["AGENTS.md", "CLAUDE.md"].flatMap((f) => {
+			try {
+				const p = path.join(r.worktree, f);
+				return fs.statSync(p).isFile() ? [`${fwd(p)} (${fs.statSync(p).size} bytes)`] : [];
+			} catch {
+				return [];
+			}
+		});
+		return `- ${r.key}: worktree ${r.worktree}, branch ${r.branch}, target ${r.target}, base ${r.base}${rules.length ? `\n  rules files (read them before changing this repo): ${rules.join(", ")}` : ""}`;
+	});
+	return `## Workspace
+
+This job's repos; change files only in these worktrees.
+${lines.join("\n")}`;
+}
+
 /** The first prompt of a worker session: its rules, the job, the current brief; `extra` says why the session is new (a restart, a re-plan, a follow-up). */
 export function workerPrompt(ctx: Pick<StepCtx, "relayDir" | "brief">, job: Job, extra?: string): string {
 	const rules = fs.readFileSync(path.join(ctx.relayDir, "prompts", "worker.md"), "utf8");
@@ -35,6 +54,8 @@ export function workerPrompt(ctx: Pick<StepCtx, "relayDir" | "brief">, job: Job,
 # Your job (brief version ${version})
 
 Work in ${job.cwd}. Finish with report_done.
+
+${workspaceSection(job)}
 ${extra ? `
 ${extra}
 ` : ""}

@@ -1,6 +1,8 @@
 // node --experimental-strip-types --import ../agents/test-hooks.ts --test commands.test.ts
 // /relay: the subcommand table, its completions, and the handler called with every entry.
 import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { test } from "node:test";
 import { RELAY_ROLES, RELAY_SUBS, relayCompletions, relayDescription } from "./commands.ts";
 import { fakeCtx, makeBus, relayOn } from "./test/fake-api.ts";
@@ -66,5 +68,24 @@ test("the handler takes every table entry, and /relay completes this session's j
 	eng.jobs.set("x1", { job: { id: "x1", state: "running" } } as any);
 	assert.deepEqual(eng.jobList(), [{ id: "x1", state: "running" }]);
 	assert.deepEqual(cmd.getArgumentCompletions("stop "), [{ value: "stop x1", label: "x1", description: "running" }]);
+	cleanup(dir);
+});
+
+test("/relay log completes job ids read from disk too, without duplicates; other subs stay in-memory", () => {
+	const disk = () => [{ id: "j2", state: "done" }, { id: "j9", state: "failed" }];
+	assert.deepEqual(relayCompletions("log j", st({ diskJobs: disk }))!.map((i) => i.value), ["log j1 ", "log j2 ", "log j9 "]);
+	assert.deepEqual(relayCompletions("stop j", st({ diskJobs: disk }))!.map((i) => i.value), ["stop j1", "stop j2"]);
+	assert.deepEqual(relayCompletions("log j", st({ diskJobs: () => { throw new Error("x"); } }))!.map((i) => i.value), ["log j1 ", "log j2 "]);
+});
+
+test("the /relay log completion reads job ids from <git common dir>/pi/relay on disk", () => {
+	const { dir } = makeRepo();
+	const jd = path.join(dir, ".git", "pi", "relay", "r1a2b3c");
+	fs.mkdirSync(jd, { recursive: true });
+	fs.writeFileSync(path.join(jd, "job.json"), JSON.stringify({ v: 1, id: "r1a2b3c", state: "done", createdAt: 1, repos: [] }));
+	const r = relayOn(makeBus(), dir);
+	const cmd = r.commands.get("relay");
+	assert.deepEqual(cmd.getArgumentCompletions("log r"), [{ value: "log r1a2b3c ", label: "r1a2b3c", description: "done" }]);
+	assert.equal(cmd.getArgumentCompletions("stop r"), null);
 	cleanup(dir);
 });

@@ -1256,7 +1256,7 @@ export class Engine {
 				jr.asks.delete(askId);
 			}
 		}
-		const told = await this.send(id, `Repo ${folder} is part of this job now: work in ${state.worktree} (branch ${r.branch}, target ${target}). It is judged and delivered with the rest.`, "steer", { by: "lead" });
+		const told = await this.send(id, `Targets added: ${folder}: ${target} (worktree ${state.worktree}, branch ${r.branch})`, "steer", { by: "lead" });
 		if ("error" in told) appendLog(jr.dir, { kind: "error", text: `add-repo: the worker was not told: ${told.error}` });
 		return { ok: true, key: folder, path: state.worktree, branch: r.branch };
 	}
