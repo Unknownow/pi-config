@@ -6,7 +6,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { test } from "node:test";
 import { readJob } from "./job.ts";
-import { readFilesGuard, writeFilesGuard } from "./files.ts";
+import { FILES_GUARD, fileGlobs, readFilesGuard, writeFilesGuard } from "./files.ts";
 import { brief, type World, waitFor, world } from "./test/env.ts";
 import { cleanup, makeRepo, tmpDir } from "./test/helpers.ts";
 
@@ -31,7 +31,7 @@ test("Files: the snapshot's paths join the globs at dispatch; a path outside is 
 		if (!("id" in r)) return;
 		const jr = w.engine.get(r.id)!;
 		await waitFor(() => jr.ws.openAsks.length === 1, 30_000, "the worker's approval request");
-		assert.deepEqual(readFilesGuard(jr.dir), { files: ["greeting.txt"], snapshot: ["a.txt"] });
+		assert.deepEqual(readFilesGuard(jr.dir), { files: ["greeting.txt"], snapshot: { [jr.job.repos[0].key]: ["a.txt"] } });
 		const ask = jr.asks.get(jr.ws.openAsks[0])!;
 		assert.deepEqual([ask.type, (ask as { category?: string }).category, (ask as { item?: string }).item], ["approval", "files", "notes.md"]);
 		assert.ok(w.wakes.some((x) => /approval .*\[files\] notes\.md/.test(x)));
@@ -45,6 +45,29 @@ test("Files: the snapshot's paths join the globs at dispatch; a path outside is 
 		assert.equal(judgeCalls(w), 1, "the Files check passed: greeting.txt, the approved notes.md and the snapshot's a.txt");
 	} finally {
 		w.end();
+	}
+});
+
+test("Files guard: a snapshot is per repo key; an old flat-array snapshot applies to every repo; approvals of category files apply to every repo", () => {
+	const d = tmpDir();
+	try {
+		const approvals = [{ at: "", item: "ok.txt", category: "files" as const, by: "lead" as const, reason: "" }];
+		writeFilesGuard(d, ["src/**"], { A: ["a.txt", "a.txt"] });
+		assert.deepEqual(readFilesGuard(d), { files: ["src/**"], snapshot: { A: ["a.txt"] } });
+		assert.deepEqual(fileGlobs(d, approvals, "A"), ["src/**", "a.txt", "ok.txt"]);
+		assert.deepEqual(fileGlobs(d, approvals, "B"), ["src/**", "ok.txt"], "the snapshot of A is not B's");
+		assert.deepEqual(fileGlobs(d, approvals, undefined), ["src/**", "ok.txt"]);
+		// an old flat-array guard still reads, and applies to every repo
+		fs.writeFileSync(path.join(d, FILES_GUARD), JSON.stringify({ files: ["src/**"], snapshot: ["old.txt"] }));
+		assert.deepEqual(readFilesGuard(d), { files: ["src/**"], snapshot: { "*": ["old.txt"] } });
+		assert.deepEqual(fileGlobs(d, [], "A"), ["src/**", "old.txt"]);
+		assert.deepEqual(fileGlobs(d, [], "B"), ["src/**", "old.txt"]);
+		// a replan keeps the guard's snapshot as it is, the "*" entry included
+		writeFilesGuard(d, ["docs/**"], readFilesGuard(d)!.snapshot);
+		assert.deepEqual(readFilesGuard(d), { files: ["docs/**"], snapshot: { "*": ["old.txt"] } });
+		assert.equal(fileGlobs(path.join(d, "none"), [], "A"), undefined, "no guard: no Files limit");
+	} finally {
+		cleanup(d);
 	}
 });
 
@@ -90,7 +113,7 @@ test("the worker extension: an edit outside Files is refused; a bash call that c
 	process.env.RELAY_JOB_DIR = jobDir;
 	try {
 		fs.writeFileSync(path.join(jobDir, "job.json"), JSON.stringify({ v: 1, id: "r1", repos: [{ key: "R", main: dir, worktree: dir, branch: "main", base: "x" }], approvals: [] }));
-		writeFilesGuard(jobDir, ["src/**"], []);
+		writeFilesGuard(jobDir, ["src/**"], {});
 		const hooks = new Map<string, (e: any, c?: any) => Promise<any>>();
 		const { default: worker } = await import("./worker.ts");
 		worker({ on: (n: string, fn: any) => void hooks.set(n, fn), registerTool: () => {} } as never);

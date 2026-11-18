@@ -41,7 +41,7 @@ test("a shell -c is checked by its inner text", () => {
 
 test("in a multi-repo set a sensitive glob is matched inside the repo that holds the file", () => {
 	const set = path.resolve("/w/set");
-	const f = facts({ worktrees: [path.join(set, "repoA"), path.join(set, "repoB")] });
+	const f = facts({ repos: [{ key: "A", worktree: path.join(set, "repoA") }, { key: "B", worktree: path.join(set, "repoB") }] });
 	assert.match(workerPathProblem("repoB/.github/workflows/ci.yml", set, f) ?? "", /\.github\/workflows\/ci\.yml is a sensitive path \(formats\)/);
 	assert.match(workerPathProblem(path.join(set, "repoA", "package.json"), set, f) ?? "", /package\.json is a sensitive path \(deps\)/);
 	assert.equal(workerPathProblem("repoA/src/a.ts", set, f), undefined);
@@ -93,31 +93,31 @@ test("waitReply returns the reply, and undefined when aborted", async () => {
 
 test("## Files: an edit or write outside the globs is refused with a pointer to ask_lead; inside, or with no Files section, it passes", () => {
 	const cwd = path.resolve("/w/set");
-	const f = facts({ worktrees: [cwd], files: ["src/**", "README.md"] });
+	const f = facts({ repos: [{ key: "R", worktree: cwd }], files: () => ["src/**", "README.md"] });
 	assert.equal(workerPathProblem("src/a/b.ts", cwd, f), undefined);
 	assert.equal(workerPathProblem("README.md", cwd, f), undefined);
 	const why = workerPathProblem("docs/x.md", cwd, f) ?? "";
 	assert.match(why, /docs\/x\.md is outside the brief's Files \(src\/\*\*, README\.md\)/);
 	assert.match(why, /ask_lead with approval \{category: "files", item: "<glob>", why\}/);
-	assert.equal(workerPathProblem("docs/x.md", cwd, facts({ worktrees: [cwd] })), undefined, "no Files section: no limit");
+	assert.equal(workerPathProblem("docs/x.md", cwd, facts({ repos: [{ key: "R", worktree: cwd }] })), undefined, "no Files section: no limit");
 	// an approved files item is part of the globs (loadFacts puts it there)
-	assert.equal(workerPathProblem("docs/x.md", cwd, facts({ worktrees: [cwd], files: ["src/**", "docs/**"] })), undefined);
+	assert.equal(workerPathProblem("docs/x.md", cwd, facts({ repos: [{ key: "R", worktree: cwd }], files: () => ["src/**", "docs/**"] })), undefined);
 });
 
 test("## Files: loadFacts reads files.json and the approved files items on every call; the snapshot paths count", () => {
 	const d = tmpDir();
-	fs.writeFileSync(path.join(d, "job.json"), JSON.stringify({ v: 1, id: "r1", repos: [], approvals: [] }));
+	fs.writeFileSync(path.join(d, "job.json"), JSON.stringify({ v: 1, id: "r1", repos: [{ key: "R", main: d, worktree: d, branch: "b", base: "x" }], approvals: [] }));
 	assert.equal(loadFacts(d).files, undefined, "no files.json: no Files limit");
-	writeFilesGuard(d, ["src/**"], ["lead-edit.txt"]);
-	assert.deepEqual(loadFacts(d).files, ["src/**", "lead-edit.txt"]);
+	writeFilesGuard(d, ["src/**"], { R: ["lead-edit.txt"] });
+	assert.deepEqual(loadFacts(d).files?.("R"), ["src/**", "lead-edit.txt"]);
 	// an approval mid-job applies at once
-	fs.writeFileSync(path.join(d, "job.json"), JSON.stringify({ v: 1, id: "r1", repos: [], approvals: [{ category: "files", item: "docs/**", by: "lead" }, { category: "deps", item: "x", by: "lead" }] }));
-	assert.deepEqual(loadFacts(d).files, ["src/**", "lead-edit.txt", "docs/**"]);
+	fs.writeFileSync(path.join(d, "job.json"), JSON.stringify({ v: 1, id: "r1", repos: [{ key: "R", main: d, worktree: d, branch: "b", base: "x" }], approvals: [{ category: "files", item: "docs/**", by: "lead" }, { category: "deps", item: "x", by: "lead" }] }));
+	assert.deepEqual(loadFacts(d).files?.("R"), ["src/**", "lead-edit.txt", "docs/**"]);
 	cleanup(d);
 });
 
 test("## Files: the bash warning lists the changed paths outside the globs, per repo in a multi-repo job", () => {
-	const f = facts({ files: ["src/**"] });
+	const f = facts({ files: () => ["src/**"] });
 	assert.equal(filesWarning([{ repo: "A", paths: ["src/a.ts"] }], f), undefined);
 	assert.equal(filesWarning([{ repo: "A", paths: ["x.ts"] }], facts()), undefined, "no Files section: no warning");
 	const one = filesWarning([{ repo: "A", paths: ["src/a.ts", "x.ts"] }], f) ?? "";
@@ -125,6 +125,38 @@ test("## Files: the bash warning lists the changed paths outside the globs, per 
 	assert.ok(!one.includes("src/a.ts"));
 	assert.match(filesWarning([{ repo: "A", paths: ["x.ts"] }, { repo: "B", paths: ["y.ts"] }], f) ?? "", /- A: x\.ts\n- B: y\.ts/);
 	assert.deepEqual(porcelainPaths(" M src/a.ts\n?? new file.txt\nR  old.ts -> src/new.ts\n?? \"q t.txt\"\n"), ["src/a.ts", "new file.txt", "src/new.ts", "q t.txt"]);
+});
+
+test("## Files: in a two-repo job a snapshot path is allowed in its own repo only; an approved files item applies in every repo", () => {
+	const d = tmpDir();
+	const A = path.join(d, "A");
+	const B = path.join(d, "B");
+	const job = (approvals: object[] = []) => fs.writeFileSync(path.join(d, "job.json"), JSON.stringify({ v: 1, id: "r1", repos: [{ key: "A", main: A, worktree: A, branch: "b", base: "x" }, { key: "B", main: B, worktree: B, branch: "b", base: "x" }], approvals }));
+	job();
+	writeFilesGuard(d, ["src/**"], { A: ["a.txt"] });
+	const f = loadFacts(d);
+	assert.equal(workerPathProblem("a.txt", A, f), undefined, "A's snapshot path in A");
+	assert.match(workerPathProblem("a.txt", B, f) ?? "", /a\.txt is outside the brief's Files \(src\/\*\*\)/, "the same path in B");
+	assert.match(filesWarning([{ repo: "A", paths: ["a.txt"] }, { repo: "B", paths: ["a.txt"] }], f) ?? "", /- B: a\.txt/);
+	assert.ok(!(filesWarning([{ repo: "A", paths: ["a.txt"] }], f) ?? "").includes("a.txt"));
+	// an approval applies to every repo
+	job([{ category: "files", item: "a.txt", by: "lead" }]);
+	const g = loadFacts(d);
+	assert.equal(workerPathProblem("a.txt", B, g), undefined);
+	assert.equal(filesWarning([{ repo: "A", paths: ["a.txt"] }, { repo: "B", paths: ["a.txt"] }], g), undefined);
+	cleanup(d);
+});
+
+test("## Files: a file under no job worktree uses the repo of a single-repo job; in a multi-repo job only the base globs apply", () => {
+	const d = tmpDir();
+	const cwd = path.join(d, "elsewhere");
+	const repo = (key: string) => ({ key, main: path.join(d, key), worktree: path.join(d, key), branch: "b", base: "x" });
+	fs.writeFileSync(path.join(d, "job.json"), JSON.stringify({ v: 1, id: "r1", repos: [repo("A")], approvals: [] }));
+	writeFilesGuard(d, ["src/**"], { A: ["a.txt"] });
+	assert.equal(workerPathProblem("a.txt", cwd, loadFacts(d)), undefined, "single repo: its snapshot applies");
+	fs.writeFileSync(path.join(d, "job.json"), JSON.stringify({ v: 1, id: "r1", repos: [repo("A"), repo("B")], approvals: [] }));
+	assert.match(workerPathProblem("a.txt", cwd, loadFacts(d)) ?? "", /outside the brief's Files/, "two repos: base globs only");
+	cleanup(d);
 });
 
 test("the files approval category: asked through ask_lead and approved like the others; never an Authority line", () => {
