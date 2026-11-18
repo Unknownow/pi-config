@@ -22,6 +22,7 @@ function body(header: string): string {
 	const a = file.indexOf(header);
 	const indent = /^[ \t]*/.exec(file.slice(file.lastIndexOf("\n", a) + 1))![0];
 	const b = file.indexOf(`\n${indent}}\n`, a);
+	assert.ok(b > a, `${header} has a closing brace at its indent`);
 	return file.slice(a, b);
 }
 
@@ -49,12 +50,23 @@ test("K4 carries judging", () => {
 	assert.match(source, /\.\.\.\(fl\.gateRun \? \{ judging: fl\.gateRun\.kind \} : \{\}\)/);
 });
 
+/** The text of the `/flow` command, from its registration to the end of the file that holds it (the last command there). */
+function flowCommand(): string {
+	const header = 'registerCommand("flow", {';
+	const file = files.find((f) => f.includes(header));
+	assert.ok(file, "/flow is registered");
+	const text = file.slice(file.indexOf(header));
+	assert.equal(text.indexOf("registerCommand(", 1), -1, "/flow is the last command in its file");
+	return text;
+}
+
 test("the critic command handles cancel before the phase dispatch, reviews the plan in plan and points to the judge tool in execute", () => {
-	const a = source.indexOf('case "critic":');
-	const cancel = source.indexOf('rest[0]?.toLowerCase() === "cancel"', a);
-	const dispatch = source.indexOf('await runDiscussionGate(fl, ctx, "full", false)', a);
+	const cmd = flowCommand();
+	const a = cmd.indexOf('case "critic":');
+	const cancel = cmd.indexOf('rest[0]?.toLowerCase() === "cancel"', a);
+	const dispatch = cmd.indexOf('await runDiscussionGate(fl, ctx, "full", false)', a);
 	assert.ok(a > 0 && cancel > a && cancel < dispatch);
-	assert.match(source.slice(dispatch, dispatch + 400), /fl\.state\.phase === "plan"\) criticPlanNow\(fl, ctx\)[\s\S]*use the judge tool/);
+	assert.match(cmd.slice(dispatch, dispatch + 400), /fl\.state\.phase === "plan"\) criticPlanNow\(fl, ctx\)[\s\S]*use the judge tool/);
 	assert.equal(source.indexOf('case "judge":'), -1);
 });
 
@@ -75,8 +87,7 @@ test("entering plan resets the gate", () => {
 });
 
 test("setPhase aborts a running gate when the phase changes", () => {
-	const a = source.indexOf("async function setPhase(");
-	assert.ok(source.indexOf('abortGate(fl, "phase")', a) > a);
+	assert.ok(body("async function setPhase(").includes('abortGate(fl, "phase")'));
 });
 
 test("the input handler queues a go and cancels on other text while the plan judge runs", () => {
