@@ -10,7 +10,7 @@ import { cleanCheck } from "../waits.ts";
 import { parseStages, stageStart } from "../stages.ts";
 import { type Flow } from "./context.ts";
 import { existingFolders, gitRoot, planCardText, restoreReview } from "./diff.ts";
-import { persist, publishFolders, setPhase, updateStatus } from "./phase.ts";
+import { persist, setPhase, updateStatus } from "./phase.ts";
 import { gitEnv, isDir, planDirFor, planMilestone } from "./plan-files.ts";
 import { setWaiting, startWaitTimer } from "./wait-points.ts";
 
@@ -28,7 +28,7 @@ export async function resumeFlow(fl: Flow, ctx: ExtensionContext, wanted: string
 		return;
 	}
 	const searchRoots: string[] = [cwdRoot];
-	for (const f of existingFolders(fl)) {
+	for (const f of existingFolders(ctx)) {
 		const r = await gitRoot(fl, f);
 		if (r && !searchRoots.some((s) => repoKey(s) === repoKey(r))) searchRoots.push(r);
 	}
@@ -161,15 +161,9 @@ export async function resumeFlow(fl: Flow, ctx: ExtensionContext, wanted: string
 	}
 
 	if (!(await setPhase(fl, ctx, "execute"))) return;
-	const folders = [...(fl.state.folders ?? [])];
-	let added = 0;
-	for (const r of roots) {
-		const abs = path.resolve(r.root).replace(/\\/g, "/");
-		if (repoKey(abs) === repoKey(ctx.cwd) || repoKey(abs) === repoKey(cwdRoot) || folders.some((f) => repoKey(f) === repoKey(abs))) continue;
-		folders.push(abs);
-		added++;
-	}
-	fl.state.folders = folders;
+	// The plan's other repos join the flow as edited repos (the folder list is the workspace extension's), so the judge and the delivery cover them.
+	const added = resumedRepos(roots.map((r) => r.root), { cwd: ctx.cwd, cwdRoot, folders: existingFolders(ctx), touched: fl.state.touchedRepos ?? [] });
+	if (added.length) fl.state.touchedRepos = [...(fl.state.touchedRepos ?? []), ...added];
 	fl.state.approvedPlan = plan;
 	fl.state.stage = status.stage;
 	fl.state.stageOutcomes = undefined;
@@ -202,7 +196,6 @@ export async function resumeFlow(fl: Flow, ctx: ExtensionContext, wanted: string
 	}
 	fl.state.planDoc = { flowId: status.flowId, rev: status.rev, roots: roots.map((r) => r.root) };
 	persist(fl);
-	publishFolders(fl, ctx);
 	updateStatus(fl, ctx);
 	planMilestone(fl, ctx);
 	startWaitTimer(fl, fl.state.waiting?.step && fl.wait.publishWaitSince.has(fl.state.waiting.step) ? Date.parse(fl.state.waiting.since) : undefined);
@@ -211,9 +204,17 @@ export async function resumeFlow(fl: Flow, ctx: ExtensionContext, wanted: string
 		{ customType: "workflow-resume-plan", content: `Resumed on this device: check \`git status\` and the branch in each repo, then continue with the open steps.\n\n${planCardText(fl)}`, display: true },
 		{ triggerTurn: false },
 	);
-	notify(`resumed "${status.title}"${status.stage ? ` at stage ${status.stage}` : ""}; send a message to continue${added ? ` (reloading to add ${added} folder${added === 1 ? "" : "s"})` : ""}`, "info");
-	if (added) {
-		await ctx.waitForIdle();
-		await ctx.reload();
+	notify(`resumed "${status.title}"${status.stage ? ` at stage ${status.stage}` : ""}; send a message to continue${added.length ? ` (${added.length} more repo${added.length === 1 ? "" : "s"} of the plan join the flow)` : ""}`, "info");
+}
+
+/** Repos of a resumed plan that join the flow as edited repos: not the working folder's, not an added folder, not already in the flow. */
+export function resumedRepos(roots: string[], have: { cwd: string; cwdRoot: string; folders: string[]; touched: string[] }): string[] {
+	const out: string[] = [];
+	const known = [have.cwd, have.cwdRoot, ...have.folders, ...have.touched].map((p) => repoKey(p));
+	for (const r of roots) {
+		const abs = path.resolve(r).replace(/\\/g, "/");
+		if (known.includes(repoKey(abs)) || out.some((o) => repoKey(o) === repoKey(abs))) continue;
+		out.push(abs);
 	}
+	return out;
 }

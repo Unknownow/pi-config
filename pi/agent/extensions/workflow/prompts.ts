@@ -200,20 +200,12 @@ Output, nothing else:
 DECISION: MERGE | NO_MERGE | ASK_USER
 Reason: 2-5 lines with evidence (plan step IDs, file:line).`;
 
-/** The agent's view of the extra folders and repos in this session. */
-export function workspaceSection(cwd: string, folders: string[], touched: string[], rules: { path: string; size: number }[] = []): string {
-	const lines = [`Working folder: ${cwd}`];
-	if (folders.length) lines.push("Added folders (also part of this task):", ...folders.map((f) => `- ${f}`));
-	if (rules.length) {
-		lines.push("Rules files of the added folders (not loaded): read a folder's files before you plan or change anything in it.");
-		lines.push(...[...rules].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)).map((r) => `- ${r.path} (${r.size} characters)`));
-	}
-	if (touched.length) lines.push("Repos edited in this flow:", ...touched.map((f) => `- ${f}`));
-	lines.push(
-		"Use absolute paths for files outside the working folder. bash starts in the working folder, so use `cd <folder>` or `git -C <folder>` for the others.",
-		"The judge reviews every git repo listed here, not only the working folder's.",
-	);
-	return lines.join("\n");
+/**
+ * The `workflowRepos` prompt section: repos the flow edited beyond the working folder and the added folders (those are the
+ * workspace extension's section). "" when there are none; it is still set on every turn so the sections keep their order.
+ */
+export function workflowReposSection(touched: string[]): string {
+	return touched.length ? ["Repos edited in this flow (the judge reviews them too):", ...touched.map((f) => `- ${f}`)].join("\n") : "";
 }
 
 /** For the judge and the arbiter: the diff covers several repos. */

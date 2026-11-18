@@ -11,6 +11,7 @@ import { judgeMetric } from "../metrics.ts";
 import { type ReviewResult, runCritic } from "../../agents/api.ts";
 import type { RunView } from "../../shared/runs.ts";
 import { type Flow } from "./context.ts";
+import { existingFolders } from "./diff.ts";
 import { endReview } from "./judge.ts";
 import { abortGate, askUser, lastAssistantText, scheduleIdleNotice } from "./notify.ts";
 import { approve, autopilotOn, noteAuto, persist, sendPlanKickoff, setPhase, updateStatus } from "./phase.ts";
@@ -73,7 +74,7 @@ export async function runPlanGate(fl: Flow, ctx: ExtensionContext, plan: string,
 		if (ctx.hasUI) ctx.ui.setWorkingMessage("critic reviewing the plan…");
 		let ext: RunView | undefined;
 		const review = await runCritic({
-			...planCriticRequest({ plan, spec, folders: fl.state.folders ?? [], recheck }),
+			...planCriticRequest({ plan, spec, folders: existingFolders(ctx), recheck }),
 			cwd: ctx.cwd,
 			signal: run.controller.signal,
 			mcpServers: fl.pi.getMcpServers(),

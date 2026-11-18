@@ -331,6 +331,29 @@ test('import deletes a local file gone from HEAD and removes empty folders; an e
   assert.ok(fs.existsSync(path.join(env.agent, 'extensions')));
 });
 
+test('a renamed extension folder (worktree -> workspace) leaves no old copy; an unrecorded entry point left behind is warned about', () => {
+  const env = setup();
+  const old = path.join(env.mirror, 'extensions', 'worktree');
+  fs.mkdirSync(old, { recursive: true });
+  write(path.join(old, 'index.ts'), 'i\n');
+  write(path.join(old, 'git-ops.ts'), 'g\n');
+  commit(env, 'add worktree');
+  run(env, 'import.js');
+  assert.ok(fs.existsSync(path.join(env.agent, 'extensions', 'worktree', 'index.ts')));
+  env.git('mv', 'pi/agent/extensions/worktree', 'pi/agent/extensions/workspace');
+  commit(env, 'rename');
+  const out = run(env, 'import.js');
+  assert.ok(!fs.existsSync(path.join(env.agent, 'extensions', 'worktree')), 'the old folder is gone');
+  assert.ok(fs.existsSync(path.join(env.agent, 'extensions', 'workspace', 'index.ts')));
+  assert.doesNotMatch(out, /is now extensions\/workspace/);
+  // A copy import never wrote (no sync record) is kept, with a warning.
+  fs.mkdirSync(path.join(env.agent, 'extensions', 'worktree'), { recursive: true });
+  write(path.join(env.agent, 'extensions', 'worktree', 'index.ts'), 'stray\n');
+  const again = run(env, 'import.js');
+  assert.ok(fs.existsSync(path.join(env.agent, 'extensions', 'worktree', 'index.ts')));
+  assert.match(again, /WARNING\s+extensions\/worktree\/ is now extensions\/workspace\//);
+});
+
 test('deletes over the cap need --allow-deletes and exit with code 2', () => {
   const env = setup();
   const dir = path.join(env.agent, 'extensions', 'demo');

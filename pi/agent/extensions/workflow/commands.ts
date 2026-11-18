@@ -1,8 +1,7 @@
-/** The `/flow` and `/folders` subcommand tables and their completions. Pure: tests load it without pi. */
+/** The `/flow` subcommand table and its completions. Pure: tests load it without pi. (`/folders` belongs to the workspace extension.) */
 import type { AutocompleteItem } from "@earendil-works/pi-tui";
-import { isKnown, safe, subcommandCompletions, usageLine, valueList, words, type Sub } from "../shared/completions.ts";
+import { isKnown, safe, subcommandCompletions, valueList, words, type Sub } from "../shared/completions.ts";
 import { roleCompletions, type RoleSpec } from "../shared/roles.ts";
-import { pathCompletions } from "./pickers.ts";
 
 export const FLOW_SUBS: Sub[] = [
 	{ value: "status", description: "phase, models, config path" },
@@ -51,43 +50,5 @@ export function flowCompletions(prefix: string, st: FlowState): AutocompleteItem
 		if (sub === "model") return roleCompletions("model", parts, st.roles, st.specOf, st.models);
 		if (FLOW_SECOND[sub] && parts.length === 2) return subcommandCompletions(FLOW_SECOND[sub], parts[1], `${sub} `);
 		return null;
-	});
-}
-
-export const FOLDERS_SUBS: Sub[] = [
-	{ value: "add", arg: "PATH", description: "add a folder to this session" },
-	{ value: "remove", arg: "PATH or N", description: "remove a folder by path or list number" },
-	{ value: "list", description: "the working folder and the added ones" },
-];
-
-export const foldersUsage = () => `Usage: /folders ${usageLine(FOLDERS_SUBS)}`;
-export const foldersDescription = () => `Folders that are part of this session: ${FOLDERS_SUBS.map((s) => (s.arg ? `${s.value} ${s.arg}` : s.value)).join(", ")}`;
-
-export interface FoldersState {
-	cwd: string;
-	home: string;
-	/** Subfolders of a directory; null when it cannot be read. */
-	readDirs: (dir: string) => string[] | null;
-	folders: string[];
-}
-
-export function foldersCompletions(prefix: string, st: FoldersState): AutocompleteItem[] | null {
-	return safe(() => {
-		const addM = prefix.match(/^add\s+(.*)$/i);
-		if (addM) {
-			const items = pathCompletions(addM[1], st.cwd, st.home, st.readDirs).map((p) => ({ value: `add ${p.includes(" ") ? `"${p}"` : p}`, label: p, description: "folder" }));
-			return items.length > 0 ? items : null;
-		}
-		const remM = prefix.match(/^remove\s+(.*)$/i);
-		if (remM) {
-			const typed = remM[1].trim().toLowerCase();
-			const items = st.folders
-				.map((f, i) => ({ value: `remove ${i + 1}`, label: `${i + 1}`, description: f, f, n: String(i + 1) }))
-				.filter((x) => x.n.startsWith(typed) || x.f.toLowerCase().startsWith(typed))
-				.map(({ value, label, description }) => ({ value, label, description }));
-			return items.length > 0 ? items : null;
-		}
-		if (/\s/.test(prefix.trimStart())) return null;
-		return subcommandCompletions(FOLDERS_SUBS, prefix);
 	});
 }

@@ -14,8 +14,8 @@ import { parseStages, stageStart } from "../stages.ts";
 import { planToolRefused } from "../../shared/readonly-tools.ts";
 import { hiddenInPhase, refilterPlanTools, syncFlowOnlyTools } from "../plan-tools.ts";
 import type { Stage } from "../view.ts";
-import { APPROVED_FINAL, type Flow, FOLDERS_ENTRY, type Phase, STATE_ENTRY, SUMMARY_ENTRY } from "./context.ts";
-import { dropReviewRefs, existingFolders, initReviewBase } from "./diff.ts";
+import { APPROVED_FINAL, type Flow, type Phase, STATE_ENTRY, SUMMARY_ENTRY } from "./context.ts";
+import { dropReviewRefs, initReviewBase } from "./diff.ts";
 import { handover, holdForStageWait, stoppedSummary } from "./handover.ts";
 import { planAllowedTools } from "./hooks.ts";
 import { abortGate, notifyUser } from "./notify.ts";
@@ -40,17 +40,6 @@ export function persist(fl: Flow): void {
 	fl.state.flow = structuredClone(fl.view.flow);
 	fl.state.flowStarted = fl.view.flowStarted;
 	fl.pi.appendEntry(STATE_ENTRY, fl.state);
-}
-
-/** K1: appends the folder list as a `session-folders` entry when the newest one on the branch differs. */
-export function publishFolders(fl: Flow, ctx: ExtensionContext): void {
-	const data = { v: 1, cwd: ctx.cwd.replace(/\\/g, "/"), folders: [...(fl.state.folders ?? [])] };
-	const newest = ctx.sessionManager
-		.getBranch()
-		.filter((e) => e.type === "custom" && (e as { customType?: string }).customType === FOLDERS_ENTRY)
-		.pop() as { data?: { cwd?: unknown; folders?: unknown } } | undefined;
-	if (newest?.data && newest.data.cwd === data.cwd && JSON.stringify(newest.data.folders) === JSON.stringify(data.folders)) return;
-	fl.pi.appendEntry(FOLDERS_ENTRY, data);
 }
 
 /** Ends the current flow: shows its token breakdown and starts counting the next one. False if it had none. */
@@ -120,13 +109,14 @@ export function updateStatus(fl: Flow, ctx: ExtensionContext): void {
 	else if (fl.state.phase === "plan") fl.view.stage = "plan";
 	else if (fl.view.stage === "discuss" || fl.view.stage === "plan") fl.view.stage = "execute";
 	if (ctx.hasUI) fl.view.mount(ctx.ui);
-	const n = existingFolders(fl).length + (fl.state.touchedRepos?.length ?? 0);
+	// Added folders are the workspace extension's status; this one counts the repos the flow edited beyond them.
+	const n = fl.state.touchedRepos?.length ?? 0;
 	const cl = fl.state.checklist;
 	if (ctx.hasUI) ctx.ui.setStatus("workflow-plan", cl?.length && fl.state.phase === "execute" ? `plan ${cl.filter((i) => !isHuman(i) && i.done).length}/${cl.filter((i) => !isHuman(i)).length}` : undefined);
 	if (ctx.hasUI) ctx.ui.setStatus("workflow-wait", fl.state.waiting && fl.state.phase === "execute" ? `waiting: ${fl.state.waiting.reason.slice(0, 40)}` : undefined);
 	if (ctx.hasUI) ctx.ui.setStatus("workflow-judge", fl.gateRun ? (fl.gateRun.kind === "plan" ? `critic on the plan (run ${(fl.state.planGate?.rounds ?? 0) + 1}/${fl.cfg.maxPlanJudgeRounds})` : "critic on the discussion") : undefined);
 	if (ctx.hasUI) ctx.ui.setStatus("workflow-autopilot", autopilotOn(fl) ? "autopilot" : undefined);
-	if (ctx.hasUI) ctx.ui.setStatus("workflow-folders", n ? `+${n} folder${n === 1 ? "" : "s"}` : undefined);
+	if (ctx.hasUI) ctx.ui.setStatus("workflow-repos", n ? `+${n} edited repo${n === 1 ? "" : "s"}` : undefined);
 	if (fl.state.approvedPlan && cl?.length && fl.state.phase === "execute") {
 		const st = currentStages(fl);
 		const open = cl.find((i) => !i.done && !isHuman(i));

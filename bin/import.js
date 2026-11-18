@@ -28,6 +28,9 @@ const fs = require('fs');
 const path = require('path');
 const lib = require('./lib');
 
+/** Extension folders that were renamed in the repo: old -> new (relative to the agent folder). */
+const RENAMED_EXTENSIONS = { 'extensions/worktree': 'extensions/workspace' };
+
 const DRY = process.argv.includes('--dry-run');
 
 function loadOverrides() {
@@ -171,6 +174,13 @@ function main() {
     }
     delete state[k];
     console.log(`  delete  ${k}`);
+  }
+
+  // A renamed extension folder: its recorded files were deleted above. One that still has an entry point (files import
+  // never wrote, so no record) would load beside its successor and register the same commands twice.
+  for (const [old, now] of Object.entries(RENAMED_EXTENSIONS)) {
+    if (head.has(`${old}/index.ts`) || !fs.existsSync(path.join(lib.AGENT, old, 'index.ts'))) continue;
+    warnings.push(`${old}/ is now ${now}/; delete ${path.join(lib.AGENT, old)} so pi does not load both`);
   }
 
   if (!DRY) lib.writeState(state);

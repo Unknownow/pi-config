@@ -1,22 +1,62 @@
-# worktree
+# workspace
 
-Run several pi sessions on the same repos without copying them. Git worktrees share one object
-store, so a set of checkouts costs a few MB (plus whatever you build in them).
+The session's working folder and everything around it: the folders added to the session (`/folders`, `--add-dir`) and
+worktree sets (`/wt`), which run several pi sessions on the same repos without copying them. Git worktrees share one
+object store, so a set of checkouts costs a few MB (plus whatever you build in them). It works on its own: the workflow
+extension is not needed (it only reads the folder list).
 
-## Commands
+(Before, this was the `worktree` extension and the workflow owned `/folders`. pi-config import deletes the old
+`~/.pi/agent/extensions/worktree` copy, files with a sync record; a `~/.pi/agent/worktree.json` is still read, see Config.)
+
+## Folders
 
 | Command | What it does |
 |---|---|
-| `/wt new [NAME]` | Without NAME the name is automatic: the smallest `w1`..`w999` with no set folder and no `wt/w<N>` branch in any repo. With a UI an input shows it as the default (Enter accepts it, Esc cancels); without a UI it is used directly. Creates one worktree per git repo of this session (the working folder and every added folder) under `<root>/NAME/<repo>` on branch `wt/NAME`, starting from `origin/<default branch>` with no upstream. Links or copies the gitignored files, then opens a new Windows Terminal window (or a new VS Code terminal when pi runs in one, see VS Code) running pi in the working repo's worktree with `--add-dir` set to the other worktrees. Folders that are not git repos are passed through unchanged. The current session is not changed. |
+| `/folders add <path>` | Adds a folder to this session (relative to the working folder, `~` allowed) and reloads pi, so its skills and prompts load. Refused for a missing folder, the working folder and one already added. Inside a set, a git repo is attached as its worktree in the set (see Adding folders inside a set). |
+| `/folders remove <path\|n>` | Removes an added folder by path or list number and reloads pi. |
+| `/folders list` (or `/folders`) | The working folder and the added folders, numbered, with `(missing)` or `(not a git repo)`. |
+| `pi --add-dir <path>` | Starts a session with extra folders (`;` separates several on Windows, `:` elsewhere). Applied when pi starts and on `/new`, not on a resume or a session switch; missing folders and the working folder are skipped with a warning. |
+
+Tab completes everything: `/folders ` the subcommands, `add ` the subfolders of what you typed (one level per Tab,
+`~` for home, hidden folders only after a typed `.`), `remove ` the added folders by number or path.
+
+**The list.** The extension keeps the added folders (absolute, forward slashes, in the order added) in memory and saves
+them as the public `session-folders` entry `{ "v": 1, "cwd": "<working folder, forward slashes>", "folders": [...] }`
+(contract K1; builder `foldersEntry` and `sameFolders` in `../shared/session-folders.ts`). It is the only writer of that
+entry (`boundary.test.ts` greps every extension for `appendEntry` with it) and appends one only when the list changed.
+Readers (agents' judge and runner guard, the workflow, relay) use `foldersForCwd`: the newest entry, only when it names
+the current working folder. At session start the list is seeded from that entry. A session saved before this extension
+owned the list (no `session-folders` entry yet) takes the `folders` of the newest `workflow-state` entry once (read
+only) and writes them as an entry.
+
+**Follow rule (K1b).** At session start (not reload), when the newest entry names another working folder than the
+current one, each added folder inside a git repo is replaced by the same path in the one worktree of that repo that sits
+next to the working folder's repo (same parent folder), if it exists. Plain folders, folders without exactly one such
+worktree and missing targets stay. A result equal to the working folder is dropped. A notice lists the moves. `/wt new`,
+`/wt use` and `/wt done` write the new session's entry themselves (below), so the rule is only a fallback for sessions
+moved by hand.
+
+**Prompt.** Every turn sets the `workspace` system prompt section, also without added folders (a section deleted and
+re-added would move): the working folder, the added folders that exist, the rules files (`AGENTS.md`, `CLAUDE.md`) of
+the added folders with their paths and sizes and the instruction to read them before planning or changing anything
+there (`addedFolderRules: "full"` loads their text into the prompt instead), the hint to use absolute paths and
+`git -C <folder>`, and "The judge reviews every git repo listed here". Skills (`.pi/skills`, `.agents/skills`) and
+prompts (`.pi/prompts`) of the added folders are added through `resources_discover`. The status bar shows `+N folders`.
+
+## Worktree sets
+
+| Command | What it does |
+|---|---|
+| `/wt new [NAME]` | Without NAME the name is automatic: the smallest `w1`..`w999` with no set folder and no `wt/w<N>` branch in any repo. With a UI an input shows it as the default (Enter accepts it, Esc cancels); without a UI it is used directly. Creates one worktree per git repo of this session (the working folder and every added folder) under `<root>/NAME/<repo>` on branch `wt/NAME`, starting from `origin/<default branch>` with no upstream. Links or copies the gitignored files, then opens a new Windows Terminal window (or a new VS Code terminal when pi runs in one, see VS Code) running pi in the working repo's worktree with `--add-dir` set to the other worktrees. Folders that are not git repos are passed through unchanged. The new session's file holds a `session-folders` entry with these folders (the worktrees for repos, plain folders unchanged), so it starts with them. The current session is not changed. |
 | `/wt open [NAME]` | Reopens an existing set (without NAME, pick one from a list): starts pi on the set's newest earlier session (or a new one) in the set's working repo (the only repo, or the one named like this session's repo, otherwise you pick one), with `--add-dir` for the other repos, through the same launch path as `/wt new`. Refuses from a session inside that set and when another live pi session uses the set. When you quit an interactive pi session inside a set that still exists, a reminder is printed to stderr with how to reopen or remove it; nothing is ever deleted on quit. |
-| `/wt use [NAME]` | Moves this conversation into a free workspace (a set no other live session uses), or back to the original folders (`/wt use original`, or pick `original folders`). Without NAME, pick from the free sets, `original folders` (inside a set) or `+ new workspace` (asks for a name and creates it). The conversation is copied into a new session file in the target repo, pi switches to it, and a message lists the new paths. Added folders follow to the sibling worktrees (the workflow's folder follow rule). Refused while a flow is executing (the workflow cancels the switch), for a set in use (`<set> is in use by pi <pid>`) and for the set this session already runs in. |
+| `/wt use [NAME]` | Moves this conversation into a free workspace (a set no other live session uses), or back to the original folders (`/wt use original`, or pick `original folders`). Without NAME, pick from the free sets, `original folders` (inside a set) or `+ new workspace` (asks for a name and creates it). The conversation is copied into a new session file in the target repo, pi switches to it, and a message lists the new paths. The copy gets a `session-folders` entry: an added folder whose repo is in the target set moves to the same path in its worktree there; going back to the original folders, worktrees move back to the main checkouts (`mainRepoOf`); plain folders and other repos stay. Refused while a flow is executing (the workflow cancels the switch), for a set in use (`<set> is in use by pi <pid>`) and for the set this session already runs in. |
 | `/wt unlink PATH` | Inside a set: removes the link `PATH` (relative to the repo, for example `node_modules`) in every repo of the set, never its target, so the workspace can install its own packages. The `.git/info/exclude` lines stay. |
 | `/wt list` | Lists every set under `<root>` with its state (`delivered`, `has-work`, `in-use`, `broken` or `leftover`, and why, see Cleanup) and, per repo: branch, changed files, ahead/behind (or "not pushed: N commits" against the base branch when there is no upstream), whether `unity/Library` exists, and whether a Unity Editor is open for it (from one `unity status` call; `unknown` if it fails). |
 | `/wt update [NAME]` | Brings a set up to date (without NAME: the set this session runs in, otherwise pick one from a list). For every repo (in parallel) it fetches, then: puts the set's branch back when the repo sits on a detached HEAD at a commit of the base branch (what `gh pr merge --delete-branch` leaves behind); fast-forwards a branch with no commits of its own to the base branch (`origin/HEAD`, `main` or `master`); resets a branch whose work was merged as a PR on GitHub (squash or rebase merge, found with `gh`; needs a clean tree); rebases unpushed own commits onto the base branch. Commits that are already pushed are never rebased (that would need a force push), a conflicting rebase is aborted and the branch is left as before, and other detached HEADs are reported and left alone. Uncommitted changes are allowed for a fast-forward (git refuses when it would overwrite one) but block a rebase or reset. |
 | `/wt remove [NAME]` | Removes one set (without NAME, pick one from a list), see Cleanup. A `delivered` set (everything is in the base branch or in a merged PR) is removed after one confirmation. A set with work (`has-work`) is only removed after a second, explicit question that shows the commits and changes it would discard; they are backed up first. Refuses a set that is `in-use` (another live pi session, this session, or an open Unity Editor) or `broken`, and refuses without a UI. Removes the links first (never their targets), runs `git worktree remove`, then deletes the set's branch. Deletes the worktree's `Library/` with it. |
 | `/wt rename [OLD] [NEW]` | Renames an unused, unpushed workspace (a picker and an input with the next free name when arguments are missing). Refused when NEW is a bad name or exists, OLD is in use or is this session's workspace, `wt/OLD` has an upstream or exists on `origin` (`branch is pushed; renaming would break its pull request`), or `wt/NEW` exists in a repo. Per repo it runs `git worktree move` and `git branch -m`; on a failure the repos already done are put back. `.pi-set.json` moves along with the new branch name. |
 | `/wt clean` | Removes everything that is safe to remove in one go, see Cleanup. Fetches each original repo once, then lists what it will remove and what it keeps (with the reason) and asks once. |
-| `/wt done` | Runs inside a worktree session: refuses while a Unity Editor is open in the set (a failing `unity status` only adds a warning), moves this conversation to the original folders (like `/wt use original`), then removes the set the session ran in with the same questions as `/wt remove`. If the set cannot be removed (it has work and you decline, or it is in use) the conversation stays in the original folders and the set is kept. |
+| `/wt done` | Runs inside a worktree session: refuses while a Unity Editor is open in the set (a failing `unity status` only adds a warning), moves this conversation to the original folders (like `/wt use original`, added folders back to the main checkouts), then removes the set the session ran in with the same questions as `/wt remove`. If the set cannot be removed (it has work and you decline, or it is in use) the conversation stays in the original folders and the set is kept. |
 
 While a `/wt` command or the automatic update runs, a widget above the editor shows a spinner, the current stage, the git command running now with its folder, and the elapsed time. It is hidden while a dialog is open and removed when the command ends.
 
@@ -32,7 +72,7 @@ leave the repos detached. Headless pi processes (subagents, `pi -p`) never updat
 files under a session that is working in the set. The fetches run before the session takes input (15 s
 timeout per fetch, no credential dialog), so startup takes a few seconds longer. Nothing is shown when every
 repo was already current; otherwise one line per repo. Turn it off with `"autoUpdate": false` in
-`worktree.json`, or only the rebase with `"rebaseUnpushed": false`.
+`workspace.json`, or only the rebase with `"rebaseUnpushed": false`.
 
 `NAME`: lowercase letters, digits, `.`, `_`, `-` (max 40, starts with a letter or digit).
 
@@ -54,7 +94,8 @@ Unity's `Library/` is never touched: a worktree session does not get one.
 
 ## Config
 
-`~/.pi/agent/worktree.json`, every key optional. No file means the defaults below.
+`~/.pi/agent/workspace.json`, every key optional. No file means the defaults below. Without `workspace.json` the old
+`~/.pi/agent/worktree.json` is read, with a notice once per pi process to rename it.
 
 | Key | Default | Meaning |
 |---|---|---|
@@ -69,11 +110,12 @@ Unity's `Library/` is never touched: a worktree session does not get one.
 | `autoUpdate` | `true` | Fast-forward the set's repos when a session starts inside it (see Automatic update). |
 | `rebaseUnpushed` | `true` | Let the automatic update rebase unpushed own commits onto the base branch. `false` turns off only the automatic rebase; `/wt update` still rebases. |
 | `addFolderWorktree` | `true` | `/folders add` inside a set attaches the repo's worktree in the set (created on the set's branch if missing). `false` attaches the folder as given. |
+| `addedFolderRules` | `paths` | Rules files of added folders in the `workspace` prompt section: `paths` lists their paths and sizes, `full` loads their text. (It was a workflow.json key; that one is ignored now.) |
 | `backupDays` | `30` | Days a backup ref of discarded work is kept; `/wt clean` deletes older ones. `0` keeps them until you delete them. |
 
 ## Running sessions and workspaces
 
-Every interactive pi session with this extension writes `<agentDir>/live/<pid>.json` (cwd, added folders, set root, busy, the workflow's phase and stage from its `workflow:status` event), every 30 s and on each change, and deletes it on exit. A file counts when it is under 120 s old and its pid is alive; readers delete files of dead pids. The session list is the left side of the shared dock below the editor (`../shared/dock.ts`): worktree publishes `dock:lines {v:1, key:"wt-sessions", side:"left", lines}` and the dock owner draws it, next to relay's job column when relay is loaded (layout rule in `../shared/README.md`; alone, the list uses the full width as before). It lists the other live sessions one per line as `label: state` (at most 8; the last line is `+N more` when there are more).
+Every interactive pi session with this extension writes `<agentDir>/live/<pid>.json` (cwd, added folders, set root, busy, the workflow's phase and stage from its `workflow:status` event), every 30 s and on each change, and deletes it on exit. A file counts when it is under 120 s old and its pid is alive; readers delete files of dead pids. The session list is the left side of the shared dock below the editor (`../shared/dock.ts`): workspace publishes `dock:lines {v:1, key:"wt-sessions", side:"left", lines}` and the dock owner draws it, next to relay's job column when relay is loaded (layout rule in `../shared/README.md`; alone, the list uses the full width as before). It lists the other live sessions one per line as `label: state` (at most 8; the last line is `+N more` when there are more).
 
 `/wt new` writes `<set>/.pi-set.json` (`{ v, created, branch, repos: [{ main, dir }] }`). Sets made by older versions have none and work as before.
 
@@ -145,7 +187,7 @@ a relative `--project-path`, and commands built at runtime or started from a scr
 
 ## Adding folders inside a set
 
-In a session inside a set, `/folders add <path>` for a git repo attaches that repo's worktree in the set, not the original checkout (the workflow asks through its `workflow:folder-add` event, K6). If a worktree of that repo already sits under the set, it is reused. Otherwise one is created like `/wt new` does: branch `<branchPrefix><set>` from the remote's default branch, gitignored files linked or copied, and the repo added to `.pi-set.json`; a progress line shows while it fetches and creates. A subfolder maps to the same subfolder in the worktree if it exists there, otherwise to the worktree root. Plain folders, folders already in the set and sessions outside a set are left alone. If the worktree cannot be created (target folder taken, branch already exists, no remote, git failure), nothing is added, nothing is left behind and the error is shown. `addFolderWorktree: false` turns this off.
+In a session inside a set, `/folders add <path>` for a git repo attaches that repo's worktree in the set, not the original checkout (`/folders add` calls `worktreeForFolder` in `add-folder.ts` directly; the old `workflow:folder-add` event is gone). If a worktree of that repo already sits under the set, it is reused. Otherwise one is created like `/wt new` does: branch `<branchPrefix><set>` from the remote's default branch, gitignored files linked or copied, and the repo added to `.pi-set.json`; a progress line shows while it fetches and creates. A subfolder maps to the same subfolder in the worktree if it exists there, otherwise to the worktree root. Plain folders, folders already in the set and sessions outside a set are left alone. If the worktree cannot be created (target folder taken, branch already exists, no remote, git failure), nothing is added, nothing is left behind and the error is shown. `addFolderWorktree: false` turns this off.
 
 ## Contracts
 
@@ -153,9 +195,16 @@ In a session inside a set, `/folders add <path>` for a git repo attaches that re
 - **W2. `worktree:remove` event.** `pi.events.emit("worktree:remove", { v: 1, name, force?, claim })`: remove a set with no dialog (`removeForEvent` in `manage.ts`). It fetches, then classifies the set: `in-use` and `broken` are always refused (even with `force`); a set with work (uncommitted, unpushed or an unmerged pushed branch) is refused unless `force: true`, which first writes the same backup refs as `/wt remove`; a delivered or leftover set is removed. The claim resolves to `{ removed, paths, backups, kept, warnings }` (`kept`: `<repo dir>: <branch>` for branches that were not deleted because they are ahead of HEAD or `branch -D` failed; `warnings` has "Unity Editor state unknown" when `unity status` failed) or `{ error }`.
 - **W3. `worktree:add-repo` event.** `pi.events.emit("worktree:add-repo", { v: 1, name, folder, base?, claim })`: add the repo of `folder` to the existing set `name` (`addRepoToSet` in `add-folder.ts`), starting at `base` (a remote ref) when given. The claim resolves to `{ path, branch }` (`path`: the folder in the set, `branch`: the set branch) or `{ error }` (unknown set, not a git repo, repo already in the set).
 
-## Relationship to the workflow extension
+## Relationship to the other extensions
 
-The dependency is one-way. This extension uses only the workflow's public contract (see "Public contract for other extensions" in the workflow README): the `session-folders` entry (K1) to learn the added folders, the `--add-dir` flag (K3) when it launches pi, the `workflow:status` event (K4), and the `workflow:folder-add` event (K6) to answer `/folders add` (see "Adding folders inside a set"). The workflow reads nothing of this extension. It imports no workflow code: the shell parser the Unity guard uses is `../shared/readonly-bash.ts`. `boundary.test.ts` enforces both sides.
+Workspace imports only its own files and `../shared/` (`boundary.test.ts`), and no other extension imports it.
+
+- **workflow** (being retired) only reads the folder list (`foldersForCwd`), never writes the entry or the `workspace`
+  prompt section; its own `workflowRepos` section lists the repos a flow edited beyond the added folders. Workspace
+  listens to its `workflow:status` event (K4) for the running-sessions list and reads its old `workflow-state` entry
+  only to migrate a session (see Folders).
+- **agents** reads the entry for the judge's repos and the runner guard's allowed folders.
+- **relay** drives sets through the W1-W3 events and reads the entry.
 
 ## Limits
 
@@ -175,16 +224,17 @@ The dependency is one-way. This extension uses only the workflow's public contra
 - `/wt clean` and the delivered check look at the 20 latest merged PRs of a branch name; without `gh` a squash merge is not recognised and the set counts as `has-work`.
 - The running-sessions list sees only sessions on this machine, and only those that run this extension with a UI.
 - Plain (non-git) folders come back only through the session's saved folders.
+- The folder list is kept per working folder: after `/tree` jumps to a branch with another entry, run `/reload` to pick it up.
 - On Windows, a pi started inside a set by an older version keeps that folder locked by its parent processes until pi exits (sessions launched by this version start in the original repo). `/wt done` treats that as removed and starts a detached cleanup that deletes the leftover empty folders (only empty folders, never files) for up to 2 minutes. If it cannot, delete them by hand.
 - The progress spinner pauses while gitignored files are copied (a synchronous copy).
 
 ## Tests
 
 ```
-node --experimental-strip-types --test create-event.test.ts config.test.ts add-folder.test.ts layout.test.ts files.test.ts git-ops.test.ts manage.test.ts unity-guard.test.ts vscode-bridge.test.ts update.test.ts rename.test.ts progress.test.ts index.test.ts folders.test.ts boundary.test.ts live.test.ts sessions.test.ts meta.test.ts shared-guard.test.ts clean.test.ts exec.test.ts
+node --experimental-strip-types --test *.test.ts
 node --test vscode/request.test.js
 ```
 
 ## Completions
 
-`/wt ` offers the subcommands with a description (`commands.ts`); `open`, `use`, `update`, `remove` and `rename` then list the set names.
+Every command and argument completes (`commands.ts`, tested in `commands.test.ts`). `/wt ` offers the subcommands with a description; `open`, `use`, `update`, `remove` and `rename` then list the set names (`use` also `original`; after `rename OLD ` the new name is free text); `unlink ` lists the linked paths of this session's set. `new`, `list`, `clean` and `done` take no argument to complete. `/folders`: see Folders.

@@ -2,10 +2,9 @@
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import { test } from "node:test";
-import { FLOW_SUBS, FLOW_UNKNOWN, FOLDERS_SUBS, flowCompletions, foldersCompletions, foldersDescription, foldersUsage, isKnownFlow } from "./commands.ts";
+import { FLOW_SUBS, FLOW_UNKNOWN, flowCompletions, isKnownFlow } from "./commands.ts";
 
 const flowSt = (over = {}) => ({ roles: ["plan", "arbiter"], specOf: () => ({ model: "a/c" }), models: () => [{ provider: "a", id: "c" }], ...over });
-const foldersSt = (over = {}) => ({ cwd: "/w", home: "/h", readDirs: () => ["src", "docs"], folders: ["/x/one", "/y/two"], ...over });
 
 test("the /flow table values equal the expected list (fable and opusplan included, plan force is second level)", () => {
 	assert.deepEqual(FLOW_SUBS.map((s) => s.value), ["status", "board", "discuss", "plan", "approve", "execute", "off", "escalate", "fable", "back", "opusplan", "critic", "tokens", "model", "autopilot", "reload", "resume"]);
@@ -36,21 +35,6 @@ test("/flow second level is exactly plan force, autopilot on|off, critic cancel,
 	assert.equal(flowCompletions("model arbiter ", flowSt({ specOf: () => { throw new Error("x"); } })), null);
 });
 
-test("/folders table, usage and completions", () => {
-	assert.deepEqual(FOLDERS_SUBS.map((s) => s.value), ["add", "remove", "list"]);
-	assert.equal(foldersUsage(), "Usage: /folders add PATH | remove PATH or N | list");
-	assert.match(foldersDescription(), /add PATH, remove PATH or N, list$/);
-	const items = foldersCompletions("", foldersSt())!;
-	assert.deepEqual(items.map((i) => i.value), ["add ", "remove ", "list"]);
-	assert.ok(items.every((i) => i.description));
-	assert.deepEqual(foldersCompletions("remove ", foldersSt())!.map((i) => [i.value, i.label, i.description]), [["remove 1", "1", "/x/one"], ["remove 2", "2", "/y/two"]]);
-	assert.deepEqual(foldersCompletions("remove /y", foldersSt())!.map((i) => i.value), ["remove 2"]);
-	const add = foldersCompletions("add ", foldersSt())!;
-	assert.ok(add.length > 0 && add.every((i) => i.value.startsWith("add ") && i.description));
-	assert.equal(foldersCompletions("list ", foldersSt()), null);
-	assert.equal(foldersCompletions("add ", foldersSt({ readDirs: () => { throw new Error("x"); } })), null);
-});
-
 test("the file with /flow handles every table entry and builds usage from the tables", () => {
 	const flowDir = new URL("./flow/", import.meta.url);
 	const candidates = [new URL("./index.ts", import.meta.url), ...fs.readdirSync(flowDir).filter((f) => f.endsWith(".ts")).map((f) => new URL(f, flowDir))];
@@ -58,6 +42,7 @@ test("the file with /flow handles every table entry and builds usage from the ta
 	assert.equal(holders.length, 1, "one file registers /flow");
 	const src = holders[0];
 	for (const s of FLOW_SUBS) assert.ok(src.includes(`case "${s.value}"`), `no case for /flow ${s.value}`);
-	assert.ok(src.includes("FLOW_UNKNOWN(sub)") && src.includes("foldersUsage()") && src.includes("foldersDescription()"));
+	assert.ok(src.includes("FLOW_UNKNOWN(sub)"));
+	assert.ok(!src.includes('registerCommand("folders"'), "/folders belongs to the workspace extension");
 	assert.ok(!src.includes("const SUBCOMMANDS"));
 });

@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { test } from "node:test";
-import { latestSession, newSessionFile } from "./sessions.ts";
+import { appendCustomEntry, latestSession, newSessionFile } from "./sessions.ts";
 
 test("newSessionFile writes a header-only session file", () => {
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sess-"));
@@ -16,6 +16,19 @@ test("newSessionFile writes a header-only session file", () => {
 	const g = newSessionFile("x", { create: () => ({ file: path.join(dir, "sub", "own.jsonl"), id: "q", dir }), version: 3 });
 	assert.equal(g, path.join(dir, "sub", "own.jsonl"));
 	assert.throws(() => newSessionFile("x", { create: () => ({ file: g, id: "q", dir }), version: 3 }));
+});
+
+test("appendCustomEntry adds a custom entry whose parent is the last entry", () => {
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sess-"));
+	const f = newSessionFile("D:/p/game", { create: () => ({ file: undefined, id: "abc", dir }), version: 3 });
+	appendCustomEntry(f, "session-folders", { v: 1, cwd: "D:/p/game", folders: ["D:/p/k"] }, () => new Date("2026-10-21T10:00:00.000Z"));
+	const lines = fs.readFileSync(f, "utf8").trim().split(/\r?\n/).map((l) => JSON.parse(l));
+	assert.equal(lines.length, 2);
+	assert.deepEqual({ ...lines[1], id: "x" }, { type: "custom", customType: "session-folders", data: { v: 1, cwd: "D:/p/game", folders: ["D:/p/k"] }, id: "x", parentId: null, timestamp: "2026-10-21T10:00:00.000Z" });
+	assert.match(lines[1].id, /^[0-9a-f]{8}$/);
+	appendCustomEntry(f, "other", 1);
+	const third = JSON.parse(fs.readFileSync(f, "utf8").trim().split(/\r?\n/)[2]);
+	assert.equal(third.parentId, lines[1].id, "chained to the previous entry");
 });
 
 test("latestSession picks the newest after the limit", () => {
@@ -46,4 +59,7 @@ test("a header written for a real pi session loads in pi", async (t) => {
 	assert.equal(head.version, CURRENT_SESSION_VERSION);
 	assert.match(head.id, /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/);
 	assert.equal(SessionManager.open(f).getCwd(), path.resolve(cwd));
+	appendCustomEntry(f, "session-folders", { v: 1, cwd, folders: ["D:/k"] });
+	const branch = SessionManager.open(f).getBranch();
+	assert.equal(branch.at(-1)?.type, "custom", "the appended entry is the leaf pi opens on");
 });

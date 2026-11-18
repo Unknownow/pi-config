@@ -1,26 +1,21 @@
-/** The /flow and /folders commands and the status text. */
+/** The /flow command and the status text. (`/folders` belongs to the workspace extension.) */
 import * as fs from "node:fs";
-import * as os from "node:os";
-import * as path from "node:path";
 import { truncateToWidth } from "@earendil-works/pi-tui";
 import { CONFIG_PATH, loadConfig, saveRole, type Role } from "../config.ts";
 import { describeRole, parseRoleSpec, pickRoleSpec } from "../../shared/roles.ts";
 import { fmtTok } from "../../shared/tokens.ts";
 import { lastAgreedList } from "../discussion-review.ts";
 import { textHash, forcedOpenFindings } from "../gates.ts";
-import { foldersDescription, foldersCompletions, FOLDERS_SUBS, foldersUsage, flowCompletions, FLOW_UNKNOWN } from "../commands.ts";
-import { isKnown } from "../../shared/completions.ts";
+import { flowCompletions, FLOW_UNKNOWN } from "../commands.ts";
 import { noMerge } from "../../shared/git/merge-gate.ts";
-import { repoKey } from "../../shared/repos.ts";
-import { askFolderAdd } from "../folder-add.ts";
 import { boardLines, detailLines } from "../board.ts";
 import { AGENT_ROLES } from "../../agents/api.ts";
 import { STAGES } from "../view.ts";
 import { type Flow, MODEL_ROLES, type Phase, SUMMARY_ENTRY } from "./context.ts";
-import { collectBoard, gitRoot, joinReviewBase } from "./diff.ts";
+import { collectBoard } from "./diff.ts";
 import { askRestate, runDiscussionGate, startDiscussionGate } from "./discussion-gate.ts";
 import { abortGate } from "./notify.ts";
-import { applyRole, approve, autopilotOn, currentStages, deescalate, escalate, persist, publishFolders, sendPlanKickoff, setPhase, updateStatus } from "./phase.ts";
+import { applyRole, approve, autopilotOn, currentStages, deescalate, escalate, sendPlanKickoff, setPhase, updateStatus } from "./phase.ts";
 import { branchAssistantTexts, criticPlanNow, moveToPlan } from "./plan-gate.ts";
 import { resumeFlow } from "./resume.ts";
 import { modelOf, roleSpecOf } from "./roles.ts";
@@ -49,119 +44,6 @@ export function statusText(fl: Flow): string {
 }
 
 export function registerCommands(fl: Flow): void {
-	fl.pi.registerCommand("folders", {
-		description: foldersDescription(),
-		getArgumentCompletions: (prefix) =>
-			foldersCompletions(prefix, {
-				cwd: fl.lastCtx?.cwd ?? process.cwd(),
-				home: os.homedir(),
-				readDirs: (dir) => {
-					try {
-						return fs.readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name);
-					} catch {
-						return null;
-					}
-				},
-				folders: fl.state.folders ?? [],
-			}),
-		handler: async (args, ctx) => {
-			const m = args.trim().match(/^(\S+)\s*([\s\S]*)$/);
-			const sub = (m?.[1] ?? "list").toLowerCase();
-			const arg = (m?.[2] ?? "").trim().replace(/^(["'])(.*)\1$/, "$2");
-			const folders = fl.state.folders ?? [];
-			if (sub === "list") {
-				const lines = [`working folder  ${ctx.cwd}`];
-				for (const [i, f] of folders.entries()) {
-					const note = !fs.existsSync(f) ? " (missing)" : (await gitRoot(fl, f)) ? "" : " (not a git repo)";
-					lines.push(`${i + 1}. ${f}${note}`);
-				}
-				for (const t of fl.state.touchedRepos ?? []) lines.push(`   ${t} (edited in this flow)`);
-				ctx.ui.notify(lines.join("\n"), "info");
-				return;
-			}
-			if (!isKnown(FOLDERS_SUBS, sub)) {
-				ctx.ui.notify(foldersUsage(), "warning");
-				return;
-			}
-			if (!arg) {
-				ctx.ui.notify(`Usage: /folders ${sub} ${sub === "remove" ? "PATH or N" : "PATH"}`, "warning");
-				return;
-			}
-			if (sub === "add") {
-				const abs = path.resolve(ctx.cwd, arg).replace(/\\/g, "/");
-				let isDir = false;
-				try {
-					isDir = fs.statSync(abs).isDirectory();
-				} catch {
-					// not there
-				}
-				if (!isDir) {
-					ctx.ui.notify(`workflow: ${abs} is not a folder`, "warning");
-					return;
-				}
-				if (repoKey(abs) === repoKey(ctx.cwd)) {
-					ctx.ui.notify("workflow: that is already the working folder", "warning");
-					return;
-				}
-				if (folders.some((f) => repoKey(f) === repoKey(abs))) {
-					ctx.ui.notify(`workflow: ${abs} is already added`, "warning");
-					return;
-				}
-				const answer = await askFolderAdd((d) => fl.pi.events.emit("workflow:folder-add", d), ctx.cwd.replace(/\\/g, "/"), abs);
-				if ("error" in answer) {
-					ctx.ui.notify(`workflow: ${abs} not added: ${answer.error}`, "error");
-					return;
-				}
-				let final = abs;
-				if (repoKey(answer.folder) !== repoKey(abs)) {
-					final = path.resolve(ctx.cwd, answer.folder).replace(/\\/g, "/");
-					let finalIsDir = false;
-					try {
-						finalIsDir = fs.statSync(final).isDirectory();
-					} catch {
-						// not there
-					}
-					if (!finalIsDir) {
-						ctx.ui.notify(`workflow: ${final} is not a folder`, "warning");
-						return;
-					}
-					if (repoKey(final) === repoKey(ctx.cwd)) {
-						ctx.ui.notify("workflow: that is already the working folder", "warning");
-						return;
-					}
-				}
-				const current = fl.state.folders ?? [];
-				if (current.some((f) => repoKey(f) === repoKey(final))) {
-					ctx.ui.notify(`workflow: ${final} is already added`, "warning");
-					return;
-				}
-				fl.state.folders = [...current, final];
-				const addedRoot = await gitRoot(fl, final);
-				if (addedRoot) await joinReviewBase(fl, addedRoot);
-				persist(fl);
-				publishFolders(fl, ctx);
-				updateStatus(fl, ctx);
-				ctx.ui.notify(final === abs ? `workflow: added ${abs}; reloading` : `workflow: added ${final} (for ${abs}); reloading`, "info");
-			} else {
-				const n = /^\d+$/.test(arg) ? Number(arg) - 1 : -1;
-				const i = n >= 0 ? n : folders.findIndex((f) => repoKey(f) === repoKey(path.resolve(ctx.cwd, arg)));
-				if (i < 0 || i >= folders.length) {
-					const touched = (fl.state.touchedRepos ?? []).some((t) => repoKey(t) === repoKey(path.resolve(ctx.cwd, arg)));
-					ctx.ui.notify(touched ? "workflow: that repo was edited in this flow; it leaves when the flow ends" : `workflow: ${arg} is not in the folder list`, "warning");
-					return;
-				}
-				const [gone] = folders.splice(i, 1);
-				fl.state.folders = folders;
-				persist(fl);
-				publishFolders(fl, ctx);
-				updateStatus(fl, ctx);
-				ctx.ui.notify(`workflow: removed ${gone}; reloading`, "info");
-			}
-			await ctx.waitForIdle();
-			await ctx.reload();
-		},
-	});
-
 	fl.pi.registerCommand("flow", {
 		description: "Plan -> execute -> judge workflow with a model per role",
 		getArgumentCompletions: (prefix) => flowCompletions(prefix, { roles: MODEL_ROLES, specOf: (r) => roleSpecOf(fl, r), models: () => fl.lastCtx?.modelRegistry.getAvailable() ?? [] }),

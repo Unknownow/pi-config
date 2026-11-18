@@ -1,4 +1,4 @@
-/** Settings of the worktree extension, read from ~/.pi/agent/worktree.json. Every key is optional. */
+/** Settings of the workspace extension, read from ~/.pi/agent/workspace.json (else the old worktree.json). Every key is optional. */
 
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -18,7 +18,13 @@ export interface WtConfig {
 	rebaseUnpushed: boolean;
 	/** Days a backup ref of a discarded workspace is kept; 0 keeps them forever. */
 	backupDays: number;
+	/** Rules files (AGENTS.md, CLAUDE.md) of added folders: "paths" lists them in the prompt, "full" loads their text. */
+	addedFolderRules: "paths" | "full";
 }
+
+export const CONFIG_FILE = "workspace.json";
+/** The file's name before the extension was renamed; read when workspace.json is missing. */
+export const OLD_CONFIG_FILE = "worktree.json";
 
 export const DEFAULT_LINK = [".pi/git", ".pi/npm", "node_modules"];
 export const DEFAULT_COPY = ["unity/Assets/IecGenerated", "unity/Assets/IecGenerated.meta"];
@@ -39,6 +45,7 @@ export function defaults(workingRepoParent: string): WtConfig {
 		addFolderWorktree: true,
 		rebaseUnpushed: true,
 		backupDays: 30,
+		addedFolderRules: "paths",
 	};
 }
 
@@ -71,6 +78,10 @@ export function mergeConfig(raw: unknown, base: WtConfig): { cfg: WtConfig; warn
 		if (typeof o.backupDays === "number" && Number.isFinite(o.backupDays) && o.backupDays >= 0) cfg.backupDays = o.backupDays;
 		else warnings.push("backupDays must be a number of days, 0 or more");
 	}
+	if (o.addedFolderRules !== undefined) {
+		if (o.addedFolderRules === "paths" || o.addedFolderRules === "full") cfg.addedFolderRules = o.addedFolderRules;
+		else warnings.push(`addedFolderRules must be "paths" or "full"`);
+	}
 	if (o.vscode !== undefined) {
 		if (typeof o.vscode === "boolean") cfg.vscode = o.vscode;
 		else warnings.push("vscode must be true or false");
@@ -88,16 +99,26 @@ export function mergeConfig(raw: unknown, base: WtConfig): { cfg: WtConfig; warn
 	return { cfg, warnings };
 }
 
-export function loadConfig(agentDir: string, workingRepoParent: string): { cfg: WtConfig; warning?: string } {
+/**
+ * The config of `agentDir`: workspace.json, else worktree.json (then `notice` asks to rename it; the caller shows it once),
+ * else the defaults.
+ */
+export function loadConfig(agentDir: string, workingRepoParent: string): { cfg: WtConfig; warning?: string; notice?: string } {
 	const base = defaults(workingRepoParent);
-	const file = path.join(agentDir, "worktree.json");
+	let name = CONFIG_FILE;
+	let notice: string | undefined;
+	if (!fs.existsSync(path.join(agentDir, name)) && fs.existsSync(path.join(agentDir, OLD_CONFIG_FILE))) {
+		name = OLD_CONFIG_FILE;
+		notice = `workspace: read ${OLD_CONFIG_FILE}; rename it to ${CONFIG_FILE} (in ${slash(agentDir)})`;
+	}
+	const file = path.join(agentDir, name);
 	if (!fs.existsSync(file)) return { cfg: base };
 	let raw: unknown;
 	try {
 		raw = JSON.parse(fs.readFileSync(file, "utf8"));
 	} catch (e) {
-		return { cfg: base, warning: `worktree.json: bad JSON, using defaults (${(e as Error).message})` };
+		return { cfg: base, warning: `${name}: bad JSON, using defaults (${(e as Error).message})`, ...(notice ? { notice } : {}) };
 	}
 	const { cfg, warnings } = mergeConfig(raw, base);
-	return warnings.length ? { cfg, warning: `worktree.json: ${warnings.join("; ")}` } : { cfg };
+	return { cfg, ...(warnings.length ? { warning: `${name}: ${warnings.join("; ")}` } : {}), ...(notice ? { notice } : {}) };
 }

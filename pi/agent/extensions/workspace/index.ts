@@ -1,5 +1,6 @@
 /**
- * /wt: run several pi sessions on the same repos without copying them. `/wt new <name>` makes a git
+ * The workspace extension: the session's folders and worktree sets. `/folders` and `--add-dir` keep the session's added folders
+ * (added-folders.ts; the only writer of the `session-folders` entry). /wt: run several pi sessions on the same repos without copying them. `/wt new <name>` makes a git
  * worktree for the working repo and every added folder, links or copies the gitignored files, and opens
  * a new terminal window (or VS Code terminal) running pi there. `/wt open <name>` reopens a set, `/wt done` moves the session home and removes its set, `/wt clean` removes everything that is safe to remove.
  * `/wt update` fast-forwards a set to its base branches; a session inside a set does that at startup. See README.md.
@@ -12,10 +13,14 @@ import { parseAddRepo, parseCreate, parseRemove } from "./create-event.ts";
 import { CURRENT_SESSION_VERSION, getAgentDir, SessionManager, type ExtensionAPI, type ExtensionCommandContext, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_LINK, loadConfig, type WtConfig } from "./config.ts";
 import { isLink, unlinkLink } from "./files.ts";
-import { foldersFromEntries, keepFolders } from "./folders.ts";
+import { keepFolders } from "./folders.ts";
+import { registerFolders } from "./added-folders.ts";
+import { remapFolders, type FolderRepo } from "./remap.ts";
+import { FOLDERS_ENTRY, foldersEntry, foldersForCwd } from "../shared/session-folders.ts";
+import { repoKey } from "../shared/repos.ts";
 import { sessionLines, pidAlive, readLive, removeLive, setInUse, writeLive, type LiveEntry } from "./live.ts";
 import { readMeta, writeMeta } from "./meta.ts";
-import { latestSession, newSessionFile } from "./sessions.ts";
+import { appendCustomEntry, latestSession, newSessionFile } from "./sessions.ts";
 import { sharedProblem } from "./shared-guard.ts";
 import { sendToVscode } from "./vscode-bridge.ts";
 import { mainRepoOf, preflight, withLockRetry, type Gh, type Git } from "./git-ops.ts";
@@ -27,7 +32,7 @@ import { renameSet } from "./rename.ts";
 import { reattach, updateSet, worthNotifying } from "./update.ts";
 import { execRunner } from "./exec.ts";
 import { Progress } from "./progress.ts";
-import { addRepoToSet, build, worktreeForFolder } from "./add-folder.ts";
+import { addRepoToSet, build } from "./add-folder.ts";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { attachDock, publishDock, unpublishDock } from "../shared/dock.ts";
 import { branchOf, checkName, launchSpec, nextFreeName, rootProblem, setRootOf, vscodeTerminalSpec } from "./layout.ts";
@@ -56,15 +61,25 @@ function makeGit(pi: ExtensionAPI, timeout = 60000): Git {
 	});
 }
 
-/** A header-only session file for a new pi session that starts in `cwd`. */
-function freshSessionFile(cwd: string): string {
-	return newSessionFile(cwd, {
+/** A header-only session file for a new pi session that starts in `cwd`; with `folders`, also its `session-folders` entry. */
+function freshSessionFile(cwd: string, folders?: string[]): string {
+	const file = newSessionFile(cwd, {
 		create: (c) => {
 			const m = SessionManager.create(c);
 			return { file: m.getSessionFile(), id: m.getSessionId(), dir: m.getSessionDir() };
 		},
 		version: CURRENT_SESSION_VERSION,
 	});
+	if (folders?.length) appendCustomEntry(file, FOLDERS_ENTRY, foldersEntry(cwd, folders));
+	return file;
+}
+
+let noticeShown = false;
+/** The worktree.json rename notice, once per pi process. */
+function noticeOnce(ctx: Pick<ExtensionContext, "ui">, notice: string | undefined): void {
+	if (!notice || noticeShown) return;
+	noticeShown = true;
+	ctx.ui.notify(notice, "info");
 }
 
 /** Where a launched pi process runs: the original repo of the session's worktree, so no process holds a workspace folder. */
@@ -80,9 +95,32 @@ type SetCtx = Pick<ExtensionContext, "cwd" | "ui" | "hasUI" | "sessionManager">;
 /** What the removal environment needs of a context: the cwd and the added folders. */
 type EnvCtx = Pick<ExtensionContext, "cwd" | "sessionManager">;
 
-/** The folders added to this session, from the workflow's public `session-folders` entry (absolute, forward slashes). */
+/** The folders added to this session, from its `session-folders` entry for the working folder (absolute, forward slashes). */
 function addedFolders(ctx: EnvCtx): string[] {
-	return foldersFromEntries(ctx.sessionManager.getBranch() as { type: string; customType?: string; data?: unknown }[]);
+	return foldersForCwd(ctx.sessionManager.getBranch(), ctx.cwd);
+}
+
+/**
+ * The added folders after the conversation moves to `newCwd`: into the set at `setRoot` (a repo of the set goes to its worktree there)
+ * or `home` (a worktree goes back to its original repo). Plain folders and other repos stay.
+ */
+async function movedFolders(git: Git, ctx: EnvCtx, to: { setRoot: string } | "home", newCwd: string): Promise<string[]> {
+	const folders = addedFolders(ctx);
+	const repos = new Map<string, FolderRepo>();
+	for (const f of folders) {
+		const t = await git(f, ["rev-parse", "--show-toplevel"]);
+		if (t.code !== 0 || !t.stdout.trim()) continue;
+		const top = slash(t.stdout.trim());
+		repos.set(f, { top, main: (await mainRepoOf(git, top)) ?? top });
+	}
+	const checkouts = new Map<string, string>();
+	if (to === "home") for (const r of repos.values()) checkouts.set(repoKey(r.main), r.main);
+	else
+		for (const wt of repoDirsIn(to.setRoot)) {
+			const main = await mainRepoOf(git, wt);
+			if (main) checkouts.set(repoKey(main), wt);
+		}
+	return remapFolders(folders, (f) => repos.get(f) ?? null, checkouts, newCwd, (p) => fs.existsSync(p));
 }
 
 /** `existsSync` is false for app execution aliases such as wt.exe; `lstat` sees them. */
@@ -279,7 +317,7 @@ async function createAndLaunch(pi: ExtensionAPI, ctx: SetCtx, name: string, prog
 	}
 	progress.stage("opening terminal");
 	const git = makeGit(pi);
-	const l = await launch(c.cfg, c.name, await launchCwdOf(git, c.cfg, c.workingTop), c.cwd, c.folders, freshSessionFile(c.cwd));
+	const l = await launch(c.cfg, c.name, await launchCwdOf(git, c.cfg, c.workingTop), c.cwd, c.folders, freshSessionFile(c.cwd, c.folders));
 	const branch = branchOf(c.cfg, c.name);
 	const head = `Worktree set "${c.name}" (branch ${branch}) in ${c.setRoot}`;
 	return { name: c.name, repos: c.repos, branch, cwd: c.cwd, setRoot: c.setRoot, launched: !l.error, text: l.error ?? l.text, report: [head, ...c.lines, l.error ?? l.text].join("\n"), warn: !!l.error };
@@ -330,8 +368,9 @@ async function renameCmd(pi: ExtensionAPI, ctx: ExtensionCommandContext, oldName
 
 /** The config as /wt new sees it: the default root sits next to the working repo. */
 async function configFor(pi: ExtensionAPI, ctx: ExtensionCommandContext): Promise<WtConfig> {
-	const { cfg, warning, parent } = await sessionConfig(makeGit(pi), getAgentDir(), ctx.cwd);
+	const { cfg, warning, notice, parent } = await sessionConfig(makeGit(pi), getAgentDir(), ctx.cwd);
 	cachedParent = parent;
+	noticeOnce(ctx, notice);
 	if (warning) ctx.ui.notify(warning, "warning");
 	return cfg;
 }
@@ -519,7 +558,7 @@ async function openCmd(pi: ExtensionAPI, ctx: ExtensionCommandContext, name: str
 		list = await SessionManager.list(p.cwd);
 	} catch {}
 	const created = Date.parse(readMeta(setRootOf(cfg, name))?.created ?? "");
-	const file = latestSession(list, Number.isNaN(created) ? 0 : created) ?? freshSessionFile(p.cwd);
+	const file = latestSession(list, Number.isNaN(created) ? 0 : created) ?? freshSessionFile(p.cwd, p.folders);
 	const l = await launch(cfg, name, await launchCwdOf(git, cfg, p.cwd), p.cwd, p.folders, file);
 	ctx.ui.notify([`Reopening worktree set "${name}" in ${setRootOf(cfg, name)}`, l.error ?? l.text].join("\n"), l.error ? "warning" : "info");
 }
@@ -558,10 +597,13 @@ async function homeOf(git: Git, ctx: ExtensionCommandContext): Promise<{ repoTop
 
 type UseTarget = { kind: "set"; name: string } | { kind: "original" } | { kind: "new" };
 
-/** Copies this conversation into `mv.targetCwd` and switches to it; `after` runs in the new session. False when the switch was cancelled (a flow is executing). */
+/**
+ * Copies this conversation into `mv.targetCwd` with the added folders `mv.folders` (written as the copy's `session-folders` entry)
+ * and switches to it; `after` runs in the new session. False when the switch was cancelled (a flow is executing).
+ */
 async function moveConversation(
 	ctx: ExtensionCommandContext,
-	mv: { targetCwd: string; label: string; setRepos: string[]; repoTop: string; after?: (nctx: ExtensionCommandContext) => Promise<void> },
+	mv: { targetCwd: string; label: string; setRepos: string[]; repoTop: string; folders: string[]; after?: (nctx: ExtensionCommandContext) => Promise<void> },
 	progress: Progress,
 ): Promise<boolean> {
 	const { targetCwd, label, setRepos, repoTop } = mv;
@@ -570,6 +612,7 @@ async function moveConversation(
 	try {
 		file = cur && fs.existsSync(cur) ? (SessionManager.forkFrom(cur, targetCwd).getSessionFile() ?? "") : freshSessionFile(targetCwd);
 		if (!file) throw new Error("no session file");
+		appendCustomEntry(file, FOLDERS_ENTRY, foldersEntry(targetCwd, mv.folders));
 	} catch (e) {
 		ctx.ui.notify(`could not copy the conversation: ${(e as Error).message}`, "error");
 		return false;
@@ -577,7 +620,7 @@ async function moveConversation(
 	progress.done();
 	const res = await ctx.switchSession(file, {
 		withSession: async (nctx) => {
-			const folders = foldersFromEntries(nctx.sessionManager.getBranch() as { type: string; customType?: string; data?: unknown }[]);
+			const folders = addedFolders(nctx);
 			const missing = setRepos.filter((r) => fold(r) !== fold(repoTop) && !folders.some((f) => fold(f) === fold(r))).map((r) => path.basename(r));
 			const text = `This conversation moved to ${targetCwd} (${label}). Repo paths now: ${[slash(nctx.cwd), ...folders].join(", ")}. Earlier messages refer to the old paths.`;
 			await nctx.sendMessage({
@@ -642,6 +685,7 @@ async function useCmd(pi: ExtensionAPI, ctx: ExtensionCommandContext, name: stri
 	let label: string;
 	let setRepos: string[] = [];
 	let repoTop: string;
+	let setRoot: string | null = null;
 	if (target.kind === "new") {
 		const c = await createSet(pi, ctx, "", progress);
 		if (!c) return;
@@ -649,6 +693,7 @@ async function useCmd(pi: ExtensionAPI, ctx: ExtensionCommandContext, name: stri
 		label = c.name;
 		setRepos = reposOf(c.cfg, c.name);
 		repoTop = c.workingTarget;
+		setRoot = c.setRoot;
 	} else if (target.kind === "original") {
 		const home = await homeOf(git, ctx);
 		if (typeof home === "string") return ctx.ui.notify(home, "error");
@@ -676,9 +721,12 @@ async function useCmd(pi: ExtensionAPI, ctx: ExtensionCommandContext, name: stri
 		targetCwd = within(repoTop);
 		label = `set ${target.name}`;
 		setRepos = repos;
+		setRoot = setRootOf(cfg, target.name);
 	}
 
-	await moveConversation(ctx, { targetCwd, label, setRepos, repoTop }, progress);
+	progress.stage("moving the added folders");
+	const folders = await movedFolders(git, ctx, setRoot ? { setRoot } : "home", targetCwd);
+	await moveConversation(ctx, { targetCwd, label, setRepos, repoTop, folders }, progress);
 }
 
 /** The linked folders (links to the original repo) of a set. */
@@ -734,6 +782,7 @@ async function doneCmd(pi: ExtensionAPI, ctx: ExtensionCommandContext, progress:
 	if (open) return ctx.ui.notify(`Nothing removed:\nUnity Editor open for ${open}; close it first`, "error");
 	const home = await homeOf(git, ctx);
 	if (typeof home === "string") return ctx.ui.notify(home, "error");
+	const folders = await movedFolders(git, ctx, "home", home.targetCwd);
 	await moveConversation(
 		ctx,
 		{
@@ -741,6 +790,7 @@ async function doneCmd(pi: ExtensionAPI, ctx: ExtensionCommandContext, progress:
 			label: "original folders",
 			setRepos: [],
 			repoTop: home.repoTop,
+			folders,
 			after: async (nctx) => {
 				const p = new Progress(nctx.ui, `/wt done ${name}`, truncateToWidth);
 				try {
@@ -764,7 +814,7 @@ async function doneCmd(pi: ExtensionAPI, ctx: ExtensionCommandContext, progress:
 	);
 }
 
-export default function worktree(pi: ExtensionAPI) {
+export default function workspace(pi: ExtensionAPI) {
 	let session: WtSession | null = null;
 	let guardOn = true;
 	let autoUpdate = true;
@@ -779,11 +829,16 @@ export default function worktree(pi: ExtensionAPI) {
 	let liveCtx: ExtensionContext | null = null;
 	let liveTimers: ReturnType<typeof setInterval>[] = [];
 	let unsubStatus: (() => void) | undefined;
-	let unsubFolderAdd: (() => void) | undefined;
 	let unsubCreate: (() => void) | undefined;
 	let unsubRemove: (() => void) | undefined;
 	let unsubAddRepo: (() => void) | undefined;
 	let addFolderCfg: WtConfig | null = null;
+	let rulesMode: WtConfig["addedFolderRules"] = "paths";
+	const folderList = registerFolders(pi, {
+		git: () => makeGit(pi),
+		set: () => (session && addFolderCfg ? { cfg: addFolderCfg, setRoot: session.setRoot } : null),
+		rules: () => rulesMode,
+	});
 	const publishLive = () => {
 		const c = liveCtx;
 		if (!c) return;
@@ -795,7 +850,7 @@ export default function worktree(pi: ExtensionAPI) {
 				updated: new Date().toISOString(),
 				sessionFile: c.sessionManager.getSessionFile() ?? null,
 				cwd: slash(c.cwd),
-				folders: foldersFromEntries(c.sessionManager.getBranch() as { type: string; customType?: string; data?: unknown }[]),
+				folders: folderList.list(),
 				repo: repoRoot,
 				set: session ? slash(session.setRoot) : null,
 				busy,
@@ -853,10 +908,17 @@ export default function worktree(pi: ExtensionAPI) {
 	});
 	pi.on("session_start", async (event, ctx) => {
 		try {
+			await folderList.start(event.reason, ctx);
+		} catch (e) {
+			ctx.ui.notify(`workspace: could not restore the added folders: ${(e as Error).message}`, "warning");
+		}
+		try {
 			const git = makeGit(pi);
 			const sc = await sessionConfig(git, getAgentDir(), ctx.cwd);
 			cachedParent = sc.parent;
+			noticeOnce(ctx, sc.notice);
 			const cfg = sc.cfg;
+			rulesMode = cfg.addedFolderRules;
 			guardOn = cfg.unityGuard;
 			session = await detectSession(git, cfg, ctx.cwd);
 			addFolderCfg = cfg;
@@ -869,34 +931,12 @@ export default function worktree(pi: ExtensionAPI) {
 			repoRoot = t.code === 0 ? slash(t.stdout.trim()) : null;
 		} catch {
 			cachedParent = path.dirname(slash(ctx.cwd));
+			rulesMode = loadConfig(getAgentDir(), cachedParent).cfg.addedFolderRules;
 			session = null;
 			addFolderCfg = null;
 			linkPaths = [];
 			repoRoot = null;
 		}
-		unsubFolderAdd?.();
-		unsubFolderAdd = pi.events.on("workflow:folder-add", (d) => {
-			const req = d as { v?: number; folder?: unknown; claim?: unknown } | null;
-			if (!req || req.v !== 1 || typeof req.folder !== "string" || typeof req.claim !== "function") return;
-			const cfg = addFolderCfg;
-			const sess = session;
-			if (!sess || !cfg || !cfg.addFolderWorktree) return;
-			const folder = req.folder;
-			(req.claim as (p: Promise<unknown>) => void)(
-				(async () => {
-					const progress = new Progress(ctx.hasUI ? ctx.ui : null, `worktree add (${path.basename(sess.setRoot)})`, truncateToWidth);
-					try {
-						const res = await worktreeForFolder(progress.wrap(makeGit(pi)), { cfg, setRoot: sess.setRoot, folder }, progress);
-						if (res && "folder" in res && ctx.hasUI) ctx.ui.notify([`Worktree ready in set "${path.basename(sess.setRoot)}": ${res.folder}`, ...res.lines].join("\n"), "info");
-						return res;
-					} catch (e) {
-						return { error: (e as Error).message };
-					} finally {
-						progress.done();
-					}
-				})(),
-			);
-		});
 		unsubCreate?.();
 		// W1: another extension asks for a set by name (no name prompt, no menus).
 		unsubCreate = pi.events.on("worktree:create", (d) => {
@@ -998,8 +1038,6 @@ export default function worktree(pi: ExtensionAPI) {
 	});
 	pi.on("session_shutdown", (event, ctx) => {
 		stopLive();
-		unsubFolderAdd?.();
-		unsubFolderAdd = undefined;
 		unsubCreate?.();
 		unsubCreate = undefined;
 		unsubRemove?.();
@@ -1039,7 +1077,15 @@ export default function worktree(pi: ExtensionAPI) {
 	});
 	pi.registerCommand("wt", {
 		description: wtDescription(),
-		getArgumentCompletions: (prefix) => wtCompletions(prefix, () => listSets(completionConfig())),
+		getArgumentCompletions: (prefix) =>
+			wtCompletions(prefix, {
+				sets: () => listSets(completionConfig()),
+				// Every link is `<set>/<repo>/<path>`; /wt unlink takes the `<path>`.
+				linked: () => {
+					const root = session ? slash(session.setRoot) : null;
+					return root ? [...new Set(linkPaths.map((p) => p.slice(root.length + 1).split("/").slice(1).join("/")))] : [];
+				},
+			}),
 		handler: async (args, ctx) => {
 			const [sub, ...rest] = args.trim().split(/\s+/);
 			const progress = new Progress(ctx.hasUI ? ctx.ui : null, `/wt ${args.trim()}`, truncateToWidth);

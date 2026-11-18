@@ -50,7 +50,7 @@ after approval runs on its own:
 - **Plan files:** every flow writes its approved plan to `<repo>/.git/pi/plans/<flowId>/plan.md` (plus `status.json`) at approval, after each amendment, at each stage end and when the flow ends. It lives inside the git folder (the first repo's, or `~/.pi/agent/workflow/plans/` without git), so it never shows in `git status`, diffs, branches or PRs. The plan card after a compaction names this file; a missing file is rewritten before its path is given out. Below the plan the file lists the checklist, and a finished flow gets an `## Outcome` footer (`ok` or `failed: ...`; a flow left by switching phase is `abandoned`).
 - **Plan retention:** the `plans` config block (`sync`, `localOnly`, `keepDays`, `keepCount`; defaults `remote`, `[]`, 14, 50). At session start, finished plans beyond the newest `keepCount` and any plan not updated for `keepDays` days are deleted (never the active flow's). `keepDays: 0` means no age limit; `keepCount: 0` deletes a plan as soon as its flow ends. `sync` and `localOnly` control pushing plan refs (below).
 - **Plan refs:** each milestone also commits the plan (`plan.md`, `status.json`) to `refs/pi/plans/<flowId>` in every repo of the flow, built with a temporary index so the work tree, index and branches are untouched. The ref is pushed to the repo's `origin` (else its first remote) without force and without `--no-verify`; a rejected push is redone on top of the remote's commit. `plans.sync: "local"` turns pushing off everywhere; a `plans.localOnly` entry (case-insensitive substring of the normalised remote URL, e.g. `"github.com/Org/private"`) turns it off for matching repos. A host that refuses custom refs, or a failed push, leaves the plan local and warns once per flow. Retention also deletes pruned refs on the remote.
-- **`/flow resume [flowId]`:** picks up an unfinished flow from its plan ref, e.g. on another device. It fetches the plan refs of the working folder's repo and added folders, and lists the unfinished flows (one match is used directly). The flow's other repos are found by remote URL: the working folder and added folders first, then sibling folders of the working repo, then you are asked for a path (empty skips it); found repos are added as folders. Each repo with a clean tree fetches the branch the flow used, switches to it, and fast-forwards it to the remote's commit (so work pushed from the other device is there); a branch that cannot be brought up (diverged local commits) stays as it is with a warning, and a dirty repo stays untouched with a warning. A plan ref never overwrites a newer one: an older snapshot from a restored session is skipped with a warning. The plan, stage, delivery and ticked steps are restored and a plan card is sent without starting a turn; send a message to continue. Limits: the code must be on the remote (switch devices at a stage boundary or after a push), and two devices cannot work on one flow at the same time (the last writer wins).
+- **`/flow resume [flowId]`:** picks up an unfinished flow from its plan ref, e.g. on another device. It fetches the plan refs of the working folder's repo and added folders, and lists the unfinished flows (one match is used directly). The flow's other repos are found by remote URL: the working folder and added folders first, then sibling folders of the working repo, then you are asked for a path (empty skips it); found repos join the flow as edited repos (the folder list belongs to the workspace extension), so the judge and the delivery cover them. Each repo with a clean tree fetches the branch the flow used, switches to it, and fast-forwards it to the remote's commit (so work pushed from the other device is there); a branch that cannot be brought up (diverged local commits) stays as it is with a warning, and a dirty repo stays untouched with a warning. A plan ref never overwrites a newer one: an older snapshot from a restored session is skipped with a warning. The plan, stage, delivery and ticked steps are restored and a plan card is sent without starting a turn; send a message to continue. Limits: the code must be on the remote (switch devices at a stage boundary or after a push), and two devices cannot work on one flow at the same time (the last writer wins).
 - **Claims:** while a flow is unfinished, the session writes `claim.json` (pid, host, working folder, time) next to the plan file in the repo's `.git/pi/plans/<flowId>/` and refreshes it every 60 s; it is removed when the flow finishes, is left, or the session ends. `/flow resume` marks flows claimed by another live session in its list (a claim is live when it is from this host, the pid is alive and it is under 180 s old) and refuses to resume one; a stale claim is taken over with a notice. Claims only work on one machine.
 - **Step checklist:** the final plan numbers its steps `**S1.**`, `**S2.**`, ... across the whole plan. The executor ticks finished steps with the `plan_check` tool (execute phase only); the status bar shows `plan done/total`, the judge and the arbiter see the ticks as claims, and the plan card lists only the open steps (of the current stage). A plan without step IDs has no checklist and the card shows none. When `judge` runs with steps of the current stage still unticked, its result ends with a reminder naming them; the verdict is unaffected.
 - **Metrics:** each flow appends to `<plan folder>/metrics.jsonl`, one JSON line per event: `subagent` (role, label, stage, model, `ms`, `bootMs`, turns, tools, tokens, cost, ok, error), `compaction` (reason `handover` or `guard`, `tokensBefore`, `ms`, ok) and a final `flow` line (outcome, ok, per-stage usage). It is local only: not in the plan ref, and deleted with the plan folder. Events from before approval are kept in memory and written to the next approved flow.
@@ -86,7 +86,7 @@ after approval runs on its own:
   the code, and drops the finding only if the code shows the executor is right.
 - **Turning steps back to manual:** set `"autoJudge": "ask"`
   and `"planPrompt": false` for a "say go" hint instead of the Approve menu.
-  `"autopilot": true` skips the routine menus and lets the agent resolve waits itself (see "Autopilot"). `"handoverCompactTokens": 0` turns off compaction at handovers. `"addedFolderRules": "full"` loads the rules files of added folders into the prompt (default `"paths"`: only their paths and sizes are listed). In agents.json, `"explore": { "contextFiles": true }` gives explore subagents the context files. `"returnTo": "off"` stays in execute after a flow ends. `"stageAdvance": "auto"` (default) starts the next stage at once, even after an incomplete delivery or a stage with no changes, with a warning (not after a run you aborted, and never while the stage has open steps, no changes and no judge call); `"ask"` asks first. When `gh` is not on PATH, the workflow looks in the standard GitHub CLI install folders and adds the one it finds to pi's PATH; when there is none, outcomes say the PR state is unknown.
+  `"autopilot": true` skips the routine menus and lets the agent resolve waits itself (see "Autopilot"). `"handoverCompactTokens": 0` turns off compaction at handovers. (`addedFolderRules` moved to the workspace extension's `workspace.json`; an old key here is ignored.) In agents.json, `"explore": { "contextFiles": true }` gives explore subagents the context files. `"returnTo": "off"` stays in execute after a flow ends. `"stageAdvance": "auto"` (default) starts the next stage at once, even after an incomplete delivery or a stage with no changes, with a warning (not after a run you aborted, and never while the stage has open steps, no changes and no judge call); `"ask"` asks first. When `gh` is not on PATH, the workflow looks in the standard GitHub CLI install folders and adds the one it finds to pi's PATH; when there is none, outcomes say the PR state is unknown.
 
 ## The plan, the judge and the arbiter
 
@@ -245,15 +245,15 @@ The test phase and its fix loop are gone. Test in normal mode with `test_run` (a
 
 ## Public contract for other extensions
 
-Other extensions (the worktree extension in this repo) may rely on exactly these, and on nothing else of the workflow. The workflow never refers to the worktree extension: it has no import of it and no knowledge of its files (`boundary.test.ts` checks this). It uses the agents extension (`../agents/`: config, sub-agent runner, run rendering) and `../shared/`.
+Other extensions (the workspace extension in this repo) may rely on exactly these, and on nothing else of the workflow. The workflow never refers to the workspace extension: it has no import of it and no knowledge of its files (`boundary.test.ts` checks this). It uses the agents extension (`../agents/`: config, sub-agent runner, run rendering) and `../shared/`.
 
-- **K1. `session-folders` entry.** `customType: "session-folders"`, data `{ "v": 1, "cwd": "<working folder, forward slashes>", "folders": ["<absolute, forward slashes>", ...] }`. The workflow is the only writer. It appends one whenever the added folders change, and at every session start (not reload) when the newest one is missing or differs. Readers use the newest entry on the branch; none means no added folders.
-- **K1b. Folder follow rule.** At session start (not reload), when saved state exists and the newest `session-folders` entry names another working folder than the current one, each added folder inside a git repo is replaced by the same path in the one worktree of that repo that sits next to the working folder's repo (same parent folder), if it exists. Plain folders, folders without exactly one such worktree and missing targets stay. A result equal to the working folder is dropped. A notice lists the moves.
+- **K1. `session-folders` entry.** Owned by the workspace extension (its only writer; `../workspace/README.md`). The workflow only reads it, with `foldersForCwd` (`../shared/session-folders.ts`, through `existingFolders(ctx)` in `flow/diff.ts`): the newest entry when it names the working folder, folders that no longer exist left out. A repo of a folder first seen while executing gets a lazy review base (`joinNewRepos`: where its branch left the base branch) before the judge and before a delivery, so commits made in it earlier are reviewed too.
+- **K1b. Folder follow rule.** Moved to the workspace extension.
 - **K2. Switch guard.** `session_before_switch` (`new` and `resume`) is cancelled while the phase is execute and a plan is approved, with the notice "a flow is executing; finish it or leave it with /flow off before switching sessions".
-- **K3. CLI flags.** `--add-dir` takes absolute folders joined by `;` on Windows and `:` elsewhere (applied at startup only, not again after a session switch); `--flow plan|execute|off` sets the start phase.
+- **K3. CLI flags.** `--flow plan|execute|off` sets the start phase. (`--add-dir` belongs to the workspace extension.)
 - **K4. `workflow:status` event.** `pi.events.emit("workflow:status", { v: 1, phase: "off"|"discuss"|"plan"|"execute", flowId?, title?, stage?, stages?, done?, total?, waiting?, judging?, delivery: { mergeMethod, deleteBranch } })`, emitted when the payload changes. `done` and `total` count the non-human plan steps and `waiting: true` marks a wait for a person; all three appear only while executing an approved plan. `judging: "plan" | "discussion"` is present while an automatic judge gate runs.
 - **K5. Shell parser.** Moved to `../shared/readonly-bash.ts` (D37); other extensions import it from there, never from `workflow/`.
-- **K6. `workflow:folder-add` event.** `/folders add` emits `pi.events.emit("workflow:folder-add", { v: 1, cwd, folder, claim })` after its checks (`cwd` and `folder` absolute, forward slashes). A listener calls `claim(promise)` synchronously during the emit; the promise resolves to `{ folder }` (use this path instead), `{ error }` (cancel the add) or `null` (no opinion). Late claims are ignored. The workflow waits for all claims for at most 300 s; an error, a rejection or the timeout cancels the add, otherwise the first `{ folder }` replaces the path (and passes the same checks again). No listener means the path is used as given.
+- **K6. `workflow:folder-add` event.** Removed: `/folders add` is the workspace extension's, which maps a repo to its worktree in the set itself.
 - **K7. Repo helpers.** Moved to `../shared/repos.ts` (D37).
 - **K8. Run cards.** Moved to `../shared/runs.ts` (D37); `view.ts` builds the workflow widget on them (`FlowRun` adds the stage). The agents extension's finished runs reach a flow only through `agents:subagent-finished`.
 
@@ -362,17 +362,17 @@ next run starts.
 | `/flow model [role] [provider/id[:thinking]]` | set a workflow role's model (discuss, plan, execute, commit, arbiter, escalate) and save it to workflow.json; left out, it lists the roles, the models with auth and the thinking levels (Tab completes model IDs). explore, advisor, runner, judge and critic are set with `/agents model` |
 | `/flow reload` | re-read workflow.json |
 | `pi --flow execute` (`plan`, `off`) | start a session in a given phase |
-| `/folders add <path>` / `remove <path\|n>` / `list` | folders that are part of this session (reloads Pi); Tab completes folder paths after `add` and folder numbers after `remove`; other extensions may replace or refuse the folder on `add` (K6) |
-| `pi --add-dir <path>` | start a session with extra folders (`;` separates several on Windows, `:` elsewhere) |
 
 ## Several repos
 
 A session has one working folder, but a flow can span more repos. The flow's repos are the working
-folder's repo, the repos of the folders you add (`/folders add`, `--add-dir`; saved with the session),
-and any repo where the executor changed a file with `edit` or `write`.
+folder's repo, the repos of the folders you add (`/folders add`, `--add-dir`: the workspace extension, see
+`../workspace/README.md`), and any repo where the executor changed a file with `edit` or `write`.
 
-- The agent's prompt lists the extra folders and says to use absolute paths there. Their
-  `AGENTS.md`/`CLAUDE.md` files are not loaded: the prompt lists their paths and sizes and tells the agent to read a folder's files before it plans or changes anything there (`addedFolderRules: "full"` loads them as before). Skills and prompts are loaded.
+- The workspace extension's `workspace` prompt section lists the working folder and the added folders (and their rules
+  files). The workflow adds its own `workflowRepos` section with the repos edited in this flow beyond those (empty when
+  there are none); it is set on every turn just before the `workflow` section, so the sections never move. The status
+  bar shows `+N edited repos` for them; `+N folders` is the workspace extension's.
 - The judge reviews every repo of the flow in one diff, each repo's part headed `### Repo <root>` (agents' `fitDiffs`), and
   re-reviews compare each repo with its last round.
 - The executor commits, pushes and opens a pull request per repo; a merge or protected push is gated on that repo's own passed tree. Each command
@@ -383,8 +383,7 @@ and any repo where the executor changed a file with `edit` or `write`.
 Limits: `cd` does not move the guard when the command text has `$(…)`, backticks, or parentheses
 outside quotes (such commands are checked against the working folder's branch); changes made
 only through `bash` in an unlisted repo are not noticed (add the folder);
-extensions in the added folders' `.pi/extensions` are not loaded; after `/resume`, run `/reload`
-to pick up that session's folder skills.
+extensions in the added folders' `.pi/extensions` are not loaded.
 
 ## Prompt is too long
 
@@ -404,11 +403,11 @@ Ns`. The idle timer pauses while a tool runs, so a long build is not cut off. `0
 
 ## Completions
 
-`/flow ` offers every subcommand with a description (`commands.ts`), then the second level: `plan force`, `autopilot on|off`, `critic cancel`, and `model <role> <provider/id>[:thinking]` (roles, models with auth, thinking levels). `/folders ` offers `add` (folders of the typed path), `remove` (the added folders by number) and `list`.
+`/flow ` offers every subcommand with a description (`commands.ts`), then the second level: `plan force`, `autopilot on|off`, `critic cancel`, and `model <role> <provider/id>[:thinking]` (roles, models with auth, thinking levels). (`/folders` completions are the workspace extension's.)
 
 ## Code layout
 
-`index.ts` is only the wiring: it creates the session's `Flow` and registers the flags, then calls `registerTools`, `registerHooks` and `registerCommands`, in that order. `Flow` (`flow/context.ts`) is the one shared context: `pi`, the config, the persisted `FlowState` (`fl.state`), the view and every other piece of session state, some grouped (`fl.notify`, `fl.plan` for the plan folders, `fl.claim`, `fl.live`, `fl.wait`). The code in `flow/` is plain exported functions that take `fl: Flow` first; the modules call each other through imports, and only at run time.
+`index.ts` is only the wiring: it creates the session's `Flow` and registers the `--flow` flag, then calls `registerTools`, `registerHooks` and `registerCommands`, in that order. `Flow` (`flow/context.ts`) is the one shared context: `pi`, the config, the persisted `FlowState` (`fl.state`), the view and every other piece of session state, some grouped (`fl.notify`, `fl.plan` for the plan folders, `fl.claim`, `fl.live`, `fl.wait`). The code in `flow/` is plain exported functions that take `fl: Flow` first; the modules call each other through imports, and only at run time.
 
 | `flow/` module | What it holds |
 |---|---|
@@ -427,7 +426,6 @@ Ns`. The idle timer pauses while a tool runs, so a long build is not cut off. `0
 | `plan-gate.ts` | the approval menu and the automatic plan judge |
 | `discussion-gate.ts` | the critic's review of the agreed list before the plan phase |
 | `merge.ts` | merge checks and `stageDone` |
-| `folders.ts` | `--add-dir` and following the working folder to another checkout |
-| `commands.ts` | `registerCommands`: `/folders`, `/flow` and the status text |
+| `commands.ts` | `registerCommands`: `/flow` and the status text |
 
-The other files in this folder are pure modules (`gates.ts`, `asks.ts`, `waits.ts`, `agent-end.ts`, `view.ts`, …) that the `flow/` modules use. `wiring.test.ts` checks that `index.ts` registers the same flags, tools, commands and events in the same order; the source-scan tests (`gate-wiring.test.ts`, `ui-guard.test.ts`, `commands.test.ts`, `boundary.test.ts`) read `index.ts` and `flow/*.ts`.
+The other files in this folder are pure modules (`gates.ts`, `asks.ts`, `waits.ts`, `agent-end.ts`, `view.ts`, …) that the `flow/` modules use. `wiring.test.ts` checks that `index.ts` registers the same flags, tools, commands and events in the same order; the source-scan tests (`gate-wiring.test.ts`, `ui-guard.test.ts`, `commands.test.ts`, `boundary.test.ts`) read `index.ts` and `flow/*.ts`; `folders-read.test.ts` checks that the workflow only reads the folder list (no `workspace` section, no folder state) and that a resumed plan's repos and folders added mid-flow reach the judge diff.

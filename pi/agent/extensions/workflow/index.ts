@@ -31,13 +31,8 @@ export default function workflow(pi: ExtensionAPI) {
 	register(createFlow(pi));
 }
 
-/** Registers everything, in this order: the flags, the tools, the event hooks, the commands. */
+/** Registers everything, in this order: the flag, the tools, the event hooks, the commands. `/folders` and `--add-dir` belong to the workspace extension. */
 function register(fl: Flow): void {
-	fl.pi.registerFlag("add-dir", {
-		description: "Extra folders for this session, separated by ; on Windows and : elsewhere",
-		type: "string",
-	});
-
 	fl.pi.registerFlag("flow", {
 		description: "Workflow phase to start in: discuss, plan, execute, test or off (default from workflow.json)",
 		type: "string",
