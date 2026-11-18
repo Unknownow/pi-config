@@ -80,8 +80,6 @@ export interface FlowState {
 	stageJudged?: boolean;
 	/** Outcomes of the stages delivered so far in this flow. */
 	stageOutcomes?: { text: string; ok: boolean }[];
-	/** Folders added with /folders or --add-dir: absolute, forward slashes, in the order added. */
-	folders?: string[];
 	/** Git roots edited in this flow that are neither the working folder's repo nor an added folder's repo. */
 	touchedRepos?: string[];
 	/** The flow waits for a person (and maybe a check) before it continues; no judge, delivery or stage advance meanwhile. */
@@ -122,9 +120,6 @@ export interface LastKnowledge {
 }
 
 export const STATE_ENTRY = "workflow-state";
-
-/** Public contract K1: the session's working folder and added folders, `{ v: 1, cwd, folders }`. The workflow is its only writer. */
-export const FOLDERS_ENTRY = "session-folders";
 
 /** Display-only entry (never sent to the model) with the token breakdown of a finished flow. */
 export const SUMMARY_ENTRY = "workflow-summary";

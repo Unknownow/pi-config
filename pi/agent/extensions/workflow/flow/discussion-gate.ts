@@ -8,6 +8,7 @@ import { judgeMetric } from "../metrics.ts";
 import { type ReviewResult, runCritic } from "../../agents/api.ts";
 import type { RunView } from "../../shared/runs.ts";
 import { type Flow } from "./context.ts";
+import { existingFolders } from "./diff.ts";
 import { endReview } from "./judge.ts";
 import { abortGate, lastAssistantText, scheduleIdleNotice } from "./notify.ts";
 import { persist, updateStatus } from "./phase.ts";
@@ -84,7 +85,7 @@ export async function runDiscussionGate(fl: Flow, ctx: ExtensionContext, decisio
 			...discussionCriticRequest({
 				list,
 				transcript: recheck ? since! : since === undefined ? transcript : branchTranscript(branch, fl.cfg.judge.maxDiscussionChars),
-				folders: fl.state.folders ?? [],
+				folders: existingFolders(ctx),
 				recheck: recheck ? { findings: prev!.findings } : undefined,
 				disputes: recheck ? planDisputes(lastAssistantText(ctx)) : undefined,
 			}),

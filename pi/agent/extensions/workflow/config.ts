@@ -129,8 +129,6 @@ export interface WorkflowConfig {
 	 * cache reads 0.1, cache writes 1.25, output 5. All 1 makes the two figures equal.
 	 */
 	tokenWeights: TokenWeights;
-	/** Rules files of added folders: "paths" lists them in the workspace section, "full" loads them into the prompt. */
-	addedFolderRules: "paths" | "full";
 	arbiter: { tools: string[] };
 	/** How flow drives agents' judge and critic; their models, tools, diff limit and knowledge step are agents.json's. */
 	judge: {
@@ -195,7 +193,6 @@ export const DEFAULTS: WorkflowConfig = {
 	planReadOnlyBash: true,
 	planBashAllow: UNITY_PLAN_ALLOW,
 	tokenWeights: { ...DEFAULT_TOKEN_WEIGHTS },
-	addedFolderRules: "paths",
 	arbiter: { tools: ["read", "grep", "find", "ls"] },
 	judge: {
 		maxDiscussionChars: 400_000,
@@ -278,8 +275,8 @@ function parseConfig(file: string): Loaded {
 		const isReturn = (v: unknown): v is WorkflowConfig["returnTo"] => v === "discuss" || v === "plan" || v === "off";
 		if (isReturn(rawObj.returnTo)) config.returnTo = rawObj.returnTo;
 		else config.returnTo = DEFAULTS.returnTo;
-		// Keys of removed settings (the finalize rewrite, the plan recap, the old boolean returnToPlan) are dropped silently.
-		for (const old of ["finalizePlan", "planRecap", "returnToPlan"]) delete (config as unknown as Record<string, unknown>)[old];
+		// Keys of removed settings (the finalize rewrite, the plan recap, the old boolean returnToPlan, addedFolderRules, now a setting of the extension that owns /folders) are dropped silently.
+		for (const old of ["finalizePlan", "planRecap", "returnToPlan", "addedFolderRules"]) delete (config as unknown as Record<string, unknown>)[old];
 		if (!["discuss", "plan", "execute", "off"].includes(config.startPhase)) config.startPhase = DEFAULTS.startPhase;
 		// A delivery that is not an object (the old autoCommit style, null) would crash the first approval.
 		if (!isObject(config.delivery)) config.delivery = DEFAULTS.delivery;
@@ -295,7 +292,6 @@ function parseConfig(file: string): Loaded {
 		// Settings that moved to agents.json (the explore, advisor and runner roles and blocks) are dropped silently.
 		for (const old of ["explore", "advisor"]) delete (config as unknown as Record<string, unknown>)[old];
 		for (const old of ["explore", "advisor", "runner"]) delete (config.roles as unknown as Record<string, unknown>)[old];
-		if (config.addedFolderRules !== "paths" && config.addedFolderRules !== "full") config.addedFolderRules = DEFAULTS.addedFolderRules;
 		for (const k of ["autoJudgeDiscussion", "autoJudgePlan"] as const) if (config[k] !== "off" && config[k] !== "auto") config[k] = DEFAULTS[k];
 		for (const k of ["maxDiscussionJudgeRounds", "maxPlanJudgeRounds"] as const) if (typeof config[k] !== "number" || !Number.isInteger(config[k]) || config[k] < 1) config[k] = DEFAULTS[k];
 		if (typeof config.autopilot !== "boolean") config.autopilot = DEFAULTS.autopilot;

@@ -1,7 +1,7 @@
 // node --experimental-strip-types --test session-folders.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { foldersForCwd, newestFolders } from "./session-folders.ts";
+import { foldersEntry, foldersForCwd, newestFolders, sameFolders } from "./session-folders.ts";
 
 const entry = (cwd: string, folders: string[]) => ({ type: "custom", customType: "session-folders", data: { v: 1, cwd, folders } });
 
@@ -27,4 +27,18 @@ test("newestFolders: [] without a valid entry", () => {
 	assert.deepEqual(newestFolders([]), []);
 	assert.deepEqual(newestFolders([{ type: "custom", customType: "workflow-state", data: { folders: ["D:/x"] } }]), []);
 	assert.deepEqual(newestFolders([{ type: "custom", customType: "session-folders", data: { v: 2, folders: ["D:/x"] } }]), []);
+});
+
+test("foldersEntry: v 1, forward slashes, folders without a trailing slash", () => {
+	assert.deepEqual(foldersEntry("D:\\a", ["D:\\x\\", "D:/y", "D:/"]), { v: 1, cwd: "D:/a", folders: ["D:/x", "D:/y", "D:/"] });
+	assert.deepEqual(foldersForCwd([{ type: "custom", customType: "session-folders", data: foldersEntry("D:\\a", ["D:\\x"]) }], "D:\\a"), ["D:/x"], "readers find what the builder wrote");
+});
+
+test("sameFolders: order matters, slashes do not; case only on Windows", () => {
+	assert.ok(sameFolders(["D:/x", "D:/y"], ["D:\\x\\", "D:/y"]));
+	assert.ok(!sameFolders(["D:/x", "D:/y"], ["D:/y", "D:/x"]));
+	assert.ok(!sameFolders(["D:/x"], ["D:/x", "D:/y"]));
+	assert.ok(sameFolders([], []));
+	assert.ok(sameFolders(["D:/X"], ["d:/x"], "win32"));
+	assert.ok(!sameFolders(["/X"], ["/x"], "linux"));
 });

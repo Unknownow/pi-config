@@ -79,7 +79,6 @@
     "cacheRead": 0.1,
     "cacheWrite": 1.25
   },
-  "addedFolderRules": "paths",
   "arbiter": {
     "tools": [
       "read",

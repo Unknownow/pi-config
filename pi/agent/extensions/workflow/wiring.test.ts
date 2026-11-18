@@ -19,7 +19,6 @@ function permissive<T extends object>(known: T): T {
 }
 
 const EXPECTED: Entry[] = [
-	["flag", "add-dir"],
 	["flag", "flow"],
 	["tool", "wait_for_user", "reason", "check", "step", "kind", "manual"],
 	["tool", "publish_packages", "step"],
@@ -32,7 +31,6 @@ const EXPECTED: Entry[] = [
 	["on", "before_agent_start"],
 	["on", "tool_call"],
 	["on", "tool_result"],
-	["on", "resources_discover"],
 	["on", "tool_result"],
 	["on", "turn_end"],
 	["on", "message_update"],
@@ -46,7 +44,6 @@ const EXPECTED: Entry[] = [
 	["on", "session_before_switch"],
 	["events.on", "agents:subagent-finished"],
 	["on", "session_shutdown"],
-	["command", "folders"],
 	["command", "flow"],
 ];
 

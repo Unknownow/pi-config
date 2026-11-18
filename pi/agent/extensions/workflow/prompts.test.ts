@@ -4,7 +4,7 @@ import { test } from "node:test";
 
 // prompts.ts reads PACE and knowledgeTools from agents/api.ts, which loads the pi packages: stub them first.
 await import("./test-hooks.ts");
-const { ARBITER, COMMIT, DISCUSSION_CRITERIA, EXECUTE_PHASE, FIX_MESSAGE, FIX_TESTS, JUDGE_CRITERIA, MERGE_ARBITER, NO_SLEEP, NO_WORKFLOW, PACE, PLAN_CRITERIA, deliveryGuidance, JUDGE_MAJOR_ONLY, minorFixMessage, phaseSection, PLAN_KICKOFF, planPhase, workspaceSection } = await import("./prompts.ts");
+const { ARBITER, COMMIT, DISCUSSION_CRITERIA, EXECUTE_PHASE, FIX_MESSAGE, FIX_TESTS, JUDGE_CRITERIA, MERGE_ARBITER, NO_SLEEP, NO_WORKFLOW, PACE, PLAN_CRITERIA, deliveryGuidance, JUDGE_MAJOR_ONLY, minorFixMessage, phaseSection, PLAN_KICKOFF, planPhase, workflowReposSection } = await import("./prompts.ts");
 const { ADVISOR, CRITIC, EXPLORE, JUDGE, JUDGE_INCREMENTAL, RUNNER } = await import("../agents/api.ts");
 
 const BATCH = `- Batch tool calls. Each call re-sends the whole conversation, so ten small calls at 150k context re-send 1.5M tokens. Put independent reads and commands in one call (a codemode script, run_code, or one bash command joined with && or ;) and print only what you need. Don't spend a call on something you could have added to the previous one.`;
@@ -55,10 +55,10 @@ test("phaseSection is never empty, so the workflow section is never deleted", ()
 	for (const phase of ["off", "discuss", "plan", "execute"]) assert.ok(phaseSection(phase, SECTION_OPTS).length > 0);
 });
 
-test("workspaceSection with no folders still gives the working folder", () => {
-	const text = workspaceSection("/w", [], [], []);
-	assert.ok(text.startsWith("Working folder: /w"));
-	assert.ok(!text.includes("Added folders"));
+test("workflowReposSection lists the edited repos, and is empty without any", () => {
+	assert.equal(workflowReposSection([]), "");
+	assert.equal(workflowReposSection(["/t", "/u"]), "Repos edited in this flow (the judge reviews them too):\n- /t\n- /u");
+	assert.ok(!workflowReposSection(["/t"]).includes("Working folder"), "the working folder and added folders are the workspace extension's section");
 });
 
 test("execute prompt names deliver and wait_for_user", () => {
@@ -132,21 +132,6 @@ test("deliveryGuidance names the configured settings", () => {
 
 test("EXPLORE sets a budget of tool calls", () => {
 	assert.ok(EXPLORE.includes("about 10 tool calls"));
-});
-
-test("workspaceSection lists rules files sorted by path, after the rule line", () => {
-	const rule = "Rules files of the added folders (not loaded): read a folder's files before you plan or change anything in it.";
-	const text = workspaceSection("/w", ["/a"], [], [{ path: "/b/AGENTS.md", size: 20 }, { path: "/a/AGENTS.md", size: 5 }]);
-	const lines = text.split("\n");
-	const i = lines.indexOf(rule);
-	assert.ok(i > 0);
-	assert.equal(lines[i + 1], "- /a/AGENTS.md (5 characters)");
-	assert.equal(lines[i + 2], "- /b/AGENTS.md (20 characters)");
-});
-
-test("workspaceSection without rules equals the three-argument output", () => {
-	assert.equal(workspaceSection("/w", ["/a"], ["/t"], []), workspaceSection("/w", ["/a"], ["/t"]));
-	assert.ok(!workspaceSection("/w", ["/a"], []).includes("Rules files"));
 });
 
 test("Publish and Mirror steps are in the planner and executor prompts", () => {

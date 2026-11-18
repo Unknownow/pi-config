@@ -135,13 +135,13 @@ test("settings that moved to agents.json are ignored and dropped", () => {
 	assert.deepEqual(c.config.knowledge.roles, ["arbiter"]);
 });
 
-test("addedFolderRules defaults to paths; full is kept, anything else falls back", () => {
-	assert.equal(DEFAULTS.addedFolderRules, "paths");
-	for (const [v, want] of [["full", "full"], ["x", "paths"]] as const) {
-		const f = tmp();
-		fs.writeFileSync(f, JSON.stringify({ addedFolderRules: v }));
-		assert.equal(loadConfig(f).config.addedFolderRules, want);
-	}
+test("addedFolderRules moved to workspace.json: an old key in workflow.json is dropped silently", () => {
+	assert.equal("addedFolderRules" in DEFAULTS, false);
+	const f = tmp();
+	fs.writeFileSync(f, JSON.stringify({ addedFolderRules: "full" }));
+	const c = loadConfig(f);
+	assert.equal("addedFolderRules" in c.config, false);
+	assert.equal(c.warning, undefined);
 });
 
 test("finalFullReviewRepeatMaxShare defaults to 0.1", () => {

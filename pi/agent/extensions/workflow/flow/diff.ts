@@ -9,6 +9,7 @@ import { parseFindings } from "../gates.ts";
 import { type RepoDiff, collectRepoDiff as collectRepoDiffImpl, citeNames, needsFinalFullReview, shouldSkipRepeatFullReview } from "../../shared/git/repo-diff.ts";
 import { forkBase, defaultRunner, mergedBase, baseFromTree } from "../../shared/git/merge-gate.ts";
 import { repoKey, combineRepoTexts } from "../../shared/repos.ts";
+import { foldersForCwd } from "../../shared/session-folders.ts";
 import { type PlanStatus, planCard } from "../plan-doc.ts";
 import { readRegistry, type BoardEntry, readLive, boardRows } from "../board.ts";
 import { readLocalStatuses, pidAlive, writeReviewRef, deleteReviewRef } from "../plan-store.ts";
@@ -58,9 +59,9 @@ export async function gitRoot(fl: Flow, dir: string): Promise<string | null> {
 	return root;
 }
 
-/** Folders added to the session that still exist. */
-export function existingFolders(fl: Flow): string[] {
-	return (fl.state.folders ?? []).filter((f) => {
+/** The session's added folders (the workspace extension's `session-folders` entry for this working folder) that still exist. */
+export function existingFolders(ctx: Pick<ExtensionContext, "cwd" | "sessionManager">): string[] {
+	return foldersForCwd(ctx.sessionManager.getBranch(), ctx.cwd).filter((f) => {
 		try {
 			return fs.statSync(f).isDirectory();
 		} catch {
@@ -94,7 +95,7 @@ export async function flowRepos(fl: Flow, ctx: ExtensionContext): Promise<RepoRe
 		out.push({ root, dir, changed: false });
 	};
 	add(await gitRoot(fl, ctx.cwd), ctx.cwd);
-	for (const f of existingFolders(fl)) {
+	for (const f of existingFolders(ctx)) {
 		const root = await gitRoot(fl, f);
 		add(root, root ?? f);
 	}
@@ -348,6 +349,16 @@ export async function joinReviewBase(fl: Flow, root: string, lazy = false): Prom
 	}
 }
 
+/**
+ * While executing, every repo of the flow without a review base joins lazily (`joinReviewBase(root, true)`): a folder added with
+ * /folders or moved by /wt since the flow started is only seen here, so commits made in it meanwhile are reviewed too.
+ * Runs before the judge and before a delivery.
+ */
+export async function joinNewRepos(fl: Flow, ctx: ExtensionContext): Promise<void> {
+	if (fl.state.phase !== "execute") return;
+	for (const ref of await flowRepos(fl, ctx)) if (!fl.state.reviewBase?.[repoKey(ref.root)]) await joinReviewBase(fl, ref.root, true);
+}
+
 /** Moves a repo's review base to `commit` and keeps that commit alive under the flow's ref. A failed ref write only warns: the base works until git collects it. */
 export async function setReviewBase(fl: Flow, ctx: ExtensionContext, ref: RepoRef, commit: string): Promise<void> {
 	const key = repoKey(ref.root);
@@ -375,6 +386,7 @@ export async function upstreamBase(fl: Flow, dir: string): Promise<string | unde
  */
 export async function refreshReviewBase(fl: Flow, ctx: ExtensionContext): Promise<string | undefined> {
 	if (fl.state.phase !== "execute") return undefined;
+	await joinNewRepos(fl, ctx);
 	const notes = new Set<string>();
 	for (const ref of await flowRepos(fl, ctx)) {
 		const base = fl.state.reviewBase?.[repoKey(ref.root)];

@@ -19,7 +19,7 @@ test("defaults without file", () => {
 
 test("bad json warns and uses defaults", () => {
 	const dir = tmp();
-	fs.writeFileSync(path.join(dir, "worktree.json"), "{nope");
+	fs.writeFileSync(path.join(dir, "workspace.json"), "{nope");
 	const { cfg, warning } = loadConfig(dir, "D:/projects");
 	assert.equal(cfg.root, "D:/projects/wt");
 	assert.match(warning ?? "", /bad JSON/);
@@ -27,7 +27,7 @@ test("bad json warns and uses defaults", () => {
 
 test("unknown launch falls back to window", () => {
 	const dir = tmp();
-	fs.writeFileSync(path.join(dir, "worktree.json"), JSON.stringify({ launch: "popup", branchPrefix: "x/" }));
+	fs.writeFileSync(path.join(dir, "workspace.json"), JSON.stringify({ launch: "popup", branchPrefix: "x/" }));
 	const { cfg, warning } = loadConfig(dir, "D:/projects");
 	assert.equal(cfg.launch, "window");
 	assert.equal(cfg.branchPrefix, "x/");
@@ -36,7 +36,7 @@ test("unknown launch falls back to window", () => {
 
 test("relative root is kept and flagged", () => {
 	const dir = tmp();
-	fs.writeFileSync(path.join(dir, "worktree.json"), JSON.stringify({ root: "wt" }));
+	fs.writeFileSync(path.join(dir, "workspace.json"), JSON.stringify({ root: "wt" }));
 	const { cfg } = loadConfig(dir, "D:/projects");
 	assert.equal(cfg.root, "wt");
 	assert.ok(rootProblem(cfg.root));
@@ -44,7 +44,7 @@ test("relative root is kept and flagged", () => {
 
 test("vscode false is read", () => {
 	const dir = tmp();
-	fs.writeFileSync(path.join(dir, "worktree.json"), JSON.stringify({ vscode: false }));
+	fs.writeFileSync(path.join(dir, "workspace.json"), JSON.stringify({ vscode: false }));
 	const { cfg, warning } = loadConfig(dir, "D:/projects");
 	assert.equal(cfg.vscode, false);
 	assert.equal(warning, undefined);
@@ -52,7 +52,7 @@ test("vscode false is read", () => {
 
 test("bad vscode warns", () => {
 	const dir = tmp();
-	fs.writeFileSync(path.join(dir, "worktree.json"), JSON.stringify({ vscode: "no" }));
+	fs.writeFileSync(path.join(dir, "workspace.json"), JSON.stringify({ vscode: "no" }));
 	const { cfg, warning } = loadConfig(dir, "D:/projects");
 	assert.equal(cfg.vscode, true);
 	assert.match(warning ?? "", /vscode/);
@@ -61,9 +61,9 @@ test("bad vscode warns", () => {
 test("autoUpdate defaults to true, false is read, a bad value warns", () => {
 	assert.equal(loadConfig(tmp(), "D:/projects").cfg.autoUpdate, true);
 	const dir = tmp();
-	fs.writeFileSync(path.join(dir, "worktree.json"), JSON.stringify({ autoUpdate: false }));
+	fs.writeFileSync(path.join(dir, "workspace.json"), JSON.stringify({ autoUpdate: false }));
 	assert.equal(loadConfig(dir, "D:/projects").cfg.autoUpdate, false);
-	fs.writeFileSync(path.join(dir, "worktree.json"), JSON.stringify({ autoUpdate: "no" }));
+	fs.writeFileSync(path.join(dir, "workspace.json"), JSON.stringify({ autoUpdate: "no" }));
 	const bad = loadConfig(dir, "D:/projects");
 	assert.equal(bad.cfg.autoUpdate, true);
 	assert.match(bad.warning ?? "", /autoUpdate/);
@@ -72,9 +72,9 @@ test("autoUpdate defaults to true, false is read, a bad value warns", () => {
 test("rebaseUnpushed defaults to true, false is read, a bad value warns", () => {
 	assert.equal(loadConfig(tmp(), "D:/projects").cfg.rebaseUnpushed, true);
 	const dir = tmp();
-	fs.writeFileSync(path.join(dir, "worktree.json"), JSON.stringify({ rebaseUnpushed: false }));
+	fs.writeFileSync(path.join(dir, "workspace.json"), JSON.stringify({ rebaseUnpushed: false }));
 	assert.equal(loadConfig(dir, "D:/projects").cfg.rebaseUnpushed, false);
-	fs.writeFileSync(path.join(dir, "worktree.json"), JSON.stringify({ rebaseUnpushed: "no" }));
+	fs.writeFileSync(path.join(dir, "workspace.json"), JSON.stringify({ rebaseUnpushed: "no" }));
 	const bad = loadConfig(dir, "D:/projects");
 	assert.equal(bad.cfg.rebaseUnpushed, true);
 	assert.match(bad.warning ?? "", /rebaseUnpushed/);
@@ -83,9 +83,9 @@ test("rebaseUnpushed defaults to true, false is read, a bad value warns", () => 
 test("backupDays defaults to 30, 0 is accepted, a negative value warns", () => {
 	assert.equal(loadConfig(tmp(), "D:/projects").cfg.backupDays, 30);
 	const dir = tmp();
-	fs.writeFileSync(path.join(dir, "worktree.json"), JSON.stringify({ backupDays: 0 }));
+	fs.writeFileSync(path.join(dir, "workspace.json"), JSON.stringify({ backupDays: 0 }));
 	assert.equal(loadConfig(dir, "D:/projects").cfg.backupDays, 0);
-	fs.writeFileSync(path.join(dir, "worktree.json"), JSON.stringify({ backupDays: -1 }));
+	fs.writeFileSync(path.join(dir, "workspace.json"), JSON.stringify({ backupDays: -1 }));
 	const bad = loadConfig(dir, "D:/projects");
 	assert.equal(bad.cfg.backupDays, 30);
 	assert.match(bad.warning ?? "", /backupDays/);
@@ -94,10 +94,34 @@ test("backupDays defaults to 30, 0 is accepted, a negative value warns", () => {
 test("addFolderWorktree defaults to true, false is read, a bad value warns", () => {
 	assert.equal(loadConfig(tmp(), "D:/projects").cfg.addFolderWorktree, true);
 	const dir = tmp();
-	fs.writeFileSync(path.join(dir, "worktree.json"), JSON.stringify({ addFolderWorktree: false }));
+	fs.writeFileSync(path.join(dir, "workspace.json"), JSON.stringify({ addFolderWorktree: false }));
 	assert.equal(loadConfig(dir, "D:/projects").cfg.addFolderWorktree, false);
-	fs.writeFileSync(path.join(dir, "worktree.json"), JSON.stringify({ addFolderWorktree: "no" }));
+	fs.writeFileSync(path.join(dir, "workspace.json"), JSON.stringify({ addFolderWorktree: "no" }));
 	const bad = loadConfig(dir, "D:/projects");
 	assert.equal(bad.cfg.addFolderWorktree, true);
 	assert.match(bad.warning ?? "", /addFolderWorktree must be true or false/);
+});
+
+test("workspace.json wins; without it the old worktree.json is read with a notice", () => {
+	const dir = tmp();
+	fs.writeFileSync(path.join(dir, "worktree.json"), JSON.stringify({ branchPrefix: "old/" }));
+	const old = loadConfig(dir, "D:/projects");
+	assert.equal(old.cfg.branchPrefix, "old/");
+	assert.match(old.notice ?? "", /read worktree\.json; rename it to workspace\.json/);
+	fs.writeFileSync(path.join(dir, "workspace.json"), JSON.stringify({ branchPrefix: "new/" }));
+	const now = loadConfig(dir, "D:/projects");
+	assert.equal(now.cfg.branchPrefix, "new/");
+	assert.equal(now.notice, undefined);
+	assert.equal(loadConfig(tmp(), "D:/projects").notice, undefined);
+});
+
+test("addedFolderRules: paths by default, full when set, anything else warns", () => {
+	assert.equal(loadConfig(tmp(), "D:/projects").cfg.addedFolderRules, "paths");
+	const dir = tmp();
+	fs.writeFileSync(path.join(dir, "workspace.json"), JSON.stringify({ addedFolderRules: "full" }));
+	assert.equal(loadConfig(dir, "D:/projects").cfg.addedFolderRules, "full");
+	fs.writeFileSync(path.join(dir, "workspace.json"), JSON.stringify({ addedFolderRules: "all" }));
+	const bad = loadConfig(dir, "D:/projects");
+	assert.equal(bad.cfg.addedFolderRules, "paths");
+	assert.match(bad.warning ?? "", /addedFolderRules/);
 });

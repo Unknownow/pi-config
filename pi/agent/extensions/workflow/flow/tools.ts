@@ -23,7 +23,7 @@ import { toolProgress, renderRuns } from "../../agents/api.ts";
 import { deviationBlock } from "../knowledge.ts";
 import { shortModel } from "../../shared/runs.ts";
 import { type Flow, GIT_GUARD_EXTENSION, type ToolReply } from "./context.ts";
-import { collectFlowDiff, flowRepos, git, judge, nextAmendmentNumber, planForJudge, refreshReviewBase } from "./diff.ts";
+import { collectFlowDiff, existingFolders, flowRepos, git, joinNewRepos, judge, nextAmendmentNumber, planForJudge, refreshReviewBase } from "./diff.ts";
 import { flowHasRemote, mergeDue, midFlowMergeRefusal, recordMergeDecision } from "./merge.ts";
 import { askUser } from "./notify.ts";
 import { autopilotOn, currentStages, deliverHintsText, deliverLine, noteAuto, persist, refreshChecklist, updateStatus } from "./phase.ts";
@@ -376,10 +376,11 @@ export function registerTools(fl: Flow): void {
 			const allowed = gitTaskAllowed(fl.state.phase, !!fl.state.approvedPlan);
 			if (!allowed.ok) return reply("git_task works only in normal mode or while executing an approved plan. Nothing changed.");
 			if (!fs.existsSync(GIT_GUARD_EXTENSION)) return reply(`git_task failed: git guard extension not found at ${GIT_GUARD_EXTENSION}`);
+			await joinNewRepos(fl, ctx);
 			const repos = await flowRepos(fl, ctx);
 			const cwd = params.repo ? path.resolve(ctx.cwd, params.repo) : ctx.cwd;
 			if (!fs.existsSync(cwd)) return reply(`git_task failed: ${cwd} does not exist.`);
-			const multi = (fl.state.folders?.length ?? 0) > 0 || (fl.state.touchedRepos?.length ?? 0) > 0;
+			const multi = existingFolders(ctx).length > 0 || (fl.state.touchedRepos?.length ?? 0) > 0;
 			const spec: GitGuardSpec = {
 				roots: multi ? repos.map((r) => r.root) : [],
 				protectedBranches: fl.cfg.protectedBranches,
@@ -635,6 +636,7 @@ export function registerTools(fl: Flow): void {
 			if (fl.state.phase !== "execute" || !plan) return reply("deliver works only while executing an approved plan. Nothing changed.");
 			const tag = params.tag && params.tag.name?.trim() ? { ...params.tag, name: params.tag.name.trim(), move: params.tag.move === true } : undefined;
 			if (!tag) return reply("Give a tag: deliver only creates or moves tags. Commit, push, pull requests and merges are done with git and gh. Nothing changed.");
+			await joinNewRepos(fl, ctx);
 
 			const step = params.step?.trim().toUpperCase() || undefined;
 			const stepText = step ? parseDeliverStep(plan, step) : null;

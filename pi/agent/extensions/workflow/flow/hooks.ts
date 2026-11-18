@@ -1,7 +1,6 @@
 /** The event hooks (turns, tool calls, input, compaction, agent_end, session start and shutdown) and the plan phase's tool rules. */
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { loadProjectContextFiles, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { DEFAULTS, loadConfig } from "../config.ts";
 import { describeRole } from "../../shared/roles.ts";
@@ -22,11 +21,10 @@ import { type FlowSummary, summaryLines, STAGES, emptyStageTokens, emptyFlowUsag
 import { type Flow, type FlowState, OWN_TOOLS, type Phase, STATE_ENTRY, SUMMARY_ENTRY } from "./context.ts";
 import { existingFolders, flowRepos, git, gitRoot, joinReviewBase, planCardReady } from "./diff.ts";
 import { startDiscussionGate } from "./discussion-gate.ts";
-import { applyAddDir, followWorkingFolder } from "./folders.ts";
 import { deliverHandover, ensureGh, onAgentEnd } from "./handover.ts";
 import { midFlowMergeRefusal } from "./merge.ts";
 import { abortGate, scheduleIdleNotice } from "./notify.ts";
-import { approve, blockPlanTools, currentStages, persist, publishFolders, publishRefuse, refilterTools, setPhase, updateStatus } from "./phase.ts";
+import { approve, blockPlanTools, currentStages, persist, publishRefuse, refilterTools, setPhase, updateStatus } from "./phase.ts";
 import { planHousekeeping, planMilestone, recordMetric, stopClaimTimer, stopLiveTimer } from "./plan-files.ts";
 import { finishWait, runWaitCheck, startWaitTimer, stopWaitTimer } from "./wait-points.ts";
 
@@ -81,30 +79,10 @@ export function registerHooks(fl: Flow): void {
 
 	fl.pi.on("before_agent_start", async (event, ctx) => {
 		refilterTools(fl);
-		const folders = existingFolders(fl);
 		const touched = fl.state.touchedRepos ?? [];
 		const opts = event.systemPromptOptions;
-		const listed: { path: string; size: number }[] = [];
-		if (folders.length || touched.length) {
-			const have = new Set(opts.contextFiles.map((f) => repoKey(f.path)));
-			for (const folder of folders) {
-				try {
-					for (const f of loadProjectContextFiles({ cwd: folder, agentDir: getAgentDir() })) {
-						if (have.has(repoKey(f.path))) continue;
-						have.add(repoKey(f.path));
-						if (fl.cfg.addedFolderRules === "full") opts.contextFiles.push(f);
-						else listed.push({ path: f.path, size: f.content.length });
-					}
-				} catch {
-					// an unreadable folder just adds no context files
-				}
-			}
-		}
-		// A section deleted and re-added moves to the end in pi's patch replay, which then no longer matches the prompt
-		// pi-claude-bridge saved (prompt_capture_unresolved). So both sections are always set, in this order.
-		opts.sections.workspace = prompts.workspaceSection(ctx.cwd, folders, touched, listed);
 		const staged = fl.state.phase === "execute" ? currentStages(fl) : undefined;
-		const publishKey = [ctx.cwd, ...existingFolders(fl), ...(fl.state.touchedRepos ?? [])].join("|");
+		const publishKey = [ctx.cwd, ...existingFolders(ctx), ...touched].join("|");
 		if (fl.publishCache?.key !== publishKey) fl.publishCache = { key: publishKey, value: (await flowRepos(fl, ctx)).some((r) => fs.existsSync(path.join(r.root, "scripts", "update-packages.mjs"))) };
 		const canPublish = (fl.state.phase === "plan" || fl.state.phase === "execute") && fl.publishCache.value;
 		const phaseText = prompts.phaseSection(fl.state.phase, {
@@ -112,6 +90,10 @@ export function registerHooks(fl: Flow): void {
 			stage: staged ? stageLine(staged.stages, staged.current) : undefined,
 			delivery: fl.state.phase === "execute" ? prompts.deliveryGuidance(fl.cfg.delivery) + (noMerge(fl.state.approvedPlan ?? "") ? "\n- This plan says Delivery: no merge: do not merge, push to a protected branch or publish; commit, push your branch and open the pull request, then stop there." : "") : undefined,
 		});
+		// A section deleted and re-added moves to the end in pi's patch replay, which then no longer matches the prompt
+		// pi-claude-bridge saved (prompt_capture_unresolved). So both sections are always set, in this order; the working
+		// folder and the added folders are the workspace extension's `workspace` section, never written here.
+		opts.sections.workflowRepos = prompts.workflowReposSection(touched);
 		opts.sections.workflow = phaseText;
 	});
 
@@ -136,7 +118,7 @@ export function registerHooks(fl: Flow): void {
 			const gitTexts = texts.filter((t) => /\bgit\b|\bgh\b/i.test(t.text));
 			if (gitTexts.length === 0) return;
 			// Several repos: a command is checked against the repo it points at (git -C, cd), else the working folder's.
-			const multi = (fl.state.folders?.length ?? 0) > 0 || (fl.state.touchedRepos?.length ?? 0) > 0;
+			const multi = existingFolders(ctx).length > 0 || (fl.state.touchedRepos?.length ?? 0) > 0;
 			const roots = multi ? (await flowRepos(fl, ctx)).map((r) => r.root) : [];
 			const branches = new Map<string, string>();
 			const branchOf = async (dir: string) => {
@@ -194,18 +176,6 @@ export function registerHooks(fl: Flow): void {
 		persist(fl);
 		updateStatus(fl, ctx);
 		ctx.ui.notify(`workflow: ${root} joins this flow (edited ${raw})`, "info");
-	});
-
-	// Skills and prompts of the added folders.
-	fl.pi.on("resources_discover", async () => {
-		const skillPaths: string[] = [];
-		const promptPaths: string[] = [];
-		for (const f of existingFolders(fl)) {
-			for (const d of [path.join(f, ".pi", "skills"), path.join(f, ".agents", "skills")]) if (fs.existsSync(d)) skillPaths.push(d);
-			const dir = path.join(f, ".pi", "prompts");
-			if (fs.existsSync(dir)) promptPaths.push(dir);
-		}
-		return { skillPaths, promptPaths };
 	});
 
 	// "repeated error" decision point
@@ -421,12 +391,6 @@ export function registerHooks(fl: Flow): void {
 			fl.view.flowStarted = fl.state.flowStarted;
 			if (fl.state.phase === "discuss" || fl.state.phase === "plan") blockPlanTools(fl);
 			else syncFlowOnlyTools(fl.pi, fl.state.phase);
-			if (event.reason !== "reload") {
-				await followWorkingFolder(fl, ctx);
-				// --add-dir is a launch flag: only the first session of the process applies it, not a later switch or resume.
-				if (event.reason === "startup") applyAddDir(fl, ctx);
-				publishFolders(fl, ctx);
-			}
 			updateStatus(fl, ctx);
 			if (fl.state.phase === "execute" && fl.state.waiting) startWaitTimer(fl);
 			if (event.reason !== "reload") void planHousekeeping(fl, ctx);
@@ -442,8 +406,6 @@ export function registerHooks(fl: Flow): void {
 		fl.view.used = emptyStageTokens();
 		fl.view.flow = emptyFlowUsage();
 		fl.view.flowStarted = undefined;
-		applyAddDir(fl, ctx);
-		publishFolders(fl, ctx);
 		if (start === "off" || !(await setPhase(fl, ctx, start))) updateStatus(fl, ctx);
 		void planHousekeeping(fl, ctx);
 	});
