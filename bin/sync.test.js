@@ -505,6 +505,16 @@ test('export skips and logs a conflict for an uncommitted repo edit; --force ove
   assert.equal(read(ma), 'machine edit\n');
 });
 
+test('a repo hand edit with an unchanged machine copy is kept, not reported as a conflict', () => {
+  const { env } = syncedPair();
+  const ma = path.join(env.mirror, 'extensions', 'demo', 'a.ts');
+  write(ma, 'repo edit\n');
+  const out = run(env, 'export.js');
+  assert.doesNotMatch(out, /conflict/);
+  assert.match(out, /keep\s+extensions\/demo\/a\.ts\s+\(edited in the repo\)/);
+  assert.equal(read(ma), 'repo edit\n');
+});
+
 test('a change pulled from another clone but not imported is not overwritten by export', () => {
   const { env, a, ma } = syncedPair();
   const bare = path.join(env.root, 'remote.git');
