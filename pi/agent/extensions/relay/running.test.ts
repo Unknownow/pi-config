@@ -241,6 +241,24 @@ test("escalation: after the judge rounds the worker switches model; then a re-pl
 	}
 });
 
+test("a re-plan rewrites the Files globs and keeps the guard's snapshot paths, an old flat-array snapshot included", async () => {
+	const w = world({ caps: { judge: 2, escalate: 1, replans: 1 } });
+	try {
+		w.write({ worker: [turn("greeting.txt", "helo\n")], judge: [FAIL] });
+		const id = await start(w, { extra: "\n## Files\n- greeting.txt\n" });
+		const jr = w.engine.get(id)!;
+		await waitFor(() => jr.job.state === "paused", 60_000, "the re-plan wait");
+		const file = path.join(jr.dir, "files.json");
+		fs.writeFileSync(file, JSON.stringify({ files: ["greeting.txt"], snapshot: ["old.txt"] }));
+		const r = await w.engine.replan(id, brief({ repo: w.repo, extra: "\n## Files\n- greeting.txt\n- docs/**\n" }));
+		assert.ok("ok" in r, JSON.stringify(r));
+		assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")), { files: ["greeting.txt", "docs/**"], snapshot: { "*": ["old.txt"] } });
+		await w.engine.stop(id);
+	} finally {
+		w.end();
+	}
+});
+
 // ------------------------------------------------------------------------------------------------ stalls and tool timeouts
 
 test("a stall (no events, no tool) aborts and restarts the worker with -c; a second stall pauses the job and wakes the lead", async () => {

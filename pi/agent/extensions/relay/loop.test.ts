@@ -174,7 +174,7 @@ test("## Files: a diff with paths outside the globs fails the round without a ju
 	try {
 		const prompts: string[] = [];
 		s.ctx.prompt = async (p) => void prompts.push(p);
-		writeFilesGuard(s.ctx.dir, ["src/**"], []);
+		writeFilesGuard(s.ctx.dir, ["src/**"], {});
 		assert.equal(await judgeStep.run(s.job, s.ctx), "work");
 		assert.equal(s.reviews.length, 0, "no judge call");
 		assert.equal(s.job.round, 1, "it counts as a judge round");
@@ -194,14 +194,41 @@ test("## Files: a diff with paths outside the globs fails the round without a ju
 	}
 });
 
+test("## Files: in a two-repo job a snapshot path is allowed in its own repo and outside Files in the other; an approved files item applies in both", async () => {
+	const s = setup();
+	const other = makeRepo();
+	try {
+		const base = git(other.dir, "rev-parse", "HEAD");
+		fs.writeFileSync(path.join(other.dir, "greeting.txt"), "hello\n");
+		git(other.dir, "add", "-A");
+		git(other.dir, "commit", "-q", "-m", "work");
+		s.job.repos.push({ key: "R1", main: other.dir, worktree: other.dir, target: "main", base, branch: "main" });
+		const prompts: string[] = [];
+		s.ctx.prompt = async (p) => void prompts.push(p);
+		// greeting.txt is the snapshot of R0 only: R1 changed it too, and it is outside R1's globs
+		writeFilesGuard(s.ctx.dir, ["src/**"], { R0: ["greeting.txt"] });
+		assert.equal(await judgeStep.run(s.job, s.ctx), "work");
+		assert.equal(s.reviews.length, 0, "no judge call");
+		assert.match(prompts[0], /Files check failed \(round 1\)[\s\S]*- R1: greeting\.txt/);
+		assert.ok(!/- R0: greeting/.test(prompts[0]), "R0 is allowed its snapshot");
+		// an approved files item applies in every repo
+		s.job.state = "judging";
+		s.job.approvals.push({ at: "", item: "greeting.txt", category: "files", by: "lead", reason: "ok" });
+		assert.equal(await judgeStep.run(s.job, s.ctx), "deliver");
+		assert.equal(s.reviews.length, 1);
+	} finally {
+		cleanup(s.dir, other.dir);
+	}
+});
+
 test("## Files: the snapshot paths are part of the globs; a job without a Files section is not limited", async () => {
 	const s = setup();
 	try {
-		writeFilesGuard(s.ctx.dir, ["src/**"], ["greeting.txt"]);
+		writeFilesGuard(s.ctx.dir, ["src/**"], { R0: ["greeting.txt"] });
 		assert.equal(await judgeStep.run(s.job, s.ctx), "deliver");
 		const t = setup();
 		try {
-			writeFilesGuard(t.ctx.dir, undefined, ["x"]);
+			writeFilesGuard(t.ctx.dir, undefined, { R0: ["x"] });
 			assert.equal(await judgeStep.run(t.job, t.ctx), "deliver");
 			assert.ok(!fs.existsSync(path.join(t.ctx.dir, "files.json")));
 		} finally {

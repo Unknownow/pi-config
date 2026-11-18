@@ -7,7 +7,7 @@ import { allowed, classifyCommand, pathCategory } from "./authority.ts";
 import { type AuthorityItem, parseBrief } from "./brief.ts";
 import type { Category } from "./config.ts";
 import { normPath } from "./glob.ts";
-import { fileGlobs, FILES_HINT, outsideFiles } from "./files.ts";
+import { FILES_HINT, globsFor, outsideFiles, readFilesGuard } from "./files.ts";
 import { type Approval, readJob } from "./job.ts";
 import { findReply, inboxPath } from "./mailbox.ts";
 
@@ -17,13 +17,13 @@ export interface GuardFacts {
 	branches: string[];
 	/** The job's base shas. */
 	bases: string[];
-	/** The job's worktrees: a sensitive-path glob is matched against the path inside the worktree that holds it. */
-	worktrees?: string[];
+	/** The job's repos: a sensitive-path glob is matched against the path inside the worktree that holds it; a file's repo key picks its Files globs. */
+	repos?: { key: string; worktree: string }[];
 	sensitivePaths: string[];
 	authority: Partial<Record<Category, AuthorityItem>>;
 	approvals: Approval[];
-	/** The job's `## Files` globs plus the snapshot paths and the approved `files` items; undefined when the brief has no Files section. */
-	files?: string[];
+	/** The Files globs of one repo key (`globsFor`: Files, its snapshot paths, the `*` snapshot paths, the approved `files` items); undefined when the brief has no Files section. */
+	files?: (key: string | undefined) => string[];
 }
 
 const HINT = " Use ask_lead (with `approval` when you need a sensitive action approved); relay does outward actions itself.";
@@ -95,10 +95,13 @@ export function workerCommandProblem(command: string, f: GuardFacts): string | u
 export function workerPathProblem(file: string, cwd: string, f: GuardFacts): string | undefined {
 	const abs = path.resolve(cwd, file);
 	// in a multi-repo set the glob is matched inside the repo that holds the file (".github/workflows/**" has no repo folder in front)
-	const home = (f.worktrees ?? []).map((w) => path.resolve(w)).filter((w) => abs.toLowerCase().startsWith(`${w.toLowerCase()}${path.sep}`)).sort((a, b) => b.length - a.length)[0];
-	const rel = normPath(path.relative(home ?? cwd, abs));
+	const repos = (f.repos ?? []).map((r) => ({ key: r.key, root: path.resolve(r.worktree) }));
+	const home = repos.filter((r) => abs.toLowerCase().startsWith(`${r.root.toLowerCase()}${path.sep}`)).sort((a, b) => b.root.length - a.root.length)[0];
+	const rel = normPath(path.relative(home?.root ?? cwd, abs));
 	if (rel.startsWith("../")) return undefined;
-	if (f.files && outsideFiles([rel], f.files).length) return `${rel} is outside the brief's Files (${f.files.join(", ") || "none"}): ${FILES_HINT} first, or keep to the listed paths.`;
+	// a file under no job worktree is in the one repo of a single-repo job; otherwise only the base globs apply
+	const globs = f.files?.(home ? home.key : repos.length === 1 ? repos[0].key : undefined);
+	if (globs && outsideFiles([rel], globs).length) return `${rel} is outside the brief's Files (${globs.join(", ") || "none"}): ${FILES_HINT} first, or keep to the listed paths.`;
 	const cat = pathCategory(rel, f.sensitivePaths);
 	if (!cat) return undefined;
 	if (allowed(cat, rel, f)) return undefined;
@@ -107,9 +110,10 @@ export function workerPathProblem(file: string, cwd: string, f: GuardFacts): str
 
 /** The changed paths (`git status --porcelain` of each job repo, repo-relative) outside the job's Files, as a warning for the worker; undefined when none. */
 export function filesWarning(changed: { repo: string; paths: string[] }[], f: GuardFacts): string | undefined {
-	if (!f.files) return undefined;
+	const files = f.files;
+	if (!files) return undefined;
 	const multi = changed.length > 1;
-	const out = changed.flatMap((c) => outsideFiles(c.paths, f.files!).map((p) => (multi ? `${c.repo}: ${p}` : p)));
+	const out = changed.flatMap((c) => outsideFiles(c.paths, files(c.repo)).map((p) => (multi ? `${c.repo}: ${p}` : p)));
 	if (!out.length) return undefined;
 	return `Warning: these changed paths are outside the brief's Files, and the judge round fails while they are in the diff:\n${out.map((p) => `- ${p}`).join("\n")}\nRevert them, or ${FILES_HINT}.`;
 }
@@ -131,8 +135,9 @@ export function loadFacts(dir: string): GuardFacts {
 		// no brief: nothing is authorised
 	}
 	const approvals = job?.approvals ?? [];
-	const files = fileGlobs(dir, approvals);
-	return { branches: job?.repos.map((r) => r.branch) ?? [], bases: job?.repos.map((r) => r.base) ?? [], worktrees: job?.repos.map((r) => r.worktree) ?? [], sensitivePaths: sensitive, authority, approvals, ...(files ? { files } : {}) };
+	const guard = readFilesGuard(dir);
+	const files = guard ? (key: string | undefined) => globsFor(guard, approvals, key) ?? [] : undefined;
+	return { branches: job?.repos.map((r) => r.branch) ?? [], bases: job?.repos.map((r) => r.base) ?? [], repos: job?.repos.map((r) => ({ key: r.key, worktree: r.worktree })) ?? [], sensitivePaths: sensitive, authority, approvals, ...(files ? { files } : {}) };
 }
 
 

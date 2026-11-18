@@ -5,7 +5,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { type Brief, appendAmendment, briefFiles, checkBrief, parseBrief, replaceBrief } from "./brief.ts";
-import { readFilesGuard, writeFilesGuard } from "./files.ts";
+import { readFilesGuard, snapshotByRepo, writeFilesGuard } from "./files.ts";
 import { filesOverlap } from "./glob.ts";
 import { budgetState, longToolWall, toolTimeoutMs } from "./budget.ts";
 import { APPROVAL_CATEGORIES, CATEGORIES, type Category, type RelayConfig, repoPolicy, type Size } from "./config.ts";
@@ -1045,7 +1045,7 @@ export class Engine {
 			if (a?.value === "yes" && !job.approvals.some((x) => x.category === c && x.item === (a.specifics ?? "*"))) job.approvals.push({ at: new Date(this.now()).toISOString(), item: a.specifics ?? "*", category: c, by: "lead", reason: "Authority in the re-planned brief", ...(job.followups ? { followup: job.followups } : {}) });
 		}
 		// ## Files follows the re-planned brief; the snapshot paths stay
-		writeFilesGuard(jr.dir, checked.brief.sections.Files !== undefined ? (checked.brief.files ?? []) : undefined, readFilesGuard(jr.dir)?.snapshot ?? job.repos.flatMap((r) => r.leadEdits?.paths.map((p) => p.path) ?? []));
+		writeFilesGuard(jr.dir, checked.brief.sections.Files !== undefined ? (checked.brief.files ?? []) : undefined, readFilesGuard(jr.dir)?.snapshot ?? snapshotByRepo(job.repos));
 		job.replans++;
 		job.round = 0;
 		job.escalated = 0;

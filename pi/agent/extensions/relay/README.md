@@ -72,7 +72,7 @@ The lead may edit up to 40 uncommitted lines or 3 files (`editBudget`), counted 
 
 ### Files enforcement
 
-A brief with a `## Files` section limits the job to those globs, relative to each job repo's root (no section: no limit). Dispatch writes `files.json` in the job dir: the globs plus the paths of the lead's snapshot commit (the worker is never failed for files it did not change); `relay_replan` rewrites the globs from the new brief. The globs in force are `files.json` plus every approved `files` item, read on every check, so an approval applies at once.
+A brief with a `## Files` section limits the job to those globs, relative to each job repo's root (no section: no limit). Dispatch writes `files.json` in the job dir: the globs plus the paths of the lead's snapshot commit, keyed by repo (the worker is never failed for files it did not change; a path snapshotted in repo A is not allowed in repo B). `relay_replan` rewrites the globs from the new brief and keeps the snapshot paths. The globs in force for a repo are the Files globs, its snapshot paths and every approved `files` item, read on every check, so an approval applies at once. An old `files.json` with a flat snapshot list applies to every repo.
 
 - `worker-guard` refuses an `edit`/`write` of a path outside the globs and tells the worker to `ask_lead` with `approval {category: "files", item: <glob>, why}`.
 - After each worker `bash` call, the changed paths (`git status --porcelain -uall` per job repo) outside the globs are appended to the tool result as a warning.
