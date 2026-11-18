@@ -102,7 +102,6 @@ test("not on master: no commit, no import, the reason is logged once", async () 
 	const { handlers } = await load(env);
 	await handlers.session_start({ reason: "startup" }, { hasUI: false });
 	await handlers.session_shutdown({}, { hasUI: false });
-	console.log(subjects(env), readLog(env));
 	assert.equal(subjects(env).length, 1);
 	assert.equal(fs.readFileSync(env.mirrorFile, "utf8"), "v1\n");
 	assert.equal(fs.readFileSync(env.agentFile, "utf8"), "v2\n");

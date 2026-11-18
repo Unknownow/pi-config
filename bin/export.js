@@ -104,6 +104,12 @@ function main() {
       continue;
     }
     if (!FORCE && lib.editedInRepo(state, item.rel, prev)) {
+      // Only the repo copy changed (a hand edit, or a pull not imported yet): nothing to export, no conflict.
+      if (lib.recordedHash(state, item.rel) === lib.sha(bytes)) {
+        console.log(`  keep    ${label}  (edited in the repo)`);
+        kept++;
+        continue;
+      }
       console.log(`  conflict ${label}  (edited in the repo and changed on this machine: kept; commit the edit and run import, or --force to replace it)`);
       kept++;
       continue;

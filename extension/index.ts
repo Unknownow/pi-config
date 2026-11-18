@@ -297,11 +297,13 @@ export default function piConfigSync(pi: ExtensionAPI) {
 
 	/**
 	 * Run `fn` under the cross-window lock and, unless `guard` is false, the repo-state guard.
-	 * A busy lock skips the run; a lost lock stops it before its next git step.
+	 * A busy lock skips the run; a lost lock stops it before its next git step. `waitMs` counts from the
+	 * call, so time spent queued behind this window's earlier jobs is part of it (shutdown waits 10 s in all).
 	 */
 	function locked(label: string, waitMs: number, fn: () => Promise<string>, guard = true): Promise<string> {
+		const deadline = Date.now() + waitMs;
 		return serial(async () => {
-			const lock = await acquire(localDir, { waitMs });
+			const lock = await acquire(localDir, { waitMs: Math.max(0, deadline - Date.now()) });
 			if (!lock) {
 				const holder = lockHolder(localDir);
 				log(repo, `${label}: skipped, lock busy${holder ? ` (pid ${holder.pid ?? "?"}, heartbeat ${Math.round(holder.ageMs / 1000)}s ago)` : ""}`);
