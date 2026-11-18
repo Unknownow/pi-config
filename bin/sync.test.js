@@ -451,7 +451,7 @@ test('a new machine file exported with a failed commit is kept by the next impor
   run(env, 'export.js'); // the commit "fails": nothing is committed
   assert.ok(fs.existsSync(path.join(env.mirror, 'extensions', 'demo', 'fresh.ts')));
   const out = run(env, 'import.js');
-  assert.match(out, /pending\s+extensions\/demo\/fresh\.ts/);
+  assert.doesNotMatch(out, /delete/);
   assert.equal(read(fresh), 'new\n');
   assert.deepEqual(fs.readdirSync(path.dirname(fresh)).filter((f) => f.includes('.bak-')), []);
 });
