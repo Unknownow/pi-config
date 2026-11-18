@@ -68,14 +68,12 @@ test("startup guards, exports unsynced machine changes before the pull, then imp
 
 test("startup does no sync at all when the guard blocks (not master, rebase in progress)", async () => {
 	const order: string[] = [];
-	const logs: string[] = [];
-	const result = await startupSync(fakeDeps(order, { guard: async () => (order.push("guard"), "on branch feature, not master"), log: (l) => void logs.push(l) }), {
+	const result = await startupSync(fakeDeps(order, { guard: async () => (order.push("guard"), "on branch feature, not master") }), {
 		pullOnStart: true,
 		autoImportOnStart: true,
 	});
 	assert.deepEqual(order, ["guard"]);
 	assert.equal(result.ran, false);
-	assert.match(logs.join("\n"), /on branch feature/);
 });
 
 test("startup skips the import when the pull fails, and honours the config switches", async () => {

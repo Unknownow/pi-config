@@ -31,7 +31,7 @@ export interface StartupResult {
 export async function startupSync(deps: StartupDeps, cfg: { pullOnStart: boolean; autoImportOnStart: boolean }): Promise<StartupResult> {
 	const blocked = await deps.guard();
 	if (blocked) {
-		deps.log(`startup: no automatic sync: ${blocked}`);
+		// The guard has logged its reason (once); nothing else runs.
 		return { ran: false, written: 0 };
 	}
 	deps.log(`startup: ${await deps.exportAndCommit()}`);
