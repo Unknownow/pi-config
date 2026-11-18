@@ -1,6 +1,5 @@
 /**
- * Answer to the workflow's `workflow:folder-add` event (K6): inside a set, a git folder that `/folders add`
- * is about to attach is replaced by the repo's worktree in the set (reused, or created on the set's branch).
+ * Called by workspace's `/folders add`: inside a set, a git folder that is about to be attached is replaced by the repo's worktree in the set (reused, or created on the set's branch).
  */
 
 import * as fs from "node:fs";

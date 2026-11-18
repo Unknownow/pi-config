@@ -31,7 +31,7 @@ test("workspaceSection lists every repo with branch, target, base and rules file
 test("workerPrompt includes the Workspace section for the start, a restart and a follow-up alike", () => {
 	const root = tmpDir();
 	const job: any = { cwd: root, briefVersion: 1, repos: [repo("a", root)] };
-	const ctx = { relayDir: path.join(path.dirname(new URL(import.meta.url).pathname.replace(/^\/(\w:)/, "$1")), ""), brief: () => "brief" };
+	const ctx = { relayDir: path.dirname(fileURLToPath(import.meta.url)), brief: () => "brief" };
 	for (const extra of [undefined, "Restart: x", "Follow-up 1 on a finished job: y"]) assert.ok(workerPrompt(ctx, job, extra).includes("## Workspace"));
 	cleanup(root);
 });

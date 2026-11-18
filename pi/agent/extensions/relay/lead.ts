@@ -134,8 +134,13 @@ export function createLead(pi: ExtensionAPI, d: LeadDeps) {
 		}
 	}
 
-	/** Sync `<git common dir>/pi/relay` for completions; undefined outside a git repo. */
+	/** Sync `<git common dir>/pi/relay` for completions, cached per cwd; undefined outside a git repo. */
+	const diskRoots = new Map<string, string | undefined>();
 	const diskRoot = (cwd: string): string | undefined => {
+		if (!diskRoots.has(cwd)) diskRoots.set(cwd, findDiskRoot(cwd));
+		return diskRoots.get(cwd);
+	};
+	const findDiskRoot = (cwd: string): string | undefined => {
 		try {
 			const common = execFileSync("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 2000 }).trim();
 			return common ? path.join(common, "pi", "relay") : undefined;
@@ -530,7 +535,7 @@ export function createLead(pi: ExtensionAPI, d: LeadDeps) {
 			const note = (m: string, level: "info" | "warning" | "error" = "info") => ctx.ui?.notify?.(m, level);
 			if (sub === "on") {
 				const r = await act.turnOn();
-				note(r.ok ? "relay: lead mode on" : `relay: not turned on: ${r.why}`, r.ok ? "info" : "warning");
+				note(r.ok ? "relay: lead mode on" : `relay: not turned on: ${r.why.replace(/^relay: /, "")}`, r.ok ? "info" : "warning");
 				if (r.ok) await leadOn(ctx);
 				paintWidget();
 			} else if (sub === "off") {
