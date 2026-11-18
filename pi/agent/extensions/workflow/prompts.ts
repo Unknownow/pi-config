@@ -202,10 +202,11 @@ Reason: 2-5 lines with evidence (plan step IDs, file:line).`;
 
 /**
  * The `workflow-repos` prompt section: repos the flow edited beyond the working folder and the added folders (those are the
- * workspace extension's section). "" when there are none; it is still set on every turn so the sections keep their order.
+ * workspace extension's section). Never "": pi drops an empty section, and one added later lands at the end of the
+ * prompt, which breaks the fixed order pi-claude-bridge relies on. So with no edited repos it says "none".
  */
 export function workflowReposSection(touched: string[]): string {
-	return touched.length ? ["Repos edited in this flow (the judge reviews them too):", ...touched.map((f) => `- ${f}`)].join("\n") : "";
+	return touched.length ? ["Repos edited in this flow (the judge reviews them too):", ...touched.map((f) => `- ${f}`)].join("\n") : "Repos edited in this flow: none";
 }
 
 /** For the judge and the arbiter: the diff covers several repos. */

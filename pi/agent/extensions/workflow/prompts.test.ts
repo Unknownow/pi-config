@@ -55,8 +55,8 @@ test("phaseSection is never empty, so the workflow section is never deleted", ()
 	for (const phase of ["off", "discuss", "plan", "execute"]) assert.ok(phaseSection(phase, SECTION_OPTS).length > 0);
 });
 
-test("workflowReposSection lists the edited repos, and is empty without any", () => {
-	assert.equal(workflowReposSection([]), "");
+test("workflowReposSection lists the edited repos, and is never empty (pi drops empty sections)", () => {
+	assert.equal(workflowReposSection([]), "Repos edited in this flow: none");
 	assert.equal(workflowReposSection(["/t", "/u"]), "Repos edited in this flow (the judge reviews them too):\n- /t\n- /u");
 	assert.ok(!workflowReposSection(["/t"]).includes("Working folder"), "the working folder and added folders are the workspace extension's section");
 });
