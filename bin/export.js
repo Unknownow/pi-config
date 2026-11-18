@@ -11,8 +11,14 @@
  * edited one). More than 20 deletions, or over 25% of the recorded files, need
  * --allow-deletes; without it nothing is deleted and the exit code is 2.
  *
- * A repo file edited since the last sync is kept, not overwritten: finish the
- * edit, import it, or run with --force to replace it with this machine's copy.
+ * A repo file edited since the last sync is never overwritten or deleted by export. A repo
+ * edit is a file under pi/agent/ whose content differs from its sync record (with no record:
+ * from HEAD). When this machine's copy differs too, export skips the file and prints
+ * `conflict <path>`: finish the edit, commit it and import, or run with --force to replace it
+ * with this machine's copy. A file that differs from HEAD but matches its record is a pending
+ * machine export (written earlier, not committed yet) and is updated normally. A file pulled
+ * from another machine but not yet imported (working tree = HEAD, differs from the record)
+ * stays protected.
  *
  *   node bin/export.js            capture
  *   node bin/export.js --dry-run  show what would change, write nothing
@@ -98,7 +104,7 @@ function main() {
       continue;
     }
     if (!FORCE && lib.editedInRepo(state, item.rel, prev)) {
-      console.log(`  keep    ${label}  (edited in the repo: run import to take the repo's copy, or --force to replace it)`);
+      console.log(`  conflict ${label}  (edited in the repo and changed on this machine: kept; commit the edit and run import, or --force to replace it)`);
       kept++;
       continue;
     }
@@ -148,7 +154,7 @@ function main() {
     }
   }
 
-  const keptNote = (kept ? `, ${kept} kept (edited in the repo)` : '') + (skipped ? `, ${skipped} skipped (possible secrets — not synced)` : '');
+  const keptNote = (kept ? `, ${kept} in conflict (edited in the repo)` : '') + (skipped ? `, ${skipped} skipped (possible secrets — not synced)` : '');
   if (DRY) {
     console.log(`\nDry run — ${changed} file(s) would change, ${del.toDelete.length} would be deleted, ${same} already current${keptNote}.`);
     if (overCap) process.exitCode = 2;

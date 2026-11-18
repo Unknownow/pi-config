@@ -11,13 +11,16 @@
  * planDeletes below): a file that was synced, is now gone on one side and is
  * unchanged on the other is deleted there too. A file with no record is never
  * deleted, so a machine that never had an extension cannot wipe it elsewhere.
+ *
+ * The committed `HEAD` is the truth import mirrors: loadHead() reads every
+ * `HEAD:pi/agent` file once per run, in working-copy form.
  */
 'use strict';
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
-const { execFileSync } = require('child_process');
+const { spawnSync } = require('child_process');
 
 const AGENT = path.join(os.homedir(), '.pi', 'agent');
 const REPO = path.resolve(__dirname, '..');
@@ -333,6 +336,35 @@ function inventory(root, skipped = []) {
   return items;
 }
 
+/**
+ * The same rules as inventory(), for one path of the mirror (relative, `/` separators):
+ * 'file', 'json', or null when it is out of scope. Import uses it on the paths of HEAD,
+ * where there is no directory to walk.
+ */
+function classify(rel) {
+  const parts = rel.split('/');
+  const name = parts[parts.length - 1];
+  if (parts.some(isJunk)) return null;
+  if (isSecretName(name) && !(parts.length === 1 && DENY_FILES.has(name))) return null;
+  if (parts.length === 1) {
+    if (CONTEXT_FILES.has(name)) return 'file';
+    return name.endsWith('.json') && !DENY_FILES.has(name) ? 'json' : null;
+  }
+  if (rel === 'npm/package.json') return 'json';
+  if (!MIRROR_DIRS.includes(parts[0])) return null;
+  if (parts.slice(0, -1).some((d) => DENY_DIRS.has(d))) return null;
+  return 'file';
+}
+
+/** Parse JSON text, or null when it is not valid. */
+function parseJson(text) {
+  try {
+    return JSON.parse(text);
+  } catch (_) {
+    return null;
+  }
+}
+
 /** Read JSON, or null when missing/unparseable. */
 function readJson(file) {
   try {
@@ -389,21 +421,89 @@ function writeState(state) {
   fs.writeFileSync(STATE, JSON.stringify(state, null, 2) + '\n');
 }
 
-/**
- * Hashes of the file as committed in HEAD: the raw blob and the working-copy form
- * (`--filters` applies the autocrlf/eol rules). Either can match a file on disk.
- */
-function headShas(rel) {
-  const out = new Set();
-  const object = `HEAD:pi/agent/${key(rel)}`;
-  for (const args of [['cat-file', 'blob', object], ['cat-file', '--filters', `--path=pi/agent/${key(rel)}`, object]]) {
-    try {
-      out.add(sha(execFileSync('git', args, { cwd: REPO, stdio: ['ignore', 'pipe', 'ignore'] })));
-    } catch {
-      // not in HEAD
-    }
+let headCache = null;
+
+/** Split the output of `git cat-file --batch` into one Buffer per object, in input order. */
+function splitBatch(out, count) {
+  const bufs = [];
+  let pos = 0;
+  while (bufs.length < count) {
+    const nl = out.indexOf(10, pos);
+    if (nl < 0) throw new Error('unexpected output from git cat-file');
+    const header = out.toString('latin1', pos, nl).split(' ');
+    if (header[1] !== 'blob') throw new Error(`git cat-file: ${header.join(' ')}`);
+    const size = Number(header[2]);
+    bufs.push(out.subarray(nl + 1, nl + 1 + size));
+    pos = nl + 1 + size + 1;
   }
-  return out;
+  return bufs;
+}
+
+function gitOut(args, opts = {}) {
+  const r = spawnSync('git', args, { cwd: REPO, maxBuffer: 1 << 30, ...opts });
+  if (r.error) throw r.error;
+  if (r.status !== 0) throw new Error(`git ${args[0]} failed: ${String(r.stderr).trim()}`);
+  return r.stdout;
+}
+
+/**
+ * Every file of `HEAD:pi/agent`, loaded once per run: Map<key, { buf, shas }>.
+ *   buf   the content in working-copy form (eol attributes applied: `.bat` is CRLF), which
+ *         is the form the sync record and the machine copy hold
+ *   shas  Set of the sha256 of that form and of the raw blob, either can match a file on disk
+ * One ls-tree, one cat-file --batch for the raw blobs, and one checkout-index into a temp dir
+ * (with a temp index) for the working-copy form: the repo's index and working tree are never
+ * touched. A repo with no commit yet gives an empty map; any other git failure throws, so a
+ * failed read can never look like "every file was deleted".
+ */
+function loadHead() {
+  if (headCache) return headCache;
+  const map = new Map();
+  gitOut(['rev-parse', '--git-dir']);
+  if (spawnSync('git', ['rev-parse', '--verify', '-q', 'HEAD'], { cwd: REPO }).status !== 0) {
+    headCache = map;
+    return map;
+  }
+  const prefix = 'pi/agent/';
+  const entries = gitOut(['ls-tree', '-r', '-z', 'HEAD', '--', 'pi/agent']).toString('utf8').split('\0').filter(Boolean)
+    .map((e) => {
+      const tab = e.indexOf('\t');
+      const [, type, oid] = e.slice(0, tab).split(' ');
+      return { type, oid, path: e.slice(tab + 1) };
+    })
+    .filter((e) => e.type === 'blob' && e.path.startsWith(prefix));
+  if (entries.length === 0) {
+    headCache = map;
+    return map;
+  }
+  const raws = splitBatch(gitOut(['cat-file', '--batch'], { input: entries.map((e) => e.oid).join('\n') + '\n' }), entries.length);
+
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-config-head-'));
+  try {
+    const env = { ...process.env, GIT_INDEX_FILE: path.join(tmp, 'index') };
+    gitOut(['read-tree', 'HEAD'], { env });
+    const out = path.join(tmp, 'out');
+    gitOut(['checkout-index', `--prefix=${out}/`, '-z', '--stdin'], { env, input: entries.map((e) => e.path).join('\0') + '\0' });
+    entries.forEach((e, i) => {
+      const buf = fs.readFileSync(path.join(out, ...e.path.split('/')));
+      map.set(e.path.slice(prefix.length), { buf, shas: new Set([sha(buf), sha(raws[i])]) });
+    });
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+  headCache = map;
+  return map;
+}
+
+/** Hashes of a file as committed in HEAD (see loadHead); empty when it is not in HEAD. */
+function headShas(rel) {
+  try {
+    return loadHead().get(key(rel))?.shas ?? new Set();
+  } catch {
+    // No readable HEAD (not a git checkout): nothing counts as committed, so hand edits stay protected.
+    headCache = new Map();
+    return new Set();
+  }
 }
 
 /** The recorded hash of a mirror file; a file marked deleted has none. */
@@ -479,7 +579,7 @@ function pruneEmptyParents(dir, stop) {
 module.exports = {
   planDeletes, tooMany, pruneEmptyParents, recordedHash,
   AGENT, REPO, MIRROR, STATE,
-  readState, writeState, editedInRepo, recordable, sha, key,
+  readState, writeState, editedInRepo, recordable, sha, key, loadHead, classify, parseJson,
   MIRROR_DIRS, DENY_FILES, DENY_DIRS, isSecretName, secretsIn,
   CLAUDE_PLACEHOLDER, REPO_PLACEHOLDER,
   inventory, walk, scrub, resolvePlaceholders, keepMachineKeys, detectClaude,
