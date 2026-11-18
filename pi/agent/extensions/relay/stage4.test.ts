@@ -254,7 +254,7 @@ test("relay_add_repo: a repo joins a running job; the worker is told; the judge 
 		assert.equal(jr.job.repos.length, 2);
 		assert.equal(jr.job.repos[1].target, "main");
 		assert.equal(jr.job.repos[1].base, git(second.dir, "rev-parse", "origin/main"));
-		assert.ok(w.cmds().some((c) => c.type === "steer" && /Repo .* is part of this job/.test(c.message)), "the worker was told");
+		assert.ok(w.cmds().some((c) => c.type === "steer" && c.message.includes("Targets added: " + second.dir + ": main (worktree ")), "the worker was told");
 		assert.match(JSON.stringify(await w.engine.addRepo(id, second.dir, "main")), /already in job/);
 		// the worker's change in the new repo
 		const wtree = (r as any).path as string;
@@ -266,6 +266,33 @@ test("relay_add_repo: a repo joins a running job; the worker is told; the judge 
 		assert.ok(tasks[0].includes("extra.txt"), "the judge diff includes the added repo");
 		assert.equal(git(second.bare!, "show", `${done.job.repos[1].remoteBranch}:extra.txt`), "x", "delivery pushed the added repo");
 		assert.ok(done.job.repos.every((x) => x.remotePushed));
+	} finally {
+		w.end();
+		cleanup(second.dir, second.bare);
+	}
+});
+
+test("relay_add_repo then a restart: the new prompt's Workspace section and brief.md name the repo, with one add-repo amendment", async () => {
+	const second = makeRepo({ "s.txt": "s" + nl, "AGENTS.md": "rules" + nl }, true);
+	const w = world();
+	try {
+		w.write({ worker: [{ hang: true }, turn("greeting.txt")], judge: [PASS] });
+		const id = await start(w);
+		const jr = await running(w, id);
+		const r = await w.engine.addRepo(id, second.dir, "main");
+		assert.ok("ok" in r, JSON.stringify(r));
+		const s2 = await w.engine.send(id, "carry on", "restart", { reset: "keep" });
+		assert.ok("ok" in s2, JSON.stringify(s2));
+		const prompts = w.cmds().filter((c) => c.type === "prompt");
+		const last = prompts[prompts.length - 1].message as string;
+		const section = last.slice(last.indexOf("## Workspace"));
+		assert.ok(section.includes(second.dir.split("\\").join("/")) || section.includes(jr.job.repos[1].worktree), "the Workspace section names the added repo's worktree");
+		assert.ok(section.includes(`branch ${jr.job.repos[1].branch}`));
+		assert.match(section, /AGENTS\.md \(\d+ bytes\)/);
+		const bf = fs.readFileSync(path.join(jr.dir, "brief.md"), "utf8");
+		assert.equal(bf.split("Targets added:").length - 1, 1, "exactly one add-repo amendment");
+		assert.ok(bf.includes(`Targets added: ${second.dir}: main (worktree ${jr.job.repos[1].worktree}, branch ${jr.job.repos[1].branch})`));
+		await ended(w, id);
 	} finally {
 		w.end();
 		cleanup(second.dir, second.bare);

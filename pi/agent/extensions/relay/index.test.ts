@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { test } from "node:test";
+import { SET_REASON } from "./events.ts";
 import { KICKOFF } from "./lead.ts";
 import { listJobs } from "./job.ts";
 import { fakeCtx, makeBus, relayOn } from "./test/fake-api.ts";
@@ -118,9 +119,9 @@ test("the lead's own gh pr merge and git push are logged, never blocked", async 
 	cleanup(dir);
 });
 
-test("in a job-set session: edit is never refused, go passes through, relay_dispatch is refused, no engine is started", async () => {
+for (const setName of ["r1a2b3c", "myset"]) test(`in a ${setName} set session: edit is never refused, go passes through, relay_dispatch is refused, no engine is started`, async () => {
 	const root = tmpDir();
-	const set = path.join(root, "r1a2b3c");
+	const set = path.join(root, setName);
 	fs.mkdirSync(set, { recursive: true });
 	git(set, "init", "-q", "-b", "main");
 	git(set, "config", "user.name", "t");
@@ -135,7 +136,7 @@ test("in a job-set session: edit is never refused, go passes through, relay_disp
 	assert.equal(await edit(r, path.join(set, "z.txt"), ctx), undefined);
 	assert.equal((await input(r, "go", ctx)).action, "continue");
 	const res = await r.tools.get("relay_dispatch").execute("id", { brief: brief({ repo: set }) }, undefined, undefined, ctx);
-	assert.match(res.content[0].text, /job's worktree/);
+	assert.equal(res.content[0].text, SET_REASON);
 	assert.equal(r.lead.engine(), undefined);
 	assert.equal(r.lead.scans(), 0, "a job-set session never scans for jobs to adopt");
 	cleanup(root);

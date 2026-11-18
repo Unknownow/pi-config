@@ -5,6 +5,7 @@
 
 import * as fs from "node:fs";
 import * as os from "node:os";
+import { execFileSync } from "node:child_process";
 import * as path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { parseRoleSpec } from "../shared/roles.ts";
@@ -15,9 +16,9 @@ import { editBudgetProblem, measureEdits } from "./budget.ts";
 import { type RelayConfig, configPath, loadConfig, repoPolicy, saveRole } from "./config.ts";
 import { RELAY_ROLES, relayCompletions, relayDescription } from "./commands.ts";
 import { Engine } from "./engine.ts";
-import { Activation } from "./events.ts";
+import { Activation, SET_REASON } from "./events.ts";
 import { newestFolders } from "../shared/session-folders.ts";
-import { jobRoot } from "./job.ts";
+import { jobRoot, listJobs } from "./job.ts";
 import { type Run, run as realRun } from "./sh.ts";
 import { criticRound } from "./steps/critic.ts";
 import type { EngineDeps } from "./engine.ts";
@@ -133,12 +134,22 @@ export function createLead(pi: ExtensionAPI, d: LeadDeps) {
 		}
 	}
 
-	const offMsg = () => `relay: lead mode is off (${act.reason || "not decided"}); /relay on turns it on.`;
+	/** Sync `<git common dir>/pi/relay` for completions; undefined outside a git repo. */
+	const diskRoot = (cwd: string): string | undefined => {
+		try {
+			const common = execFileSync("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 2000 }).trim();
+			return common ? path.join(common, "pi", "relay") : undefined;
+		} catch {
+			return undefined;
+		}
+	};
+
+	const offMsg = () => (act.inSet ? SET_REASON : `relay: lead mode is off (${act.reason || "not decided"}); /relay on turns it on.`);
 	const off = () => text(offMsg());
 
 	const claimWt = async (event: string, payload: object, timeoutMs: number): Promise<any> => {
 		const c = emitClaims((data) => pi.events.emit(event, data), { v: 1, ...payload }, timeoutMs);
-		if (!c.claimed) return { error: `${event}: no listener (is the worktree extension loaded?)` };
+		if (!c.claimed) return { error: `${event}: no listener (is the workspace extension loaded?)` };
 		const a: any = await c.answer;
 		return a ?? { error: `${event}: no answer` };
 	};
@@ -299,7 +310,7 @@ export function createLead(pi: ExtensionAPI, d: LeadDeps) {
 	// One implementation per action, shared by the tools and the commands.
 	async function doDispatch(ctx: any, p: { brief: string; size?: string; draft?: string; overrides?: any }): Promise<{ id: string; queued: boolean } | { error: string }> {
 		if (!(await leadOn(ctx))) return { error: offMsg() };
-		if (act.jobSet) return { error: "this session is inside a job's worktree; it cannot dispatch jobs." };
+		if (act.inSet) return { error: SET_REASON };
 		const eng = await engineFor(ctx);
 		if ("error" in eng) return { error: eng.error };
 		if (p.size !== undefined && !["small", "normal", "large"].includes(p.size)) return { error: 'size must be "small", "normal" or "large"' };
@@ -313,7 +324,7 @@ export function createLead(pi: ExtensionAPI, d: LeadDeps) {
 	}
 	async function doFollowup(ctx: any, id: string, words: string): Promise<{ ok: true; n: number; queued: boolean } | { error: string }> {
 		if (!(await leadOn(ctx))) return { error: offMsg() };
-		if (act.jobSet) return { error: "this session is inside a job's worktree." };
+		if (act.inSet) return { error: SET_REASON };
 		const eng = await engineFor(ctx);
 		if ("error" in eng) return { error: eng.error };
 		return eng.followup(id, words);
@@ -506,6 +517,10 @@ export function createLead(pi: ExtensionAPI, d: LeadDeps) {
 		getArgumentCompletions: (prefix: string) =>
 			relayCompletions(prefix, {
 				jobs: () => engine?.jobList() ?? [],
+				diskJobs: () => {
+					const root = diskRoot(lastCtx?.cwd ?? d.cwd);
+					return root ? listJobs(root).map((j) => ({ id: j.job.id, state: j.job.state })) : [];
+				},
 				specOf: (role) => (role.startsWith("worker.") ? cfg.roles.worker[role.slice(7) as Size] : cfg.roles.escalate),
 				models: () => lastCtx?.modelRegistry?.getAvailable() ?? [],
 			}),

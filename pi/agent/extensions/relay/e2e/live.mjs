@@ -41,7 +41,9 @@ const cfgFile = path.join(base, "relay.json");
 const provider = process.env.RELAY_E2E_PROVIDER ?? path.join(os.homedir(), ".pi", "agent", "npm", "node_modules", "pi-claude-bridge", "src", "index.ts");
 fs.writeFileSync(cfgFile, JSON.stringify({ repos: { [fwd(repo)]: { merge: "after-pass" } }, active: true, caps: { critic: 2 }, worker: { extensions: [provider] } }));
 
-const pi = spawn(process.env.RELAY_E2E_PI ?? "pi", ["--mode", "rpc", "-ne", "-a", "--model", model, "-e", provider, "-e", path.join(ext, "relay", "index.ts"), "-e", path.join(ext, "worktree", "index.ts"), "-e", path.join(ext, "sandbox", "index.ts")], {
+// the worktree extension was renamed workspace: load whichever exists
+const wsExt = fs.existsSync(path.join(ext, "workspace", "index.ts")) ? path.join(ext, "workspace", "index.ts") : path.join(ext, "worktree", "index.ts");
+const pi = spawn(process.env.RELAY_E2E_PI ?? "pi", ["--mode", "rpc", "-ne", "-a", "--model", model, "-e", provider, "-e", path.join(ext, "relay", "index.ts"), "-e", wsExt, "-e", path.join(ext, "sandbox", "index.ts")], {
 	cwd: repo,
 	env: { ...process.env, RELAY_CONFIG: cfgFile },
 	stdio: ["pipe", "pipe", "inherit"],

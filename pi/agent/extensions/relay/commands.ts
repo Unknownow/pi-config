@@ -30,6 +30,8 @@ export interface RelayState {
 	specOf: (role: string) => RoleSpec;
 	/** Models with auth; empty before the first session context. */
 	models: () => { provider: string; id: string; name?: string }[];
+	/** Jobs read from disk (this repo's job folder), for `/relay log`: finished jobs of earlier sessions too. */
+	diskJobs?: () => { id: string; state: string }[];
 }
 
 export function relayCompletions(prefix: string, st: RelayState): AutocompleteItem[] | null {
@@ -39,7 +41,9 @@ export function relayCompletions(prefix: string, st: RelayState): AutocompleteIt
 		const sub = parts[0];
 		if (sub === "model") return roleCompletions("model", parts, RELAY_ROLES, st.specOf, st.models);
 		if (parts.length === 2 && JOB_SUBS.includes(sub)) {
-			const items = st.jobs()
+			const known = new Map(st.jobs().map((j) => [j.id, j]));
+			if (sub === "log") for (const j of safe(() => st.diskJobs?.() ?? []) ?? []) if (!known.has(j.id)) known.set(j.id, j);
+			const items = [...known.values()]
 				.filter((j) => j.id.startsWith(parts[1]))
 				.map((j) => ({ value: `${sub} ${j.id}${sub === "followup" || sub === "log" ? " " : ""}`, label: j.id, description: j.state }));
 			return items.length > 0 ? items : null;

@@ -29,7 +29,7 @@ test("relay imports agents only through agents/api.ts", () => {
 	assert.ok(imports().some((i) => /\.\.\/agents\/api\.ts$/.test(i.spec)), "relay uses agents through api.ts");
 });
 
-test("relay imports nothing from workflow, worktree, sandbox, quiet-tools or markdown-view", () => {
-	const bad = imports().filter((i) => /\.\.\/(workflow|worktree|sandbox|quiet-tools|markdown-view)(\/|$)/.test(i.spec));
+test("relay imports nothing from workflow, worktree, workspace, sandbox, quiet-tools or markdown-view", () => {
+	const bad = imports().filter((i) => /\.\.\/(workflow|worktree|workspace|sandbox|quiet-tools|markdown-view)(\/|$)/.test(i.spec));
 	assert.deepEqual(bad, []);
 });
