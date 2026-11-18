@@ -201,7 +201,7 @@ DECISION: MERGE | NO_MERGE | ASK_USER
 Reason: 2-5 lines with evidence (plan step IDs, file:line).`;
 
 /**
- * The `workflowRepos` prompt section: repos the flow edited beyond the working folder and the added folders (those are the
+ * The `workflow-repos` prompt section: repos the flow edited beyond the working folder and the added folders (those are the
  * workspace extension's section). "" when there are none; it is still set on every turn so the sections keep their order.
  */
 export function workflowReposSection(touched: string[]): string {

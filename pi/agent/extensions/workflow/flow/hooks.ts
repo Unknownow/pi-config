@@ -93,7 +93,7 @@ export function registerHooks(fl: Flow): void {
 		// A section deleted and re-added moves to the end in pi's patch replay, which then no longer matches the prompt
 		// pi-claude-bridge saved (prompt_capture_unresolved). So both sections are always set, in this order; the working
 		// folder and the added folders are the workspace extension's `workspace` section, never written here.
-		opts.sections.workflowRepos = prompts.workflowReposSection(touched);
+		opts.sections["workflow-repos"] = prompts.workflowReposSection(touched);
 		opts.sections.workflow = phaseText;
 	});
 

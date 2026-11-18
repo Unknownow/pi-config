@@ -25,13 +25,20 @@ test("the workflow never assigns the workspace prompt section and keeps no folde
 	}
 });
 
-test("workflowRepos is set on every turn just before the workflow section", () => {
+test("the workflow-repos section is set on every turn just before the workflow section", () => {
 	const hooks = sources.find((s) => s.f === "flow/hooks.ts")!.text;
-	const i = hooks.indexOf("opts.sections.workflowRepos = ");
+	const i = hooks.indexOf(`opts.sections["workflow-repos"] = `);
 	const j = hooks.indexOf("opts.sections.workflow = ");
-	assert.ok(i > 0 && j > i, "workflowRepos comes first");
-	assert.ok(!/\n\s*(if|else)[^\n]*\n?\s*opts\.sections\.workflowRepos/.test(hooks), "it is not conditional");
+	assert.ok(i > 0 && j > i, "workflow-repos comes first");
+	assert.ok(!/\n\s*(if|else)[^\n]*\n?\s*opts\.sections\["workflow-repos"\]/.test(hooks), "it is not conditional");
 	assert.equal(hooks.slice(i, j).split("\n").length, 2, "nothing between the two assignments");
+});
+
+test("every prompt section name matches pi's pattern (lowercase, digits, - and _), or pi refuses the prompt", () => {
+	const hooks = sources.find((s) => s.f === "flow/hooks.ts")!.text;
+	const names = [...hooks.matchAll(/opts\.sections(?:\.(\w+)|\["([^"]+)"\])\s*=/g)].map((m) => m[1] ?? m[2]);
+	assert.ok(names.length >= 2);
+	for (const n of names) assert.match(n, /^[a-z][a-z0-9_-]*$/, n);
 });
 
 const sh = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
