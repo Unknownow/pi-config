@@ -7,7 +7,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { matchesAny, normPath } from "./glob.ts";
+import { matchesAny, normPath, splitScope } from "./glob.ts";
 import type { Approval, Job } from "./job.ts";
 
 export const FILES_GUARD = "files.json";
@@ -51,10 +51,22 @@ export function snapshotByRepo(repos: Job["repos"]): Record<string, string[]> {
 	return Object.fromEntries(repos.flatMap((r) => (r.leadEdits ? [[r.key, r.leadEdits.paths.map((p) => p.path)] as const] : [])));
 }
 
+const slash = (s: string) => s.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+
+/** The glob of a Files entry for repo `key`: a plain entry applies to every repo, a `<repo>: <glob>` entry only to the repo whose key or key's folder name is `<repo>`. */
+function scopedGlob(entry: string, key: string | undefined): string[] {
+	const s = splitScope(entry);
+	if (s.repo === undefined) return [s.glob];
+	if (key === undefined) return [];
+	const k = slash(key);
+	const r = slash(s.repo);
+	return r === k || r === k.slice(k.lastIndexOf("/") + 1) ? [s.glob] : [];
+}
+
 /** The globs of one repo (`key`; undefined: the base list): Files, its snapshot paths, the `"*"` snapshot paths, the approved `files` items. Undefined without a guard. */
 export function globsFor(g: FilesGuard | undefined, approvals: Approval[], key: string | undefined): string[] | undefined {
 	if (!g) return undefined;
-	return [...g.files, ...(key === undefined ? [] : (g.snapshot[key] ?? [])), ...(g.snapshot[ALL_REPOS] ?? []), ...approvals.filter((a) => a.category === "files").map((a) => a.item)];
+	return [...g.files.flatMap((f) => scopedGlob(f, key)), ...(key === undefined ? [] : (g.snapshot[key] ?? [])), ...(g.snapshot[ALL_REPOS] ?? []), ...approvals.filter((a) => a.category === "files").map((a) => a.item)];
 }
 
 /** The job's current globs for repo `key`; undefined when the job has no Files section. */

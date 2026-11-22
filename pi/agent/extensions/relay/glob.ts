@@ -1,5 +1,14 @@
 /** Small glob matcher for repo-relative paths: `**` crosses folders, `*` and `?` stay inside one. */
 
+/** A Files entry may be scoped to one repo: `<repo>: <glob>` (the repo is a folder name or a path; a `D:` drive colon has no space after it). */
+const SCOPED = /^(.+?):\s+(.+)$/;
+
+/** Splits a Files entry into its repo scope (undefined for a plain glob) and the glob. */
+export function splitScope(entry: string): { repo?: string; glob: string } {
+	const m = SCOPED.exec(entry.trim());
+	return m ? { repo: m[1].trim(), glob: m[2].trim() } : { glob: entry.trim() };
+}
+
 const cache = new Map<string, RegExp>();
 
 export function globToRegExp(glob: string): RegExp {
@@ -49,6 +58,8 @@ export function globsOverlap(a: string[], b: string[]): boolean {
 
 /** Whether two file lists (paths or globs) can name the same file: equal, one matches the other, or two globs share a literal directory prefix. */
 export function filesOverlap(a: string[], b: string[]): boolean {
+	a = a.map((x) => splitScope(x).glob);
+	b = b.map((x) => splitScope(x).glob);
 	const dirOf = (g: string) => {
 		const lit = normPath(g).split(/[*?]/)[0];
 		return lit.endsWith("/") ? lit : lit.slice(0, lit.lastIndexOf("/") + 1);

@@ -1,8 +1,11 @@
 /** The brief: a markdown document with `##` sections. Parse, validate, version and amend. */
 
 import { CATEGORIES, type Category, type Size } from "./config.ts";
+import { splitScope } from "./glob.ts";
 
-export const REQUIRED_SECTIONS = ["Goal", "Done when", "Non-goals", "Constraints", "Decisions (locked)", "Design", "Scale", "Verify"] as const;
+export const REQUIRED_SECTIONS = ["Goal", "Done when", "Non-goals", "Constraints", "Decisions (locked)", "Design", "Scale"] as const;
+/** Every section name the parser maps case-insensitively (the required ones plus the optional ones). */
+const KNOWN_SECTIONS = [...REQUIRED_SECTIONS, "Verify", "Targets", "Authority", "Files", "Budget", "Publish", "Depends on"] as const;
 /** A `yes` here needs specifics. */
 export const NEEDS_SPECIFICS: Category[] = ["merge", "publish", "delete", "formats"];
 
@@ -57,6 +60,15 @@ function parseTokens(s: string): number | undefined {
 	return Math.round(Number(m[1]) * (m[2].toLowerCase() === "m" ? 1_000_000 : m[2].toLowerCase() === "k" ? 1000 : 1));
 }
 
+/** The Files entries: one line each; `<repo>: glob, glob` scopes its globs to a repo (kept as `<repo>: <glob>`); commas split the globs. */
+function parseFiles(body: string): string[] {
+	const unq = (s: string) => s.trim().replace(/^`|`$/g, "").trim();
+	return body.split(/\r?\n/).flatMap((line) => {
+		const { repo, glob } = splitScope(unq(bullet(line)));
+		return glob.split(",").map(unq).filter(Boolean).map((g) => (repo === undefined ? g : `${unq(repo)}: ${g}`));
+	});
+}
+
 /** The brief, or the format errors found (a bad Authority value, a Targets line without a branch, a bad Budget). Missing sections are `validateBrief`'s job. */
 export function parseBrief(text: string): Brief | { errors: string[] } {
 	const errors: string[] = [];
@@ -68,7 +80,7 @@ export function parseBrief(text: string): Brief | { errors: string[] } {
 			b.amendments.push({ n: Number(am[1]), by: am[2].toLowerCase() as Amendment["by"], text: [am[3], p.body].filter(Boolean).join("\n") });
 			continue;
 		}
-		const key = REQUIRED_SECTIONS.find((r) => r.toLowerCase() === p.name.toLowerCase()) ?? p.name;
+		const key = KNOWN_SECTIONS.find((r) => r.toLowerCase() === p.name.toLowerCase()) ?? p.name;
 		b.sections[key] = p.body;
 	}
 	b.version = 1 + b.amendments.length;
@@ -109,7 +121,7 @@ export function parseBrief(text: string): Brief | { errors: string[] } {
 		}
 		b.budget = budget;
 	}
-	if (b.sections.Files) b.files = b.sections.Files.split(/[\n,]/).map((s) => bullet(s).replace(/^`|`$/g, "")).filter(Boolean);
+	if (b.sections.Files) b.files = parseFiles(b.sections.Files);
 	if (b.sections["Depends on"]) b.dependsOn = lines(b.sections["Depends on"])[0];
 	if (b.sections.Publish) b.publish = lines(b.sections.Publish).map((s) => s.replace(/^`|`$/g, ""));
 	return errors.length ? { errors } : b;
