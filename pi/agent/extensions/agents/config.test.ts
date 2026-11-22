@@ -78,10 +78,12 @@ test("saveRole rewrites one role and keeps the rest of the file", () => {
 	assert.deepEqual(loadConfig(f).config.roles.advisor, { model: "x/y", thinking: "high" });
 });
 
-test("the shipped agents.json loads to the defaults", () => {
+test("the shipped agents.json loads to the defaults, except the user's role choices", () => {
+	// roles holds the user's model and thinking picks (/agents model, synced by pi-config), so it may differ.
 	const c = loadConfig(path.join(import.meta.dirname, "..", "..", "agents.json"));
 	assert.equal(c.error, undefined);
-	assert.deepEqual(c.config, DEFAULTS);
+	assert.deepEqual(Object.keys(c.config.roles).sort(), Object.keys(DEFAULTS.roles).sort());
+	assert.deepEqual({ ...c.config, roles: DEFAULTS.roles }, DEFAULTS);
 });
 
 test("AGENT_ROLES has judge and critic, so /agents model judge|critic works", () => {
