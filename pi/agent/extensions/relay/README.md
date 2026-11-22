@@ -65,14 +65,14 @@ The lead may edit up to 40 uncommitted lines or 3 files (`editBudget`), counted 
 
 `##` headings in `brief.md`:
 
-- Required: `Goal`, `Done when` (bullets), `Non-goals`, `Constraints`, `Decisions (locked)`, `Design`, `Scale` (numbers; the lead assumes numbers when none are given), `Verify` (commands, one per line; `<repo key>: <cmd>` runs in that repo, any other line in the first repo).
-- `Targets`: one line per repo, `<repo dir or name>: <branch>`.
+- Required: `Goal`, `Done when` (bullets), `Non-goals`, `Constraints`, `Decisions (locked)`, `Design`, `Scale` (numbers; the lead assumes numbers when none are given).
+- `Targets`: one line per repo, `<repo dir or name>: <branch>`. A repo that is neither the lead's repo nor one of its added folders is refused at `relay_dispatch` (add it with `/folders add <path>`, or target the session's worktree of it).
 - `Authority`: one line each for `merge`, `publish`, `comments`, `delete`, `formats`, `deps`: `yes (<specifics>)`, `no` or `n/a`. A `yes` without specifics is invalid for `merge`, `publish`, `delete` and `formats`.
-- Optional: `Budget` (`wall: 120m; tokens: 8M; size: small|normal|large`), `Files` (globs, see below), `Depends on` (stage 4), `Publish` (exact commands, only with `publish: yes`).
+- Optional: `Verify` (cheap static checks or tests the user asked for, commands one per line; `<repo key>: <cmd>` runs in that repo, any other line in the first repo; by default none, and the worker runs no other tests), `Budget` (`wall: 120m; tokens: 8M; size: small|normal|large`), `Files` (globs, see below), `Depends on` (stage 4), `Publish` (exact commands, only with `publish: yes`).
 
 ### Files enforcement
 
-A brief with a `## Files` section limits the job to those globs, relative to each job repo's root (no section: no limit). Dispatch writes `files.json` in the job dir: the globs plus the paths of the lead's snapshot commit, keyed by repo (the worker is never failed for files it did not change; a path snapshotted in repo A is not allowed in repo B). `relay_replan` rewrites the globs from the new brief and keeps the snapshot paths. The globs in force for a repo are the Files globs, its snapshot paths and every approved `files` item, read on every check, so an approval applies at once. An old `files.json` with a flat snapshot list applies to every repo.
+A brief with a `## Files` section limits the job to those globs, relative to each job repo's root (no section: no limit). One line lists globs separated by commas. A line `<repo>: glob, glob` (the repo's folder name or path) applies only to that repo; a line without a repo applies to every repo. Scoped entries stay `<repo>: <glob>` strings in `files.json`, and `globsFor` keeps those whose repo equals the repo key or its folder name (case-insensitive). Dispatch writes `files.json` in the job dir: the globs plus the paths of the lead's snapshot commit, keyed by repo (the worker is never failed for files it did not change; a path snapshotted in repo A is not allowed in repo B). `relay_replan` rewrites the globs from the new brief and keeps the snapshot paths. The globs in force for a repo are the Files globs, its snapshot paths and every approved `files` item, read on every check, so an approval applies at once. An old `files.json` with a flat snapshot list applies to every repo.
 
 - `worker-guard` refuses an `edit`/`write` of a path outside the globs and tells the worker to `ask_lead` with `approval {category: "files", item: <glob>, why}`.
 - After each worker `bash` call, the changed paths (`git status --porcelain -uall` per job repo) outside the globs are appended to the tool result as a warning.
@@ -124,7 +124,7 @@ Lock files `owner.<n>.lock` hold `{pid, sessionId, host, heartbeat}`. `acquire` 
 
 ## Delivery and the push rule
 
-Per repo, in Targets order: `git fetch`, then `git rebase origin/<target>`. A clean rebase with no overlap between the upstream changes and the job's files, and a passing Verify, is `passedViaRebase`. A conflict, an overlap or a failing Verify is a fix round (the rebase is aborted on a conflict) followed by a judge. A multi-repo job pushes and merges only when every repo is accepted.
+Per repo, in Targets order: `git fetch`, then `git rebase origin/<target>`. A clean rebase with no overlap between the upstream changes and the job's files, and (when `verifyAfterRebase` is true) a passing Verify, is `passedViaRebase`. A conflict, an overlap or (when `verifyAfterRebase` is true) a failing Verify is a fix round (the rebase is aborted on a conflict) followed by a judge. A multi-repo job pushes and merges only when every repo is accepted.
 
 - **First push:** `git push origin HEAD:<remoteBranch>`; the branch must not exist on origin (otherwise delivery stops and the lead is woken). `remoteBranch` is set to the branch name at this push.
 - **Later pushes** (after a delivery rebase): `git push --force-with-lease=<remoteBranch>:<remotePushed> origin HEAD:<remoteBranch>`, only on the job's own branch, never the target or a protected branch. After each push `remotePushed` is the sha pushed. A lease failure means someone else pushed (for example you after `/wt open`): delivery stops, the lead is woken, nothing is overwritten.
@@ -149,6 +149,7 @@ The path is `RELAY_CONFIG`, or else `<agent dir>/relay.json`. Invalid keys fall 
 | `worker.extensions` | `[]` (the worker's `-e` list is `worker.ts`, the agents extension, these, plus `builtin:mcp` and agents' `mcp-forward.ts` only when the knowledge server is registered) |
 | `repos` | `{"<path glob or owner/name>": {merge: "after-pass"\|"pr-only", protectedBranches, sensitivePaths}}` |
 | `defaultMerge` | `"after-pass"` (`"pr-only"` opts out for all repos; a brief with `merge: no` opts out for one job) |
+| `verifyAfterRebase` | `false` (`true` reruns the brief's Verify commands after a delivery rebase that changed the tree) |
 | `askUser` | `[]` (categories the lead must ask you about before approving) |
 | `knowledge` | `{server: "knowledge", tools: [search, get_entry, get_rule_pack, get_schema, status], env: {KNOWLEDGE_OFFLINE: "1"}}`: the **worker's** knowledge tools only (the judge's and critic's come from agents.json `knowledge`) |
 | `approvePattern` | as in `workflow.json` |
