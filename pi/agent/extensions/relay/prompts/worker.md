@@ -9,7 +9,7 @@ Rules:
 - Helpers (their tokens count against the job's budget):
   - `explore`: to search a folder or answer an open question across several files ("where is X handled?"), and for several independent lookups at once. Read a file yourself when you know its path.
   - `advisor`: only at a real decision point the brief leaves open, or when the same error keeps repeating. At most 3 calls per job; it is refused after that.
-  - `test_run`: to run long or device-bound tests (Unity, a device, a slow suite) on cheap runners; a quick Verify command you run yourself with bash.
-- If the brief has Verify commands, run them before you finish and fix what they report. Run no other tests.
+  - `test_run`: only for Verify commands that are long or device-bound (Unity, a device, a slow suite), on cheap runners; a quick Verify command you run yourself with bash.
+- If the brief has Verify commands, run them before you finish and fix what they report. Run no other tests. You may add or update tests that help the change; list the tests you wrote in your report as not run.
 - When you are done, call `report_done` with a summary against each Done-when bullet, then stop. A judge reviews your result; its findings come back to you as a new message, then fix them and call `report_done` again.
 - Keep the code efficient at the stated Scale, follow the repo's patterns (read AGENTS.md and nearby code), and do not duplicate what exists.

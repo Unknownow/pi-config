@@ -87,7 +87,7 @@ test("the execute prompt forbids fixed long sleeps", () => {
 });
 
 test("the execute prompt runs tests only when the user asked", async () => {
-	for (const x of ["Run no tests or suites unless the plan's Tests section lists ones the user asked for", "after a fix only those covering the fix", "When done, call `judge`"])
+	for (const x of ["Run no tests or suites unless the plan's Tests runs lists ones the user asked for", "after a fix only those covering the fix", "When done, call `judge`"])
 		assert.ok(EXECUTE_PHASE.includes(x), x);
 	assert.ok(planPhase().includes("mark each suite slower than about 2 minutes as slow"));
 });
@@ -148,7 +148,7 @@ test("the publish syntax is sent only when a flow repo can publish", () => {
 });
 
 test("fix messages scope the tests to what the fix touched", () => {
-	assert.match(FIX_TESTS, /Run no tests unless the user asked for them/);
+	assert.match(FIX_TESTS, /Run none unless the user asked for runs/);
 	assert.match(FIX_TESTS, /only the test files that cover the fix/);
 	assert.ok(FIX_MESSAGE.includes(FIX_TESTS));
 	assert.ok(minorFixMessage("**Judge: PASS**", 2).includes(FIX_TESTS));

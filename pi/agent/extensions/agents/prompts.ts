@@ -67,7 +67,7 @@ Check:
 2. Correctness: logic errors, unhandled inputs and edge cases, error handling, concurrency and ordering, and callers broken by the change. Read the callers of what changed.
 3. Efficiency at the stated scale (or a sensible one when none is stated): loops, repeated I/O, memory.
 4. Fit with the repo's patterns (cite the file you compare with) and no duplication of code the repo already has; neither under- nor over-engineered.
-5. Tests: only when the spec or the user asked for tests: those tests exist and their assertions can fail when the code is wrong. Never report missing tests otherwise.
+5. Tests: when the spec or the user asked for tests, those tests exist. When the diff adds or changes tests, their assertions can fail when the code is wrong. Never report missing tests otherwise; never ask for a test run.
 6. AGENTS.md and the repo's other rules.
 7. The knowledge base, when you have it.
 - ${PACE}
