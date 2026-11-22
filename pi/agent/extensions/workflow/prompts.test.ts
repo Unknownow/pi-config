@@ -86,11 +86,10 @@ test("the execute prompt forbids fixed long sleeps", () => {
 	assert.ok(EXECUTE_PHASE.includes(NO_SLEEP));
 });
 
-test("slow suites run once and rerun only when touched", async () => {
-	for (const x of ["While fixing, run the narrowest check that covers the change", "Run each slow suite in full once, before your first judge call", "After a judge round, rerun a slow suite only if the fix changed files it builds or reads; otherwise cite its last passing run", "then call `judge`"])
+test("the execute prompt runs tests only when the user asked", async () => {
+	for (const x of ["Run no tests or suites unless the plan's Tests section lists ones the user asked for", "after a fix only those covering the fix", "When done, call `judge`"])
 		assert.ok(EXECUTE_PHASE.includes(x), x);
-	assert.ok(planPhase().includes("Mark each suite slower than about 2 minutes as slow"));
-	assert.ok(EXECUTE_PHASE.includes("When done, run the plan's tests as above"));
+	assert.ok(planPhase().includes("mark each suite slower than about 2 minutes as slow"));
 });
 
 test("human checks are Verify steps, never Wait", () => {
@@ -149,9 +148,8 @@ test("the publish syntax is sent only when a flow repo can publish", () => {
 });
 
 test("fix messages scope the tests to what the fix touched", () => {
-	assert.match(FIX_TESTS, /Test only what the fix touched/);
-	assert.match(FIX_TESTS, /cite its last passing run/);
-	assert.match(EXECUTE_PHASE, /never the full suite after each edit/);
+	assert.match(FIX_TESTS, /Run no tests unless the user asked for them/);
+	assert.match(FIX_TESTS, /only the test files that cover the fix/);
 	assert.ok(FIX_MESSAGE.includes(FIX_TESTS));
 	assert.ok(minorFixMessage("**Judge: PASS**", 2).includes(FIX_TESTS));
 });
