@@ -188,7 +188,7 @@ wholesale, so no `last-import.json` / `--session-start` guard was added. The per
 `/pi-config status` shows the repo-state guard result, the lock holder (pid, heartbeat age), the conflicts
 and the files an import would delete.
 
-Tests: `node --test bin/sync.test.js bin/vscode-bridge.test.js` and `node --experimental-strip-types --test extension/*.test.ts`.
+Tests: `node bin/test-all.js` runs every suite (on demand only, a few minutes; `--json` for machine output). Single suites: `node --test bin/sync.test.js bin/vscode-bridge.test.js` and `node --experimental-strip-types --test extension/*.test.ts`; each extension's README has its own command.
 
 
 ### Secret guard
