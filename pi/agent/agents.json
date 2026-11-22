@@ -3,23 +3,23 @@
   "roles": {
     "explore": {
       "model": "claude-bridge/claude-haiku-5-5",
-      "thinking": "medium"
+      "thinking": "high"
     },
     "advisor": {
       "model": "claude-bridge/claude-opus-5-5",
-      "thinking": "medium"
+      "thinking": "high"
     },
     "runner": {
       "model": "claude-bridge/claude-haiku-5-5",
-      "thinking": "low"
+      "thinking": "high"
     },
     "judge": {
       "model": "claude-bridge/claude-opus-5-5",
-      "thinking": "medium"
+      "thinking": "high"
     },
     "critic": {
       "model": "claude-bridge/claude-opus-5-5",
-      "thinking": "medium"
+      "thinking": "high"
     }
   },
   "explore": {

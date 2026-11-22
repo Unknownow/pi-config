@@ -9,15 +9,15 @@
     "worker": {
       "small": {
         "model": "claude-bridge/claude-haiku-5-5",
-        "thinking": "medium"
+        "thinking": "high"
       },
       "normal": {
         "model": "claude-bridge/claude-sonnet-5-5",
-        "thinking": "medium"
+        "thinking": "high"
       },
       "large": {
         "model": "claude-bridge/claude-opus-5-5",
-        "thinking": "medium"
+        "thinking": "high"
       }
     }
   },
