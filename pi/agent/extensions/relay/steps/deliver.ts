@@ -70,10 +70,11 @@ async function accept(job: Job, repo: RepoState, ctx: StepCtx, verify: string): 
 		repo.retarget = true;
 	}
 	const overlap = jobFiles.filter((f) => upFiles.has(f));
-	if (overlap.length) return { ok: false, fix: `origin/${repo.target} changed files you also changed (${overlap.join(", ")}). The rebase went through, but check that your change still fits what is upstream now, run Verify, and report_done again.` };
+	if (overlap.length) return { ok: false, fix: `origin/${repo.target} changed files you also changed (${overlap.join(", ")}). The rebase went through, but check that your change still fits what is upstream now, ${verify.trim() ? "run Verify, " : ""}and report_done again.` };
 	const newTree = firstLine((await git("rev-parse", "HEAD^{tree}")).stdout);
 	if (newTree !== repo.judgedTree) {
-		const cmds = verifyCommands(verify, job.repos.map((r) => r.key)).filter((c) => (c.repo ?? job.repos[0].key) === repo.key);
+		// the rerun is opt-in (`verifyAfterRebase`); off, the command list is empty
+		const cmds = (ctx.cfg.verifyAfterRebase ? verifyCommands(verify, job.repos.map((r) => r.key)) : []).filter((c) => (c.repo ?? job.repos[0].key) === repo.key);
 		for (const c of cmds) {
 			const r = await ctx.shell(c.cmd, repo.worktree);
 			if (r.code !== 0) return { ok: false, fix: `After rebasing onto origin/${repo.target}, Verify failed in ${repo.key}: \`${c.cmd}\` exited ${r.code}.\n\n${r.out.slice(-3000)}` };

@@ -10,8 +10,8 @@ import { applySnapshot, dropSnapshotBranch, revertSnapshotted, snapshotEdits } f
 import type { Job, RepoState } from "../job.ts";
 import type { Step, StepCtx } from "../types.ts";
 
-const fwd = (p: string) => p.split("\\").join("/").replace(/\/+$/, "");
-const same = (a: string, b: string) => fwd(a).toLowerCase() === fwd(b).toLowerCase();
+export const fwd = (p: string) => p.split("\\").join("/").replace(/\/+$/, "");
+export const same = (a: string, b: string) => fwd(a).toLowerCase() === fwd(b).toLowerCase();
 
 /** The repo top level a Targets key names: an existing folder (absolute, or relative to the lead's cwd), or the name of the lead's repo or of one of its added folders. */
 export async function resolveRepo(ctx: Pick<StepCtx, "run" | "leadCwd" | "folders">, key: string): Promise<string | undefined> {

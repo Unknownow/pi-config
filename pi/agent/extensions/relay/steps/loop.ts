@@ -49,6 +49,12 @@ export const workStep: Step = {
 	},
 };
 
+/** "run Verify again, " when the brief has a Verify section, else nothing. */
+function verifyAgain(ctx: StepCtx): string {
+	const p = parseBrief(ctx.brief());
+	return "errors" in p || !p.sections.Verify?.trim() ? "" : "run Verify again, ";
+}
+
 /** The diff of every repo against its base (the follow-up base for a follow-up), as agents DiffParts. */
 export async function jobDiffParts(job: Job, ctx: StepCtx): Promise<DiffPart[]> {
 	const parts: DiffPart[] = [];
@@ -120,7 +126,7 @@ export async function failRound(job: Job, ctx: StepCtx, why: string, body: strin
 
 ${body}
 
-Fix every blocker and major finding, run Verify again, then call report_done.`);
+Fix every blocker and major finding, ${verifyAgain(ctx)}then call report_done.`);
 	return "work";
 }
 
@@ -143,7 +149,7 @@ export async function backToWork(job: Job, ctx: StepCtx, since: number): Promise
 	ctx.log("amended", `back to the worker: ${list.map((a) => `amendment ${a.n}`).join(", ")}`);
 	ctx.notify(`relay job ${job.id}: amended; the worker continues`);
 	const items = list.map((a) => `Amendment ${a.n} (${a.by}): ${a.text}`).join(`\n\n`);
-	await ctx.prompt(`The brief was amended while the job was being reviewed:\n\n${items}\n\nApply it, run Verify again, then call report_done.`);
+	await ctx.prompt(`The brief was amended while the job was being reviewed:\n\n${items}\n\nApply it, ${verifyAgain(ctx)}then call report_done.`);
 	return "work";
 }
 

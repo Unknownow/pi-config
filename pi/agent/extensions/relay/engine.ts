@@ -18,7 +18,7 @@ import { ADVISOR_CAP_ENV, costOf, forwardedServers, loadConfig as loadAgentsConf
 import { ADVISOR_CAP, AGENTS_USAGE_FILE, advisorRunsUsed, draftCriticCost, readNewUsage } from "./usage.ts";
 import { AMENDMENT_CRITERIA, CRITIC_ABOUT } from "./reviews.ts";
 import { applySnapshot } from "./snapshot.ts";
-import { dispatchStep, resolveRepo, workerPrompt } from "./steps/dispatch.ts";
+import { dispatchStep, fwd, resolveRepo, same, workerPrompt } from "./steps/dispatch.ts";
 import { followupStep } from "./steps/followup.ts";
 import { deliverStep } from "./steps/deliver.ts";
 import { judgeStep, workStep } from "./steps/loop.ts";
@@ -228,10 +228,26 @@ export class Engine {
 
 	// ------------------------------------------------------------------------------------------------ dispatch
 
+	/** A message when a Target repo is neither the lead's repo nor one of its added folders (the set could not hold it); undefined when all are in the session or cannot be resolved (dispatchStep fails those). */
+	private async targetOutsideSession(brief: Brief): Promise<string | undefined> {
+		const ctx = { run: this.d.run, leadCwd: this.d.leadCwd, folders: this.d.folders };
+		const lead = await this.d.run("git", ["rev-parse", "--show-toplevel"], this.d.leadCwd);
+		const top = lead.code === 0 ? lead.stdout.trim() : "";
+		for (const t of brief.targets) {
+			const main = await resolveRepo(ctx, t.repo);
+			if (!main) continue;
+			if ((top && same(top, main)) || this.d.folders().some((f) => same(main, fwd(f)))) continue;
+			return `Targets: ${t.repo} (${main}) is not in this session. Add it with /folders add <path>, or target the session's worktree of it.`;
+		}
+		return undefined;
+	}
+
 	async dispatch(input: { brief: string; size?: Size; overrides?: Job["overrides"]; draft?: string }): Promise<{ id: string; state: JobState; queued: boolean } | { error: string }> {
 		const checked = checkBrief(input.brief);
 		if ("errors" in checked) return { error: `the brief is not complete:\n- ${checked.errors.join("\n- ")}` };
 		const brief = checked.brief;
+		const outside = await this.targetOutsideSession(brief);
+		if (outside) return { error: outside };
 		if (brief.dependsOn) {
 			const pred = this.peek(brief.dependsOn);
 			if (!pred) return { error: `Depends on: job "${brief.dependsOn}" is unknown (a job id of this repo)` };

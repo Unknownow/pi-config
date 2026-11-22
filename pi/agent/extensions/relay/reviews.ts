@@ -17,7 +17,8 @@ export const JUDGE_CRITERIA = `You judge the result of a relay job: a headless w
 
 /** The critic's relay rules for a brief (relay_critic). */
 export const BRIEF_CRITERIA = `The document is a relay brief: the whole job for a headless worker that cannot ask anything the brief should have decided. Your working folder is the lead's checkout.
-- Completeness: Goal, Done-when bullets that can be checked, Non-goals, Constraints, Decisions (locked), Design, Scale (numbers), Verify (runnable commands), Targets, Authority (all six categories: merge, publish, comments, delete, formats, deps).
+- Completeness: Goal, Done-when bullets that can be checked, Non-goals, Constraints, Decisions (locked), Design, Scale (numbers), Targets, Authority (all six categories: merge, publish, comments, delete, formats, deps).
+- Verify is optional; when present its lines are runnable commands. Never ask to add test runs or new tests unless the brief says the user asked for them.
 - Efficiency at the stated Scale: will the Design hold at those numbers? Name the cost (loops, I/O, memory) when it will not.
 - A path for the extensions the Goal names (new modes, kinds, providers).
 - Fit with the repo's patterns (cite the file); no duplication of code the repo already has; neither under- nor over-engineered.

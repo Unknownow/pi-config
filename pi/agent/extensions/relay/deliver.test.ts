@@ -150,7 +150,7 @@ test("an overlap, a conflict and a failed Verify each give a fix round, and noth
 		["conflict", (s: Scenario) => s.push(0, "greeting.txt", "different\n"), undefined, /conflicts in greeting\.txt/],
 		["verify", (s: Scenario) => s.push(0, "b.txt", "x\n"), 'node -e "process.exit(3)"', /Verify failed in R0.*exited 3/s],
 	] as const) {
-		const s = scenario(1, { ...MERGE, ...(verify ? { verify } : {}) });
+		const s = scenario(1, { ...MERGE, ...(verify ? { verify } : {}) }, { verifyAfterRebase: true });
 		try {
 			setup(s);
 			assert.equal(await deliverStep.run(s.job, s.ctx), "work", name);
@@ -221,7 +221,7 @@ test("the gate refuses a tree that was not accepted", async () => {
 });
 
 test("two repos: a failed Verify in B means no merge and no push anywhere; both accepted merge in Targets order", async () => {
-	const s = scenario(2, { ...MERGE, verify: 'R1: node -e "process.exit(1)"' });
+	const s = scenario(2, { ...MERGE, verify: 'R1: node -e "process.exit(1)"' }, { verifyAfterRebase: true });
 	try {
 		s.push(1, "b.txt", "up\n");
 		assert.equal(await deliverStep.run(s.job, s.ctx), "work");

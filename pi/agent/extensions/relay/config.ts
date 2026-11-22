@@ -46,6 +46,8 @@ export interface RelayConfig {
 	worker: { extensions: string[] };
 	repos: Record<string, Partial<RepoPolicy>>;
 	defaultMerge: MergeMode;
+	/** Rerun the brief's Verify commands after a delivery rebase that changed the tree. */
+	verifyAfterRebase: boolean;
 	askUser: Category[];
 	knowledge: KnowledgeConfig;
 	/** The typed-"go" pattern (copied from workflow.json `approvePattern`). */
@@ -77,6 +79,7 @@ export const DEFAULTS: RelayConfig = {
 	worker: { extensions: [] },
 	repos: {},
 	defaultMerge: "after-pass",
+	verifyAfterRebase: false,
 	askUser: [],
 	knowledge: {
 		server: "knowledge",
@@ -190,6 +193,8 @@ export function parseConfig(raw: unknown): Loaded {
 	}
 	if (raw.defaultMerge === "after-pass" || raw.defaultMerge === "pr-only") c.defaultMerge = raw.defaultMerge;
 	else if (raw.defaultMerge !== undefined) warn(`defaultMerge: expected "after-pass" or "pr-only"; using "${DEFAULTS.defaultMerge}"`);
+	if (typeof raw.verifyAfterRebase === "boolean") c.verifyAfterRebase = raw.verifyAfterRebase;
+	else if (raw.verifyAfterRebase !== undefined) warn("verifyAfterRebase: expected a boolean; using false");
 	if (raw.askUser !== undefined) {
 		if (isStrings(raw.askUser) && raw.askUser.every((x) => (CATEGORIES as readonly string[]).includes(x))) c.askUser = raw.askUser as Category[];
 		else warn(`askUser: expected a list of ${CATEGORIES.join(", ")}; using none`);
