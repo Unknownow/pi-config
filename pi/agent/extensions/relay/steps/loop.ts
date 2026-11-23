@@ -9,6 +9,7 @@ import type { DiffPart } from "../../agents/api.ts";
 import { fileGlobs, FILES_HINT, outsideFiles } from "../files.ts";
 import type { Job } from "../job.ts";
 import { judgeCriteria } from "../reviews.ts";
+import { syncBase } from "./sync-base.ts";
 import type { JudgeCall, Step, StepCtx } from "../types.ts";
 
 const MAX_NUDGES = 2;
@@ -191,6 +192,8 @@ export const judgeStep: Step = {
 		job.briefVersion = briefVersion;
 		// the tree the judge sees is recorded before it reviews, and checked again after
 		const treeOf = async (r: Job["repos"][number]) => (await ctx.run("git", ["rev-parse", "HEAD^{tree}"], r.worktree)).stdout.trim();
+		// a branch the worker rebased itself is diffed from where it sits now, not from the dispatch base
+		for (const r of job.repos) await syncBase(r, ctx);
 		const seen = await Promise.all(job.repos.map(treeOf));
 		const diff = await jobDiffParts(job, ctx);
 		// ## Files: a change outside the globs of the repo it is in fails the round before the judge runs

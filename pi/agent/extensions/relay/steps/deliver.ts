@@ -7,6 +7,7 @@ import { type Job, type RepoState, stackState } from "../job.ts";
 import { gateCheck, originRepo } from "../../shared/git/merge-gate.ts";
 import { type PushContext, pushProblem } from "../../shared/git/push-guard.ts";
 import { backToWork, failRound, workAmendments } from "./loop.ts";
+import { syncBase } from "./sync-base.ts";
 import type { Step, StepCtx } from "../types.ts";
 
 const firstLine = (s: string) => s.trim().split(/\r?\n/)[0] ?? "";
@@ -35,11 +36,13 @@ type Outcome = { kind: "amended" } | { kind: "done" } | { kind: "stopped" } | { 
 
 async function accept(job: Job, repo: RepoState, ctx: StepCtx, verify: string): Promise<{ ok: true } | { ok: false; fix?: string; error?: string }> {
 	const git = (...args: string[]) => ctx.run("git", args, repo.worktree);
+	const fetch = await git("fetch", "origin");
+	if (fetch.code !== 0) return { ok: false, error: `git fetch failed in ${repo.key}: ${firstLine(fetch.stderr)}` };
+	// the worker may have rebased the branch itself: start from where it sits now
+	await syncBase(repo, ctx);
 	// a stacked repo rebases onto its predecessor's branch while that is open, and --onto the target once it merged (D17)
 	const stack = stackState(repo, repo.stackedOn ? ctx.job(repo.stackedOn.job) : undefined);
 	const tgt = stack === "open" ? repo.stackedOn!.branch : repo.target;
-	const fetch = await git("fetch", "origin");
-	if (fetch.code !== 0) return { ok: false, error: `git fetch failed in ${repo.key}: ${firstLine(fetch.stderr)}` };
 	const upstream = firstLine((await git("rev-parse", `origin/${tgt}`)).stdout);
 	if (!upstream) return { ok: false, error: `origin/${tgt} not found in ${repo.key}` };
 	const headTree = firstLine((await git("rev-parse", "HEAD^{tree}")).stdout);
