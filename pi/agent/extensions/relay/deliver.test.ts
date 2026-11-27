@@ -9,6 +9,7 @@ import { emptyJob, type Job } from "./job.ts";
 import { gateCheck } from "../shared/git/merge-gate.ts";
 import { parseConfig } from "./config.ts";
 import { run } from "./sh.ts";
+import { jobDiffParts } from "./steps/loop.ts";
 import { deliverStep, mergeAllowed, pushJobBranch, verifyCommands } from "./steps/deliver.ts";
 import type { StepCtx } from "./types.ts";
 import { git, makeRepo, tmpDir, cleanup } from "./test/helpers.ts";
@@ -446,6 +447,42 @@ test("GitHub origin, PR could not be opened: no fallback push to the target", as
 		assert.match(s.job.notes.at(-1) ?? "", /no pull request in R0/);
 		assert.equal(s.job.repos[0].merged, undefined);
 		assert.equal(git(s.repos[0].bare, "rev-parse", "main"), mainBefore);
+	} finally {
+		s.clean();
+	}
+});
+
+test("a follow-up that merged or rebased onto a moved target: the diff and the Files names hold only its own edits", async () => {
+	for (const how of ["merge", "rebase"]) {
+		const s = scenario(1);
+		try {
+			const r = s.job.repos[0];
+			r.followBase = git(r.worktree, "rev-parse", "HEAD");
+			s.push(0, "up.txt", "u\n");
+			s.push(0, "a.txt", "a2\n");
+			git(r.worktree, "fetch", "-q", "origin");
+			if (how === "merge") git(r.worktree, "-c", "user.name=t", "-c", "user.email=t@t", "merge", "-q", "--no-edit", "origin/main");
+			else git(r.worktree, "-c", "user.name=t", "-c", "user.email=t@t", "rebase", "-q", "origin/main");
+			s.commit(0, "b2.txt", "b\n");
+			const [part] = await jobDiffParts(s.job, s.ctx);
+			assert.deepEqual(part.names, ["b2.txt"], how);
+			assert.ok(!part.full.includes("up.txt") && !part.full.includes("greeting.txt"), how);
+		} finally {
+			s.clean();
+		}
+	}
+});
+
+test("a follow-up with no newer upstream keeps followBase as its diff base", async () => {
+	const s = scenario(1);
+	try {
+		const r = s.job.repos[0];
+		r.followBase = git(r.worktree, "rev-parse", "HEAD");
+		s.push(0, "up.txt", "u\n");
+		s.commit(0, "b2.txt", "b\n");
+		const [part] = await jobDiffParts(s.job, s.ctx);
+		assert.equal(part.base, r.followBase);
+		assert.deepEqual(part.names, ["b2.txt"]);
 	} finally {
 		s.clean();
 	}

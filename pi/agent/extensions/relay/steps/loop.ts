@@ -9,7 +9,7 @@ import type { DiffPart } from "../../agents/api.ts";
 import { fileGlobs, FILES_HINT, outsideFiles } from "../files.ts";
 import type { Job } from "../job.ts";
 import { judgeCriteria } from "../reviews.ts";
-import { syncBase } from "./sync-base.ts";
+import { followDiffBase, syncBase } from "./sync-base.ts";
 import type { JudgeCall, Step, StepCtx } from "../types.ts";
 
 const MAX_NUDGES = 2;
@@ -56,11 +56,11 @@ function verifyAgain(ctx: StepCtx): string {
 	return "errors" in p || !p.sections.Verify?.trim() ? "" : "run Verify again, ";
 }
 
-/** The diff of every repo against its base (the follow-up base for a follow-up), as agents DiffParts. */
+/** The diff of every repo against its base (for a follow-up, its start plus any upstream the worker took in since), as agents DiffParts. */
 export async function jobDiffParts(job: Job, ctx: StepCtx): Promise<DiffPart[]> {
 	const parts: DiffPart[] = [];
 	for (const r of job.repos) {
-		const base = r.followBase ?? r.base;
+		const base = r.followBase ? await followDiffBase(r, ctx) : r.base;
 		const d = await collectRepoDiff((cwd, ...args) => ctx.run("git", args, cwd), r.worktree, base);
 		parts.push({ key: r.key, base, full: d?.full ?? "", names: d?.rootNames ?? [] });
 	}
